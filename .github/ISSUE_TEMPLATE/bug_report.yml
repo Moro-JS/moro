@@ -1,0 +1,91 @@
+name: 🐛 Bug Report
+description: Report a bug in MoroJS
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! 🐛
+        
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of what the bug is.
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+      
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+      
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, add a minimal code sample to help explain your problem.
+      render: typescript
+      
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime Environment
+      description: Which runtime are you using?
+      options:
+        - Node.js
+        - Vercel Edge Functions
+        - AWS Lambda
+        - Cloudflare Workers
+        - Other (please specify in additional context)
+    validations:
+      required: true
+      
+  - type: input
+    id: version
+    attributes:
+      label: MoroJS Version
+      description: What version of MoroJS are you running?
+      placeholder: "1.0.0"
+    validations:
+      required: true
+      
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js Version
+      description: What version of Node.js are you running?
+      placeholder: "20.x.x"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant log output.
+      render: shell
+      
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here. 

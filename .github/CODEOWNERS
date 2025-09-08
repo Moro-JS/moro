@@ -1,0 +1,16 @@
+# Global code owners
+* @M-Chris
+
+# Core framework files require extra scrutiny
+/src/core/ @M-Chris
+/src/moro.ts @M-Chris
+/src/index.ts @M-Chris
+
+# Package and workflow changes
+/package.json @M-Chris
+/.github/ @M-Chris
+/tsconfig.json @M-Chris
+
+# Documentation changes
+/README.md @M-Chris
+/docs/ @M-Chris 
