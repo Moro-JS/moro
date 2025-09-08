@@ -98,33 +98,6 @@ jobs:
           name: dist
           path: dist/
 
-  docs:
-    name: Generate Documentation
-    runs-on: ubuntu-latest
-    needs: [build]
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          
-      - name: Install dependencies
-        run: npm ci
-        
-      - name: Generate TypeDoc documentation
-        run: npm run docs:build
-        
-      - name: Upload documentation
-        uses: actions/upload-artifact@v4
-        with:
-          name: docs
-          path: docs/
-
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -176,24 +149,4 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  deploy-docs:
-    name: Deploy Documentation
-    runs-on: ubuntu-latest
-    needs: [docs]
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Download documentation
-        uses: actions/download-artifact@v4
-        with:
-          name: docs
-          path: docs/
-          
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs 
+ 
