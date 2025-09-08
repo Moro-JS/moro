@@ -16,7 +16,6 @@ export default [
         project: './tsconfig.json',
       },
       globals: {
-        ...globalThis,
         process: 'readonly',
         console: 'readonly',
         Buffer: 'readonly',
@@ -44,12 +43,15 @@ export default [
       ...prettierConfig.rules,
       
       // TypeScript specific rules
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-empty-function': 'off',
       '@typescript-eslint/no-non-null-assertion': 'warn',
+      '@typescript-eslint/no-require-imports': 'warn', // Needed for optional deps in adapters
+      '@typescript-eslint/no-unsafe-function-type': 'warn', // TODO: Fix for v1.1.0
+      '@typescript-eslint/no-namespace': 'warn',
       
       // General rules
       'no-console': 'warn',

@@ -457,7 +457,7 @@ function generateExample(def: any): any {
     case "ZodBoolean":
       return true;
 
-    case "ZodObject":
+    case "ZodObject": {
       const example: any = {};
       let shape;
 
@@ -484,6 +484,7 @@ function generateExample(def: any): any {
       }
 
       return example;
+    }
 
     case "ZodArray":
       if (def.type && def.type._def) {

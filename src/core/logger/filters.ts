@@ -66,7 +66,7 @@ export const sanitizeFilter = (
     // Also sanitize message content
     let sanitizedMessage = entry.message;
     for (const key of sensitiveKeys) {
-      const regex = new RegExp(`(${key}["\s]*[:=]["\s]*)([^"\s]+)`, "gi");
+      const regex = new RegExp(`(${key}["\\s]*[:=]["\\s]*)([^"\\s]+)`, "gi");
       sanitizedMessage = sanitizedMessage.replace(regex, "$1[REDACTED]");
     }
     entry.message = sanitizedMessage;

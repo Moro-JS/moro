@@ -497,19 +497,21 @@ export class FunctionalContainer extends EventEmitter {
     context?: ServiceContext,
   ): Map<string, ServiceInstance> {
     switch (scope) {
-      case ServiceScope.REQUEST:
+      case ServiceScope.REQUEST: {
         const requestId = context?.requestId || "default-request";
         if (!this.requestScopes.has(requestId)) {
           this.requestScopes.set(requestId, new Map());
         }
         return this.requestScopes.get(requestId)!;
+      }
 
-      case ServiceScope.MODULE:
+      case ServiceScope.MODULE: {
         const moduleId = context?.moduleId || "default-module";
         if (!this.moduleScopes.has(moduleId)) {
           this.moduleScopes.set(moduleId, new Map());
         }
         return this.moduleScopes.get(moduleId)!;
+      }
 
       default:
         return this.instances;

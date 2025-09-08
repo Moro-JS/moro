@@ -365,12 +365,13 @@ export class ExecutableRoute implements CompiledRoute {
         }
         break;
 
-      case "handler":
+      case "handler": {
         const result = await this.schema.handler(req, res);
         if (result !== undefined && !res.headersSent) {
           res.json(result);
         }
         break;
+      }
     }
   }
 

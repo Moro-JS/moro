@@ -599,9 +599,9 @@ export class Moro extends EventEmitter {
     const paramNames: string[] = [];
     const regexPath = path
       .replace(/\//g, "\\/")
-      .replace(/:([^\/]+)/g, (match, paramName) => {
+      .replace(/:([^/]+)/g, (match, paramName) => {
         paramNames.push(paramName);
-        return "([^\/]+)";
+        return "([^/]+)";
       });
 
     return {

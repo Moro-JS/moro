@@ -106,7 +106,7 @@ export class RouteRegistry {
     // Convert path parameters like :id to regex groups
     const regexPath = path
       .replace(/\//g, "\\/") // Escape forward slashes
-      .replace(/:([^\/]+)/g, (match, paramName) => {
+      .replace(/:([^/]+)/g, (match, paramName) => {
         paramNames.push(paramName);
         return "([^/]+)"; // Match parameter value
       });
