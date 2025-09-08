@@ -149,7 +149,7 @@ jobs:
     name: Publish to NPM
     runs-on: ubuntu-latest
     needs: [lint-and-format, test, build, security-audit]
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && github.event.release.prerelease == false && github.actor == github.repository_owner
     
     steps:
       - name: Checkout code
@@ -168,8 +168,11 @@ jobs:
       - name: Build project
         run: npm run build
         
+      - name: Verify package contents
+        run: npm pack --dry-run
+        
       - name: Publish to NPM
-        run: npm publish
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

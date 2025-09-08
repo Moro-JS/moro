@@ -2,17 +2,17 @@
 
 <div align="center">
 
-![Moro Logo](https://via.placeholder.com/300x100/2563eb/ffffff?text=MoroJS)
+![Moro Logo](https://img.shields.io/badge/MoroJS-2563eb?style=for-the-badge&logo=typescript&logoColor=white)
 
 **High-performance multi-runtime framework with intelligent routing**  
 *Functional • Type-safe • Multi-environment • Production-ready*
 
-[![npm version](https://badge.fury.io/js/moro.svg)](https://badge.fury.io/js/moro)
+[![npm version](https://badge.fury.io/js/@morojs%2Fmoro.svg)](https://badge.fury.io/js/@morojs%2Fmoro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)](https://www.typescriptlang.org/)
 
-[**Documentation**](./docs/) • [**Quick Start**](#quick-start) • [**Examples**](https://github.com/MoroJS/examples) • [**API Reference**](./docs/API.md)
+[**Documentation**](./docs/) • [**Quick Start**](#quick-start) • [**Examples**](#examples) • [**API Reference**](./docs/API.md)
 
 </div>
 
@@ -29,14 +29,23 @@ Moro eliminates the pain points of traditional Node.js frameworks with **intelli
 - **Functional Architecture** - No decorators, pure functional patterns
 - **Zero Order Dependencies** - Framework handles optimal middleware execution
 
+## Superior Performance
+
+| Framework | Req/sec | Latency | Memory |
+|-----------|---------|---------|--------|
+| **Moro**  | **52,400** | **1.8ms** | **24MB** |
+| Express   | 28,540  | 3.8ms   | 45MB   |
+| Fastify   | 38,120  | 2.9ms   | 35MB   |
+| NestJS    | 22,100  | 4.5ms   | 58MB   |
+
 ## Quick Start
 
 ### Installation
 
 ```bash
-npm install moro
+npm install @morojs/moro
 # or
-yarn add moro
+yarn add @morojs/moro
 ```
 
 ### Hello World
@@ -136,15 +145,6 @@ app.post('/users')
    });
 ```
 
-### **Superior Performance**
-
-| Framework | Req/sec | Latency | Memory |
-|-----------|---------|---------|--------|
-| **Moro**  | **52,400** | **1.8ms** | **24MB** |
-| Express   | 28,540  | 3.8ms   | 45MB   |
-| Fastify   | 38,120  | 2.9ms   | 35MB   |
-| NestJS    | 22,100  | 4.5ms   | 58MB   |
-
 ## Examples
 
 ### API Styles
@@ -197,7 +197,7 @@ await app.loadModule(UsersModule);
 - [**Migration Guide**](./docs/MIGRATION.md) - From Express, Fastify, NestJS
 - [**Performance Guide**](./docs/PERFORMANCE.md) - Optimization and benchmarks
 - [**Runtime System**](./docs/RUNTIME.md) - Multi-runtime deployment guide
-- [**Examples Repository**](https://github.com/MoroJS/examples) - Working examples
+- [**Examples Repository**](../MoroJS%20Examples/) - Working examples
 
 ### **Key Concepts**
 - **Multi-Runtime Support** - Same API works on Node.js, Edge, Lambda, and Workers
@@ -226,8 +226,8 @@ MIT © [Moro Framework Team](https://morojs.com)
 
 <div align="center">
 
-**Ready to deploy everywhere with one codebase? **
+**Ready to deploy everywhere with one codebase?**
 
-[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/MoroJS/moro) • [npm](https://www.npmjs.com/package/moro)
+[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/MoroJS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro)
 
 </div> 
