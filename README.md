@@ -51,7 +51,7 @@ yarn add @morojs/moro
 ### Hello World
 
 ```typescript
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 
 const app = createApp();
 
