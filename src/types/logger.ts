@@ -1,5 +1,5 @@
 // Enterprise Logger Types
-export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 export interface LogEntry {
   timestamp: Date;
@@ -26,7 +26,7 @@ export interface LoggerOptions {
   enableContext?: boolean;
   enableMetadata?: boolean;
   enablePerformance?: boolean;
-  format?: "pretty" | "json" | "compact";
+  format?: 'pretty' | 'json' | 'compact';
   outputs?: LogOutput[];
   filters?: LogFilter[];
   maxEntries?: number;
@@ -36,7 +36,7 @@ export interface LogOutput {
   name: string;
   write: (entry: LogEntry) => Promise<void> | void;
   level?: LogLevel;
-  format?: "pretty" | "json" | "compact";
+  format?: 'pretty' | 'json' | 'compact';
 }
 
 export interface LogFilter {
@@ -45,31 +45,15 @@ export interface LogFilter {
 }
 
 export interface Logger {
-  debug(
-    message: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void;
+  debug(message: string, context?: string, metadata?: Record<string, any>): void;
   info(message: string, context?: string, metadata?: Record<string, any>): void;
   warn(message: string, context?: string, metadata?: Record<string, any>): void;
-  error(
-    message: string | Error,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void;
-  fatal(
-    message: string | Error,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void;
+  error(message: string | Error, context?: string, metadata?: Record<string, any>): void;
+  fatal(message: string | Error, context?: string, metadata?: Record<string, any>): void;
 
   // Performance logging
   time(label: string): void;
-  timeEnd(
-    label: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void;
+  timeEnd(label: string, context?: string, metadata?: Record<string, any>): void;
 
   // Structured logging
   child(context: string, metadata?: Record<string, any>): Logger;

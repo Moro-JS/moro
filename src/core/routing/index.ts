@@ -1,29 +1,19 @@
 // Intelligent Routing System for Moro Framework
 // Schema-first with automatic middleware ordering and chainable API
 
-import { z, ZodSchema } from "zod";
-import { HttpRequest, HttpResponse } from "../http";
-import { createFrameworkLogger } from "../logger";
+import { z, ZodSchema } from 'zod';
+import { HttpRequest, HttpResponse } from '../http';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("IntelligentRouting");
+const logger = createFrameworkLogger('IntelligentRouting');
 
 // Core types
-export type HttpMethod =
-  | "GET"
-  | "POST"
-  | "PUT"
-  | "DELETE"
-  | "PATCH"
-  | "HEAD"
-  | "OPTIONS";
-export type RouteHandler<T = any> = (
-  req: HttpRequest,
-  res: HttpResponse,
-) => T | Promise<T>;
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
+export type RouteHandler<T = any> = (req: HttpRequest, res: HttpResponse) => T | Promise<T>;
 export type Middleware = (
   req: HttpRequest,
   res: HttpResponse,
-  next: () => void,
+  next: () => void
 ) => void | Promise<void>;
 
 // Configuration interfaces
@@ -81,16 +71,16 @@ export interface RouteSchema {
 
 // Execution phases in optimal order
 export const EXECUTION_PHASES = [
-  "security", // CORS, Helmet (framework-managed)
-  "parsing", // Body/query parsing (framework-managed)
-  "rateLimit", // Rate limiting (early protection)
-  "before", // Custom pre-processing middleware
-  "auth", // Authentication/authorization
-  "validation", // Request validation
-  "transform", // Data transformation middleware
-  "cache", // Caching logic
-  "after", // Custom post-processing middleware
-  "handler", // Route handler (always last)
+  'security', // CORS, Helmet (framework-managed)
+  'parsing', // Body/query parsing (framework-managed)
+  'rateLimit', // Rate limiting (early protection)
+  'before', // Custom pre-processing middleware
+  'auth', // Authentication/authorization
+  'validation', // Request validation
+  'transform', // Data transformation middleware
+  'cache', // Caching logic
+  'after', // Custom post-processing middleware
+  'handler', // Route handler (always last)
 ] as const;
 
 export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
@@ -202,28 +192,19 @@ export class IntelligentRouteBuilder implements RouteBuilder {
   // Custom middleware
   before(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
-    this.schema.middleware.before = [
-      ...(this.schema.middleware.before || []),
-      ...middleware,
-    ];
+    this.schema.middleware.before = [...(this.schema.middleware.before || []), ...middleware];
     return this;
   }
 
   after(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
-    this.schema.middleware.after = [
-      ...(this.schema.middleware.after || []),
-      ...middleware,
-    ];
+    this.schema.middleware.after = [...(this.schema.middleware.after || []), ...middleware];
     return this;
   }
 
   transform(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
-    this.schema.middleware.transform = [
-      ...(this.schema.middleware.transform || []),
-      ...middleware,
-    ];
+    this.schema.middleware.transform = [...(this.schema.middleware.transform || []), ...middleware];
     return this;
   }
 
@@ -245,7 +226,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
   // Terminal method - compiles the route
   handler<T>(handler: RouteHandler<T>): CompiledRoute {
     if (!handler) {
-      throw new Error("Handler is required");
+      throw new Error('Handler is required');
     }
 
     const completeSchema: RouteSchema = {
@@ -255,7 +236,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
 
     logger.debug(
       `Compiled route: ${completeSchema.method} ${completeSchema.path}`,
-      "RouteCompilation",
+      'RouteCompilation',
       {
         hasValidation: !!completeSchema.validation,
         hasAuth: !!completeSchema.auth,
@@ -266,7 +247,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
           after: completeSchema.middleware?.after?.length || 0,
           transform: completeSchema.middleware?.transform?.length || 0,
         },
-      },
+      }
     );
 
     return new ExecutableRoute(completeSchema);
@@ -282,20 +263,20 @@ export class ExecutableRoute implements CompiledRoute {
 
     try {
       // Execute middleware in intelligent order
-      await this.executePhase("before", validatedReq, res);
-      await this.executePhase("rateLimit", validatedReq, res);
-      await this.executePhase("auth", validatedReq, res);
-      await this.executePhase("validation", validatedReq, res);
-      await this.executePhase("transform", validatedReq, res);
-      await this.executePhase("cache", validatedReq, res);
-      await this.executePhase("after", validatedReq, res);
+      await this.executePhase('before', validatedReq, res);
+      await this.executePhase('rateLimit', validatedReq, res);
+      await this.executePhase('auth', validatedReq, res);
+      await this.executePhase('validation', validatedReq, res);
+      await this.executePhase('transform', validatedReq, res);
+      await this.executePhase('cache', validatedReq, res);
+      await this.executePhase('after', validatedReq, res);
 
       // Execute handler last
       if (!res.headersSent) {
-        await this.executePhase("handler", validatedReq, res);
+        await this.executePhase('handler', validatedReq, res);
       }
     } catch (error) {
-      logger.error("Route execution error", "RouteExecution", {
+      logger.error('Route execution error', 'RouteExecution', {
         error: error instanceof Error ? error.message : String(error),
         route: `${this.schema.method} ${this.schema.path}`,
         requestId: req.requestId,
@@ -304,7 +285,7 @@ export class ExecutableRoute implements CompiledRoute {
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
-          error: "Internal server error",
+          error: 'Internal server error',
           requestId: req.requestId,
         });
       }
@@ -314,10 +295,10 @@ export class ExecutableRoute implements CompiledRoute {
   private async executePhase(
     phase: ExecutionPhase,
     req: ValidatedRequest,
-    res: HttpResponse,
+    res: HttpResponse
   ): Promise<void> {
     switch (phase) {
-      case "before":
+      case 'before':
         if (this.schema.middleware?.before) {
           for (const middleware of this.schema.middleware.before) {
             await this.executeMiddleware(middleware, req, res);
@@ -325,25 +306,25 @@ export class ExecutableRoute implements CompiledRoute {
         }
         break;
 
-      case "rateLimit":
+      case 'rateLimit':
         if (this.schema.rateLimit) {
           await this.executeRateLimit(req, res);
         }
         break;
 
-      case "auth":
+      case 'auth':
         if (this.schema.auth) {
           await this.executeAuth(req, res);
         }
         break;
 
-      case "validation":
+      case 'validation':
         if (this.schema.validation) {
           await this.executeValidation(req, res);
         }
         break;
 
-      case "transform":
+      case 'transform':
         if (this.schema.middleware?.transform) {
           for (const middleware of this.schema.middleware.transform) {
             await this.executeMiddleware(middleware, req, res);
@@ -351,13 +332,13 @@ export class ExecutableRoute implements CompiledRoute {
         }
         break;
 
-      case "cache":
+      case 'cache':
         if (this.schema.cache) {
           await this.executeCache(req, res);
         }
         break;
 
-      case "after":
+      case 'after':
         if (this.schema.middleware?.after) {
           for (const middleware of this.schema.middleware.after) {
             await this.executeMiddleware(middleware, req, res);
@@ -365,7 +346,7 @@ export class ExecutableRoute implements CompiledRoute {
         }
         break;
 
-      case "handler": {
+      case 'handler': {
         const result = await this.schema.handler(req, res);
         if (result !== undefined && !res.headersSent) {
           res.json(result);
@@ -378,7 +359,7 @@ export class ExecutableRoute implements CompiledRoute {
   private async executeMiddleware(
     middleware: Middleware,
     req: HttpRequest,
-    res: HttpResponse,
+    res: HttpResponse
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -393,31 +374,22 @@ export class ExecutableRoute implements CompiledRoute {
     });
   }
 
-  private async executeRateLimit(
-    req: HttpRequest,
-    res: HttpResponse,
-  ): Promise<void> {
+  private async executeRateLimit(req: HttpRequest, res: HttpResponse): Promise<void> {
     // Rate limiting implementation will be added
-    logger.debug("Rate limit check", "RateLimit", {
+    logger.debug('Rate limit check', 'RateLimit', {
       config: this.schema.rateLimit,
       ip: req.ip,
     });
   }
 
-  private async executeAuth(
-    req: ValidatedRequest,
-    res: HttpResponse,
-  ): Promise<void> {
+  private async executeAuth(req: ValidatedRequest, res: HttpResponse): Promise<void> {
     // Authentication implementation will be added
-    logger.debug("Auth check", "Auth", {
+    logger.debug('Auth check', 'Auth', {
       config: this.schema.auth,
     });
   }
 
-  private async executeValidation(
-    req: ValidatedRequest,
-    res: HttpResponse,
-  ): Promise<void> {
+  private async executeValidation(req: ValidatedRequest, res: HttpResponse): Promise<void> {
     if (!this.schema.validation) return;
 
     const { body, query, params, headers } = this.schema.validation;
@@ -428,7 +400,7 @@ export class ExecutableRoute implements CompiledRoute {
         req.validatedBody = await body.parseAsync(req.body);
         req.body = req.validatedBody; // Update original for compatibility
       } catch (error: any) {
-        this.sendValidationError(res, error, "body", req.requestId);
+        this.sendValidationError(res, error, 'body', req.requestId);
         return;
       }
     }
@@ -439,7 +411,7 @@ export class ExecutableRoute implements CompiledRoute {
         req.validatedQuery = await query.parseAsync(req.query);
         req.query = req.validatedQuery; // Update original for compatibility
       } catch (error: any) {
-        this.sendValidationError(res, error, "query", req.requestId);
+        this.sendValidationError(res, error, 'query', req.requestId);
         return;
       }
     }
@@ -450,7 +422,7 @@ export class ExecutableRoute implements CompiledRoute {
         req.validatedParams = await params.parseAsync(req.params);
         req.params = req.validatedParams; // Update original for compatibility
       } catch (error: any) {
-        this.sendValidationError(res, error, "params", req.requestId);
+        this.sendValidationError(res, error, 'params', req.requestId);
         return;
       }
     }
@@ -460,12 +432,12 @@ export class ExecutableRoute implements CompiledRoute {
       try {
         req.validatedHeaders = await headers.parseAsync(req.headers);
       } catch (error: any) {
-        this.sendValidationError(res, error, "headers", req.requestId);
+        this.sendValidationError(res, error, 'headers', req.requestId);
         return;
       }
     }
 
-    logger.debug("Validation passed", "Validation", {
+    logger.debug('Validation passed', 'Validation', {
       route: `${this.schema.method} ${this.schema.path}`,
       validatedFields: Object.keys(this.schema.validation),
     });
@@ -475,14 +447,14 @@ export class ExecutableRoute implements CompiledRoute {
     res: HttpResponse,
     error: any,
     field: string,
-    requestId?: string,
+    requestId?: string
   ): void {
     if (error.issues) {
       res.status(400).json({
         success: false,
         error: `Validation failed for ${field}`,
         details: error.issues.map((issue: any) => ({
-          field: issue.path.length > 0 ? issue.path.join(".") : field,
+          field: issue.path.length > 0 ? issue.path.join('.') : field,
           message: issue.message,
           code: issue.code,
         })),
@@ -497,12 +469,9 @@ export class ExecutableRoute implements CompiledRoute {
     }
   }
 
-  private async executeCache(
-    req: HttpRequest,
-    res: HttpResponse,
-  ): Promise<void> {
+  private async executeCache(req: HttpRequest, res: HttpResponse): Promise<void> {
     // Caching implementation will be added
-    logger.debug("Cache check", "Cache", {
+    logger.debug('Cache check', 'Cache', {
       config: this.schema.cache,
     });
   }

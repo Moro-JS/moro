@@ -1,5 +1,5 @@
 // Enterprise Event Bus - Secure, Scalable, Observable
-import { EventEmitter } from "events";
+import { EventEmitter } from 'events';
 import {
   EventContext,
   EventPayload,
@@ -8,8 +8,8 @@ import {
   GlobalEventBus,
   EventMetrics,
   EventHandler,
-} from "../../types/events";
-import { createFrameworkLogger } from "../logger";
+} from '../../types/events';
+import { createFrameworkLogger } from '../logger';
 
 export class MoroEventBus implements GlobalEventBus {
   private emitter = new EventEmitter();
@@ -25,23 +25,19 @@ export class MoroEventBus implements GlobalEventBus {
   private auditLog: EventPayload[] = [];
   private latencySum = 0;
   private errorCount = 0;
-  private logger = createFrameworkLogger("EventBus");
+  private logger = createFrameworkLogger('EventBus');
 
   constructor(private options: EventBusOptions = {}) {
     this.emitter.setMaxListeners(options.maxListeners || 100);
   }
 
   // Global event emission with full context and metrics
-  async emit<T = any>(
-    event: string,
-    data: T,
-    context?: Partial<EventContext>,
-  ): Promise<boolean> {
+  async emit<T = any>(event: string, data: T, context?: Partial<EventContext>): Promise<boolean> {
     const startTime = Date.now();
 
     const fullContext: EventContext = {
       timestamp: new Date(),
-      source: "framework",
+      source: 'framework',
       requestId: this.generateRequestId(),
       ...context,
     };
@@ -73,7 +69,7 @@ export class MoroEventBus implements GlobalEventBus {
       return result;
     } catch (error) {
       this.errorCount++;
-      this.logger.error(`Event emission error for ${event}`, "Emission", {
+      this.logger.error(`Event emission error for ${event}`, 'Emission', {
         event,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -110,17 +106,14 @@ export class MoroEventBus implements GlobalEventBus {
   createModuleBus(moduleId: string): ModuleEventBus {
     // Return existing bus if it already exists
     if (this.moduleBuses.has(moduleId)) {
-      this.logger.debug(
-        `Reusing existing event bus for module: ${moduleId}`,
-        "ModuleBus",
-      );
+      this.logger.debug(`Reusing existing event bus for module: ${moduleId}`, 'ModuleBus');
       return this.moduleBuses.get(moduleId)!;
     }
 
     const moduleBus = new ModuleEventBusImpl(moduleId, this);
     this.moduleBuses.set(moduleId, moduleBus);
 
-    this.logger.debug(`Created event bus for module: ${moduleId}`, "ModuleBus");
+    this.logger.debug(`Created event bus for module: ${moduleId}`, 'ModuleBus');
     return moduleBus;
   }
 
@@ -130,10 +123,7 @@ export class MoroEventBus implements GlobalEventBus {
     if (moduleBus) {
       moduleBus.removeAllListeners();
       this.moduleBuses.delete(moduleId);
-      this.logger.debug(
-        `Destroyed event bus for module: ${moduleId}`,
-        "ModuleBus",
-      );
+      this.logger.debug(`Destroyed event bus for module: ${moduleId}`, 'ModuleBus');
     }
   }
 
@@ -141,27 +131,22 @@ export class MoroEventBus implements GlobalEventBus {
   getMetrics(): EventMetrics {
     return {
       ...this.metrics,
-      averageLatency:
-        this.metrics.totalEvents > 0
-          ? this.latencySum / this.metrics.totalEvents
-          : 0,
+      averageLatency: this.metrics.totalEvents > 0 ? this.latencySum / this.metrics.totalEvents : 0,
       errorRate:
-        this.metrics.totalEvents > 0
-          ? (this.errorCount / this.metrics.totalEvents) * 100
-          : 0,
+        this.metrics.totalEvents > 0 ? (this.errorCount / this.metrics.totalEvents) * 100 : 0,
     };
   }
 
   // Enable audit logging for compliance
   enableAuditLog(): void {
     this.auditEnabled = true;
-    this.logger.info("Event audit logging enabled", "Audit");
+    this.logger.info('Event audit logging enabled', 'Audit');
   }
 
   disableAuditLog(): void {
     this.auditEnabled = false;
     this.auditLog = [];
-    this.logger.info("Event audit logging disabled", "Audit");
+    this.logger.info('Event audit logging disabled', 'Audit');
   }
 
   // Get audit log for compliance reporting
@@ -171,12 +156,10 @@ export class MoroEventBus implements GlobalEventBus {
 
   private updateMetrics(event: string, moduleId?: string): void {
     this.metrics.totalEvents++;
-    this.metrics.eventsByType[event] =
-      (this.metrics.eventsByType[event] || 0) + 1;
+    this.metrics.eventsByType[event] = (this.metrics.eventsByType[event] || 0) + 1;
 
     if (moduleId) {
-      this.metrics.eventsByModule[moduleId] =
-        (this.metrics.eventsByModule[moduleId] || 0) + 1;
+      this.metrics.eventsByModule[moduleId] = (this.metrics.eventsByModule[moduleId] || 0) + 1;
     }
   }
 
@@ -189,7 +172,7 @@ export class MoroEventBus implements GlobalEventBus {
 class ModuleEventBusImpl implements ModuleEventBus {
   constructor(
     private moduleId: string,
-    private globalBus: MoroEventBus,
+    private globalBus: MoroEventBus
   ) {}
 
   async emit<T = any>(event: string, data: T): Promise<boolean> {
@@ -197,24 +180,18 @@ class ModuleEventBusImpl implements ModuleEventBus {
     const namespacedEvent = `module:${this.moduleId}:${event}`;
 
     return this.globalBus.emit(namespacedEvent, data, {
-      source: "module",
+      source: 'module',
       moduleId: this.moduleId,
     });
   }
 
-  on<T = any>(
-    event: string,
-    listener: (payload: EventPayload<T>) => void | Promise<void>,
-  ): this {
+  on<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this {
     const namespacedEvent = `module:${this.moduleId}:${event}`;
     this.globalBus.on(namespacedEvent, listener);
     return this;
   }
 
-  once<T = any>(
-    event: string,
-    listener: (payload: EventPayload<T>) => void | Promise<void>,
-  ): this {
+  once<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this {
     const namespacedEvent = `module:${this.moduleId}:${event}`;
     this.globalBus.once(namespacedEvent, listener);
     return this;
@@ -233,10 +210,10 @@ class ModuleEventBusImpl implements ModuleEventBus {
     } else {
       // Remove all module events - would need access to globalBus emitter
       // For now, this is a simplified implementation
-      const logger = createFrameworkLogger("EventBus");
+      const logger = createFrameworkLogger('EventBus');
       logger.warn(
         `Removing all listeners for module ${this.moduleId} not fully implemented`,
-        "ModuleBus",
+        'ModuleBus'
       );
     }
     return this;

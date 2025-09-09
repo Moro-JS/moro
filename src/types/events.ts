@@ -1,5 +1,5 @@
 // Enterprise Event System Types
-import { EventEmitter } from "events";
+import { EventEmitter } from 'events';
 
 export interface EventContext {
   timestamp: Date;
@@ -20,19 +20,13 @@ export interface EventBusOptions {
   maxListeners?: number;
   enablePersistence?: boolean;
   enableMetrics?: boolean;
-  isolation?: "none" | "module" | "strict";
+  isolation?: 'none' | 'module' | 'strict';
 }
 
 export interface ModuleEventBus {
   emit<T = any>(event: string, data: T): Promise<boolean>;
-  on<T = any>(
-    event: string,
-    listener: (payload: EventPayload<T>) => void | Promise<void>,
-  ): this;
-  once<T = any>(
-    event: string,
-    listener: (payload: EventPayload<T>) => void | Promise<void>,
-  ): this;
+  on<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this;
+  once<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this;
   off(event: string, listener: Function): this;
   removeAllListeners(event?: string): this;
   listenerCount(event: string): number;
@@ -55,36 +49,34 @@ export interface EventMetrics {
 }
 
 export type SystemEvents = {
-  "framework:initialized": { options: any };
-  "framework:shutdown": { graceful: boolean };
-  "module:loading": { moduleId: string; path?: string };
-  "module:loaded": { moduleId: string; version: string };
-  "module:unloaded": { moduleId: string };
-  "middleware:registered": { name: string; type: string };
-  "middleware:installed": { name: string; options?: any };
-  "database:connected": { adapter: string; config: any };
-  "database:disconnected": { adapter: string };
-  "server:starting": { port: number };
-  "server:started": { port: number; pid: number };
-  "server:stopping": { graceful: boolean };
-  "request:start": { method: string; path: string; requestId: string };
-  "request:end": {
+  'framework:initialized': { options: any };
+  'framework:shutdown': { graceful: boolean };
+  'module:loading': { moduleId: string; path?: string };
+  'module:loaded': { moduleId: string; version: string };
+  'module:unloaded': { moduleId: string };
+  'middleware:registered': { name: string; type: string };
+  'middleware:installed': { name: string; options?: any };
+  'database:connected': { adapter: string; config: any };
+  'database:disconnected': { adapter: string };
+  'server:starting': { port: number };
+  'server:started': { port: number; pid: number };
+  'server:stopping': { graceful: boolean };
+  'request:start': { method: string; path: string; requestId: string };
+  'request:end': {
     method: string;
     path: string;
     requestId: string;
     statusCode: number;
     duration: number;
   };
-  "websocket:connected": { namespace: string; socketId: string };
-  "websocket:disconnected": {
+  'websocket:connected': { namespace: string; socketId: string };
+  'websocket:disconnected': {
     namespace: string;
     socketId: string;
     reason: string;
   };
-  "error:handled": { error: Error; context: string; requestId?: string };
-  "error:unhandled": { error: Error; context: string };
+  'error:handled': { error: Error; context: string; requestId?: string };
+  'error:unhandled': { error: Error; context: string };
 };
 
-export type EventHandler<T = any> = (
-  payload: EventPayload<T>,
-) => void | Promise<void>;
+export type EventHandler<T = any> = (payload: EventPayload<T>) => void | Promise<void>;

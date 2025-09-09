@@ -26,7 +26,7 @@ export interface CacheOptions {
   maxAge?: number;
   staleWhileRevalidate?: number;
   vary?: string[];
-  etag?: boolean | "weak" | "strong";
+  etag?: boolean | 'weak' | 'strong';
 }
 
 export interface CachedResponse {

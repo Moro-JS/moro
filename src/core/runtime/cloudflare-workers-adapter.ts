@@ -1,7 +1,7 @@
 // Cloudflare Workers runtime adapter
-import { BaseRuntimeAdapter } from "./base-adapter";
-import { HttpRequest, HttpResponse } from "../../types/http";
-import { RuntimeHttpResponse } from "../../types/runtime";
+import { BaseRuntimeAdapter } from './base-adapter';
+import { HttpRequest, HttpResponse } from '../../types/http';
+import { RuntimeHttpResponse } from '../../types/runtime';
 
 export interface WorkersEnv {
   [key: string]: any;
@@ -13,26 +13,22 @@ export interface WorkersContext {
 }
 
 export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
-  readonly type = "cloudflare-workers" as const;
+  readonly type = 'cloudflare-workers' as const;
 
-  async adaptRequest(
-    request: Request,
-    env: WorkersEnv,
-    ctx: WorkersContext,
-  ): Promise<HttpRequest> {
+  async adaptRequest(request: Request, env: WorkersEnv, ctx: WorkersContext): Promise<HttpRequest> {
     const { pathname, query } = this.parseUrl(request.url);
 
     // Parse body for POST/PUT/PATCH requests
     let body: any;
-    if (["POST", "PUT", "PATCH"].includes(request.method)) {
-      const contentType = request.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
+    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      const contentType = request.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
         try {
           body = await request.json();
         } catch {
           body = await request.text();
         }
-      } else if (contentType.includes("application/x-www-form-urlencoded")) {
+      } else if (contentType.includes('application/x-www-form-urlencoded')) {
         body = await request.formData();
         // Convert FormData to object
         const formObject: Record<string, any> = {};
@@ -60,8 +56,8 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
       headers,
       ip: this.getClientIP(headers, request),
       params: {},
-      requestId: "",
-      cookies: this.parseCookies(headers.cookie || ""),
+      requestId: '',
+      cookies: this.parseCookies(headers.cookie || ''),
       files: {},
       // Add Workers-specific context
       env,
@@ -71,9 +67,7 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
     return this.enhanceRequest(baseRequest);
   }
 
-  async adaptResponse(
-    moroResponse: HttpResponse | RuntimeHttpResponse,
-  ): Promise<Response> {
+  async adaptResponse(moroResponse: HttpResponse | RuntimeHttpResponse): Promise<Response> {
     const runtimeResponse = moroResponse as RuntimeHttpResponse;
 
     // Handle different response states
@@ -82,10 +76,7 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
     const headers = runtimeResponse.headers || {};
 
     // If it's a real HttpResponse, we need to extract the data differently
-    if (
-      "statusCode" in moroResponse &&
-      typeof moroResponse.statusCode === "number"
-    ) {
+    if ('statusCode' in moroResponse && typeof moroResponse.statusCode === 'number') {
       status = moroResponse.statusCode;
     }
 
@@ -96,9 +87,9 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
     });
 
     // Handle different body types
-    if (typeof body === "object" && body !== null) {
+    if (typeof body === 'object' && body !== null) {
       body = JSON.stringify(body);
-      responseHeaders.set("Content-Type", "application/json");
+      responseHeaders.set('Content-Type', 'application/json');
     }
 
     return new Response(body, {
@@ -107,9 +98,7 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
     });
   }
 
-  createServer(
-    handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
-  ) {
+  createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>) {
     // Return a Cloudflare Workers-compatible handler function
     return async (request: Request, env: WorkersEnv, ctx: WorkersContext) => {
       try {
@@ -123,13 +112,13 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
         return new Response(
           JSON.stringify({
             success: false,
-            error: "Internal server error",
-            message: error instanceof Error ? error.message : "Unknown error",
+            error: 'Internal server error',
+            message: error instanceof Error ? error.message : 'Unknown error',
           }),
           {
             status: 500,
-            headers: { "Content-Type": "application/json" },
-          },
+            headers: { 'Content-Type': 'application/json' },
+          }
         );
       }
     };
@@ -138,26 +127,23 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
   // Cloudflare Workers doesn't have a listen method - it's handled by the platform
   // listen method is optional in the interface
 
-  private getClientIP(
-    headers: Record<string, string>,
-    request: Request,
-  ): string {
+  private getClientIP(headers: Record<string, string>, request: Request): string {
     // Cloudflare provides the real IP in CF-Connecting-IP header
     return (
-      headers["cf-connecting-ip"] ||
-      headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      headers["x-real-ip"] ||
-      "unknown"
+      headers['cf-connecting-ip'] ||
+      headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      headers['x-real-ip'] ||
+      'unknown'
     );
   }
 
   private parseCookies(cookieHeader: string): Record<string, string> {
     const cookies: Record<string, string> = {};
     if (cookieHeader) {
-      cookieHeader.split(";").forEach((cookie) => {
-        const [name, ...rest] = cookie.trim().split("=");
+      cookieHeader.split(';').forEach(cookie => {
+        const [name, ...rest] = cookie.trim().split('=');
         if (name && rest.length > 0) {
-          cookies[name] = rest.join("=");
+          cookies[name] = rest.join('=');
         }
       });
     }

@@ -1,14 +1,14 @@
 // Configuration System - Main Exports and Utilities
-export * from "./schema";
-export * from "./loader";
-export * from "./utils";
+export * from './schema';
+export * from './loader';
+export * from './utils';
 
 // Re-export common Zod utilities for configuration
-export { z } from "zod";
+export { z } from 'zod';
 
 // Main configuration loading function
-import { loadConfig } from "./loader";
-import type { AppConfig } from "./schema";
+import { loadConfig } from './loader';
+import type { AppConfig } from './schema';
 
 // Global configuration instance
 let globalConfig: AppConfig | null = null;
@@ -32,9 +32,7 @@ export function initializeConfig(): AppConfig {
  */
 export function getGlobalConfig(): AppConfig {
   if (!globalConfig) {
-    throw new Error(
-      "Configuration not initialized. Call initializeConfig() first.",
-    );
+    throw new Error('Configuration not initialized. Call initializeConfig() first.');
   }
   return globalConfig;
 }

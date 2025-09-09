@@ -1,6 +1,6 @@
 // Database Drizzle ORM Adapter
-import { DatabaseAdapter, DatabaseTransaction } from "../../../types/database";
-import { createFrameworkLogger } from "../../logger";
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
+import { createFrameworkLogger } from '../../logger';
 
 interface DrizzleConfig {
   database: any; // Drizzle database instance
@@ -11,22 +11,22 @@ interface DrizzleConfig {
 export class DrizzleAdapter implements DatabaseAdapter {
   private db: any;
   private schema: any;
-  private logger = createFrameworkLogger("Drizzle");
+  private logger = createFrameworkLogger('Drizzle');
 
   constructor(config: DrizzleConfig) {
     try {
       if (!config.database) {
-        throw new Error("Drizzle database instance is required");
+        throw new Error('Drizzle database instance is required');
       }
 
       this.db = config.database;
       this.schema = config.schema;
 
-      this.logger.info("Drizzle ORM adapter initialized", "Drizzle");
+      this.logger.info('Drizzle ORM adapter initialized', 'Drizzle');
     } catch (error) {
-      this.logger.error("Drizzle ORM initialization failed", "Drizzle");
+      this.logger.error('Drizzle ORM initialization failed', 'Drizzle');
       throw new Error(
-        "Drizzle ORM configuration error. Ensure you have a valid Drizzle database instance.",
+        'Drizzle ORM configuration error. Ensure you have a valid Drizzle database instance.'
       );
     }
   }
@@ -34,13 +34,13 @@ export class DrizzleAdapter implements DatabaseAdapter {
   async connect(): Promise<void> {
     // Drizzle doesn't have an explicit connect method
     // Connection is handled by the underlying driver
-    this.logger.info("Drizzle ORM adapter ready", "Connection");
+    this.logger.info('Drizzle ORM adapter ready', 'Connection');
   }
 
   async disconnect(): Promise<void> {
     // Drizzle doesn't have an explicit disconnect method
     // This would be handled by the underlying driver
-    this.logger.info("Drizzle ORM adapter disconnected", "Connection");
+    this.logger.info('Drizzle ORM adapter disconnected', 'Connection');
   }
 
   // Raw SQL query support
@@ -60,7 +60,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
         return [result];
       }
     } catch (error) {
-      this.logger.error("Drizzle query failed", "Query", {
+      this.logger.error('Drizzle query failed', 'Query', {
         sql,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -78,23 +78,20 @@ export class DrizzleAdapter implements DatabaseAdapter {
     try {
       if (this.schema && this.schema[table]) {
         // Use schema-based insert
-        const result = await this.db
-          .insert(this.schema[table])
-          .values(data)
-          .returning();
+        const result = await this.db.insert(this.schema[table]).values(data).returning();
         return result[0] as T;
       } else {
         // Fallback to raw SQL
         const keys = Object.keys(data);
         const values = Object.values(data);
-        const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+        const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
 
-        const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders}) RETURNING *`;
+        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
         const result = await this.query<T>(sql, values);
         return result[0];
       }
     } catch (error) {
-      this.logger.error("Drizzle insert failed", "Insert", {
+      this.logger.error('Drizzle insert failed', 'Insert', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -105,20 +102,19 @@ export class DrizzleAdapter implements DatabaseAdapter {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     try {
       if (this.schema && this.schema[table]) {
         // Use schema-based update
         try {
-          const { eq, and } = require("drizzle-orm");
+          const { eq, and } = require('drizzle-orm');
 
           // Build where conditions
           const conditions = Object.entries(where).map(([key, value]) =>
-            eq(this.schema[table][key], value),
+            eq(this.schema[table][key], value)
           );
-          const whereClause =
-            conditions.length === 1 ? conditions[0] : and(...conditions);
+          const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
 
           const result = await this.db
             .update(this.schema[table])
@@ -131,10 +127,10 @@ export class DrizzleAdapter implements DatabaseAdapter {
           // Fallback to raw SQL if drizzle-orm is not available
           const setClause = Object.keys(data)
             .map((key, i) => `${key} = $${i + 1}`)
-            .join(", ");
+            .join(', ');
           const whereClause = Object.keys(where)
             .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-            .join(" AND ");
+            .join(' AND ');
 
           const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
           const params = [...Object.values(data), ...Object.values(where)];
@@ -145,10 +141,10 @@ export class DrizzleAdapter implements DatabaseAdapter {
         // Fallback to raw SQL
         const setClause = Object.keys(data)
           .map((key, i) => `${key} = $${i + 1}`)
-          .join(", ");
+          .join(', ');
         const whereClause = Object.keys(where)
           .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-          .join(" AND ");
+          .join(' AND ');
 
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
@@ -156,7 +152,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
         return result[0];
       }
     } catch (error) {
-      this.logger.error("Drizzle update failed", "Update", {
+      this.logger.error('Drizzle update failed', 'Update', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -169,29 +165,23 @@ export class DrizzleAdapter implements DatabaseAdapter {
       if (this.schema && this.schema[table]) {
         // Use schema-based delete
         try {
-          const { eq, and } = require("drizzle-orm");
+          const { eq, and } = require('drizzle-orm');
 
           const conditions = Object.entries(where).map(([key, value]) =>
-            eq(this.schema[table][key], value),
+            eq(this.schema[table][key], value)
           );
-          const whereClause =
-            conditions.length === 1 ? conditions[0] : and(...conditions);
+          const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
 
-          const result = await this.db
-            .delete(this.schema[table])
-            .where(whereClause);
+          const result = await this.db.delete(this.schema[table]).where(whereClause);
 
           return (
-            (result as any).changes ||
-            (result as any).rowCount ||
-            (result as any).affectedRows ||
-            0
+            (result as any).changes || (result as any).rowCount || (result as any).affectedRows || 0
           );
         } catch (importError) {
           // Fallback to raw SQL if drizzle-orm is not available
           const whereClause = Object.keys(where)
             .map((key, i) => `${key} = $${i + 1}`)
-            .join(" AND ");
+            .join(' AND ');
           const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
           await this.query(sql, Object.values(where));
           return 1; // Can't determine exact count without result metadata
@@ -200,13 +190,13 @@ export class DrizzleAdapter implements DatabaseAdapter {
         // Fallback to raw SQL
         const whereClause = Object.keys(where)
           .map((key, i) => `${key} = $${i + 1}`)
-          .join(" AND ");
+          .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         await this.query(sql, Object.values(where));
         return 1; // Can't determine exact count without result metadata
       }
     } catch (error) {
-      this.logger.error("Drizzle delete failed", "Delete", {
+      this.logger.error('Drizzle delete failed', 'Delete', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -214,9 +204,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
     }
   }
 
-  async transaction<T>(
-    callback: (tx: DatabaseTransaction) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     return await this.db.transaction(async (tx: any) => {
       const transaction = new DrizzleTransaction(tx, this.schema, this.logger);
       return await callback(transaction);
@@ -274,7 +262,7 @@ class DrizzleTransaction implements DatabaseTransaction {
   constructor(
     private tx: any,
     private schema: any,
-    private logger: any,
+    private logger: any
   ) {}
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
@@ -291,7 +279,7 @@ class DrizzleTransaction implements DatabaseTransaction {
         return [result];
       }
     } catch (error) {
-      this.logger.error("Drizzle transaction query failed", "Query", {
+      this.logger.error('Drizzle transaction query failed', 'Query', {
         sql,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -306,17 +294,14 @@ class DrizzleTransaction implements DatabaseTransaction {
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     if (this.schema && this.schema[table]) {
-      const result = await this.tx
-        .insert(this.schema[table])
-        .values(data)
-        .returning();
+      const result = await this.tx.insert(this.schema[table]).values(data).returning();
       return result[0] as T;
     } else {
       const keys = Object.keys(data);
       const values = Object.values(data);
-      const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+      const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
 
-      const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders}) RETURNING *`;
+      const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
       const result = await this.query<T>(sql, values);
       return result[0];
     }
@@ -325,17 +310,16 @@ class DrizzleTransaction implements DatabaseTransaction {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     if (this.schema && this.schema[table]) {
       try {
-        const { eq, and } = require("drizzle-orm");
+        const { eq, and } = require('drizzle-orm');
 
         const conditions = Object.entries(where).map(([key, value]) =>
-          eq(this.schema[table][key], value),
+          eq(this.schema[table][key], value)
         );
-        const whereClause =
-          conditions.length === 1 ? conditions[0] : and(...conditions);
+        const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
 
         const result = await this.tx
           .update(this.schema[table])
@@ -348,10 +332,10 @@ class DrizzleTransaction implements DatabaseTransaction {
         // Fallback to raw SQL
         const setClause = Object.keys(data)
           .map((key, i) => `${key} = $${i + 1}`)
-          .join(", ");
+          .join(', ');
         const whereClause = Object.keys(where)
           .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-          .join(" AND ");
+          .join(' AND ');
 
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
@@ -361,10 +345,10 @@ class DrizzleTransaction implements DatabaseTransaction {
     } else {
       const setClause = Object.keys(data)
         .map((key, i) => `${key} = $${i + 1}`)
-        .join(", ");
+        .join(', ');
       const whereClause = Object.keys(where)
         .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-        .join(" AND ");
+        .join(' AND ');
 
       const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
       const params = [...Object.values(data), ...Object.values(where)];
@@ -376,29 +360,23 @@ class DrizzleTransaction implements DatabaseTransaction {
   async delete(table: string, where: Record<string, any>): Promise<number> {
     if (this.schema && this.schema[table]) {
       try {
-        const { eq, and } = require("drizzle-orm");
+        const { eq, and } = require('drizzle-orm');
 
         const conditions = Object.entries(where).map(([key, value]) =>
-          eq(this.schema[table][key], value),
+          eq(this.schema[table][key], value)
         );
-        const whereClause =
-          conditions.length === 1 ? conditions[0] : and(...conditions);
+        const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
 
-        const result = await this.tx
-          .delete(this.schema[table])
-          .where(whereClause);
+        const result = await this.tx.delete(this.schema[table]).where(whereClause);
 
         return (
-          (result as any).changes ||
-          (result as any).rowCount ||
-          (result as any).affectedRows ||
-          0
+          (result as any).changes || (result as any).rowCount || (result as any).affectedRows || 0
         );
       } catch (importError) {
         // Fallback to raw SQL
         const whereClause = Object.keys(where)
           .map((key, i) => `${key} = $${i + 1}`)
-          .join(" AND ");
+          .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         await this.query(sql, Object.values(where));
         return 1; // Can't determine exact count
@@ -406,7 +384,7 @@ class DrizzleTransaction implements DatabaseTransaction {
     } else {
       const whereClause = Object.keys(where)
         .map((key, i) => `${key} = $${i + 1}`)
-        .join(" AND ");
+        .join(' AND ');
       const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
       await this.query(sql, Object.values(where));
       return 1; // Can't determine exact count
@@ -420,6 +398,6 @@ class DrizzleTransaction implements DatabaseTransaction {
 
   async rollback(): Promise<void> {
     // Drizzle transactions will auto-rollback on error
-    throw new Error("Transaction rollback");
+    throw new Error('Transaction rollback');
   }
 }

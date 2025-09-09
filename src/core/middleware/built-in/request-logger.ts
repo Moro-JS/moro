@@ -2,9 +2,7 @@
 export const requestLogger = async (context: any): Promise<void> => {
   const startTime = Date.now();
 
-  console.log(
-    `[${new Date().toISOString()}] ${context.request?.method} ${context.request?.path}`,
-  );
+  console.log(`[${new Date().toISOString()}] ${context.request?.method} ${context.request?.path}`);
 
   // Log completion after response
   context.onComplete = () => {

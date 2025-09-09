@@ -1,5 +1,5 @@
 // Event System - Centralized Exports
-export { MoroEventBus } from "./event-bus";
+export { MoroEventBus } from './event-bus';
 export type {
   EventContext,
   EventPayload,
@@ -9,4 +9,4 @@ export type {
   EventMetrics,
   SystemEvents,
   EventHandler,
-} from "../../types/events";
+} from '../../types/events';

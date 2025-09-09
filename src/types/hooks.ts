@@ -1,5 +1,5 @@
 // Hooks and Middleware Types
-import { HttpRequest, HttpResponse } from "./http";
+import { HttpRequest, HttpResponse } from './http';
 
 export type HookFunction = (...args: any[]) => Promise<any> | any;
 

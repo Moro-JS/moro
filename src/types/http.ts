@@ -1,5 +1,5 @@
 // HTTP Server Types
-import { IncomingMessage, ServerResponse } from "http";
+import { IncomingMessage, ServerResponse } from 'http';
 
 export interface HttpRequest extends IncomingMessage {
   params: Record<string, string>;
@@ -19,7 +19,7 @@ export interface CookieOptions {
   expires?: Date;
   httpOnly?: boolean;
   secure?: boolean;
-  sameSite?: "strict" | "lax" | "none";
+  sameSite?: 'strict' | 'lax' | 'none';
   domain?: string;
   path?: string;
 }
@@ -35,19 +35,16 @@ export interface HttpResponse extends ServerResponse {
   render?(template: string, data?: any): Promise<void>;
 }
 
-export type HttpHandler = (
-  req: HttpRequest,
-  res: HttpResponse,
-) => Promise<void> | void;
+export type HttpHandler = (req: HttpRequest, res: HttpResponse) => Promise<void> | void;
 export type Middleware = (
   req: HttpRequest,
   res: HttpResponse,
-  next: () => void,
+  next: () => void
 ) => Promise<void> | void;
 export type MiddlewareFunction = (
   req: HttpRequest,
   res: HttpResponse,
-  next: () => void,
+  next: () => void
 ) => void | Promise<void>;
 
 // Internal router types

@@ -1,7 +1,7 @@
 // AWS Lambda runtime adapter
-import { BaseRuntimeAdapter } from "./base-adapter";
-import { HttpRequest, HttpResponse } from "../../types/http";
-import { RuntimeHttpResponse } from "../../types/runtime";
+import { BaseRuntimeAdapter } from './base-adapter';
+import { HttpRequest, HttpResponse } from '../../types/http';
+import { RuntimeHttpResponse } from '../../types/runtime';
 
 export interface LambdaEvent {
   httpMethod: string;
@@ -40,12 +40,9 @@ export interface LambdaResponse {
 }
 
 export class AWSLambdaAdapter extends BaseRuntimeAdapter {
-  readonly type = "aws-lambda" as const;
+  readonly type = 'aws-lambda' as const;
 
-  async adaptRequest(
-    event: LambdaEvent,
-    context: LambdaContext,
-  ): Promise<HttpRequest> {
+  async adaptRequest(event: LambdaEvent, context: LambdaContext): Promise<HttpRequest> {
     const { pathname, query } = this.parseUrl(event.path);
 
     // Merge query parameters from event
@@ -57,12 +54,9 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
     // Parse body
     let body: any;
     if (event.body) {
-      const contentType =
-        event.headers?.["content-type"] ||
-        event.headers?.["Content-Type"] ||
-        "";
+      const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'] || '';
       if (event.isBase64Encoded) {
-        body = Buffer.from(event.body, "base64").toString();
+        body = Buffer.from(event.body, 'base64').toString();
       } else {
         body = event.body;
       }
@@ -76,19 +70,17 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
       query: mergedQuery,
       body,
       headers: event.headers || {},
-      ip: event.requestContext?.identity?.sourceIp || "unknown",
+      ip: event.requestContext?.identity?.sourceIp || 'unknown',
       params: event.pathParameters || {},
       requestId: context.awsRequestId,
-      cookies: this.parseCookies(event.headers?.cookie || ""),
+      cookies: this.parseCookies(event.headers?.cookie || ''),
       files: {},
     } as Partial<HttpRequest>;
 
     return this.enhanceRequest(baseRequest);
   }
 
-  async adaptResponse(
-    moroResponse: HttpResponse | RuntimeHttpResponse,
-  ): Promise<LambdaResponse> {
+  async adaptResponse(moroResponse: HttpResponse | RuntimeHttpResponse): Promise<LambdaResponse> {
     const runtimeResponse = moroResponse as RuntimeHttpResponse;
 
     let body = runtimeResponse.body;
@@ -96,11 +88,11 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
     const headers = runtimeResponse.headers || {};
 
     // Convert body to string
-    if (typeof body === "object" && body !== null) {
+    if (typeof body === 'object' && body !== null) {
       body = JSON.stringify(body);
-      headers["Content-Type"] = "application/json";
+      headers['Content-Type'] = 'application/json';
     } else if (body === null || body === undefined) {
-      body = "";
+      body = '';
     } else {
       body = String(body);
     }
@@ -113,9 +105,7 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
     };
   }
 
-  createServer(
-    handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
-  ) {
+  createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>) {
     // Return a Lambda-compatible handler function
     return async (event: LambdaEvent, context: LambdaContext) => {
       try {
@@ -128,11 +118,11 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
       } catch (error) {
         return {
           statusCode: 500,
-          headers: { "Content-Type": "application/json" },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             success: false,
-            error: "Internal server error",
-            message: error instanceof Error ? error.message : "Unknown error",
+            error: 'Internal server error',
+            message: error instanceof Error ? error.message : 'Unknown error',
           }),
         };
       }
@@ -145,10 +135,10 @@ export class AWSLambdaAdapter extends BaseRuntimeAdapter {
   private parseCookies(cookieHeader: string): Record<string, string> {
     const cookies: Record<string, string> = {};
     if (cookieHeader) {
-      cookieHeader.split(";").forEach((cookie) => {
-        const [name, ...rest] = cookie.trim().split("=");
+      cookieHeader.split(';').forEach(cookie => {
+        const [name, ...rest] = cookie.trim().split('=');
         if (name && rest.length > 0) {
-          cookies[name] = rest.join("=");
+          cookies[name] = rest.join('=');
         }
       });
     }

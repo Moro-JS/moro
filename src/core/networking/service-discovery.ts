@@ -12,7 +12,7 @@ export interface ServiceInfo {
 }
 
 export interface ServiceDiscoveryOptions {
-  type: "consul" | "kubernetes" | "memory";
+  type: 'consul' | 'kubernetes' | 'memory';
   consulUrl?: string;
   kubernetesNamespace?: string;
   healthCheckInterval?: number;
@@ -33,13 +33,13 @@ export class ServiceRegistry {
     const { name } = service;
 
     switch (this.options.type) {
-      case "consul":
+      case 'consul':
         await this.registerWithConsul(service);
         break;
-      case "kubernetes":
+      case 'kubernetes':
         await this.registerWithKubernetes(service);
         break;
-      case "memory":
+      case 'memory':
         this.registerInMemory(service);
         break;
     }
@@ -49,11 +49,11 @@ export class ServiceRegistry {
 
   async discover(serviceName: string): Promise<ServiceInfo[]> {
     switch (this.options.type) {
-      case "consul":
+      case 'consul':
         return this.discoverFromConsul(serviceName);
-      case "kubernetes":
+      case 'kubernetes':
         return this.discoverFromKubernetes(serviceName);
-      case "memory":
+      case 'memory':
         return this.discoverFromMemory(serviceName);
       default:
         return [];
@@ -62,13 +62,13 @@ export class ServiceRegistry {
 
   async deregister(serviceName: string): Promise<void> {
     switch (this.options.type) {
-      case "consul":
+      case 'consul':
         await this.deregisterFromConsul(serviceName);
         break;
-      case "kubernetes":
+      case 'kubernetes':
         // K8s handles this automatically
         break;
-      case "memory":
+      case 'memory':
         this.services.delete(serviceName);
         break;
     }
@@ -79,9 +79,7 @@ export class ServiceRegistry {
   // In-memory registry methods
   private registerInMemory(service: ServiceInfo): void {
     const existing = this.services.get(service.name) || [];
-    const updated = existing.filter(
-      (s) => s.host !== service.host || s.port !== service.port,
-    );
+    const updated = existing.filter(s => s.host !== service.host || s.port !== service.port);
     updated.push(service);
     this.services.set(service.name, updated);
   }
@@ -93,7 +91,7 @@ export class ServiceRegistry {
   // Consul integration
   private async registerWithConsul(service: ServiceInfo): Promise<void> {
     if (!this.options.consulUrl) {
-      throw new Error("Consul URL required for consul service discovery");
+      throw new Error('Consul URL required for consul service discovery');
     }
 
     const consulService = {
@@ -105,43 +103,38 @@ export class ServiceRegistry {
       Check: service.health
         ? {
             HTTP: `http://${service.host}:${service.port}${service.health}`,
-            Interval: "30s",
-            Timeout: "10s",
+            Interval: '30s',
+            Timeout: '10s',
           }
         : undefined,
       Meta: service.metadata || {},
     };
 
     try {
-      const response = await fetch(
-        `${this.options.consulUrl}/v1/agent/service/register`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(consulService),
-        },
-      );
+      const response = await fetch(`${this.options.consulUrl}/v1/agent/service/register`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(consulService),
+      });
 
       if (!response.ok) {
         throw new Error(`Consul registration failed: ${response.statusText}`);
       }
     } catch (error) {
-      console.error("Failed to register with Consul:", error);
+      console.error('Failed to register with Consul:', error);
       // Fallback to in-memory
       this.registerInMemory(service);
     }
   }
 
-  private async discoverFromConsul(
-    serviceName: string,
-  ): Promise<ServiceInfo[]> {
+  private async discoverFromConsul(serviceName: string): Promise<ServiceInfo[]> {
     if (!this.options.consulUrl) {
       return this.discoverFromMemory(serviceName);
     }
 
     try {
       const response = await fetch(
-        `${this.options.consulUrl}/v1/health/service/${serviceName}?passing=true`,
+        `${this.options.consulUrl}/v1/health/service/${serviceName}?passing=true`
       );
 
       if (!response.ok) {
@@ -157,7 +150,7 @@ export class ServiceRegistry {
         metadata: entry.Service.Meta,
       }));
     } catch (error) {
-      console.error("Failed to discover from Consul:", error);
+      console.error('Failed to discover from Consul:', error);
       return this.discoverFromMemory(serviceName);
     }
   }
@@ -166,14 +159,11 @@ export class ServiceRegistry {
     if (!this.options.consulUrl) return;
 
     try {
-      await fetch(
-        `${this.options.consulUrl}/v1/agent/service/deregister/${serviceName}`,
-        {
-          method: "PUT",
-        },
-      );
+      await fetch(`${this.options.consulUrl}/v1/agent/service/deregister/${serviceName}`, {
+        method: 'PUT',
+      });
     } catch (error) {
-      console.error("Failed to deregister from Consul:", error);
+      console.error('Failed to deregister from Consul:', error);
     }
   }
 
@@ -181,19 +171,15 @@ export class ServiceRegistry {
   private async registerWithKubernetes(service: ServiceInfo): Promise<void> {
     // In Kubernetes, services are registered via Service/Endpoints resources
     // This would typically be handled by the K8s API, not application code
-    console.log(
-      `K8s service registration: ${service.name} (handled by Kubernetes)`,
-    );
+    console.log(`K8s service registration: ${service.name} (handled by Kubernetes)`);
 
     // Fallback to in-memory for local development
     this.registerInMemory(service);
   }
 
-  private async discoverFromKubernetes(
-    serviceName: string,
-  ): Promise<ServiceInfo[]> {
+  private async discoverFromKubernetes(serviceName: string): Promise<ServiceInfo[]> {
     // In K8s, we can discover services via DNS or the K8s API
-    const namespace = this.options.kubernetesNamespace || "default";
+    const namespace = this.options.kubernetesNamespace || 'default';
 
     try {
       // Try K8s service DNS resolution
@@ -206,11 +192,11 @@ export class ServiceRegistry {
           name: serviceName,
           host,
           port: 80, // Default port, should be discovered from service definition
-          metadata: { discovered: "kubernetes" },
+          metadata: { discovered: 'kubernetes' },
         },
       ];
     } catch (error) {
-      console.error("Failed to discover from Kubernetes:", error);
+      console.error('Failed to discover from Kubernetes:', error);
       return this.discoverFromMemory(serviceName);
     }
   }
@@ -220,7 +206,7 @@ export class ServiceRegistry {
     if (this.options.healthCheckInterval) {
       this.healthCheckInterval = setInterval(
         () => this.performHealthChecks(),
-        this.options.healthCheckInterval,
+        this.options.healthCheckInterval
       );
     }
   }
@@ -234,13 +220,11 @@ export class ServiceRegistry {
               `http://${service.host}:${service.port}${service.health}`,
               {
                 timeout: 5000,
-              } as any,
+              } as any
             );
 
             if (!response.ok) {
-              console.warn(
-                `Health check failed for ${serviceName}: ${response.statusText}`,
-              );
+              console.warn(`Health check failed for ${serviceName}: ${response.statusText}`);
               // Remove unhealthy service
               this.removeUnhealthyService(serviceName, service);
             }
@@ -253,14 +237,10 @@ export class ServiceRegistry {
     }
   }
 
-  private removeUnhealthyService(
-    serviceName: string,
-    unhealthyService: ServiceInfo,
-  ): void {
+  private removeUnhealthyService(serviceName: string, unhealthyService: ServiceInfo): void {
     const services = this.services.get(serviceName) || [];
     const filtered = services.filter(
-      (s) =>
-        s.host !== unhealthyService.host || s.port !== unhealthyService.port,
+      s => s.host !== unhealthyService.host || s.port !== unhealthyService.port
     );
 
     if (filtered.length === 0) {
@@ -273,7 +253,7 @@ export class ServiceRegistry {
   // Load balancing
   selectService(
     serviceName: string,
-    strategy: "round-robin" | "random" | "least-connections" = "round-robin",
+    strategy: 'round-robin' | 'random' | 'least-connections' = 'round-robin'
   ): ServiceInfo | null {
     const services = this.services.get(serviceName) || [];
 
@@ -282,12 +262,12 @@ export class ServiceRegistry {
     }
 
     switch (strategy) {
-      case "random":
+      case 'random':
         return services[Math.floor(Math.random() * services.length)];
-      case "round-robin":
+      case 'round-robin':
         // Simple round-robin (in production, maintain state)
         return services[Date.now() % services.length];
-      case "least-connections":
+      case 'least-connections':
         // For demo, just return the first (in production, track connections)
         return services[0];
       default:

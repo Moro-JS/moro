@@ -1,10 +1,10 @@
 // Simple Documentation Generator - Fallback for when Swagger UI has issues
 // Generates clean, readable API documentation from routes
 
-import { CompiledRoute, RouteSchema } from "../routing";
-import { createFrameworkLogger } from "../logger";
+import { CompiledRoute, RouteSchema } from '../routing';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("SimpleDocs");
+const logger = createFrameworkLogger('SimpleDocs');
 
 export interface SimpleDocsOptions {
   title?: string;
@@ -17,19 +17,16 @@ export class SimpleDocsGenerator {
 
   constructor(private options: SimpleDocsOptions = {}) {
     this.options = {
-      title: "API Documentation",
-      description: "API documentation generated from intelligent routes",
-      basePath: "/docs",
+      title: 'API Documentation',
+      description: 'API documentation generated from intelligent routes',
+      basePath: '/docs',
       ...options,
     };
   }
 
   addRoutes(routes: CompiledRoute[]): void {
     this.routes = routes;
-    logger.debug(
-      `Added ${routes.length} routes to simple docs`,
-      "RouteAddition",
-    );
+    logger.debug(`Added ${routes.length} routes to simple docs`, 'RouteAddition');
   }
 
   generateHTML(): string {
@@ -156,7 +153,7 @@ export class SimpleDocsGenerator {
     const grouped = new Map<string, CompiledRoute[]>();
 
     for (const route of this.routes) {
-      const tags = route.schema.tags || ["default"];
+      const tags = route.schema.tags || ['default'];
 
       for (const tag of tags) {
         if (!grouped.has(tag)) {
@@ -169,10 +166,8 @@ export class SimpleDocsGenerator {
     return grouped;
   }
 
-  private generateRouteDocumentation(
-    routesByTag: Map<string, CompiledRoute[]>,
-  ): string {
-    let html = "";
+  private generateRouteDocumentation(routesByTag: Map<string, CompiledRoute[]>): string {
+    let html = '';
 
     for (const [tag, routes] of routesByTag) {
       html += `<h2>${tag.charAt(0).toUpperCase() + tag.slice(1)}</h2>`;
@@ -195,9 +190,9 @@ export class SimpleDocsGenerator {
         <span class="path">${route.path}</span>
       </div>
       
-      ${route.description ? `<div class="description">${route.description}</div>` : ""}
+      ${route.description ? `<div class="description">${route.description}</div>` : ''}
       
-      ${route.tags ? `<div class="tags">${route.tags.map((tag) => `<span class="tag">${tag}</span>`).join("")}</div>` : ""}
+      ${route.tags ? `<div class="tags">${route.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>` : ''}
       
       ${this.generateValidationInfo(route)}
       ${this.generateAuthInfo(route)}
@@ -209,27 +204,25 @@ export class SimpleDocsGenerator {
   }
 
   private generateValidationInfo(route: RouteSchema): string {
-    if (!route.validation) return "";
+    if (!route.validation) return '';
 
     const validationTypes = [];
-    if (route.validation.body) validationTypes.push("Body");
-    if (route.validation.query) validationTypes.push("Query Parameters");
-    if (route.validation.params) validationTypes.push("Path Parameters");
-    if (route.validation.headers) validationTypes.push("Headers");
+    if (route.validation.body) validationTypes.push('Body');
+    if (route.validation.query) validationTypes.push('Query Parameters');
+    if (route.validation.params) validationTypes.push('Path Parameters');
+    if (route.validation.headers) validationTypes.push('Headers');
 
     return `
     <div class="validation">
-      <strong>Validation:</strong> ${validationTypes.join(", ")}
+      <strong>Validation:</strong> ${validationTypes.join(', ')}
       <br><small>Request will be validated with Zod schemas for type safety</small>
     </div>`;
   }
 
   private generateAuthInfo(route: RouteSchema): string {
-    if (!route.auth) return "";
+    if (!route.auth) return '';
 
-    const roles = route.auth.roles
-      ? route.auth.roles.join(", ")
-      : "authenticated";
+    const roles = route.auth.roles ? route.auth.roles.join(', ') : 'authenticated';
 
     return `
     <div class="auth">
@@ -239,7 +232,7 @@ export class SimpleDocsGenerator {
   }
 
   private generateRateLimitInfo(route: RouteSchema): string {
-    if (!route.rateLimit) return "";
+    if (!route.rateLimit) return '';
 
     const { requests, window } = route.rateLimit;
     const windowSeconds = Math.round(window / 1000);
@@ -252,19 +245,19 @@ export class SimpleDocsGenerator {
   }
 
   private generateExamples(route: RouteSchema): string {
-    const baseUrl = "http://localhost:3001";
+    const baseUrl = 'http://localhost:3001';
     const fullPath = `${baseUrl}${route.path}`;
 
-    let example = "";
+    let example = '';
 
-    if (route.method === "GET") {
+    if (route.method === 'GET') {
       example = `curl "${fullPath}"`;
 
       // Add query parameter example if validation exists
       if (route.validation?.query) {
         example = `curl "${fullPath}?limit=10&search=example"`;
       }
-    } else if (["POST", "PUT", "PATCH"].includes(route.method)) {
+    } else if (['POST', 'PUT', 'PATCH'].includes(route.method)) {
       example = `curl -X ${route.method} ${fullPath} \\
   -H "Content-Type: application/json" \\
   -d '{"example": "data"}'`;
@@ -283,19 +276,16 @@ export class SimpleDocsGenerator {
 // Create middleware for simple docs
 export function createSimpleDocsMiddleware(
   routes: CompiledRoute[],
-  options: SimpleDocsOptions = {},
+  options: SimpleDocsOptions = {}
 ) {
   const generator = new SimpleDocsGenerator(options);
   generator.addRoutes(routes);
 
-  const basePath = options.basePath || "/docs";
+  const basePath = options.basePath || '/docs';
 
   return (req: any, res: any, next: () => void) => {
-    if (
-      req.path === `${basePath}/simple` ||
-      req.path === `${basePath}/simple/`
-    ) {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
+    if (req.path === `${basePath}/simple` || req.path === `${basePath}/simple/`) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(generator.generateHTML());
       return;
     }

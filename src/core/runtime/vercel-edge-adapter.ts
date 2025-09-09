@@ -1,10 +1,10 @@
 // Vercel Edge runtime adapter
-import { BaseRuntimeAdapter } from "./base-adapter";
-import { HttpRequest, HttpResponse } from "../../types/http";
-import { RuntimeHttpResponse } from "../../types/runtime";
+import { BaseRuntimeAdapter } from './base-adapter';
+import { HttpRequest, HttpResponse } from '../../types/http';
+import { RuntimeHttpResponse } from '../../types/runtime';
 
 export class VercelEdgeAdapter extends BaseRuntimeAdapter {
-  readonly type = "vercel-edge" as const;
+  readonly type = 'vercel-edge' as const;
 
   async adaptRequest(request: Request): Promise<HttpRequest> {
     const url = new URL(request.url);
@@ -12,9 +12,9 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
 
     // Parse body for POST/PUT/PATCH requests
     let body: any;
-    if (["POST", "PUT", "PATCH"].includes(request.method)) {
-      const contentType = request.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
+    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      const contentType = request.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
         try {
           body = await request.json();
         } catch {
@@ -40,7 +40,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
       headers,
       ip: this.getClientIP(headers),
       params: {},
-      requestId: "",
+      requestId: '',
       cookies: {},
       files: {},
     } as Partial<HttpRequest>;
@@ -48,9 +48,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
     return this.enhanceRequest(baseRequest);
   }
 
-  async adaptResponse(
-    moroResponse: HttpResponse | RuntimeHttpResponse,
-  ): Promise<Response> {
+  async adaptResponse(moroResponse: HttpResponse | RuntimeHttpResponse): Promise<Response> {
     const runtimeResponse = moroResponse as RuntimeHttpResponse;
 
     // Handle different response states
@@ -59,10 +57,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
     const headers = runtimeResponse.headers || {};
 
     // If it's a real HttpResponse, we need to extract the data differently
-    if (
-      "statusCode" in moroResponse &&
-      typeof moroResponse.statusCode === "number"
-    ) {
+    if ('statusCode' in moroResponse && typeof moroResponse.statusCode === 'number') {
       status = moroResponse.statusCode;
     }
 
@@ -73,9 +68,9 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
     });
 
     // Handle different body types
-    if (typeof body === "object" && body !== null) {
+    if (typeof body === 'object' && body !== null) {
       body = JSON.stringify(body);
-      responseHeaders.set("Content-Type", "application/json");
+      responseHeaders.set('Content-Type', 'application/json');
     }
 
     return new Response(body, {
@@ -84,9 +79,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
     });
   }
 
-  createServer(
-    handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
-  ) {
+  createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>) {
     // Return a Vercel Edge-compatible handler function
     return async (request: Request) => {
       try {
@@ -100,13 +93,13 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
         return new Response(
           JSON.stringify({
             success: false,
-            error: "Internal server error",
-            message: error instanceof Error ? error.message : "Unknown error",
+            error: 'Internal server error',
+            message: error instanceof Error ? error.message : 'Unknown error',
           }),
           {
             status: 500,
-            headers: { "Content-Type": "application/json" },
-          },
+            headers: { 'Content-Type': 'application/json' },
+          }
         );
       }
     };
@@ -116,10 +109,6 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
   // listen method is optional in the interface
 
   private getClientIP(headers: Record<string, string>): string {
-    return (
-      headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      headers["x-real-ip"] ||
-      "unknown"
-    );
+    return headers['x-forwarded-for']?.split(',')[0]?.trim() || headers['x-real-ip'] || 'unknown';
   }
 }

@@ -1,8 +1,8 @@
 // Content Security Policy Middleware
-import { MiddlewareInterface, HookContext } from "../../../types/hooks";
-import { createFrameworkLogger } from "../../logger";
+import { MiddlewareInterface, HookContext } from '../../../types/hooks';
+import { createFrameworkLogger } from '../../logger';
 
-const logger = createFrameworkLogger("CSPMiddleware");
+const logger = createFrameworkLogger('CSPMiddleware');
 
 export const csp = (
   options: {
@@ -25,22 +25,21 @@ export const csp = (
     reportOnly?: boolean;
     reportUri?: string;
     nonce?: boolean;
-  } = {},
+  } = {}
 ): MiddlewareInterface => ({
-  name: "csp",
-  version: "1.0.0",
+  name: 'csp',
+  version: '1.0.0',
   metadata: {
-    name: "csp",
-    version: "1.0.0",
-    description:
-      "Content Security Policy middleware with nonce support and violation reporting",
-    author: "MoroJS Team",
+    name: 'csp',
+    version: '1.0.0',
+    description: 'Content Security Policy middleware with nonce support and violation reporting',
+    author: 'MoroJS Team',
   },
 
   install: async (hooks: any, middlewareOptions: any = {}) => {
-    logger.debug("Installing CSP middleware", "Installation");
+    logger.debug('Installing CSP middleware', 'Installation');
 
-    hooks.before("request", async (context: HookContext) => {
+    hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
 
@@ -48,7 +47,7 @@ export const csp = (
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "https:"],
+        imgSrc: ["'self'", 'data:', 'https:'],
         connectSrc: ["'self'"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
@@ -59,8 +58,8 @@ export const csp = (
       // Generate nonce if requested
       let nonce: string | undefined;
       if (options.nonce) {
-        const crypto = require("crypto");
-        nonce = crypto.randomBytes(16).toString("base64");
+        const crypto = require('crypto');
+        nonce = crypto.randomBytes(16).toString('base64');
         req.cspNonce = nonce;
       }
 
@@ -68,25 +67,20 @@ export const csp = (
       const cspParts: string[] = [];
 
       for (const [directive, sources] of Object.entries(directives)) {
-        if (directive === "upgradeInsecureRequests" && sources === true) {
-          cspParts.push("upgrade-insecure-requests");
-        } else if (directive === "blockAllMixedContent" && sources === true) {
-          cspParts.push("block-all-mixed-content");
+        if (directive === 'upgradeInsecureRequests' && sources === true) {
+          cspParts.push('upgrade-insecure-requests');
+        } else if (directive === 'blockAllMixedContent' && sources === true) {
+          cspParts.push('block-all-mixed-content');
         } else if (Array.isArray(sources)) {
-          let sourceList = sources.join(" ");
+          let sourceList = sources.join(' ');
 
           // Add nonce to script-src and style-src if enabled
-          if (
-            nonce &&
-            (directive === "scriptSrc" || directive === "styleSrc")
-          ) {
+          if (nonce && (directive === 'scriptSrc' || directive === 'styleSrc')) {
             sourceList += ` 'nonce-${nonce}'`;
           }
 
           // Convert camelCase to kebab-case
-          const kebabDirective = directive
-            .replace(/([A-Z])/g, "-$1")
-            .toLowerCase();
+          const kebabDirective = directive.replace(/([A-Z])/g, '-$1').toLowerCase();
           cspParts.push(`${kebabDirective} ${sourceList}`);
         }
       }
@@ -96,10 +90,10 @@ export const csp = (
         cspParts.push(`report-uri ${options.reportUri}`);
       }
 
-      const cspValue = cspParts.join("; ");
+      const cspValue = cspParts.join('; ');
       const headerName = options.reportOnly
-        ? "Content-Security-Policy-Report-Only"
-        : "Content-Security-Policy";
+        ? 'Content-Security-Policy-Report-Only'
+        : 'Content-Security-Policy';
 
       res.setHeader(headerName, cspValue);
     });

@@ -1,16 +1,16 @@
 // Session Middleware
-import { MiddlewareInterface, HookContext } from "../../../types/hooks";
-import { createFrameworkLogger } from "../../logger";
-import { CacheAdapter } from "../../../types/cache";
-import { MemoryCacheAdapter } from "./adapters/cache/memory";
-import { RedisCacheAdapter } from "./adapters/cache/redis";
-import { FileCacheAdapter } from "./adapters/cache/file";
+import { MiddlewareInterface, HookContext } from '../../../types/hooks';
+import { createFrameworkLogger } from '../../logger';
+import { CacheAdapter } from '../../../types/cache';
+import { MemoryCacheAdapter } from './adapters/cache/memory';
+import { RedisCacheAdapter } from './adapters/cache/redis';
+import { FileCacheAdapter } from './adapters/cache/file';
 
-const logger = createFrameworkLogger("SessionMiddleware");
+const logger = createFrameworkLogger('SessionMiddleware');
 
 export interface SessionOptions {
   // Session store configuration
-  store?: "memory" | "redis" | "file" | CacheAdapter;
+  store?: 'memory' | 'redis' | 'file' | CacheAdapter;
   storeOptions?: {
     // Redis options
     host?: string;
@@ -37,14 +37,14 @@ export interface SessionOptions {
     expires?: Date; // Absolute expiry
     httpOnly?: boolean; // Prevent XSS access
     secure?: boolean; // HTTPS only
-    sameSite?: "strict" | "lax" | "none";
+    sameSite?: 'strict' | 'lax' | 'none';
     domain?: string;
     path?: string;
   };
 
   // Security
   proxy?: boolean; // Trust proxy for secure cookies
-  unset?: "destroy" | "keep"; // What to do when session is unset
+  unset?: 'destroy' | 'keep'; // What to do when session is unset
 }
 
 export interface SessionData {
@@ -66,12 +66,7 @@ class Session {
   private isNew: boolean = false;
   private isModified: boolean = false;
 
-  constructor(
-    id: string,
-    store: CacheAdapter,
-    options: SessionOptions,
-    isNew: boolean = false,
-  ) {
+  constructor(id: string, store: CacheAdapter, options: SessionOptions, isNew: boolean = false) {
     this.id = id;
     this.store = store;
     this.options = options;
@@ -84,7 +79,7 @@ class Session {
     store: CacheAdapter,
     options: SessionOptions,
     data: SessionData = {},
-    isNew: boolean = false,
+    isNew: boolean = false
   ): Session {
     const session = new Session(id, store, options, isNew);
     session.data = data;
@@ -130,7 +125,7 @@ class Session {
       await this.store.set(this.id, this.data, ttl);
       this.isModified = false;
       this.isNew = false;
-      logger.debug(`Session saved: ${this.id}`, "SessionSave");
+      logger.debug(`Session saved: ${this.id}`, 'SessionSave');
     }
   }
 
@@ -138,7 +133,7 @@ class Session {
     await this.store.del(this.id);
     this.data = {};
     this.isModified = false;
-    logger.debug(`Session destroyed: ${this.id}`, "SessionDestroy");
+    logger.debug(`Session destroyed: ${this.id}`, 'SessionDestroy');
   }
 
   async regenerate(): Promise<string> {
@@ -146,7 +141,7 @@ class Session {
     this.id = this.generateId();
     this.isNew = true;
     this.isModified = true;
-    logger.debug(`Session regenerated: ${this.id}`, "SessionRegenerate");
+    logger.debug(`Session regenerated: ${this.id}`, 'SessionRegenerate');
     return this.id;
   }
 
@@ -162,8 +157,8 @@ class Session {
       return this.options.genid();
     }
 
-    const crypto = require("crypto");
-    return crypto.randomBytes(24).toString("hex");
+    const crypto = require('crypto');
+    return crypto.randomBytes(24).toString('hex');
   }
 
   get sessionID(): string {
@@ -172,23 +167,23 @@ class Session {
 }
 
 export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
-  name: "session",
-  version: "1.0.0",
+  name: 'session',
+  version: '1.0.0',
   metadata: {
-    name: "session",
-    version: "1.0.0",
-    description: "Session management middleware with multiple store adapters",
-    author: "MoroJS Team",
+    name: 'session',
+    version: '1.0.0',
+    description: 'Session management middleware with multiple store adapters',
+    author: 'MoroJS Team',
   },
 
   install: async (hooks: any, middlewareOptions: any = {}) => {
-    logger.debug("Installing session middleware", "Installation");
+    logger.debug('Installing session middleware', 'Installation');
 
     // Merge options
     const config: SessionOptions = {
-      store: "memory",
-      name: "connect.sid",
-      secret: "moro-session-secret",
+      store: 'memory',
+      name: 'connect.sid',
+      secret: 'moro-session-secret',
       rolling: false,
       resave: false,
       saveUninitialized: false,
@@ -196,10 +191,10 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         httpOnly: true,
         secure: false,
-        sameSite: "lax",
-        path: "/",
+        sameSite: 'lax',
+        path: '/',
       },
-      unset: "keep",
+      unset: 'keep',
       ...options,
       ...middlewareOptions,
     };
@@ -207,20 +202,20 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
     // Initialize store
     let store: CacheAdapter;
 
-    if (typeof config.store === "string") {
+    if (typeof config.store === 'string') {
       switch (config.store) {
-        case "redis":
+        case 'redis':
           store = new RedisCacheAdapter({
-            keyPrefix: "sess:",
+            keyPrefix: 'sess:',
             ...config.storeOptions,
           });
           break;
-        case "file":
+        case 'file':
           store = new FileCacheAdapter({
-            cacheDir: config.storeOptions?.path || "./sessions",
+            cacheDir: config.storeOptions?.path || './sessions',
           });
           break;
-        case "memory":
+        case 'memory':
         default:
           store = new MemoryCacheAdapter();
           break;
@@ -234,11 +229,11 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
       if (config.genid) {
         return config.genid();
       }
-      const crypto = require("crypto");
-      return crypto.randomBytes(24).toString("hex");
+      const crypto = require('crypto');
+      return crypto.randomBytes(24).toString('hex');
     };
 
-    hooks.before("request", async (context: HookContext) => {
+    hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
 
@@ -250,13 +245,9 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
       if (sessionId) {
         try {
           sessionData = (await store.get(sessionId)) || {};
-          logger.debug(`Session loaded: ${sessionId}`, "SessionLoad");
+          logger.debug(`Session loaded: ${sessionId}`, 'SessionLoad');
         } catch (error) {
-          logger.warn(
-            `Failed to load session: ${sessionId}`,
-            "SessionLoadError",
-            { error },
-          );
+          logger.warn(`Failed to load session: ${sessionId}`, 'SessionLoadError', { error });
           sessionId = generateSessionId();
           isNew = true;
         }
@@ -266,46 +257,32 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
       }
 
       // Create session object
-      req.session = Session.create(
-        sessionId,
-        store,
-        config,
-        sessionData,
-        isNew,
-      );
+      req.session = Session.create(sessionId, store, config, sessionData, isNew);
 
       // Set session cookie
       if (isNew || config.rolling) {
         res.cookie(config.name!, sessionId, {
           ...config.cookie,
           secure:
-            config.cookie?.secure ||
-            (config.proxy && req.headers["x-forwarded-proto"] === "https"),
+            config.cookie?.secure || (config.proxy && req.headers['x-forwarded-proto'] === 'https'),
         });
       }
     });
 
-    hooks.after("response", async (context: HookContext) => {
+    hooks.after('response', async (context: HookContext) => {
       const req = context.request as any;
 
       if (req.session) {
         try {
-          if (
-            config.saveUninitialized ||
-            !req.session.isNew ||
-            req.session.isModified
-          ) {
+          if (config.saveUninitialized || !req.session.isNew || req.session.isModified) {
             await req.session.save();
           }
         } catch (error) {
-          logger.error("Failed to save session", "SessionSaveError", { error });
+          logger.error('Failed to save session', 'SessionSaveError', { error });
         }
       }
     });
 
-    logger.info(
-      `Session middleware installed with ${config.store} store`,
-      "Installation",
-    );
+    logger.info(`Session middleware installed with ${config.store} store`, 'Installation');
   },
 });

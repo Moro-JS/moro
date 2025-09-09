@@ -5,8 +5,8 @@ export {
   createFrameworkLogger,
   configureGlobalLogger,
   applyLoggingConfiguration,
-} from "./logger";
-export * from "./filters";
+} from './logger';
+export * from './filters';
 
 export type {
   LogLevel,
@@ -17,4 +17,4 @@ export type {
   LogFilter,
   LogMetrics,
   ColorScheme,
-} from "../../types/logger";
+} from '../../types/logger';

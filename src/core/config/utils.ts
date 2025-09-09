@@ -1,9 +1,9 @@
 // Configuration Utilities for Modules and Environment Handling
-import { z } from "zod";
-import { AppConfig } from "./schema";
-import { createFrameworkLogger } from "../logger";
+import { z } from 'zod';
+import { AppConfig } from './schema';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("ConfigUtils");
+const logger = createFrameworkLogger('ConfigUtils');
 
 // Global configuration store
 let appConfig: AppConfig | null = null;
@@ -13,7 +13,7 @@ let appConfig: AppConfig | null = null;
  */
 export function setConfig(config: AppConfig): void {
   appConfig = config;
-  logger.debug("Global configuration updated");
+  logger.debug('Global configuration updated');
 }
 
 /**
@@ -21,7 +21,7 @@ export function setConfig(config: AppConfig): void {
  */
 export function getConfig(): AppConfig {
   if (!appConfig) {
-    throw new Error("Configuration not initialized. Call loadConfig() first.");
+    throw new Error('Configuration not initialized. Call loadConfig() first.');
   }
   return appConfig;
 }
@@ -32,7 +32,7 @@ export function getConfig(): AppConfig {
 export function createModuleConfig<T>(
   schema: z.ZodSchema<T>,
   defaultConfig: Partial<T>,
-  envPrefix?: string,
+  envPrefix?: string
 ): T {
   const globalConfig = getConfig();
 
@@ -41,7 +41,7 @@ export function createModuleConfig<T>(
 
   if (envPrefix) {
     // Extract environment variables with the given prefix
-    Object.keys(process.env).forEach((key) => {
+    Object.keys(process.env).forEach(key => {
       if (key.startsWith(envPrefix)) {
         const configKey = key
           .substring(envPrefix.length)
@@ -62,10 +62,7 @@ export function createModuleConfig<T>(
   try {
     return schema.parse(mergedConfig);
   } catch (error) {
-    logger.error(
-      `Module configuration validation failed for prefix ${envPrefix}:`,
-      String(error),
-    );
+    logger.error(`Module configuration validation failed for prefix ${envPrefix}:`, String(error));
     throw error;
   }
 }
@@ -73,11 +70,7 @@ export function createModuleConfig<T>(
 /**
  * Get environment variable with type conversion
  */
-export function getEnvVar<T>(
-  key: string,
-  defaultValue: T,
-  converter?: (value: string) => T,
-): T {
+export function getEnvVar<T>(key: string, defaultValue: T, converter?: (value: string) => T): T {
   const value = process.env[key];
 
   if (value === undefined) {
@@ -88,20 +81,17 @@ export function getEnvVar<T>(
     try {
       return converter(value);
     } catch (error) {
-      logger.warn(
-        `Failed to convert environment variable ${key}:`,
-        String(error),
-      );
+      logger.warn(`Failed to convert environment variable ${key}:`, String(error));
       return defaultValue;
     }
   }
 
   // Default type conversions
-  if (typeof defaultValue === "boolean") {
-    return (value.toLowerCase() === "true") as T;
+  if (typeof defaultValue === 'boolean') {
+    return (value.toLowerCase() === 'true') as T;
   }
 
-  if (typeof defaultValue === "number") {
+  if (typeof defaultValue === 'number') {
     const num = Number(value);
     return (isNaN(num) ? defaultValue : num) as T;
   }
@@ -112,10 +102,7 @@ export function getEnvVar<T>(
 /**
  * Parse comma-separated environment variable as array
  */
-export function getEnvArray(
-  key: string,
-  defaultValue: string[] = [],
-): string[] {
+export function getEnvArray(key: string, defaultValue: string[] = []): string[] {
   const value = process.env[key];
 
   if (!value) {
@@ -123,8 +110,8 @@ export function getEnvArray(
   }
 
   return value
-    .split(",")
-    .map((item) => item.trim())
+    .split(',')
+    .map(item => item.trim())
     .filter(Boolean);
 }
 
@@ -141,10 +128,7 @@ export function getEnvJson<T>(key: string, defaultValue: T): T {
   try {
     return JSON.parse(value);
   } catch (error) {
-    logger.warn(
-      `Failed to parse JSON environment variable ${key}:`,
-      String(error),
-    );
+    logger.warn(`Failed to parse JSON environment variable ${key}:`, String(error));
     return defaultValue;
   }
 }
@@ -155,16 +139,14 @@ export function getEnvJson<T>(key: string, defaultValue: T): T {
 export function requireEnvVars(...keys: string[]): void {
   const missing: string[] = [];
 
-  keys.forEach((key) => {
+  keys.forEach(key => {
     if (!process.env[key]) {
       missing.push(key);
     }
   });
 
   if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}`,
-    );
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
 }
 
@@ -181,7 +163,7 @@ export function envVar(prefix: string, name: string): string {
 export function getConfigValue(path: string): any {
   const config = getConfig();
 
-  return path.split(".").reduce((obj, key) => {
+  return path.split('.').reduce((obj, key) => {
     return obj && obj[key] !== undefined ? obj[key] : undefined;
   }, config as any);
 }
@@ -191,9 +173,9 @@ export function getConfigValue(path: string): any {
  */
 export function isDevelopment(): boolean {
   try {
-    return getConfig().server.environment === "development";
+    return getConfig().server.environment === 'development';
   } catch {
-    return process.env.NODE_ENV === "development";
+    return process.env.NODE_ENV === 'development';
   }
 }
 
@@ -202,9 +184,9 @@ export function isDevelopment(): boolean {
  */
 export function isProduction(): boolean {
   try {
-    return getConfig().server.environment === "production";
+    return getConfig().server.environment === 'production';
   } catch {
-    return process.env.NODE_ENV === "production";
+    return process.env.NODE_ENV === 'production';
   }
 }
 
@@ -213,8 +195,8 @@ export function isProduction(): boolean {
  */
 export function isStaging(): boolean {
   try {
-    return getConfig().server.environment === "staging";
+    return getConfig().server.environment === 'staging';
   } catch {
-    return process.env.NODE_ENV === "staging";
+    return process.env.NODE_ENV === 'staging';
   }
 }

@@ -1,21 +1,18 @@
 // src/core/websocket-manager.ts
-import { Server as SocketIOServer, Socket, Namespace } from "socket.io";
-import { Container } from "../utilities";
-import { CircuitBreaker } from "../utilities";
-import { ModuleConfig, WebSocketDefinition } from "../../types/module";
+import { Server as SocketIOServer, Socket, Namespace } from 'socket.io';
+import { Container } from '../utilities';
+import { CircuitBreaker } from '../utilities';
+import { ModuleConfig, WebSocketDefinition } from '../../types/module';
 
 export class WebSocketManager {
   private circuitBreakers = new Map<string, CircuitBreaker>();
-  private rateLimiters = new Map<
-    string,
-    Map<string, { count: number; resetTime: number }>
-  >();
+  private rateLimiters = new Map<string, Map<string, { count: number; resetTime: number }>>();
   private compressionEnabled = true;
   private customIdGenerator?: () => string;
 
   constructor(
     private io: SocketIOServer,
-    private container: Container,
+    private container: Container
   ) {
     this.setupAdvancedFeatures();
   }
@@ -60,7 +57,7 @@ export class WebSocketManager {
 
       // Add heartbeat mechanism
       (socket as any).heartbeat = () => {
-        socket.emit("heartbeat", { timestamp: Date.now() });
+        socket.emit('heartbeat', { timestamp: Date.now() });
       };
 
       next();
@@ -102,9 +99,9 @@ export class WebSocketManager {
   async registerHandler(
     namespace: Namespace,
     wsConfig: WebSocketDefinition,
-    moduleConfig: ModuleConfig,
+    moduleConfig: ModuleConfig
   ): Promise<void> {
-    namespace.on("connection", (socket: Socket) => {
+    namespace.on('connection', (socket: Socket) => {
       console.log(`WebSocket connected to /${moduleConfig.name}: ${socket.id}`);
       this.setupSocketHandlers(socket, wsConfig, moduleConfig);
       this.setupSocketMiddleware(socket, moduleConfig.name);
@@ -114,24 +111,21 @@ export class WebSocketManager {
   private setupSocketHandlers(
     socket: Socket,
     wsConfig: WebSocketDefinition,
-    moduleConfig: ModuleConfig,
+    moduleConfig: ModuleConfig
   ): void {
     socket.on(wsConfig.event, async (data: any, callback?: Function) => {
       const handlerKey = `${moduleConfig.name}.${wsConfig.handler}`;
 
       try {
         // Rate limiting
-        if (
-          wsConfig.rateLimit &&
-          !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)
-        ) {
+        if (wsConfig.rateLimit && !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)) {
           const error = {
             success: false,
-            error: "Rate limit exceeded",
-            code: "RATE_LIMIT",
+            error: 'Rate limit exceeded',
+            code: 'RATE_LIMIT',
           };
           if (callback) callback(error);
-          else socket.emit("error", error);
+          else socket.emit('error', error);
           return;
         }
 
@@ -143,15 +137,15 @@ export class WebSocketManager {
             if (validationError.issues) {
               const error = {
                 success: false,
-                error: "Validation failed",
+                error: 'Validation failed',
                 details: validationError.issues.map((issue: any) => ({
-                  field: issue.path.length > 0 ? issue.path.join(".") : "data",
+                  field: issue.path.length > 0 ? issue.path.join('.') : 'data',
                   message: issue.message,
                   code: issue.code,
                 })),
               };
               if (callback) callback(error);
-              else socket.emit("error", error);
+              else socket.emit('error', error);
               return;
             }
             throw validationError;
@@ -175,9 +169,8 @@ export class WebSocketManager {
           socket.emit(`${wsConfig.event}:response`, result);
         }
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        const errorCode = (error as any)?.code || "INTERNAL_ERROR";
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorCode = (error as any)?.code || 'INTERNAL_ERROR';
         console.error(`WebSocket error in ${handlerKey}:`, errorMessage);
 
         const errorResponse = {
@@ -189,29 +182,27 @@ export class WebSocketManager {
         if (callback) {
           callback(errorResponse);
         } else {
-          socket.emit("error", errorResponse);
+          socket.emit('error', errorResponse);
         }
       }
     });
   }
 
   private setupSocketMiddleware(socket: Socket, moduleName: string): void {
-    socket.on("disconnect", (reason) => {
-      console.log(
-        `WebSocket disconnected from /${moduleName}: ${socket.id} (${reason})`,
-      );
+    socket.on('disconnect', reason => {
+      console.log(`WebSocket disconnected from /${moduleName}: ${socket.id} (${reason})`);
       this.cleanup(socket.id);
     });
 
-    socket.on("ping", () => {
-      socket.emit("pong");
+    socket.on('ping', () => {
+      socket.emit('pong');
     });
   }
 
   private checkRateLimit(
     socketId: string,
     handlerKey: string,
-    rateLimit: { requests: number; window: number },
+    rateLimit: { requests: number; window: number }
   ): boolean {
     if (!this.rateLimiters.has(handlerKey)) {
       this.rateLimiters.set(handlerKey, new Map());
@@ -245,14 +236,14 @@ export class WebSocketManager {
           failureThreshold: 5,
           resetTimeout: 30000,
           monitoringPeriod: 10000,
-        }),
+        })
       );
     }
     return this.circuitBreakers.get(key)!;
   }
 
   private cleanup(socketId: string): void {
-    this.rateLimiters.forEach((limiter) => {
+    this.rateLimiters.forEach(limiter => {
       limiter.delete(socketId);
     });
   }

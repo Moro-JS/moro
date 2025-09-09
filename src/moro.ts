@@ -1,35 +1,31 @@
 // Moro Framework - Modern TypeScript API Framework
 // Built for developers who demand performance, elegance, and zero compromises
 // Event-driven • Modular • Enterprise-ready • Developer-first
-import { Moro as MoroCore } from "./core/framework";
-import { HttpRequest, HttpResponse, middleware } from "./core/http";
-import { ModuleConfig, InternalRouteDefinition } from "./types/module";
-import { MoroOptions } from "./types/core";
-import { MoroEventBus } from "./core/events";
+import { Moro as MoroCore } from './core/framework';
+import { HttpRequest, HttpResponse, middleware } from './core/http';
+import { ModuleConfig, InternalRouteDefinition } from './types/module';
+import { MoroOptions } from './types/core';
+import { MoroEventBus } from './core/events';
 import {
   createFrameworkLogger,
   logger as globalLogger,
   applyLoggingConfiguration,
-} from "./core/logger";
-import { IntelligentRoutingManager } from "./core/routing/app-integration";
-import { RouteBuilder, RouteSchema, CompiledRoute } from "./core/routing";
-import { AppDocumentationManager, DocsConfig } from "./core/docs";
-import { readdirSync, statSync } from "fs";
-import { join } from "path";
-import { EventEmitter } from "events";
+} from './core/logger';
+import { IntelligentRoutingManager } from './core/routing/app-integration';
+import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing';
+import { AppDocumentationManager, DocsConfig } from './core/docs';
+import { readdirSync, statSync } from 'fs';
+import { join } from 'path';
+import { EventEmitter } from 'events';
 // Configuration System Integration
-import {
-  initializeConfig,
-  getGlobalConfig,
-  type AppConfig,
-} from "./core/config";
+import { initializeConfig, getGlobalConfig, type AppConfig } from './core/config';
 // Runtime System Integration
 import {
   RuntimeAdapter,
   RuntimeType,
   createRuntimeAdapter,
   NodeRuntimeAdapter,
-} from "./core/runtime";
+} from './core/runtime';
 
 export class Moro extends EventEmitter {
   private coreFramework: MoroCore;
@@ -40,7 +36,7 @@ export class Moro extends EventEmitter {
   // Enterprise event system integration
   private eventBus: MoroEventBus;
   // Application logger
-  private logger = createFrameworkLogger("App");
+  private logger = createFrameworkLogger('App');
   // Intelligent routing system
   private intelligentRouting = new IntelligentRoutingManager();
   // Documentation system
@@ -70,18 +66,14 @@ export class Moro extends EventEmitter {
     }
 
     this.logger.info(
-      `Configuration system initialized: ${this.config.server.environment}:${this.config.server.port}`,
+      `Configuration system initialized: ${this.config.server.environment}:${this.config.server.port}`
     );
 
     // Initialize runtime system
-    this.runtimeType = options.runtime?.type || "node";
-    this.runtimeAdapter =
-      options.runtime?.adapter || createRuntimeAdapter(this.runtimeType);
+    this.runtimeType = options.runtime?.type || 'node';
+    this.runtimeAdapter = options.runtime?.adapter || createRuntimeAdapter(this.runtimeType);
 
-    this.logger.info(
-      `Runtime system initialized: ${this.runtimeType}`,
-      "Runtime",
-    );
+    this.logger.info(`Runtime system initialized: ${this.runtimeType}`, 'Runtime');
 
     this.coreFramework = new MoroCore();
 
@@ -96,11 +88,11 @@ export class Moro extends EventEmitter {
 
     // Auto-discover modules if enabled
     if (options.autoDiscover !== false) {
-      this.autoDiscoverModules(options.modulesPath || "./modules");
+      this.autoDiscoverModules(options.modulesPath || './modules');
     }
 
     // Emit initialization event through enterprise event bus
-    this.eventBus.emit("framework:initialized", {
+    this.eventBus.emit('framework:initialized', {
       options,
       config: this.config,
       runtime: this.runtimeType,
@@ -142,95 +134,75 @@ export class Moro extends EventEmitter {
   // Intelligent route methods - chainable with automatic middleware ordering
   // Overloads for better TypeScript inference
   get(path: string): RouteBuilder;
-  get(
-    path: string,
-    handler: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
-  ): this;
+  get(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   get(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
+    options?: any
   ): RouteBuilder | this {
     if (handler) {
       // Direct route registration
-      return this.addRoute("GET", path, handler, options);
+      return this.addRoute('GET', path, handler, options);
     }
     // Chainable route builder
     return this.intelligentRouting.get(path);
   }
 
   post(path: string): RouteBuilder;
-  post(
-    path: string,
-    handler: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
-  ): this;
+  post(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   post(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
+    options?: any
   ): RouteBuilder | this {
     if (handler) {
       // Direct route registration
-      return this.addRoute("POST", path, handler, options);
+      return this.addRoute('POST', path, handler, options);
     }
     // Chainable route builder
     return this.intelligentRouting.post(path);
   }
 
   put(path: string): RouteBuilder;
-  put(
-    path: string,
-    handler: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
-  ): this;
+  put(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   put(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
+    options?: any
   ): RouteBuilder | this {
     if (handler) {
       // Direct route registration
-      return this.addRoute("PUT", path, handler, options);
+      return this.addRoute('PUT', path, handler, options);
     }
     // Chainable route builder
     return this.intelligentRouting.put(path);
   }
 
   delete(path: string): RouteBuilder;
-  delete(
-    path: string,
-    handler: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
-  ): this;
+  delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   delete(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
+    options?: any
   ): RouteBuilder | this {
     if (handler) {
       // Direct route registration
-      return this.addRoute("DELETE", path, handler, options);
+      return this.addRoute('DELETE', path, handler, options);
     }
     // Chainable route builder
     return this.intelligentRouting.delete(path);
   }
 
   patch(path: string): RouteBuilder;
-  patch(
-    path: string,
-    handler: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
-  ): this;
+  patch(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   patch(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
-    options?: any,
+    options?: any
   ): RouteBuilder | this {
     if (handler) {
       // Direct route registration
-      return this.addRoute("PATCH", path, handler, options);
+      return this.addRoute('PATCH', path, handler, options);
     }
     // Chainable route builder
     return this.intelligentRouting.patch(path);
@@ -245,11 +217,8 @@ export class Moro extends EventEmitter {
   enableDocs(config: DocsConfig): void {
     this.documentation.enableDocs(config, this.intelligentRouting);
 
-    this.logger.info(
-      `API Documentation enabled at ${config.basePath || "/docs"}`,
-      "Documentation",
-    );
-    this.eventBus.emit("docs:enabled", { config });
+    this.logger.info(`API Documentation enabled at ${config.basePath || '/docs'}`, 'Documentation');
+    this.eventBus.emit('docs:enabled', { config });
   }
 
   // Get OpenAPI specification
@@ -275,39 +244,33 @@ export class Moro extends EventEmitter {
   // Universal middleware system - seamlessly handles standard and advanced middleware
   async use(middlewareOrFunction: any, config?: any) {
     // Standard middleware integration (req, res, next pattern)
-    if (
-      typeof middlewareOrFunction === "function" &&
-      middlewareOrFunction.length >= 3
-    ) {
+    if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length >= 3) {
       this.coreFramework.addMiddleware(middlewareOrFunction);
-      this.eventBus.emit("middleware:registered", {
-        type: "standard",
+      this.eventBus.emit('middleware:registered', {
+        type: 'standard',
         middleware: middlewareOrFunction,
       });
       return this;
     }
 
     // Function-style middleware execution
-    if (
-      typeof middlewareOrFunction === "function" &&
-      middlewareOrFunction.length <= 1
-    ) {
+    if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length <= 1) {
       await middlewareOrFunction(this);
-      this.eventBus.emit("middleware:executed", {
-        type: "function",
+      this.eventBus.emit('middleware:executed', {
+        type: 'function',
         middleware: middlewareOrFunction,
       });
       return this;
     }
 
     // Advanced middleware pipeline integration
-    this.eventBus.emit("middleware:advanced", {
+    this.eventBus.emit('middleware:advanced', {
       middleware: middlewareOrFunction,
       config,
     });
     this.logger.debug(
-      "Advanced middleware integration - enhanced capabilities loading...",
-      "Middleware",
+      'Advanced middleware integration - enhanced capabilities loading...',
+      'Middleware'
     );
     return this;
   }
@@ -319,25 +282,24 @@ export class Moro extends EventEmitter {
 
   // Module loading with events
   async loadModule(moduleOrPath: ModuleConfig | string) {
-    this.eventBus.emit("module:loading", {
-      moduleId:
-        typeof moduleOrPath === "string" ? moduleOrPath : moduleOrPath.name,
+    this.eventBus.emit('module:loading', {
+      moduleId: typeof moduleOrPath === 'string' ? moduleOrPath : moduleOrPath.name,
     });
 
-    if (typeof moduleOrPath === "string") {
+    if (typeof moduleOrPath === 'string') {
       const module = await this.importModule(moduleOrPath);
       await this.coreFramework.loadModule(module);
       this.loadedModules.add(moduleOrPath);
-      this.eventBus.emit("module:loaded", {
+      this.eventBus.emit('module:loaded', {
         moduleId: module.name,
-        version: module.version || "1.0.0",
+        version: module.version || '1.0.0',
       });
     } else {
       await this.coreFramework.loadModule(moduleOrPath);
       this.loadedModules.add(moduleOrPath.name);
-      this.eventBus.emit("module:loaded", {
+      this.eventBus.emit('module:loaded', {
         moduleId: moduleOrPath.name,
-        version: moduleOrPath.version || "1.0.0",
+        version: moduleOrPath.version || '1.0.0',
       });
     }
     return this;
@@ -345,9 +307,9 @@ export class Moro extends EventEmitter {
 
   // Database helper with events
   database(adapter: any) {
-    this.eventBus.emit("database:connected", {
+    this.eventBus.emit('database:connected', {
       adapter: adapter.constructor.name,
-      config: "hidden",
+      config: 'hidden',
     });
     this.coreFramework.registerDatabase(adapter);
     return this;
@@ -355,35 +317,35 @@ export class Moro extends EventEmitter {
 
   // WebSocket helper with events
   websocket(namespace: string, handlers: Record<string, Function>) {
-    this.emit("websocket:registering", { namespace, handlers });
+    this.emit('websocket:registering', { namespace, handlers });
 
     const io = this.coreFramework.getIOServer();
     const ns = io.of(namespace);
 
     Object.entries(handlers).forEach(([event, handler]) => {
-      ns.on("connection", (socket) => {
-        this.emit("websocket:connection", { namespace, event, socket });
+      ns.on('connection', socket => {
+        this.emit('websocket:connection', { namespace, event, socket });
 
         socket.on(event, (data, callback) => {
-          this.emit("websocket:event", { namespace, event, data });
+          this.emit('websocket:event', { namespace, event, data });
 
           Promise.resolve(handler(socket, data))
-            .then((result) => {
-              this.emit("websocket:response", { namespace, event, result });
+            .then(result => {
+              this.emit('websocket:response', { namespace, event, result });
               if (callback) callback(result);
               else if (result) socket.emit(`${event}:response`, result);
             })
-            .catch((error) => {
-              this.emit("websocket:error", { namespace, event, error });
+            .catch(error => {
+              this.emit('websocket:error', { namespace, event, error });
               const errorResponse = { success: false, error: error.message };
               if (callback) callback(errorResponse);
-              else socket.emit("error", errorResponse);
+              else socket.emit('error', errorResponse);
             });
         });
       });
     });
 
-    this.emit("websocket:registered", { namespace, handlers });
+    this.emit('websocket:registered', { namespace, handlers });
     return this;
   }
 
@@ -392,41 +354,38 @@ export class Moro extends EventEmitter {
   listen(port: number, host: string, callback?: () => void): void;
   listen(port: number, host?: string | (() => void), callback?: () => void) {
     // Only available for Node.js runtime
-    if (this.runtimeType !== "node") {
+    if (this.runtimeType !== 'node') {
       throw new Error(
-        `listen() is only available for Node.js runtime. Current runtime: ${this.runtimeType}. Use getHandler() for other runtimes.`,
+        `listen() is only available for Node.js runtime. Current runtime: ${this.runtimeType}. Use getHandler() for other runtimes.`
       );
     }
 
     // Handle overloaded parameters (port, callback) or (port, host, callback)
-    if (typeof host === "function") {
+    if (typeof host === 'function') {
       callback = host;
       host = undefined;
     }
-    this.eventBus.emit("server:starting", { port, runtime: this.runtimeType });
+    this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
 
     // Add documentation middleware first (if enabled)
     try {
       const docsMiddleware = this.documentation.getDocsMiddleware();
       this.coreFramework.addMiddleware(docsMiddleware);
-      this.logger.debug("Documentation middleware added", "Documentation");
+      this.logger.debug('Documentation middleware added', 'Documentation');
     } catch (error) {
       // Documentation not enabled, that's fine
-      this.logger.debug("Documentation not enabled", "Documentation");
+      this.logger.debug('Documentation not enabled', 'Documentation');
     }
 
     // Add intelligent routing middleware to handle chainable routes
     this.coreFramework.addMiddleware(
       async (req: HttpRequest, res: HttpResponse, next: () => void) => {
         // Try intelligent routing first
-        const handled = await this.intelligentRouting.handleIntelligentRoute(
-          req,
-          res,
-        );
+        const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
         if (!handled) {
           next(); // Fall back to direct routes
         }
-      },
+      }
     );
 
     // Register direct routes with the HTTP server
@@ -435,31 +394,25 @@ export class Moro extends EventEmitter {
     }
 
     const actualCallback = () => {
-      const displayHost = host || "localhost";
-      this.logger.info("Moro Server Started", "Server");
-      this.logger.info(`Runtime: ${this.runtimeType}`, "Server");
-      this.logger.info(`HTTP API: http://${displayHost}:${port}`, "Server");
-      this.logger.info(`WebSocket: ws://${displayHost}:${port}`, "Server");
-      this.logger.info(
-        "Native Node.js HTTP • Zero Dependencies • Maximum Performance",
-        "Server",
-      );
-      this.logger.info("Learn more at https://morojs.com", "Server");
+      const displayHost = host || 'localhost';
+      this.logger.info('Moro Server Started', 'Server');
+      this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
+      this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
+      this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
+      this.logger.info('Native Node.js HTTP • Zero Dependencies • Maximum Performance', 'Server');
+      this.logger.info('Learn more at https://morojs.com', 'Server');
 
       // Log intelligent routes info
       const intelligentRoutes = this.intelligentRouting.getIntelligentRoutes();
       if (intelligentRoutes.length > 0) {
-        this.logger.info(
-          `Intelligent Routes: ${intelligentRoutes.length} registered`,
-          "Server",
-        );
+        this.logger.info(`Intelligent Routes: ${intelligentRoutes.length} registered`, 'Server');
       }
 
-      this.eventBus.emit("server:started", { port, runtime: this.runtimeType });
+      this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
       if (callback) callback();
     };
 
-    if (host && typeof host === "string") {
+    if (host && typeof host === 'string') {
       this.coreFramework.listen(port, host, actualCallback);
     } else {
       this.coreFramework.listen(port, actualCallback);
@@ -480,10 +433,7 @@ export class Moro extends EventEmitter {
       }
 
       // Try intelligent routing first
-      const handled = await this.intelligentRouting.handleIntelligentRoute(
-        req,
-        res,
-      );
+      const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
       if (handled) return;
 
       // Handle direct routes
@@ -501,7 +451,7 @@ export class Moro extends EventEmitter {
     // Find matching route
     const route = this.findMatchingRoute(req.method!, req.path);
     if (!route) {
-      (res as any).status(404).json({ success: false, error: "Not found" });
+      (res as any).status(404).json({ success: false, error: 'Not found' });
       return;
     }
 
@@ -518,9 +468,7 @@ export class Moro extends EventEmitter {
       // Get handler function
       const handler = this.routeHandlers[route.handler];
       if (!handler) {
-        (res as any)
-          .status(500)
-          .json({ success: false, error: "Handler not found" });
+        (res as any).status(500).json({ success: false, error: 'Handler not found' });
         return;
       }
 
@@ -533,9 +481,9 @@ export class Moro extends EventEmitter {
           if (error.issues) {
             (res as any).status(400).json({
               success: false,
-              error: "Validation failed",
+              error: 'Validation failed',
               details: error.issues.map((issue: any) => ({
-                field: issue.path.length > 0 ? issue.path.join(".") : "body",
+                field: issue.path.length > 0 ? issue.path.join('.') : 'body',
                 message: issue.message,
                 code: issue.code,
               })),
@@ -548,13 +496,13 @@ export class Moro extends EventEmitter {
 
       // Execute rate limiting if present
       if (route.rateLimit) {
-        const clientId = req.ip || "unknown";
+        const clientId = req.ip || 'unknown';
         const key = `${route.method}:${route.path}:${clientId}`;
 
         if (!this.checkRateLimit(key, route.rateLimit)) {
           (res as any).status(429).json({
             success: false,
-            error: "Rate limit exceeded",
+            error: 'Rate limit exceeded',
             retryAfter: Math.ceil(route.rateLimit.window / 1000),
           });
           return;
@@ -570,8 +518,7 @@ export class Moro extends EventEmitter {
       if (!(res as any).headersSent) {
         (res as any).status(500).json({
           success: false,
-          error:
-            error instanceof Error ? error.message : "Internal server error",
+          error: error instanceof Error ? error.message : 'Internal server error',
         });
       }
     }
@@ -597,12 +544,10 @@ export class Moro extends EventEmitter {
   // Convert path to regex (simplified version)
   private pathToRegex(path: string): { pattern: RegExp; paramNames: string[] } {
     const paramNames: string[] = [];
-    const regexPath = path
-      .replace(/\//g, "\\/")
-      .replace(/:([^/]+)/g, (match, paramName) => {
-        paramNames.push(paramName);
-        return "([^/]+)";
-      });
+    const regexPath = path.replace(/\//g, '\\/').replace(/:([^/]+)/g, (match, paramName) => {
+      paramNames.push(paramName);
+      return '([^/]+)';
+    });
 
     return {
       pattern: new RegExp(`^${regexPath}$`),
@@ -621,12 +566,7 @@ export class Moro extends EventEmitter {
   }
 
   // Private methods
-  private addRoute(
-    method: string,
-    path: string,
-    handler: Function,
-    options: any = {},
-  ) {
+  private addRoute(method: string, path: string, handler: Function, options: any = {}) {
     const handlerName = `handler_${this.routes.length}`;
 
     this.routes.push({
@@ -669,10 +609,9 @@ export class Moro extends EventEmitter {
               if (error.issues) {
                 res.status(400).json({
                   success: false,
-                  error: "Validation failed",
+                  error: 'Validation failed',
                   details: error.issues.map((issue: any) => ({
-                    field:
-                      issue.path.length > 0 ? issue.path.join(".") : "body",
+                    field: issue.path.length > 0 ? issue.path.join('.') : 'body',
                     message: issue.message,
                     code: issue.code,
                   })),
@@ -685,14 +624,13 @@ export class Moro extends EventEmitter {
 
           // Rate limiting middleware
           if (route.rateLimit) {
-            const clientId =
-              req.ip || req.connection.remoteAddress || "unknown";
+            const clientId = req.ip || req.connection.remoteAddress || 'unknown';
             const key = `${route.method}:${route.path}:${clientId}`;
 
             if (!this.checkRateLimit(key, route.rateLimit)) {
               res.status(429).json({
                 success: false,
-                error: "Rate limit exceeded",
+                error: 'Rate limit exceeded',
                 retryAfter: Math.ceil(route.rateLimit.window / 1000),
               });
               return;
@@ -708,10 +646,7 @@ export class Moro extends EventEmitter {
           if (!res.headersSent) {
             res.status(500).json({
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Internal server error",
+              error: error instanceof Error ? error.message : 'Internal server error',
             });
           }
         }
@@ -726,15 +661,9 @@ export class Moro extends EventEmitter {
   }
 
   // Simple rate limiting for direct routes
-  private rateLimitStore = new Map<
-    string,
-    { count: number; resetTime: number }
-  >();
+  private rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 
-  private checkRateLimit(
-    key: string,
-    config: { requests: number; window: number },
-  ): boolean {
+  private checkRateLimit(key: string, config: { requests: number; window: number }): boolean {
     const now = Date.now();
     const bucket = this.rateLimitStore.get(key);
 
@@ -758,7 +687,7 @@ export class Moro extends EventEmitter {
   private setupDefaultMiddleware(options: MoroOptions) {
     // CORS
     if (options.cors !== false) {
-      const corsOptions = typeof options.cors === "object" ? options.cors : {};
+      const corsOptions = typeof options.cors === 'object' ? options.cors : {};
       this.use(middleware.cors(corsOptions));
     }
 
@@ -769,13 +698,12 @@ export class Moro extends EventEmitter {
 
     // Compression
     if (options.compression !== false) {
-      const compressionOptions =
-        typeof options.compression === "object" ? options.compression : {};
+      const compressionOptions = typeof options.compression === 'object' ? options.compression : {};
       this.use(middleware.compression(compressionOptions));
     }
 
     // Body size limiting
-    this.use(middleware.bodySize({ limit: "10mb" }));
+    this.use(middleware.bodySize({ limit: '10mb' }));
   }
 
   private autoDiscoverModules(modulesPath: string) {
@@ -783,14 +711,14 @@ export class Moro extends EventEmitter {
       if (!statSync(modulesPath).isDirectory()) return;
 
       const items = readdirSync(modulesPath);
-      items.forEach((item) => {
+      items.forEach(item => {
         const fullPath = join(modulesPath, item);
         if (statSync(fullPath).isDirectory()) {
-          const indexPath = join(fullPath, "index.ts");
+          const indexPath = join(fullPath, 'index.ts');
           try {
             statSync(indexPath);
             // Module directory found, will be loaded later
-            this.logger.debug(`Discovered module: ${item}`, "ModuleDiscovery");
+            this.logger.debug(`Discovered module: ${item}`, 'ModuleDiscovery');
           } catch {
             // No index.ts, skip
           }
@@ -813,30 +741,30 @@ export function createApp(options?: MoroOptions): Moro {
 }
 
 // Runtime-specific convenience functions
-export function createAppNode(options?: Omit<MoroOptions, "runtime">): Moro {
+export function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Moro {
   return new Moro({
     ...options,
-    runtime: { type: "node" },
+    runtime: { type: 'node' },
   });
 }
 
-export function createAppEdge(options?: Omit<MoroOptions, "runtime">): Moro {
+export function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Moro {
   return new Moro({
     ...options,
-    runtime: { type: "vercel-edge" },
+    runtime: { type: 'vercel-edge' },
   });
 }
 
-export function createAppLambda(options?: Omit<MoroOptions, "runtime">): Moro {
+export function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): Moro {
   return new Moro({
     ...options,
-    runtime: { type: "aws-lambda" },
+    runtime: { type: 'aws-lambda' },
   });
 }
 
-export function createAppWorker(options?: Omit<MoroOptions, "runtime">): Moro {
+export function createAppWorker(options?: Omit<MoroOptions, 'runtime'>): Moro {
   return new Moro({
     ...options,
-    runtime: { type: "cloudflare-workers" },
+    runtime: { type: 'cloudflare-workers' },
   });
 }

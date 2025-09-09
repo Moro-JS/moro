@@ -8,11 +8,11 @@ import {
   createRoute,
   defineRoute,
   HttpMethod,
-} from "./index";
-import { HttpRequest, HttpResponse } from "../http";
-import { createFrameworkLogger } from "../logger";
+} from './index';
+import { HttpRequest, HttpResponse } from '../http';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("AppIntegration");
+const logger = createFrameworkLogger('AppIntegration');
 
 // Extended app interface with intelligent routing
 export interface IntelligentApp {
@@ -32,12 +32,7 @@ export interface IntelligentApp {
   register(route: CompiledRoute): void;
 
   // Direct route method (deprecated)
-  directRoute(
-    method: string,
-    path: string,
-    handler: Function,
-    options?: any,
-  ): void;
+  directRoute(method: string, path: string, handler: Function, options?: any): void;
 }
 
 // Route registry for managing compiled routes
@@ -63,7 +58,7 @@ export class RouteRegistry {
       paramNames,
     });
 
-    logger.debug(`Registered route: ${key}`, "RouteRegistry", {
+    logger.debug(`Registered route: ${key}`, 'RouteRegistry', {
       path: route.schema.path,
       hasValidation: !!route.schema.validation,
       hasAuth: !!route.schema.auth,
@@ -105,10 +100,10 @@ export class RouteRegistry {
 
     // Convert path parameters like :id to regex groups
     const regexPath = path
-      .replace(/\//g, "\\/") // Escape forward slashes
+      .replace(/\//g, '\\/') // Escape forward slashes
       .replace(/:([^/]+)/g, (match, paramName) => {
         paramNames.push(paramName);
-        return "([^/]+)"; // Match parameter value
+        return '([^/]+)'; // Match parameter value
       });
 
     return {
@@ -124,31 +119,31 @@ export class IntelligentRoutingManager implements IntelligentApp {
 
   // Chainable route methods
   get(path: string): RouteBuilder {
-    return this.createChainableRoute("GET", path);
+    return this.createChainableRoute('GET', path);
   }
 
   post(path: string): RouteBuilder {
-    return this.createChainableRoute("POST", path);
+    return this.createChainableRoute('POST', path);
   }
 
   put(path: string): RouteBuilder {
-    return this.createChainableRoute("PUT", path);
+    return this.createChainableRoute('PUT', path);
   }
 
   delete(path: string): RouteBuilder {
-    return this.createChainableRoute("DELETE", path);
+    return this.createChainableRoute('DELETE', path);
   }
 
   patch(path: string): RouteBuilder {
-    return this.createChainableRoute("PATCH", path);
+    return this.createChainableRoute('PATCH', path);
   }
 
   head(path: string): RouteBuilder {
-    return this.createChainableRoute("HEAD", path);
+    return this.createChainableRoute('HEAD', path);
   }
 
   options(path: string): RouteBuilder {
-    return this.createChainableRoute("OPTIONS", path);
+    return this.createChainableRoute('OPTIONS', path);
   }
 
   // Schema-first route method
@@ -164,10 +159,7 @@ export class IntelligentRoutingManager implements IntelligentApp {
   }
 
   // Handle incoming requests with intelligent routing
-  async handleIntelligentRoute(
-    req: HttpRequest,
-    res: HttpResponse,
-  ): Promise<boolean> {
+  async handleIntelligentRoute(req: HttpRequest, res: HttpResponse): Promise<boolean> {
     return await this.routeRegistry.handleRequest(req, res);
   }
 
@@ -177,16 +169,11 @@ export class IntelligentRoutingManager implements IntelligentApp {
   }
 
   // Direct route method (deprecated)
-  directRoute(
-    method: string,
-    path: string,
-    handler: Function,
-    options?: any,
-  ): void {
-    logger.warn("Using deprecated direct route method", "DirectRoute", {
+  directRoute(method: string, path: string, handler: Function, options?: any): void {
+    logger.warn('Using deprecated direct route method', 'DirectRoute', {
       method,
       path,
-      suggestion: "Use chainable or schema-first API instead",
+      suggestion: 'Use chainable or schema-first API instead',
     });
 
     // Convert direct options to new schema format

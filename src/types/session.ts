@@ -22,14 +22,14 @@ export interface SessionInstance {
 
   // Session properties
   readonly sessionID: string;
-  readonly cookie?: SessionData["cookie"];
+  readonly cookie?: SessionData['cookie'];
   readonly isNew?: boolean;
   readonly isModified?: boolean;
 }
 
 export interface SessionOptions {
   // Store configuration
-  store?: "memory" | "redis" | "file" | any;
+  store?: 'memory' | 'redis' | 'file' | any;
   storeOptions?: {
     // Redis options
     host?: string;
@@ -56,14 +56,14 @@ export interface SessionOptions {
     expires?: Date; // Absolute expiry
     httpOnly?: boolean; // Prevent XSS access
     secure?: boolean; // HTTPS only
-    sameSite?: "strict" | "lax" | "none";
+    sameSite?: 'strict' | 'lax' | 'none';
     domain?: string;
     path?: string;
   };
 
   // Security
   proxy?: boolean; // Trust proxy for secure cookies
-  unset?: "destroy" | "keep"; // What to do when session is unset
+  unset?: 'destroy' | 'keep'; // What to do when session is unset
 }
 
 // Extend the HTTP request type to include session

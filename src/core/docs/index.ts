@@ -1,23 +1,19 @@
 // Moro Framework Documentation System
 // Automatic API documentation generation from intelligent routes and Zod schemas
 
-import { CompiledRoute } from "../routing";
-import { IntelligentRoutingManager } from "../routing/app-integration";
+import { CompiledRoute } from '../routing';
+import { IntelligentRoutingManager } from '../routing/app-integration';
 import {
   OpenAPIGenerator,
   generateOpenAPIFromRoutes,
   GenerationOptions,
   OpenAPISpec,
   defaultSecuritySchemes,
-} from "./openapi-generator";
-import {
-  SwaggerUIMiddleware,
-  SwaggerUIOptions,
-  createDocsMiddleware,
-} from "./swagger-ui";
-import { createFrameworkLogger } from "../logger";
+} from './openapi-generator';
+import { SwaggerUIMiddleware, SwaggerUIOptions, createDocsMiddleware } from './swagger-ui';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("DocumentationSystem");
+const logger = createFrameworkLogger('DocumentationSystem');
 
 // Documentation configuration
 export interface DocsConfig {
@@ -49,7 +45,7 @@ export class DocumentationSystem {
 
   constructor(config: DocsConfig) {
     this.config = {
-      basePath: "/docs",
+      basePath: '/docs',
       includeExamples: true,
       includeSchemas: true,
       enableAuth: true,
@@ -68,21 +64,16 @@ export class DocumentationSystem {
       servers: this.config.servers,
       includeExamples: this.config.includeExamples,
       includeSchemas: this.config.includeSchemas,
-      securitySchemes: this.config.enableAuth
-        ? defaultSecuritySchemes
-        : undefined,
+      securitySchemes: this.config.enableAuth ? defaultSecuritySchemes : undefined,
     };
 
     this.generator = new OpenAPIGenerator(generationOptions);
 
     // Initialize with empty spec
     const initialSpec = this.generator.generate();
-    this.swaggerUI = new SwaggerUIMiddleware(
-      initialSpec,
-      this.config.swaggerUI,
-    );
+    this.swaggerUI = new SwaggerUIMiddleware(initialSpec, this.config.swaggerUI);
 
-    logger.info("Documentation system initialized", "Initialization", {
+    logger.info('Documentation system initialized', 'Initialization', {
       title: this.config.title,
       basePath: this.config.basePath,
       includeExamples: this.config.includeExamples,
@@ -97,7 +88,7 @@ export class DocumentationSystem {
     // Update Swagger UI with new spec
     this.swaggerUI.updateSpec(spec);
 
-    logger.info("Documentation generated from routes", "Generation", {
+    logger.info('Documentation generated from routes', 'Generation', {
       routeCount: routes.length,
       pathCount: Object.keys(spec.paths).length,
     });
@@ -128,7 +119,7 @@ export class DocumentationSystem {
   // Update configuration
   updateConfig(newConfig: Partial<DocsConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    logger.debug("Documentation configuration updated", "ConfigUpdate", {
+    logger.debug('Documentation configuration updated', 'ConfigUpdate', {
       title: this.config.title,
       basePath: this.config.basePath,
     });
@@ -156,10 +147,7 @@ export class AppDocumentationManager {
   private routingManager?: IntelligentRoutingManager;
 
   // Initialize documentation system
-  enableDocs(
-    config: DocsConfig,
-    routingManager: IntelligentRoutingManager,
-  ): void {
+  enableDocs(config: DocsConfig, routingManager: IntelligentRoutingManager): void {
     this.routingManager = routingManager;
     this.docSystem = new DocumentationSystem(config);
 
@@ -167,7 +155,7 @@ export class AppDocumentationManager {
     const routes = routingManager.getIntelligentRoutes();
     this.docSystem.generateFromRoutes(routes);
 
-    logger.info("Documentation enabled for app", "AppIntegration", {
+    logger.info('Documentation enabled for app', 'AppIntegration', {
       title: config.title,
       routeCount: routes.length,
       basePath: config.basePath,
@@ -177,7 +165,7 @@ export class AppDocumentationManager {
   // Get documentation middleware
   getDocsMiddleware() {
     if (!this.docSystem) {
-      throw new Error("Documentation not enabled. Call enableDocs() first.");
+      throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
     return this.docSystem.createMiddleware();
   }
@@ -185,13 +173,13 @@ export class AppDocumentationManager {
   // Refresh documentation (useful after adding new routes)
   refreshDocs(): void {
     if (!this.docSystem || !this.routingManager) {
-      throw new Error("Documentation not enabled. Call enableDocs() first.");
+      throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
 
     const routes = this.routingManager.getIntelligentRoutes();
     this.docSystem.generateFromRoutes(routes);
 
-    logger.debug("Documentation refreshed", "Refresh", {
+    logger.debug('Documentation refreshed', 'Refresh', {
       routeCount: routes.length,
     });
   }
@@ -199,7 +187,7 @@ export class AppDocumentationManager {
   // Get current OpenAPI spec
   getOpenAPISpec(): OpenAPISpec {
     if (!this.docSystem) {
-      throw new Error("Documentation not enabled. Call enableDocs() first.");
+      throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
     return this.docSystem.getSpec();
   }
@@ -207,7 +195,7 @@ export class AppDocumentationManager {
   // Get docs as JSON
   getDocsJSON(): string {
     if (!this.docSystem) {
-      throw new Error("Documentation not enabled. Call enableDocs() first.");
+      throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
     return this.docSystem.getOpenAPIJSON();
   }
@@ -215,22 +203,20 @@ export class AppDocumentationManager {
   // Get docs as YAML
   getDocsYAML(): string {
     if (!this.docSystem) {
-      throw new Error("Documentation not enabled. Call enableDocs() first.");
+      throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
     return this.docSystem.getOpenAPIYAML();
   }
 }
 
 // Convenience functions
-export function createDocumentationSystem(
-  config: DocsConfig,
-): DocumentationSystem {
+export function createDocumentationSystem(config: DocsConfig): DocumentationSystem {
   return new DocumentationSystem(config);
 }
 
 export function generateDocsFromIntelligentRoutes(
   routes: CompiledRoute[],
-  config: DocsConfig,
+  config: DocsConfig
 ): { spec: OpenAPISpec; middleware: any } {
   const docSystem = new DocumentationSystem(config);
   const spec = docSystem.generateFromRoutes(routes);
@@ -240,6 +226,6 @@ export function generateDocsFromIntelligentRoutes(
 }
 
 // Export all types and functions
-export * from "./openapi-generator";
-export * from "./swagger-ui";
-export * from "./zod-to-openapi";
+export * from './openapi-generator';
+export * from './swagger-ui';
+export * from './zod-to-openapi';

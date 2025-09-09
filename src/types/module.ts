@@ -1,6 +1,6 @@
 // Module Definition Types
 export interface ModuleRoute {
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   path: string;
   handler: (req: any, res: any) => any | Promise<any>;
   validation?: any;
@@ -50,7 +50,7 @@ export interface ModuleConfig {
 }
 
 export interface InternalRouteDefinition {
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   path: string;
   handler: string;
   middleware?: string[];

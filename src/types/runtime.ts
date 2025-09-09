@@ -1,11 +1,7 @@
 // Runtime abstraction types for multi-environment support
-import { HttpRequest, HttpResponse } from "./http";
+import { HttpRequest, HttpResponse } from './http';
 
-export type RuntimeType =
-  | "node"
-  | "vercel-edge"
-  | "aws-lambda"
-  | "cloudflare-workers";
+export type RuntimeType = 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers';
 
 // Generic runtime request/response interfaces
 export interface RuntimeRequest {
@@ -44,11 +40,7 @@ export interface RuntimeHttpResponse {
 export type NodeHandler = (req: any, res: any) => Promise<void> | void;
 export type EdgeHandler = (request: Request) => Promise<Response>;
 export type LambdaHandler = (event: any, context: any) => Promise<any>;
-export type WorkerHandler = (
-  request: Request,
-  env: any,
-  ctx: any,
-) => Promise<Response>;
+export type WorkerHandler = (request: Request, env: any, ctx: any) => Promise<Response>;
 
 // Runtime adapter interface
 export interface RuntimeAdapter {
@@ -60,21 +52,14 @@ export interface RuntimeAdapter {
   // Convert MoroJS HttpResponse to runtime-specific response
   adaptResponse(
     moroResponse: HttpResponse | RuntimeHttpResponse,
-    runtimeRequest: any,
+    runtimeRequest: any
   ): Promise<any>;
 
   // Create the appropriate server/handler for the runtime
-  createServer(
-    handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
-  ): any;
+  createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): any;
 
   // Start listening (for runtimes that support it)
-  listen?(
-    server: any,
-    port: number,
-    host?: string,
-    callback?: () => void,
-  ): void;
+  listen?(server: any, port: number, host?: string, callback?: () => void): void;
 }
 
 // Runtime configuration

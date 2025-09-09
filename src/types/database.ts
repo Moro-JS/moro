@@ -5,11 +5,7 @@ export interface DatabaseAdapter {
   query<T = any>(sql: string, params?: any[]): Promise<T[]>;
   queryOne<T = any>(sql: string, params?: any[]): Promise<T | null>;
   insert<T = any>(table: string, data: Record<string, any>): Promise<T>;
-  update<T = any>(
-    table: string,
-    data: Record<string, any>,
-    where: Record<string, any>,
-  ): Promise<T>;
+  update<T = any>(table: string, data: Record<string, any>, where: Record<string, any>): Promise<T>;
   delete(table: string, where: Record<string, any>): Promise<number>;
   transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T>;
 }
@@ -18,11 +14,7 @@ export interface DatabaseTransaction {
   query<T = any>(sql: string, params?: any[]): Promise<T[]>;
   queryOne<T = any>(sql: string, params?: any[]): Promise<T | null>;
   insert<T = any>(table: string, data: Record<string, any>): Promise<T>;
-  update<T = any>(
-    table: string,
-    data: Record<string, any>,
-    where: Record<string, any>,
-  ): Promise<T>;
+  update<T = any>(table: string, data: Record<string, any>, where: Record<string, any>): Promise<T>;
   delete(table: string, where: Record<string, any>): Promise<number>;
   commit(): Promise<void>;
   rollback(): Promise<void>;

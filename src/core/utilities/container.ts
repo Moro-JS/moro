@@ -1,22 +1,22 @@
 // Enhanced Functional Dependency Injection Container
-import { EventEmitter } from "events";
+import { EventEmitter } from 'events';
 
 // Service lifecycle states
 export enum ServiceLifecycle {
-  UNINITIALIZED = "uninitialized",
-  INITIALIZING = "initializing",
-  INITIALIZED = "initialized",
-  DISPOSING = "disposing",
-  DISPOSED = "disposed",
-  ERROR = "error",
+  UNINITIALIZED = 'uninitialized',
+  INITIALIZING = 'initializing',
+  INITIALIZED = 'initialized',
+  DISPOSING = 'disposing',
+  DISPOSED = 'disposed',
+  ERROR = 'error',
 }
 
 // Service scopes
 export enum ServiceScope {
-  SINGLETON = "singleton", // One instance per container
-  TRANSIENT = "transient", // New instance every time
-  REQUEST = "request", // One instance per request context
-  MODULE = "module", // One instance per module
+  SINGLETON = 'singleton', // One instance per container
+  TRANSIENT = 'transient', // New instance every time
+  REQUEST = 'request', // One instance per request context
+  MODULE = 'module', // One instance per module
 }
 
 // Service metadata and configuration
@@ -46,7 +46,7 @@ export interface ServiceDefinition<T = any> {
 // Functional factory type
 export type ServiceFactory<T> = (
   dependencies: Record<string, any>,
-  context?: ServiceContext,
+  context?: ServiceContext
 ) => T | Promise<T>;
 
 // Service interceptor for AOP patterns
@@ -54,14 +54,11 @@ export type ServiceInterceptor = (
   serviceName: string,
   dependencies: Record<string, any>,
   context: ServiceContext,
-  next: () => any,
+  next: () => any
 ) => any | Promise<any>;
 
 // Service decorator for functional composition
-export type ServiceDecorator<T> = (
-  instance: T,
-  context: ServiceContext,
-) => T | Promise<T>;
+export type ServiceDecorator<T> = (instance: T, context: ServiceContext) => T | Promise<T>;
 
 // Service context for request-scoped services
 export interface ServiceContext {
@@ -86,9 +83,7 @@ export const withLogging =
   <T>(logger: any) =>
   (factory: ServiceFactory<T>): ServiceFactory<T> =>
   (deps, ctx) => {
-    logger.debug(
-      `Creating service with dependencies: ${Object.keys(deps).join(", ")}`,
-    );
+    logger.debug(`Creating service with dependencies: ${Object.keys(deps).join(', ')}`);
     const start = Date.now();
     const result = factory(deps, ctx);
     logger.debug(`Service created in ${Date.now() - start}ms`);
@@ -100,7 +95,7 @@ export const withCaching =
   (factory: ServiceFactory<T>): ServiceFactory<T> => {
     const cache = new Map<string, { value: T; expires: number }>();
     return async (deps, ctx) => {
-      const key = `${ctx?.requestId || "global"}_${JSON.stringify(deps)}`;
+      const key = `${ctx?.requestId || 'global'}_${JSON.stringify(deps)}`;
       const cached = cache.get(key);
       if (cached && cached.expires > Date.now()) {
         return cached.value;
@@ -122,9 +117,7 @@ export const withRetry =
       } catch (error) {
         lastError = error as Error;
         if (i < maxRetries) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, delay * Math.pow(2, i)),
-          );
+          await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
         }
       }
     }
@@ -139,10 +132,9 @@ export const withTimeout =
       factory(deps, ctx),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () =>
-            reject(new Error(`Service creation timeout after ${timeoutMs}ms`)),
-          timeoutMs,
-        ),
+          () => reject(new Error(`Service creation timeout after ${timeoutMs}ms`)),
+          timeoutMs
+        )
       ),
     ]);
   };
@@ -296,9 +288,7 @@ export class FunctionalContainer extends EventEmitter {
         tags: service.metadata.tags,
         lifecycle: instance?.lifecycle || ServiceLifecycle.UNINITIALIZED,
         accessCount: instance?.accessCount || 0,
-        lastAccessed: instance?.lastAccessed
-          ? new Date(instance.lastAccessed).toISOString()
-          : null,
+        lastAccessed: instance?.lastAccessed ? new Date(instance.lastAccessed).toISOString() : null,
       };
     }
 
@@ -319,7 +309,7 @@ export class FunctionalContainer extends EventEmitter {
           instance.lifecycle = ServiceLifecycle.DISPOSED;
         } catch (error) {
           instance.lifecycle = ServiceLifecycle.ERROR;
-          this.emit("disposeError", { name, error });
+          this.emit('disposeError', { name, error });
         }
       }
     }
@@ -333,7 +323,7 @@ export class FunctionalContainer extends EventEmitter {
   private async createInstance<T>(
     name: string,
     service: ServiceDefinition<T>,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): Promise<ServiceInstance<T>> {
     const instance: ServiceInstance<T> = {
       value: undefined as any,
@@ -346,28 +336,21 @@ export class FunctionalContainer extends EventEmitter {
 
     try {
       // Resolve dependencies
-      const dependencies = await this.resolveDependencies(
-        service.metadata,
-        context,
-      );
+      const dependencies = await this.resolveDependencies(service.metadata, context);
 
       // Apply interceptors
       const interceptedFactory = this.applyInterceptors(
         name,
         service.factory,
         dependencies,
-        context,
+        context
       );
 
       // Create instance
       instance.value = await interceptedFactory();
 
       // Apply decorators
-      instance.value = await this.applyDecorators(
-        instance.value,
-        service.decorators,
-        context,
-      );
+      instance.value = await this.applyDecorators(instance.value, service.decorators, context);
 
       // Run initialization lifecycle
       if (service.metadata.lifecycle?.init) {
@@ -375,10 +358,10 @@ export class FunctionalContainer extends EventEmitter {
       }
 
       instance.lifecycle = ServiceLifecycle.INITIALIZED;
-      this.emit("serviceCreated", { name, instance });
+      this.emit('serviceCreated', { name, instance });
     } catch (error) {
       instance.lifecycle = ServiceLifecycle.ERROR;
-      this.emit("serviceError", { name, error });
+      this.emit('serviceError', { name, error });
 
       // Try fallback if available
       if (service.metadata.fallback) {
@@ -395,19 +378,16 @@ export class FunctionalContainer extends EventEmitter {
   private createInstanceSync<T>(
     name: string,
     service: ServiceDefinition<T>,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): T {
     // Simplified sync version - no async dependencies or lifecycle
-    const dependencies = this.resolveDependenciesSync(
-      service.metadata,
-      context,
-    );
+    const dependencies = this.resolveDependenciesSync(service.metadata, context);
     return service.factory(dependencies, context) as T;
   }
 
   private async resolveDependencies(
     metadata: ServiceMetadata,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): Promise<Record<string, any>> {
     const dependencies: Record<string, any> = {};
 
@@ -428,7 +408,7 @@ export class FunctionalContainer extends EventEmitter {
 
   private resolveDependenciesSync(
     metadata: ServiceMetadata,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): Record<string, any> {
     const dependencies: Record<string, any> = {};
 
@@ -451,24 +431,19 @@ export class FunctionalContainer extends EventEmitter {
     name: string,
     factory: ServiceFactory<any>,
     dependencies: Record<string, any>,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): () => any {
     return [...this.globalInterceptors].reduceRight(
       (next: () => any, interceptor: ServiceInterceptor) => () =>
-        interceptor(
-          name,
-          dependencies,
-          context || this.createDefaultContext(),
-          next,
-        ),
-      () => factory(dependencies, context),
+        interceptor(name, dependencies, context || this.createDefaultContext(), next),
+      () => factory(dependencies, context)
     );
   }
 
   private async applyDecorators<T>(
     instance: T,
     decorators: ServiceDecorator<T>[],
-    context?: ServiceContext,
+    context?: ServiceContext
   ): Promise<T> {
     let result = instance;
     for (const decorator of decorators) {
@@ -477,16 +452,12 @@ export class FunctionalContainer extends EventEmitter {
     return result;
   }
 
-  private getScopeKey(
-    serviceName: string,
-    scope: ServiceScope,
-    context?: ServiceContext,
-  ): string {
+  private getScopeKey(serviceName: string, scope: ServiceScope, context?: ServiceContext): string {
     switch (scope) {
       case ServiceScope.REQUEST:
-        return `${serviceName}:${context?.requestId || "default-request"}`;
+        return `${serviceName}:${context?.requestId || 'default-request'}`;
       case ServiceScope.MODULE:
-        return `${serviceName}:${context?.moduleId || "default-module"}`;
+        return `${serviceName}:${context?.moduleId || 'default-module'}`;
       default:
         return serviceName; // Each singleton service gets its own key
     }
@@ -494,11 +465,11 @@ export class FunctionalContainer extends EventEmitter {
 
   private getInstanceMap(
     scope: ServiceScope,
-    context?: ServiceContext,
+    context?: ServiceContext
   ): Map<string, ServiceInstance> {
     switch (scope) {
       case ServiceScope.REQUEST: {
-        const requestId = context?.requestId || "default-request";
+        const requestId = context?.requestId || 'default-request';
         if (!this.requestScopes.has(requestId)) {
           this.requestScopes.set(requestId, new Map());
         }
@@ -506,7 +477,7 @@ export class FunctionalContainer extends EventEmitter {
       }
 
       case ServiceScope.MODULE: {
-        const moduleId = context?.moduleId || "default-module";
+        const moduleId = context?.moduleId || 'default-module';
         if (!this.moduleScopes.has(moduleId)) {
           this.moduleScopes.set(moduleId, new Map());
         }
@@ -518,10 +489,7 @@ export class FunctionalContainer extends EventEmitter {
     }
   }
 
-  private shouldRecreate(
-    instance: ServiceInstance,
-    metadata: ServiceMetadata,
-  ): boolean {
+  private shouldRecreate(instance: ServiceInstance, metadata: ServiceMetadata): boolean {
     return (
       metadata.scope === ServiceScope.TRANSIENT ||
       instance.lifecycle === ServiceLifecycle.ERROR ||
@@ -545,7 +513,7 @@ export class FunctionalContainer extends EventEmitter {
 
         for (const [requestId, scope] of this.requestScopes) {
           const hasRecentActivity = Array.from(scope.values()).some(
-            (instance) => now - instance.lastAccessed < timeout,
+            instance => now - instance.lastAccessed < timeout
           );
 
           if (!hasRecentActivity) {
@@ -553,7 +521,7 @@ export class FunctionalContainer extends EventEmitter {
           }
         }
       },
-      5 * 60 * 1000,
+      5 * 60 * 1000
     ); // Check every 5 minutes
 
     // Unref the interval so it doesn't keep the process alive during testing
@@ -573,13 +541,13 @@ export class FunctionalContainer extends EventEmitter {
     this.instances.clear();
     this.services.clear();
 
-    this.emit("containerDestroyed");
+    this.emit('containerDestroyed');
   }
 
   // Internal registration method
   _registerService<T>(name: string, definition: ServiceDefinition<T>): this {
     this.services.set(name, definition);
-    this.emit("serviceRegistered", { name, metadata: definition.metadata });
+    this.emit('serviceRegistered', { name, metadata: definition.metadata });
     return this;
   }
 
@@ -603,7 +571,7 @@ export class ServiceRegistrationBuilder<T> {
 
   constructor(
     private container: FunctionalContainer,
-    private name: string,
+    private name: string
   ) {}
 
   // Scope configuration
@@ -629,10 +597,7 @@ export class ServiceRegistrationBuilder<T> {
 
   // Dependencies
   dependsOn(...deps: string[]): this {
-    this.metadata.dependencies = [
-      ...(this.metadata.dependencies || []),
-      ...deps,
-    ];
+    this.metadata.dependencies = [...(this.metadata.dependencies || []), ...deps];
     return this;
   }
 
@@ -685,11 +650,9 @@ export class ServiceRegistrationBuilder<T> {
     return this;
   }
 
-  compose(
-    ...compositionFns: Array<(factory: ServiceFactory<T>) => ServiceFactory<T>>
-  ): this {
+  compose(...compositionFns: Array<(factory: ServiceFactory<T>) => ServiceFactory<T>>): this {
     if (!this._factory) {
-      throw new Error("Factory must be set before composition");
+      throw new Error('Factory must be set before composition');
     }
 
     this._factory = compositionFns.reduce((acc, fn) => fn(acc), this._factory);
@@ -741,7 +704,7 @@ export class Container {
     this.functionalContainer
       .register<T>(name)
       .factory(() => factory())
-      [singleton ? "singleton" : "transient"]()
+      [singleton ? 'singleton' : 'transient']()
       .build();
   }
 

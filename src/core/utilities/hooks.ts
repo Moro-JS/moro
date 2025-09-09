@@ -1,26 +1,26 @@
 // Hook System for Moro
-import { EventEmitter } from "events";
-import { HookFunction, HookContext, MoroMiddleware } from "../../types/hooks";
-import { createFrameworkLogger } from "../logger";
+import { EventEmitter } from 'events';
+import { HookFunction, HookContext, MoroMiddleware } from '../../types/hooks';
+import { createFrameworkLogger } from '../logger';
 
 export const HOOK_EVENTS = {
-  BEFORE_REQUEST: "before:request",
-  AFTER_REQUEST: "after:request",
-  BEFORE_RESPONSE: "before:response",
-  AFTER_RESPONSE: "after:response",
-  ERROR: "error",
+  BEFORE_REQUEST: 'before:request',
+  AFTER_REQUEST: 'after:request',
+  BEFORE_RESPONSE: 'before:response',
+  AFTER_RESPONSE: 'after:response',
+  ERROR: 'error',
 } as const;
 
 export class HookManager extends EventEmitter {
   private hooks = new Map<string, HookFunction[]>();
   private beforeHooks = new Map<string, HookFunction[]>();
   private afterHooks = new Map<string, HookFunction[]>();
-  private logger = createFrameworkLogger("Hooks");
+  private logger = createFrameworkLogger('Hooks');
 
   constructor() {
     super();
     // Initialize hook arrays
-    Object.values(HOOK_EVENTS).forEach((event) => {
+    Object.values(HOOK_EVENTS).forEach(event => {
       this.hooks.set(event, []);
       this.beforeHooks.set(event, []);
       this.afterHooks.set(event, []);
@@ -55,10 +55,7 @@ export class HookManager extends EventEmitter {
   }
 
   // Execute hooks for an event
-  async execute(
-    event: string,
-    context: HookContext = {},
-  ): Promise<HookContext> {
+  async execute(event: string, context: HookContext = {}): Promise<HookContext> {
     // Execute before hooks
     const beforeHooks = this.beforeHooks.get(event) || [];
     for (const hook of beforeHooks) {
@@ -84,16 +81,13 @@ export class HookManager extends EventEmitter {
   }
 
   // Execute a single hook with error handling
-  private async executeHook(
-    hook: HookFunction,
-    context: HookContext,
-  ): Promise<void> {
+  private async executeHook(hook: HookFunction, context: HookContext): Promise<void> {
     try {
       await hook(context);
     } catch (error) {
-      this.logger.error("Hook execution error", "HookExecution", {
+      this.logger.error('Hook execution error', 'HookExecution', {
         error: error instanceof Error ? error.message : String(error),
-        context: context.request?.method || "unknown",
+        context: context.request?.method || 'unknown',
       });
       throw error;
     }
@@ -106,7 +100,7 @@ export class HookManager extends EventEmitter {
       this.beforeHooks.delete(event);
       this.afterHooks.delete(event);
     } else {
-      [this.hooks, this.beforeHooks, this.afterHooks].forEach((map) => {
+      [this.hooks, this.beforeHooks, this.afterHooks].forEach(map => {
         const hooks = map.get(event);
         if (hooks) {
           const index = hooks.indexOf(fn);
@@ -136,7 +130,7 @@ export class HookManager extends EventEmitter {
       ...this.afterHooks.keys(),
     ]);
 
-    allEvents.forEach((event) => {
+    allEvents.forEach(event => {
       allHooks[event] = this.getHooks(event);
     });
 
@@ -145,4 +139,4 @@ export class HookManager extends EventEmitter {
 }
 
 // Built-in middleware - now organized in individual files
-export { simpleMiddleware as middleware } from "../middleware/index";
+export { simpleMiddleware as middleware } from '../middleware/index';

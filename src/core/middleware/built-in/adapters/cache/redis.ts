@@ -1,8 +1,8 @@
 // Redis Cache Adapter
-import { CacheAdapter } from "../../../../../types/cache";
-import { createFrameworkLogger } from "../../../../logger";
+import { CacheAdapter } from '../../../../../types/cache';
+import { createFrameworkLogger } from '../../../../logger';
 
-const logger = createFrameworkLogger("RedisCacheAdapter");
+const logger = createFrameworkLogger('RedisCacheAdapter');
 
 export class RedisCacheAdapter implements CacheAdapter {
   private client: any;
@@ -14,29 +14,26 @@ export class RedisCacheAdapter implements CacheAdapter {
       password?: string;
       db?: number;
       keyPrefix?: string;
-    } = {},
+    } = {}
   ) {
     try {
-      const redis = require("redis");
+      const redis = require('redis');
       this.client = redis.createClient({
-        host: options.host || "localhost",
+        host: options.host || 'localhost',
         port: options.port || 6379,
         password: options.password,
         db: options.db || 0,
-        key_prefix: options.keyPrefix || "moro:cache:",
+        key_prefix: options.keyPrefix || 'moro:cache:',
       });
 
-      this.client.on("error", (err: Error) => {
-        logger.error("Redis cache error", "RedisCache", { error: err.message });
+      this.client.on('error', (err: Error) => {
+        logger.error('Redis cache error', 'RedisCache', { error: err.message });
       });
 
-      logger.info("Redis cache adapter initialized", "RedisCache");
+      logger.info('Redis cache adapter initialized', 'RedisCache');
     } catch (error) {
-      logger.error(
-        "Redis not available, falling back to memory cache",
-        "RedisCache",
-      );
-      throw new Error("Redis package not installed. Run: npm install redis");
+      logger.error('Redis not available, falling back to memory cache', 'RedisCache');
+      throw new Error('Redis package not installed. Run: npm install redis');
     }
   }
 
@@ -45,7 +42,7 @@ export class RedisCacheAdapter implements CacheAdapter {
       const value = await this.client.get(key);
       return value ? JSON.parse(value) : null;
     } catch (error) {
-      logger.error("Redis get error", "RedisCache", { key, error });
+      logger.error('Redis get error', 'RedisCache', { key, error });
       return null;
     }
   }
@@ -58,27 +55,27 @@ export class RedisCacheAdapter implements CacheAdapter {
       } else {
         await this.client.set(key, serialized);
       }
-      logger.debug(`Cached item in Redis: ${key} (TTL: ${ttl}s)`, "RedisCache");
+      logger.debug(`Cached item in Redis: ${key} (TTL: ${ttl}s)`, 'RedisCache');
     } catch (error) {
-      logger.error("Redis set error", "RedisCache", { key, error });
+      logger.error('Redis set error', 'RedisCache', { key, error });
     }
   }
 
   async del(key: string): Promise<void> {
     try {
       await this.client.del(key);
-      logger.debug(`Deleted Redis cache item: ${key}`, "RedisCache");
+      logger.debug(`Deleted Redis cache item: ${key}`, 'RedisCache');
     } catch (error) {
-      logger.error("Redis del error", "RedisCache", { key, error });
+      logger.error('Redis del error', 'RedisCache', { key, error });
     }
   }
 
   async clear(): Promise<void> {
     try {
       await this.client.flushdb();
-      logger.debug("Cleared all Redis cache items", "RedisCache");
+      logger.debug('Cleared all Redis cache items', 'RedisCache');
     } catch (error) {
-      logger.error("Redis clear error", "RedisCache", { error });
+      logger.error('Redis clear error', 'RedisCache', { error });
     }
   }
 
@@ -87,7 +84,7 @@ export class RedisCacheAdapter implements CacheAdapter {
       const exists = await this.client.exists(key);
       return exists === 1;
     } catch (error) {
-      logger.error("Redis exists error", "RedisCache", { key, error });
+      logger.error('Redis exists error', 'RedisCache', { key, error });
       return false;
     }
   }
@@ -96,7 +93,7 @@ export class RedisCacheAdapter implements CacheAdapter {
     try {
       return await this.client.ttl(key);
     } catch (error) {
-      logger.error("Redis TTL error", "RedisCache", { key, error });
+      logger.error('Redis TTL error', 'RedisCache', { key, error });
       return -1;
     }
   }

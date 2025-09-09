@@ -1,6 +1,6 @@
 // Database Redis Adapter
-import { DatabaseAdapter, DatabaseTransaction } from "../../../types/database";
-import { createFrameworkLogger } from "../../logger";
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
+import { createFrameworkLogger } from '../../logger';
 
 interface RedisConfig {
   host?: string;
@@ -20,13 +20,13 @@ interface RedisConfig {
 
 export class RedisAdapter implements DatabaseAdapter {
   private client: any;
-  private logger = createFrameworkLogger("Redis");
+  private logger = createFrameworkLogger('Redis');
   private keyPrefix: string;
 
   constructor(config: RedisConfig = {}) {
     try {
-      const Redis = require("ioredis");
-      this.keyPrefix = config.keyPrefix || "moro:";
+      const Redis = require('ioredis');
+      this.keyPrefix = config.keyPrefix || 'moro:';
 
       if (config.cluster) {
         // Redis Cluster
@@ -37,7 +37,7 @@ export class RedisAdapter implements DatabaseAdapter {
       } else {
         // Single Redis instance
         this.client = new Redis({
-          host: config.host || "localhost",
+          host: config.host || 'localhost',
           port: config.port || 6379,
           password: config.password,
           db: config.db || 0,
@@ -47,24 +47,24 @@ export class RedisAdapter implements DatabaseAdapter {
         });
       }
 
-      this.client.on("error", (err: Error) => {
-        this.logger.error("Redis client error", "Redis", {
+      this.client.on('error', (err: Error) => {
+        this.logger.error('Redis client error', 'Redis', {
           error: err.message,
         });
       });
 
-      this.client.on("connect", () => {
-        this.logger.info("Redis connected", "Connection");
+      this.client.on('connect', () => {
+        this.logger.info('Redis connected', 'Connection');
       });
 
-      this.client.on("disconnect", () => {
-        this.logger.warn("Redis disconnected", "Connection");
+      this.client.on('disconnect', () => {
+        this.logger.warn('Redis disconnected', 'Connection');
       });
 
-      this.logger.info("Redis adapter initialized", "Redis");
+      this.logger.info('Redis adapter initialized', 'Redis');
     } catch (error) {
       throw new Error(
-        "ioredis package is required for Redis adapter. Install it with: npm install ioredis",
+        'ioredis package is required for Redis adapter. Install it with: npm install ioredis'
       );
     }
   }
@@ -76,9 +76,9 @@ export class RedisAdapter implements DatabaseAdapter {
   async connect(): Promise<void> {
     try {
       await this.client.ping();
-      this.logger.info("Redis connection established", "Connection");
+      this.logger.info('Redis connection established', 'Connection');
     } catch (error) {
-      this.logger.error("Redis connection failed", "Connection", {
+      this.logger.error('Redis connection failed', 'Connection', {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -97,11 +97,11 @@ export class RedisAdapter implements DatabaseAdapter {
 
       const values = await this.client.mget(keys);
       return values.map((value: string, index: number) => ({
-        key: keys[index].replace(this.keyPrefix, ""),
+        key: keys[index].replace(this.keyPrefix, ''),
         value: value ? JSON.parse(value) : null,
       }));
     } catch (error) {
-      this.logger.error("Redis query failed", "Query", {
+      this.logger.error('Redis query failed', 'Query', {
         pattern,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -114,7 +114,7 @@ export class RedisAdapter implements DatabaseAdapter {
       const value = await this.client.get(this.prefixKey(key));
       return value ? JSON.parse(value) : null;
     } catch (error) {
-      this.logger.error("Redis queryOne failed", "Query", {
+      this.logger.error('Redis queryOne failed', 'Query', {
         key,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -128,7 +128,7 @@ export class RedisAdapter implements DatabaseAdapter {
       await this.client.set(this.prefixKey(key), value);
       return data as T;
     } catch (error) {
-      this.logger.error("Redis insert failed", "Insert", {
+      this.logger.error('Redis insert failed', 'Insert', {
         key,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -139,7 +139,7 @@ export class RedisAdapter implements DatabaseAdapter {
   async update<T = any>(
     key: string,
     data: Record<string, any>,
-    _where?: Record<string, any>,
+    _where?: Record<string, any>
   ): Promise<T> {
     try {
       // For Redis, we'll merge with existing data if it exists
@@ -149,7 +149,7 @@ export class RedisAdapter implements DatabaseAdapter {
       await this.client.set(this.prefixKey(key), value);
       return merged as T;
     } catch (error) {
-      this.logger.error("Redis update failed", "Update", {
+      this.logger.error('Redis update failed', 'Update', {
         key,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -165,7 +165,7 @@ export class RedisAdapter implements DatabaseAdapter {
       const deletedCount = await this.client.del(...keys);
       return deletedCount;
     } catch (error) {
-      this.logger.error("Redis delete failed", "Delete", {
+      this.logger.error('Redis delete failed', 'Delete', {
         pattern,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -173,9 +173,7 @@ export class RedisAdapter implements DatabaseAdapter {
     }
   }
 
-  async transaction<T>(
-    callback: (tx: DatabaseTransaction) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     const multi = this.client.multi();
     const transaction = new RedisTransaction(multi, this.keyPrefix);
 
@@ -242,7 +240,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async lpush(list: string, ...values: any[]): Promise<number> {
-    const serialized = values.map((v) => JSON.stringify(v));
+    const serialized = values.map(v => JSON.stringify(v));
     return await this.client.lpush(this.prefixKey(list), ...serialized);
   }
 
@@ -260,13 +258,10 @@ export class RedisAdapter implements DatabaseAdapter {
     return await this.client.publish(channel, JSON.stringify(message));
   }
 
-  async subscribe(
-    channel: string,
-    callback: (message: any) => void,
-  ): Promise<void> {
+  async subscribe(channel: string, callback: (message: any) => void): Promise<void> {
     const subscriber = this.client.duplicate();
     subscriber.subscribe(channel);
-    subscriber.on("message", (_channel: string, message: string) => {
+    subscriber.on('message', (_channel: string, message: string) => {
       callback(JSON.parse(message));
     });
   }
@@ -279,7 +274,7 @@ export class RedisAdapter implements DatabaseAdapter {
 class RedisTransaction implements DatabaseTransaction {
   constructor(
     private multi: any,
-    private keyPrefix: string,
+    private keyPrefix: string
   ) {}
 
   private prefixKey(key: string): string {
@@ -290,13 +285,13 @@ class RedisTransaction implements DatabaseTransaction {
     // Note: Redis transactions can't perform read operations during MULTI
     // This is a limitation of Redis transactions
     throw new Error(
-      "Redis transactions cannot perform read operations. Use regular operations instead.",
+      'Redis transactions cannot perform read operations. Use regular operations instead.'
     );
   }
 
   async queryOne<T = any>(_key: string, _params?: any[]): Promise<T | null> {
     throw new Error(
-      "Redis transactions cannot perform read operations. Use regular operations instead.",
+      'Redis transactions cannot perform read operations. Use regular operations instead.'
     );
   }
 
@@ -309,7 +304,7 @@ class RedisTransaction implements DatabaseTransaction {
   async update<T = any>(
     key: string,
     data: Record<string, any>,
-    _where?: Record<string, any>,
+    _where?: Record<string, any>
   ): Promise<T> {
     const value = JSON.stringify(data);
     this.multi.set(this.prefixKey(key), value);

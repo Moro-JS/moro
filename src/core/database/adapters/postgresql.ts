@@ -1,6 +1,6 @@
 // Database PostgreSQL Adapter
-import { DatabaseAdapter, DatabaseTransaction } from "../../../types/database";
-import { createFrameworkLogger } from "../../logger";
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
+import { createFrameworkLogger } from '../../logger';
 
 interface PostgreSQLConfig {
   host?: string;
@@ -14,31 +14,31 @@ interface PostgreSQLConfig {
 
 export class PostgreSQLAdapter implements DatabaseAdapter {
   private pool: any;
-  private logger = createFrameworkLogger("PostgreSQL");
+  private logger = createFrameworkLogger('PostgreSQL');
 
   constructor(config: PostgreSQLConfig) {
     try {
-      const { Pool } = require("pg");
+      const { Pool } = require('pg');
       this.pool = new Pool({
-        host: config.host || "localhost",
+        host: config.host || 'localhost',
         port: config.port || 5432,
-        user: config.user || "postgres",
-        password: config.password || "",
-        database: config.database || "moro_app",
+        user: config.user || 'postgres',
+        password: config.password || '',
+        database: config.database || 'moro_app',
         max: config.connectionLimit || 10,
         ssl: config.ssl || false,
       });
 
-      this.pool.on("error", (err: Error) => {
-        this.logger.error("PostgreSQL pool error", "Pool", {
+      this.pool.on('error', (err: Error) => {
+        this.logger.error('PostgreSQL pool error', 'Pool', {
           error: err.message,
         });
       });
 
-      this.logger.info("PostgreSQL adapter initialized", "PostgreSQL");
+      this.logger.info('PostgreSQL adapter initialized', 'PostgreSQL');
     } catch (error) {
       throw new Error(
-        "pg package is required for PostgreSQL adapter. Install it with: npm install pg",
+        'pg package is required for PostgreSQL adapter. Install it with: npm install pg'
       );
     }
   }
@@ -47,9 +47,9 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     try {
       const client = await this.pool.connect();
       client.release();
-      this.logger.info("PostgreSQL connection established", "Connection");
+      this.logger.info('PostgreSQL connection established', 'Connection');
     } catch (error) {
-      this.logger.error("PostgreSQL connection failed", "Connection", {
+      this.logger.error('PostgreSQL connection failed', 'Connection', {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -73,9 +73,9 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
+    const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders}) RETURNING *`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
     const result = await this.pool.query(sql, values);
 
     return result.rows[0] as T;
@@ -84,19 +84,17 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const dataKeys = Object.keys(data);
     const dataValues = Object.values(data);
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
 
-    const setClause = dataKeys
-      .map((key, index) => `${key} = $${index + 1}`)
-      .join(", ");
+    const setClause = dataKeys.map((key, index) => `${key} = $${index + 1}`).join(', ');
     const whereClause = whereKeys
       .map((key, index) => `${key} = $${dataKeys.length + index + 1}`)
-      .join(" AND ");
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
     const params = [...dataValues, ...whereValues];
@@ -108,9 +106,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
-    const whereClause = whereKeys
-      .map((key, index) => `${key} = $${index + 1}`)
-      .join(" AND ");
+    const whereClause = whereKeys.map((key, index) => `${key} = $${index + 1}`).join(' AND ');
 
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
     const result = await this.pool.query(sql, whereValues);
@@ -118,21 +114,19 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     return result.rowCount || 0;
   }
 
-  async transaction<T>(
-    callback: (tx: DatabaseTransaction) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
 
     try {
-      await client.query("BEGIN");
+      await client.query('BEGIN');
 
       const transaction = new PostgreSQLTransaction(client);
       const result = await callback(transaction);
 
-      await client.query("COMMIT");
+      await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query('ROLLBACK');
       throw error;
     } finally {
       client.release();
@@ -156,9 +150,9 @@ class PostgreSQLTransaction implements DatabaseTransaction {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
+    const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders}) RETURNING *`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
     const result = await this.client.query(sql, values);
 
     return result.rows[0] as T;
@@ -167,19 +161,17 @@ class PostgreSQLTransaction implements DatabaseTransaction {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const dataKeys = Object.keys(data);
     const dataValues = Object.values(data);
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
 
-    const setClause = dataKeys
-      .map((key, index) => `${key} = $${index + 1}`)
-      .join(", ");
+    const setClause = dataKeys.map((key, index) => `${key} = $${index + 1}`).join(', ');
     const whereClause = whereKeys
       .map((key, index) => `${key} = $${dataKeys.length + index + 1}`)
-      .join(" AND ");
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
     const params = [...dataValues, ...whereValues];
@@ -191,9 +183,7 @@ class PostgreSQLTransaction implements DatabaseTransaction {
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
-    const whereClause = whereKeys
-      .map((key, index) => `${key} = $${index + 1}`)
-      .join(" AND ");
+    const whereClause = whereKeys.map((key, index) => `${key} = $${index + 1}`).join(' AND ');
 
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
     const result = await this.client.query(sql, whereValues);
@@ -202,10 +192,10 @@ class PostgreSQLTransaction implements DatabaseTransaction {
   }
 
   async commit(): Promise<void> {
-    await this.client.query("COMMIT");
+    await this.client.query('COMMIT');
   }
 
   async rollback(): Promise<void> {
-    await this.client.query("ROLLBACK");
+    await this.client.query('ROLLBACK');
   }
 }

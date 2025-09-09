@@ -1,8 +1,8 @@
 // Memory Cache Adapter
-import { CacheAdapter } from "../../../../../types/cache";
-import { createFrameworkLogger } from "../../../../logger";
+import { CacheAdapter } from '../../../../../types/cache';
+import { createFrameworkLogger } from '../../../../logger';
 
-const logger = createFrameworkLogger("MemoryCacheAdapter");
+const logger = createFrameworkLogger('MemoryCacheAdapter');
 
 export class MemoryCacheAdapter implements CacheAdapter {
   private cache = new Map<string, { value: any; expires: number }>();
@@ -39,7 +39,7 @@ export class MemoryCacheAdapter implements CacheAdapter {
     }, ttl * 1000);
 
     this.timers.set(key, timer);
-    logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, "MemoryCache");
+    logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, 'MemoryCache');
   }
 
   async del(key: string): Promise<void> {
@@ -49,14 +49,14 @@ export class MemoryCacheAdapter implements CacheAdapter {
       clearTimeout(timer);
       this.timers.delete(key);
     }
-    logger.debug(`Deleted cache item: ${key}`, "MemoryCache");
+    logger.debug(`Deleted cache item: ${key}`, 'MemoryCache');
   }
 
   async clear(): Promise<void> {
     this.cache.clear();
-    this.timers.forEach((timer) => clearTimeout(timer));
+    this.timers.forEach(timer => clearTimeout(timer));
     this.timers.clear();
-    logger.debug("Cleared all cache items", "MemoryCache");
+    logger.debug('Cleared all cache items', 'MemoryCache');
   }
 
   async exists(key: string): Promise<boolean> {

@@ -5,38 +5,34 @@ import {
   HttpHandler,
   Middleware,
   RouteDefinition,
-} from "../../types/http";
-import { createFrameworkLogger } from "../logger";
+} from '../../types/http';
+import { createFrameworkLogger } from '../logger';
 
 export class Router {
   private routes: RouteDefinition[] = [];
-  private logger = createFrameworkLogger("Router");
+  private logger = createFrameworkLogger('Router');
 
   get(path: string, ...handlers: (Middleware | HttpHandler)[]): void {
-    this.addRoute("GET", path, handlers);
+    this.addRoute('GET', path, handlers);
   }
 
   post(path: string, ...handlers: (Middleware | HttpHandler)[]): void {
-    this.addRoute("POST", path, handlers);
+    this.addRoute('POST', path, handlers);
   }
 
   put(path: string, ...handlers: (Middleware | HttpHandler)[]): void {
-    this.addRoute("PUT", path, handlers);
+    this.addRoute('PUT', path, handlers);
   }
 
   delete(path: string, ...handlers: (Middleware | HttpHandler)[]): void {
-    this.addRoute("DELETE", path, handlers);
+    this.addRoute('DELETE', path, handlers);
   }
 
   patch(path: string, ...handlers: (Middleware | HttpHandler)[]): void {
-    this.addRoute("PATCH", path, handlers);
+    this.addRoute('PATCH', path, handlers);
   }
 
-  private addRoute(
-    method: string,
-    path: string,
-    handlers: (Middleware | HttpHandler)[],
-  ): void {
+  private addRoute(method: string, path: string, handlers: (Middleware | HttpHandler)[]): void {
     const { pattern, paramNames } = this.pathToRegex(path);
     const handler = handlers.pop() as HttpHandler;
     const middleware = handlers as Middleware[];
@@ -58,9 +54,9 @@ export class Router {
     const regexPattern = path
       .replace(/\/:([^/]+)/g, (match, paramName) => {
         paramNames.push(paramName);
-        return "/([^/]+)";
+        return '/([^/]+)';
       })
-      .replace(/\//g, "\\/");
+      .replace(/\//g, '\\/');
 
     return {
       pattern: new RegExp(`^${regexPattern}$`),
@@ -68,32 +64,24 @@ export class Router {
     };
   }
 
-  async handle(
-    req: HttpRequest,
-    res: HttpResponse,
-    basePath: string = "",
-  ): Promise<boolean> {
-    let path = req.path.startsWith(basePath)
-      ? req.path.substring(basePath.length)
-      : req.path;
+  async handle(req: HttpRequest, res: HttpResponse, basePath: string = ''): Promise<boolean> {
+    let path = req.path.startsWith(basePath) ? req.path.substring(basePath.length) : req.path;
 
     // If removing basePath results in empty string, default to '/'
-    if (path === "" || path === undefined) {
-      path = "/";
+    if (path === '' || path === undefined) {
+      path = '/';
     }
 
     this.logger.debug(
       `Router processing: originalPath="${req.path}", basePath="${basePath}", processedPath="${path}"`,
-      "Processing",
+      'Processing'
     );
 
-    const route = this.routes.find(
-      (r) => r.method === req.method && r.pattern.test(path),
-    );
+    const route = this.routes.find(r => r.method === req.method && r.pattern.test(path));
 
     this.logger.debug(
-      `Found route: ${!!route}${route ? ` ${route.method} ${route.path}` : " none"}`,
-      "RouteMatch",
+      `Found route: ${!!route}${route ? ` ${route.method} ${route.path}` : ' none'}`,
+      'RouteMatch'
     );
 
     if (!route) {

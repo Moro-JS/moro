@@ -1,6 +1,6 @@
 // Database MySQL Adapter
-import { DatabaseAdapter, DatabaseTransaction } from "../../../types/database";
-import { createFrameworkLogger } from "../../logger";
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
+import { createFrameworkLogger } from '../../logger';
 
 interface MySQLConfig {
   host?: string;
@@ -13,24 +13,24 @@ interface MySQLConfig {
 
 export class MySQLAdapter implements DatabaseAdapter {
   private pool: any;
-  private logger = createFrameworkLogger("MySQL");
+  private logger = createFrameworkLogger('MySQL');
 
   constructor(config: MySQLConfig) {
     try {
-      const mysql = require("mysql2/promise");
+      const mysql = require('mysql2/promise');
       this.pool = mysql.createPool({
-        host: config.host || "localhost",
+        host: config.host || 'localhost',
         port: config.port || 3306,
-        user: config.user || "root",
-        password: config.password || "",
-        database: config.database || "moro_app",
+        user: config.user || 'root',
+        password: config.password || '',
+        database: config.database || 'moro_app',
         waitForConnections: true,
         connectionLimit: config.connectionLimit || 10,
         queueLimit: 0,
       });
     } catch (error) {
       throw new Error(
-        "mysql2 package is required for MySQL adapter. Install it with: npm install mysql2",
+        'mysql2 package is required for MySQL adapter. Install it with: npm install mysql2'
       );
     }
   }
@@ -39,9 +39,9 @@ export class MySQLAdapter implements DatabaseAdapter {
     try {
       const connection = await this.pool.getConnection();
       connection.release();
-      this.logger.info("MySQL connection established", "Connection");
+      this.logger.info('MySQL connection established', 'Connection');
     } catch (error) {
-      this.logger.error("MySQL connection failed", "Connection", {
+      this.logger.error('MySQL connection failed', 'Connection', {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -65,16 +65,15 @@ export class MySQLAdapter implements DatabaseAdapter {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map(() => "?").join(", ");
+    const placeholders = keys.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
     const [result] = (await this.pool.execute(sql, values)) as any;
 
     // Return the inserted record
-    const insertedRecord = await this.queryOne<T>(
-      `SELECT * FROM ${table} WHERE id = ?`,
-      [result.insertId],
-    );
+    const insertedRecord = await this.queryOne<T>(`SELECT * FROM ${table} WHERE id = ?`, [
+      result.insertId,
+    ]);
 
     return insertedRecord!;
   }
@@ -82,14 +81,14 @@ export class MySQLAdapter implements DatabaseAdapter {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const setClause = Object.keys(data)
-      .map((key) => `${key} = ?`)
-      .join(", ");
+      .map(key => `${key} = ?`)
+      .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
     const params = [...Object.values(data), ...Object.values(where)];
@@ -99,7 +98,7 @@ export class MySQLAdapter implements DatabaseAdapter {
     // Return the updated record
     const updatedRecord = await this.queryOne<T>(
       `SELECT * FROM ${table} WHERE ${whereClause}`,
-      Object.values(where),
+      Object.values(where)
     );
 
     return updatedRecord!;
@@ -107,20 +106,15 @@ export class MySQLAdapter implements DatabaseAdapter {
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
 
-    const [result] = (await this.pool.execute(
-      sql,
-      Object.values(where),
-    )) as any;
+    const [result] = (await this.pool.execute(sql, Object.values(where))) as any;
     return result.affectedRows;
   }
 
-  async transaction<T>(
-    callback: (tx: DatabaseTransaction) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     const connection = await this.pool.getConnection();
 
     try {
@@ -156,15 +150,14 @@ class MySQLTransaction implements DatabaseTransaction {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map(() => "?").join(", ");
+    const placeholders = keys.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
     const [result] = (await this.connection.execute(sql, values)) as any;
 
-    const insertedRecord = await this.queryOne<T>(
-      `SELECT * FROM ${table} WHERE id = ?`,
-      [result.insertId],
-    );
+    const insertedRecord = await this.queryOne<T>(`SELECT * FROM ${table} WHERE id = ?`, [
+      result.insertId,
+    ]);
 
     return insertedRecord!;
   }
@@ -172,14 +165,14 @@ class MySQLTransaction implements DatabaseTransaction {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const setClause = Object.keys(data)
-      .map((key) => `${key} = ?`)
-      .join(", ");
+      .map(key => `${key} = ?`)
+      .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
     const params = [...Object.values(data), ...Object.values(where)];
@@ -188,7 +181,7 @@ class MySQLTransaction implements DatabaseTransaction {
 
     const updatedRecord = await this.queryOne<T>(
       `SELECT * FROM ${table} WHERE ${whereClause}`,
-      Object.values(where),
+      Object.values(where)
     );
 
     return updatedRecord!;
@@ -196,14 +189,11 @@ class MySQLTransaction implements DatabaseTransaction {
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
 
-    const [result] = (await this.connection.execute(
-      sql,
-      Object.values(where),
-    )) as any;
+    const [result] = (await this.connection.execute(sql, Object.values(where))) as any;
     return result.affectedRows;
   }
 

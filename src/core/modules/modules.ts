@@ -1,13 +1,9 @@
 // Module System - Definition and Loading
-import { promises as fs } from "fs";
-import path from "path";
-import { Container } from "../utilities";
-import { ModuleConfig } from "../../types/module";
-import {
-  ModuleDefinition,
-  ModuleRoute,
-  ModuleSocket,
-} from "../../types/module";
+import { promises as fs } from 'fs';
+import path from 'path';
+import { Container } from '../utilities';
+import { ModuleConfig } from '../../types/module';
+import { ModuleDefinition, ModuleRoute, ModuleSocket } from '../../types/module';
 
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {
@@ -35,7 +31,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
         acc[`route_handler_${index}`] = route.handler;
         return acc;
       },
-      {} as Record<string, Function>,
+      {} as Record<string, Function>
     );
   }
 
@@ -56,7 +52,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
         acc[`socket_handler_${index}`] = socket.handler;
         return acc;
       },
-      {} as Record<string, Function>,
+      {} as Record<string, Function>
     );
   }
 
@@ -81,7 +77,7 @@ export class ModuleLoader {
 
       for (const entry of entries) {
         if (entry.isDirectory()) {
-          const modulePath = path.join(moduleDir, entry.name, "index.ts");
+          const modulePath = path.join(moduleDir, entry.name, 'index.ts');
 
           try {
             await fs.access(modulePath);
@@ -90,25 +86,20 @@ export class ModuleLoader {
             // Look for exported module config
             for (const exportName of Object.keys(moduleExports)) {
               const exported = moduleExports[exportName];
-              if (
-                exported &&
-                typeof exported === "object" &&
-                exported.name &&
-                exported.version
-              ) {
+              if (exported && typeof exported === 'object' && exported.name && exported.version) {
                 modules.push(exported as ModuleConfig);
               }
             }
           } catch (error) {
             console.warn(
               `⚠️  Could not load module from ${modulePath}:`,
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.message : String(error)
             );
           }
         }
       }
     } catch (error) {
-      console.error("Failed to discover modules:", error);
+      console.error('Failed to discover modules:', error);
     }
 
     return modules;

@@ -1,11 +1,11 @@
 // Error tracking middleware
-import { createFrameworkLogger } from "../../logger";
+import { createFrameworkLogger } from '../../logger';
 
-const logger = createFrameworkLogger("ErrorTracker");
+const logger = createFrameworkLogger('ErrorTracker');
 
 export const errorTracker = async (context: any): Promise<void> => {
   context.onError = (error: Error) => {
-    logger.error("Request error", "ErrorTracking", {
+    logger.error('Request error', 'ErrorTracking', {
       error: error.message,
       stack: error.stack,
       url: context.request?.url,

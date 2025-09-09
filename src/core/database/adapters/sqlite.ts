@@ -1,6 +1,6 @@
 // Database SQLite Adapter
-import { DatabaseAdapter, DatabaseTransaction } from "../../../types/database";
-import { createFrameworkLogger } from "../../logger";
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
+import { createFrameworkLogger } from '../../logger';
 
 interface SQLiteConfig {
   filename?: string;
@@ -13,39 +13,35 @@ interface SQLiteConfig {
 
 export class SQLiteAdapter implements DatabaseAdapter {
   private db: any;
-  private logger = createFrameworkLogger("SQLite");
+  private logger = createFrameworkLogger('SQLite');
 
   constructor(config: SQLiteConfig = {}) {
     try {
-      const Database = require("better-sqlite3");
-      const filename = config.memory
-        ? ":memory:"
-        : config.filename || "moro_app.db";
+      const Database = require('better-sqlite3');
+      const filename = config.memory ? ':memory:' : config.filename || 'moro_app.db';
       this.db = new Database(filename, {
         readonly: config.readonly || false,
         fileMustExist: config.fileMustExist || false,
         timeout: config.timeout || 5000,
-        verbose: config.verbose
-          ? this.logger.debug.bind(this.logger)
-          : undefined,
+        verbose: config.verbose ? this.logger.debug.bind(this.logger) : undefined,
       });
 
       // Enable foreign keys
-      this.db.pragma("foreign_keys = ON");
+      this.db.pragma('foreign_keys = ON');
 
-      this.logger.info("SQLite connection established", "Connection", {
+      this.logger.info('SQLite connection established', 'Connection', {
         filename,
       });
     } catch (error) {
       throw new Error(
-        "better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3",
+        'better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3'
       );
     }
   }
 
   async connect(): Promise<void> {
     // SQLite doesn't require explicit connection - it's handled in constructor
-    this.logger.info("SQLite adapter ready", "Connection");
+    this.logger.info('SQLite adapter ready', 'Connection');
   }
 
   async disconnect(): Promise<void> {
@@ -58,7 +54,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
       const results = stmt.all(params || []);
       return results as T[];
     } catch (error) {
-      this.logger.error("SQLite query failed", "Query", {
+      this.logger.error('SQLite query failed', 'Query', {
         sql,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -72,7 +68,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
       const result = stmt.get(params || []);
       return (result as T) || null;
     } catch (error) {
-      this.logger.error("SQLite queryOne failed", "Query", {
+      this.logger.error('SQLite queryOne failed', 'Query', {
         sql,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -83,23 +79,22 @@ export class SQLiteAdapter implements DatabaseAdapter {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map(() => "?").join(", ");
+    const placeholders = keys.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
 
     try {
       const stmt = this.db.prepare(sql);
       const info = stmt.run(values);
 
       // Return the inserted record
-      const insertedRecord = await this.queryOne<T>(
-        `SELECT * FROM ${table} WHERE rowid = ?`,
-        [info.lastInsertRowid],
-      );
+      const insertedRecord = await this.queryOne<T>(`SELECT * FROM ${table} WHERE rowid = ?`, [
+        info.lastInsertRowid,
+      ]);
 
       return insertedRecord!;
     } catch (error) {
-      this.logger.error("SQLite insert failed", "Insert", {
+      this.logger.error('SQLite insert failed', 'Insert', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -110,14 +105,14 @@ export class SQLiteAdapter implements DatabaseAdapter {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const setClause = Object.keys(data)
-      .map((key) => `${key} = ?`)
-      .join(", ");
+      .map(key => `${key} = ?`)
+      .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
     const params = [...Object.values(data), ...Object.values(where)];
@@ -129,12 +124,12 @@ export class SQLiteAdapter implements DatabaseAdapter {
       // Return the updated record
       const updatedRecord = await this.queryOne<T>(
         `SELECT * FROM ${table} WHERE ${whereClause}`,
-        Object.values(where),
+        Object.values(where)
       );
 
       return updatedRecord!;
     } catch (error) {
-      this.logger.error("SQLite update failed", "Update", {
+      this.logger.error('SQLite update failed', 'Update', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -144,8 +139,8 @@ export class SQLiteAdapter implements DatabaseAdapter {
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
 
     try {
@@ -153,7 +148,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
       const info = stmt.run(Object.values(where));
       return info.changes;
     } catch (error) {
-      this.logger.error("SQLite delete failed", "Delete", {
+      this.logger.error('SQLite delete failed', 'Delete', {
         table,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -161,9 +156,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
     }
   }
 
-  async transaction<T>(
-    callback: (tx: DatabaseTransaction) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     const transaction = this.db.transaction(async () => {
       const tx = new SQLiteTransaction(this.db);
       return await callback(tx);
@@ -191,16 +184,15 @@ class SQLiteTransaction implements DatabaseTransaction {
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
     const keys = Object.keys(data);
     const values = Object.values(data);
-    const placeholders = keys.map(() => "?").join(", ");
+    const placeholders = keys.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
     const stmt = this.db.prepare(sql);
     const info = stmt.run(values);
 
-    const insertedRecord = await this.queryOne<T>(
-      `SELECT * FROM ${table} WHERE rowid = ?`,
-      [info.lastInsertRowid],
-    );
+    const insertedRecord = await this.queryOne<T>(`SELECT * FROM ${table} WHERE rowid = ?`, [
+      info.lastInsertRowid,
+    ]);
 
     return insertedRecord!;
   }
@@ -208,14 +200,14 @@ class SQLiteTransaction implements DatabaseTransaction {
   async update<T = any>(
     table: string,
     data: Record<string, any>,
-    where: Record<string, any>,
+    where: Record<string, any>
   ): Promise<T> {
     const setClause = Object.keys(data)
-      .map((key) => `${key} = ?`)
-      .join(", ");
+      .map(key => `${key} = ?`)
+      .join(', ');
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
 
     const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
     const params = [...Object.values(data), ...Object.values(where)];
@@ -225,7 +217,7 @@ class SQLiteTransaction implements DatabaseTransaction {
 
     const updatedRecord = await this.queryOne<T>(
       `SELECT * FROM ${table} WHERE ${whereClause}`,
-      Object.values(where),
+      Object.values(where)
     );
 
     return updatedRecord!;
@@ -233,8 +225,8 @@ class SQLiteTransaction implements DatabaseTransaction {
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereClause = Object.keys(where)
-      .map((key) => `${key} = ?`)
-      .join(" AND ");
+      .map(key => `${key} = ?`)
+      .join(' AND ');
     const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
 
     const stmt = this.db.prepare(sql);
@@ -250,6 +242,6 @@ class SQLiteTransaction implements DatabaseTransaction {
   async rollback(): Promise<void> {
     // SQLite transactions are handled automatically by better-sqlite3
     // This is just for interface compatibility
-    throw new Error("Transaction rollback");
+    throw new Error('Transaction rollback');
   }
 }

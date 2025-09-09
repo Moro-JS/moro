@@ -1,8 +1,8 @@
 // Auto-discovery system for Moro modules
-import { readdirSync, statSync } from "fs";
-import { join, extname } from "path";
-import { ModuleConfig } from "../../types/module";
-import { DiscoveryOptions } from "../../types/discovery";
+import { readdirSync, statSync } from 'fs';
+import { join, extname } from 'path';
+import { ModuleConfig } from '../../types/module';
+import { DiscoveryOptions } from '../../types/discovery';
 
 export class ModuleDiscovery {
   private baseDir: string;
@@ -13,7 +13,7 @@ export class ModuleDiscovery {
     this.options = {
       pattern: /\.(module|config)\.(ts|js)$/,
       recursive: true,
-      extensions: [".ts", ".js"],
+      extensions: ['.ts', '.js'],
       ...options,
     };
   }
@@ -29,7 +29,7 @@ export class ModuleDiscovery {
         if (module) {
           modules.push(module);
           console.log(
-            `Auto-discovered module: ${module.name}@${module.version} from ${modulePath}`,
+            `Auto-discovered module: ${module.name}@${module.version} from ${modulePath}`
           );
         }
       } catch (error) {
@@ -41,9 +41,7 @@ export class ModuleDiscovery {
   }
 
   // Find modules by directory structure
-  async discoverModuleDirectories(
-    modulesDir: string = "src/modules",
-  ): Promise<ModuleConfig[]> {
+  async discoverModuleDirectories(modulesDir: string = 'src/modules'): Promise<ModuleConfig[]> {
     const modules: ModuleConfig[] = [];
     const fullPath = join(this.baseDir, modulesDir);
 
@@ -58,21 +56,19 @@ export class ModuleDiscovery {
         const itemPath = join(fullPath, item);
 
         if (statSync(itemPath).isDirectory()) {
-          const indexPath = join(itemPath, "index.ts");
+          const indexPath = join(itemPath, 'index.ts');
 
           try {
             if (statSync(indexPath).isFile()) {
               const module = await this.loadModule(indexPath);
               if (module) {
                 modules.push(module);
-                console.log(
-                  `Auto-discovered module directory: ${module.name} from ${item}/`,
-                );
+                console.log(`Auto-discovered module directory: ${module.name} from ${item}/`);
               }
             }
           } catch {
             // Try alternate patterns
-            const alternates = ["module.ts", `${item}.module.ts`, "config.ts"];
+            const alternates = ['module.ts', `${item}.module.ts`, 'config.ts'];
 
             for (const alt of alternates) {
               const altPath = join(itemPath, alt);
@@ -81,9 +77,7 @@ export class ModuleDiscovery {
                   const module = await this.loadModule(altPath);
                   if (module) {
                     modules.push(module);
-                    console.log(
-                      `Auto-discovered module: ${module.name} from ${item}/${alt}`,
-                    );
+                    console.log(`Auto-discovered module: ${module.name} from ${item}/${alt}`);
                     break;
                   }
                 }
@@ -105,7 +99,7 @@ export class ModuleDiscovery {
   private findModuleFiles(): string[] {
     const files: string[] = [];
     this.scanDirectory(this.baseDir, files);
-    return files.filter((file) => this.options.pattern?.test(file));
+    return files.filter(file => this.options.pattern?.test(file));
   }
 
   // Recursively scan directories for module files
@@ -119,10 +113,7 @@ export class ModuleDiscovery {
 
         if (stat.isDirectory()) {
           // Skip node_modules and other common directories
-          if (
-            !["node_modules", ".git", "dist", "build"].includes(item) &&
-            this.options.recursive
-          ) {
+          if (!['node_modules', '.git', 'dist', 'build'].includes(item) && this.options.recursive) {
             this.scanDirectory(fullPath, files);
           }
         } else if (stat.isFile()) {
@@ -149,8 +140,7 @@ export class ModuleDiscovery {
         module.config,
         module,
         ...Object.values(module).filter(
-          (exp) =>
-            exp && typeof exp === "object" && "name" in exp && "version" in exp,
+          exp => exp && typeof exp === 'object' && 'name' in exp && 'version' in exp
         ),
       ];
 
@@ -170,9 +160,9 @@ export class ModuleDiscovery {
   private isValidModule(obj: any): boolean {
     return (
       obj &&
-      typeof obj === "object" &&
-      typeof obj.name === "string" &&
-      typeof obj.version === "string" &&
+      typeof obj === 'object' &&
+      typeof obj.name === 'string' &&
+      typeof obj.version === 'string' &&
       (obj.routes === undefined || Array.isArray(obj.routes)) &&
       (obj.websockets === undefined || Array.isArray(obj.websockets)) &&
       (obj.services === undefined || Array.isArray(obj.services))
@@ -181,10 +171,10 @@ export class ModuleDiscovery {
 
   // Watch for module changes (for development)
   watchModules(callback: (modules: ModuleConfig[]) => void): void {
-    const fs = require("fs");
+    const fs = require('fs');
     const modulePaths = this.findModuleFiles();
 
-    modulePaths.forEach((path) => {
+    modulePaths.forEach(path => {
       try {
         fs.watchFile(path, async () => {
           console.log(`Module file changed: ${path}`);
@@ -201,7 +191,7 @@ export class ModuleDiscovery {
 // Convenience functions
 export async function autoDiscoverModules(
   baseDir?: string,
-  options?: DiscoveryOptions,
+  options?: DiscoveryOptions
 ): Promise<ModuleConfig[]> {
   const discovery = new ModuleDiscovery(baseDir, options);
   return discovery.discoverModules();
@@ -209,7 +199,7 @@ export async function autoDiscoverModules(
 
 export async function autoDiscoverModuleDirectories(
   baseDir?: string,
-  modulesDir?: string,
+  modulesDir?: string
 ): Promise<ModuleConfig[]> {
   const discovery = new ModuleDiscovery(baseDir);
   return discovery.discoverModuleDirectories(modulesDir);

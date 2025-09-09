@@ -1,13 +1,13 @@
 // Swagger UI Integration for Moro Framework
 // Serves interactive API documentation using Swagger UI
 
-import { readFileSync } from "fs";
-import { join } from "path";
-import { HttpRequest, HttpResponse } from "../http";
-import { OpenAPISpec } from "./openapi-generator";
-import { createFrameworkLogger } from "../logger";
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { HttpRequest, HttpResponse } from '../http';
+import { OpenAPISpec } from './openapi-generator';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("SwaggerUI");
+const logger = createFrameworkLogger('SwaggerUI');
 
 // Swagger UI configuration options
 export interface SwaggerUIOptions {
@@ -30,18 +30,15 @@ export class SwaggerUIMiddleware {
   constructor(openAPISpec: OpenAPISpec, options: SwaggerUIOptions = {}) {
     this.openAPISpec = openAPISpec;
     this.options = {
-      title: "API Documentation",
+      title: 'API Documentation',
       enableTryItOut: true,
       enableFilter: true,
       enableDeepLinking: true,
       swaggerOptions: {
-        dom_id: "#swagger-ui",
-        presets: [
-          "SwaggerUIBundle.presets.apis",
-          "SwaggerUIBundle.presets.standalone",
-        ],
-        plugins: ["SwaggerUIBundle.plugins.DownloadUrl"],
-        layout: "StandaloneLayout",
+        dom_id: '#swagger-ui',
+        presets: ['SwaggerUIBundle.presets.apis', 'SwaggerUIBundle.presets.standalone'],
+        plugins: ['SwaggerUIBundle.plugins.DownloadUrl'],
+        layout: 'StandaloneLayout',
       },
       ...options,
     };
@@ -49,17 +46,17 @@ export class SwaggerUIMiddleware {
     try {
       // Find swagger-ui-dist assets
       this.swaggerUIAssetPath = require
-        .resolve("swagger-ui-dist/package.json")
-        .replace("/package.json", "");
-      logger.debug("Swagger UI assets found", "Initialization", {
+        .resolve('swagger-ui-dist/package.json')
+        .replace('/package.json', '');
+      logger.debug('Swagger UI assets found', 'Initialization', {
         assetPath: this.swaggerUIAssetPath,
       });
     } catch (error) {
-      logger.error("Failed to locate Swagger UI assets", "Initialization", {
+      logger.error('Failed to locate Swagger UI assets', 'Initialization', {
         error: error instanceof Error ? error.message : String(error),
       });
       throw new Error(
-        "swagger-ui-dist package not found. Install with: npm install swagger-ui-dist",
+        'swagger-ui-dist package not found. Install with: npm install swagger-ui-dist'
       );
     }
   }
@@ -108,9 +105,9 @@ export class SwaggerUIMiddleware {
       font-family: monospace;
       color: #c62828;
     }
-    ${this.options.customCss || ""}
+    ${this.options.customCss || ''}
   </style>
-  ${this.options.favicon ? `<link rel="icon" type="image/png" href="${this.options.favicon}" sizes="32x32" />` : ""}
+  ${this.options.favicon ? `<link rel="icon" type="image/png" href="${this.options.favicon}" sizes="32x32" />` : ''}
 </head>
 <body>
   <div id="loading-message">
@@ -212,98 +209,87 @@ export class SwaggerUIMiddleware {
   }
 
   // Create middleware function that serves Swagger UI
-  createMiddleware(basePath: string = "/docs") {
+  createMiddleware(basePath: string = '/docs') {
     return (req: HttpRequest, res: HttpResponse, next: () => void) => {
       const path = req.path;
 
-      logger.debug(`Docs middleware handling: ${path}`, "DocsMiddleware", {
+      logger.debug(`Docs middleware handling: ${path}`, 'DocsMiddleware', {
         basePath,
       });
 
       // Serve the main HTML page
       if (path === basePath || path === `${basePath}/`) {
-        logger.debug("Serving Swagger UI HTML", "DocsServing");
+        logger.debug('Serving Swagger UI HTML', 'DocsServing');
 
         // Set CSP headers to allow Swagger UI to work
         res.setHeader(
-          "Content-Security-Policy",
+          'Content-Security-Policy',
           "default-src 'self'; " +
             "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
             "style-src 'self' 'unsafe-inline'; " +
             "img-src 'self' data: https:; " +
             "font-src 'self' data:; " +
-            "connect-src 'self'",
+            "connect-src 'self'"
         );
 
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(this.generateHTML(basePath));
         return;
       }
 
       // Serve the OpenAPI JSON spec
       if (path === `${basePath}/openapi.json`) {
-        logger.debug("Serving OpenAPI JSON spec", "DocsServing");
-        res.setHeader("Content-Type", "application/json");
+        logger.debug('Serving OpenAPI JSON spec', 'DocsServing');
+        res.setHeader('Content-Type', 'application/json');
         res.json(this.openAPISpec);
         return;
       }
 
       // Serve Swagger UI assets
       if (path.startsWith(`${basePath}/`)) {
-        const assetName = path.replace(`${basePath}/`, "");
+        const assetName = path.replace(`${basePath}/`, '');
 
-        logger.debug(
-          `Attempting to serve asset: ${assetName}`,
-          "AssetServing",
-          {
-            fullPath: path,
-            basePath,
-            assetPath: this.swaggerUIAssetPath,
-          },
-        );
+        logger.debug(`Attempting to serve asset: ${assetName}`, 'AssetServing', {
+          fullPath: path,
+          basePath,
+          assetPath: this.swaggerUIAssetPath,
+        });
 
         // Security: only allow specific asset files
         const allowedAssets = [
-          "swagger-ui-bundle.js",
-          "swagger-ui.css",
-          "swagger-ui-standalone-preset.js",
-          "favicon-16x16.png",
-          "favicon-32x32.png",
+          'swagger-ui-bundle.js',
+          'swagger-ui.css',
+          'swagger-ui-standalone-preset.js',
+          'favicon-16x16.png',
+          'favicon-32x32.png',
         ];
 
         if (allowedAssets.includes(assetName)) {
           try {
             const assetPath = join(this.swaggerUIAssetPath, assetName);
-            logger.debug(`Reading asset from: ${assetPath}`, "AssetServing");
+            logger.debug(`Reading asset from: ${assetPath}`, 'AssetServing');
 
             const content = readFileSync(assetPath);
 
             // Set appropriate content type
             const contentType = this.getContentType(assetName);
-            res.setHeader("Content-Type", contentType);
-            res.setHeader("Cache-Control", "public, max-age=86400"); // Cache for 1 day
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
 
-            logger.debug(
-              `Serving asset: ${assetName} (${content.length} bytes)`,
-              "AssetServing",
-            );
+            logger.debug(`Serving asset: ${assetName} (${content.length} bytes)`, 'AssetServing');
             res.send(content);
             return;
           } catch (error) {
-            logger.error(
-              `Failed to serve Swagger UI asset: ${assetName}`,
-              "AssetServing",
-              {
-                error: error instanceof Error ? error.message : String(error),
-                assetPath: join(this.swaggerUIAssetPath, assetName),
-              },
-            );
+            logger.error(`Failed to serve Swagger UI asset: ${assetName}`, 'AssetServing', {
+              error: error instanceof Error ? error.message : String(error),
+              assetPath: join(this.swaggerUIAssetPath, assetName),
+            });
             res.status(404);
             res.send(`Asset not found: ${assetName}`);
             return;
           }
         } else {
-          logger.warn(`Asset not allowed: ${assetName}`, "AssetServing", {
+          logger.warn(`Asset not allowed: ${assetName}`, 'AssetServing', {
             allowedAssets,
           });
           res.status(404);
@@ -319,27 +305,24 @@ export class SwaggerUIMiddleware {
 
   // Get content type for asset files
   private getContentType(filename: string): string {
-    if (filename.endsWith(".js")) return "application/javascript";
-    if (filename.endsWith(".css")) return "text/css";
-    if (filename.endsWith(".png")) return "image/png";
-    if (filename.endsWith(".ico")) return "image/x-icon";
-    return "text/plain";
+    if (filename.endsWith('.js')) return 'application/javascript';
+    if (filename.endsWith('.css')) return 'text/css';
+    if (filename.endsWith('.png')) return 'image/png';
+    if (filename.endsWith('.ico')) return 'image/x-icon';
+    return 'text/plain';
   }
 
   // Update the OpenAPI spec (useful for dynamic updates)
   updateSpec(newSpec: OpenAPISpec): void {
     this.openAPISpec = newSpec;
-    logger.debug("OpenAPI specification updated", "SpecUpdate", {
+    logger.debug('OpenAPI specification updated', 'SpecUpdate', {
       pathCount: Object.keys(newSpec.paths).length,
     });
   }
 }
 
 // Convenience function to create documentation middleware
-export function createDocsMiddleware(
-  openAPISpec: OpenAPISpec,
-  options: SwaggerUIOptions = {},
-) {
+export function createDocsMiddleware(openAPISpec: OpenAPISpec, options: SwaggerUIOptions = {}) {
   const middleware = new SwaggerUIMiddleware(openAPISpec, options);
   return middleware.createMiddleware();
 }
@@ -348,20 +331,18 @@ export function createDocsMiddleware(
 export function generateDocsForApp(
   routes: any[],
   info: { title: string; version: string; description?: string },
-  options: SwaggerUIOptions = {},
+  options: SwaggerUIOptions = {}
 ) {
   const openAPISpec: OpenAPISpec = {
-    openapi: "3.0.3",
+    openapi: '3.0.3',
     info,
-    servers: [
-      { url: "http://localhost:3000", description: "Development server" },
-    ],
+    servers: [{ url: 'http://localhost:3000', description: 'Development server' }],
     paths: {},
     tags: [],
   };
 
   // This will be enhanced when integrated with the routing system
-  logger.info("Documentation generated for app", "AppDocumentation", {
+  logger.info('Documentation generated for app', 'AppDocumentation', {
     routeCount: routes.length,
     title: info.title,
   });

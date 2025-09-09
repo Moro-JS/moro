@@ -1,11 +1,11 @@
 // Functional Validation System for Moro Framework
 // Elegant, type-safe validation using Zod with functional composition
 
-import { z, ZodSchema, ZodError } from "zod";
-import { HttpRequest, HttpResponse } from "../http";
-import { createFrameworkLogger } from "../logger";
+import { z, ZodSchema, ZodError } from 'zod';
+import { HttpRequest, HttpResponse } from '../http';
+import { createFrameworkLogger } from '../logger';
 
-const logger = createFrameworkLogger("Validation");
+const logger = createFrameworkLogger('Validation');
 
 // Validation configuration interface
 export interface ValidationConfig {
@@ -39,10 +39,7 @@ export interface ValidatedRequest<T = any> extends HttpRequest {
 // Main validation wrapper function
 export function validate<TBody = any, TQuery = any, TParams = any>(
   config: ValidationConfig,
-  handler: (
-    req: ValidatedRequest<TBody>,
-    res: HttpResponse,
-  ) => any | Promise<any>,
+  handler: (req: ValidatedRequest<TBody>, res: HttpResponse) => any | Promise<any>
 ) {
   return async (req: HttpRequest, res: HttpResponse): Promise<any> => {
     try {
@@ -50,9 +47,9 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
 
       // Validate body
       if (config.body) {
-        const result = await validateField(config.body, req.body, "body");
+        const result = await validateField(config.body, req.body, 'body');
         if (!result.success) {
-          return sendValidationError(res, result.errors!, "body");
+          return sendValidationError(res, result.errors!, 'body');
         }
         validatedReq.validatedBody = result.data;
         validatedReq.body = result.data; // Also update original body for compatibility
@@ -60,9 +57,9 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
 
       // Validate query parameters
       if (config.query) {
-        const result = await validateField(config.query, req.query, "query");
+        const result = await validateField(config.query, req.query, 'query');
         if (!result.success) {
-          return sendValidationError(res, result.errors!, "query");
+          return sendValidationError(res, result.errors!, 'query');
         }
         validatedReq.validatedQuery = result.data;
         validatedReq.query = result.data; // Also update original query for compatibility
@@ -70,9 +67,9 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
 
       // Validate path parameters
       if (config.params) {
-        const result = await validateField(config.params, req.params, "params");
+        const result = await validateField(config.params, req.params, 'params');
         if (!result.success) {
-          return sendValidationError(res, result.errors!, "params");
+          return sendValidationError(res, result.errors!, 'params');
         }
         validatedReq.validatedParams = result.data;
         validatedReq.params = result.data; // Also update original params for compatibility
@@ -80,18 +77,14 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
 
       // Validate headers
       if (config.headers) {
-        const result = await validateField(
-          config.headers,
-          req.headers,
-          "headers",
-        );
+        const result = await validateField(config.headers, req.headers, 'headers');
         if (!result.success) {
-          return sendValidationError(res, result.errors!, "headers");
+          return sendValidationError(res, result.errors!, 'headers');
         }
         validatedReq.validatedHeaders = result.data;
       }
 
-      logger.debug("Request validation passed", "ValidationSuccess", {
+      logger.debug('Request validation passed', 'ValidationSuccess', {
         path: req.path,
         method: req.method,
         validatedFields: Object.keys(config),
@@ -100,7 +93,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       // Execute the handler with validated request
       return await handler(validatedReq, res);
     } catch (error) {
-      logger.error("Validation wrapper error", "ValidationError", {
+      logger.error('Validation wrapper error', 'ValidationError', {
         error: error instanceof Error ? error.message : String(error),
         path: req.path,
         method: req.method,
@@ -109,7 +102,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
-          error: "Internal validation error",
+          error: 'Internal validation error',
           requestId: req.requestId,
         });
       }
@@ -121,7 +114,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
 async function validateField(
   schema: ZodSchema,
   data: any,
-  fieldName: string,
+  fieldName: string
 ): Promise<ValidationResult> {
   try {
     const validated = await schema.parseAsync(data);
@@ -132,12 +125,12 @@ async function validateField(
   } catch (error) {
     if (error instanceof ZodError) {
       const errors: ValidationError[] = error.issues.map((err: any) => ({
-        field: err.path.length > 0 ? err.path.join(".") : fieldName,
+        field: err.path.length > 0 ? err.path.join('.') : fieldName,
         message: err.message,
         code: err.code,
       }));
 
-      logger.debug("Field validation failed", "ValidationFailed", {
+      logger.debug('Field validation failed', 'ValidationFailed', {
         field: fieldName,
         errors: errors.length,
         details: errors,
@@ -155,12 +148,8 @@ async function validateField(
 }
 
 // Send validation error response
-function sendValidationError(
-  res: HttpResponse,
-  errors: ValidationError[],
-  field: string,
-): void {
-  logger.debug("Sending validation error response", "ValidationResponse", {
+function sendValidationError(res: HttpResponse, errors: ValidationError[], field: string): void {
+  logger.debug('Sending validation error response', 'ValidationResponse', {
     field,
     errorCount: errors.length,
   });
@@ -175,34 +164,19 @@ function sendValidationError(
 
 // Convenience functions for single-field validation
 export function body<T>(schema: ZodSchema<T>) {
-  return (
-    handler: (
-      req: ValidatedRequest<T>,
-      res: HttpResponse,
-    ) => any | Promise<any>,
-  ) => {
+  return (handler: (req: ValidatedRequest<T>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ body: schema }, handler);
   };
 }
 
 export function query<T>(schema: ZodSchema<T>) {
-  return (
-    handler: (
-      req: ValidatedRequest<any>,
-      res: HttpResponse,
-    ) => any | Promise<any>,
-  ) => {
+  return (handler: (req: ValidatedRequest<any>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ query: schema }, handler);
   };
 }
 
 export function params<T>(schema: ZodSchema<T>) {
-  return (
-    handler: (
-      req: ValidatedRequest<any>,
-      res: HttpResponse,
-    ) => any | Promise<any>,
-  ) => {
+  return (handler: (req: ValidatedRequest<any>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ params: schema }, handler);
   };
 }
@@ -213,4 +187,4 @@ export function combineSchemas(schemas: ValidationConfig): ValidationConfig {
 }
 
 // Re-export Zod for convenience
-export { z } from "zod";
+export { z } from 'zod';

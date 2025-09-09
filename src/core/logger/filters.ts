@@ -1,5 +1,5 @@
 // Advanced Logger Filters
-import { LogEntry, LogFilter } from "../../types/logger";
+import { LogEntry, LogFilter } from '../../types/logger';
 
 // Level-based filter
 export const levelFilter = (minLevel: string): LogFilter => ({
@@ -12,10 +12,10 @@ export const levelFilter = (minLevel: string): LogFilter => ({
 
 // Context-based filter
 export const contextFilter = (allowedContexts: string[]): LogFilter => ({
-  name: "context-filter",
+  name: 'context-filter',
   filter: (entry: LogEntry) => {
     if (!entry.context) return true;
-    return allowedContexts.some((ctx) => entry.context!.includes(ctx));
+    return allowedContexts.some(ctx => entry.context!.includes(ctx));
   },
 });
 
@@ -24,7 +24,7 @@ export const rateLimitFilter = (maxPerSecond: number): LogFilter => {
   const timestamps: number[] = [];
 
   return {
-    name: "rate-limit",
+    name: 'rate-limit',
     filter: (entry: LogEntry) => {
       const now = Date.now();
       const oneSecondAgo = now - 1000;
@@ -47,16 +47,16 @@ export const rateLimitFilter = (maxPerSecond: number): LogFilter => {
 
 // Sensitive data filter
 export const sanitizeFilter = (
-  sensitiveKeys: string[] = ["password", "token", "key", "secret"],
+  sensitiveKeys: string[] = ['password', 'token', 'key', 'secret']
 ): LogFilter => ({
-  name: "sanitize",
+  name: 'sanitize',
   filter: (entry: LogEntry) => {
     if (entry.metadata) {
       const sanitized = { ...entry.metadata };
 
       for (const key of sensitiveKeys) {
         if (sanitized[key]) {
-          sanitized[key] = "[REDACTED]";
+          sanitized[key] = '[REDACTED]';
         }
       }
 
@@ -66,8 +66,8 @@ export const sanitizeFilter = (
     // Also sanitize message content
     let sanitizedMessage = entry.message;
     for (const key of sensitiveKeys) {
-      const regex = new RegExp(`(${key}["\\s]*[:=]["\\s]*)([^"\\s]+)`, "gi");
-      sanitizedMessage = sanitizedMessage.replace(regex, "$1[REDACTED]");
+      const regex = new RegExp(`(${key}["\\s]*[:=]["\\s]*)([^"\\s]+)`, 'gi');
+      sanitizedMessage = sanitizedMessage.replace(regex, '$1[REDACTED]');
     }
     entry.message = sanitizedMessage;
 
@@ -77,7 +77,7 @@ export const sanitizeFilter = (
 
 // Performance filter - only log slow operations
 export const performanceFilter = (minDuration: number): LogFilter => ({
-  name: "performance",
+  name: 'performance',
   filter: (entry: LogEntry) => {
     if (!entry.performance?.duration) return true;
     return entry.performance.duration >= minDuration;
@@ -87,16 +87,16 @@ export const performanceFilter = (minDuration: number): LogFilter => ({
 // Error aggregation filter - prevent spam
 export const errorAggregationFilter = (
   maxSameErrors: number = 5,
-  timeWindow: number = 60000,
+  timeWindow: number = 60000
 ): LogFilter => {
   const errorCounts = new Map<string, { count: number; firstSeen: number }>();
 
   return {
-    name: "error-aggregation",
+    name: 'error-aggregation',
     filter: (entry: LogEntry) => {
-      if (entry.level !== "error" && entry.level !== "fatal") return true;
+      if (entry.level !== 'error' && entry.level !== 'fatal') return true;
 
-      const errorKey = `${entry.message}:${entry.context || ""}`;
+      const errorKey = `${entry.message}:${entry.context || ''}`;
       const now = Date.now();
       const existing = errorCounts.get(errorKey);
 
@@ -123,16 +123,13 @@ export const errorAggregationFilter = (
 };
 
 // Development vs Production filter
-export const environmentFilter = (
-  environment: "development" | "production",
-): LogFilter => ({
+export const environmentFilter = (environment: 'development' | 'production'): LogFilter => ({
   name: `env-${environment}`,
   filter: (entry: LogEntry) => {
-    if (environment === "production") {
+    if (environment === 'production') {
       // In production, filter out debug logs and sensitive development info
-      if (entry.level === "debug") return false;
-      if (entry.context?.includes("dev") || entry.context?.includes("test"))
-        return false;
+      if (entry.level === 'debug') return false;
+      if (entry.context?.includes('dev') || entry.context?.includes('test')) return false;
     }
     return true;
   },
@@ -140,7 +137,7 @@ export const environmentFilter = (
 
 // Module-specific filter
 export const moduleFilter = (allowedModules: string[]): LogFilter => ({
-  name: "module-filter",
+  name: 'module-filter',
   filter: (entry: LogEntry) => {
     if (!entry.moduleId) return true;
     return allowedModules.includes(entry.moduleId);

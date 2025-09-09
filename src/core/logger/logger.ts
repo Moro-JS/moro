@@ -1,5 +1,5 @@
 // Moro Logger - Beautiful, Fast, Feature-Rich
-import { performance } from "perf_hooks";
+import { performance } from 'perf_hooks';
 import {
   LogLevel,
   LogEntry,
@@ -9,10 +9,10 @@ import {
   LogFilter,
   LogMetrics,
   ColorScheme,
-} from "../../types/logger";
+} from '../../types/logger';
 
 export class MoroLogger implements Logger {
-  private level: LogLevel = "info";
+  private level: LogLevel = 'info';
   private options: LoggerOptions;
   private outputs: Map<string, LogOutput> = new Map();
   private filters: Map<string, LogFilter> = new Map();
@@ -39,108 +39,84 @@ export class MoroLogger implements Logger {
   };
 
   private static readonly COLORS: ColorScheme = {
-    debug: "\x1b[36m", // Cyan
-    info: "\x1b[32m", // Green
-    warn: "\x1b[33m", // Yellow
-    error: "\x1b[31m", // Red
-    fatal: "\x1b[35m", // Magenta
-    timestamp: "\x1b[90m", // Gray
-    context: "\x1b[34m", // Blue
-    metadata: "\x1b[37m", // White
-    performance: "\x1b[36m", // Cyan
+    debug: '\x1b[36m', // Cyan
+    info: '\x1b[32m', // Green
+    warn: '\x1b[33m', // Yellow
+    error: '\x1b[31m', // Red
+    fatal: '\x1b[35m', // Magenta
+    timestamp: '\x1b[90m', // Gray
+    context: '\x1b[34m', // Blue
+    metadata: '\x1b[37m', // White
+    performance: '\x1b[36m', // Cyan
   };
 
-  private static readonly RESET = "\x1b[0m";
-  private static readonly BOLD = "\x1b[1m";
+  private static readonly RESET = '\x1b[0m';
+  private static readonly BOLD = '\x1b[1m';
 
   constructor(options: LoggerOptions = {}) {
     this.options = {
-      level: "info",
+      level: 'info',
       enableColors: true,
       enableTimestamp: true,
       enableContext: true,
       enableMetadata: true,
       enablePerformance: true,
-      format: "pretty",
+      format: 'pretty',
       outputs: [],
       filters: [],
       maxEntries: 1000,
       ...options,
     };
 
-    this.level = this.options.level || "info";
+    this.level = this.options.level || 'info';
 
     // Add default console output
     this.addOutput({
-      name: "console",
+      name: 'console',
       write: this.writeToConsole.bind(this),
       format: this.options.format,
     });
 
     // Add custom outputs
-    this.options.outputs?.forEach((output) => this.addOutput(output));
-    this.options.filters?.forEach((filter) => this.addFilter(filter));
+    this.options.outputs?.forEach(output => this.addOutput(output));
+    this.options.filters?.forEach(filter => this.addFilter(filter));
   }
 
-  debug(
-    message: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
-    this.log("debug", message, context, metadata);
+  debug(message: string, context?: string, metadata?: Record<string, any>): void {
+    this.log('debug', message, context, metadata);
   }
 
-  info(
-    message: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
-    this.log("info", message, context, metadata);
+  info(message: string, context?: string, metadata?: Record<string, any>): void {
+    this.log('info', message, context, metadata);
   }
 
-  warn(
-    message: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
-    this.log("warn", message, context, metadata);
+  warn(message: string, context?: string, metadata?: Record<string, any>): void {
+    this.log('warn', message, context, metadata);
   }
 
-  error(
-    message: string | Error,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
+  error(message: string | Error, context?: string, metadata?: Record<string, any>): void {
     const msg = message instanceof Error ? message.message : message;
     const stack = message instanceof Error ? message.stack : undefined;
-    this.log("error", msg, context, { ...metadata, stack });
+    this.log('error', msg, context, { ...metadata, stack });
   }
 
-  fatal(
-    message: string | Error,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
+  fatal(message: string | Error, context?: string, metadata?: Record<string, any>): void {
     const msg = message instanceof Error ? message.message : message;
     const stack = message instanceof Error ? message.stack : undefined;
-    this.log("fatal", msg, context, { ...metadata, stack });
+    this.log('fatal', msg, context, { ...metadata, stack });
   }
 
   time(label: string): void {
     this.timers.set(label, performance.now());
   }
 
-  timeEnd(
-    label: string,
-    context?: string,
-    metadata?: Record<string, any>,
-  ): void {
+  timeEnd(label: string, context?: string, metadata?: Record<string, any>): void {
     const startTime = this.timers.get(label);
     if (startTime !== undefined) {
       const duration = performance.now() - startTime;
       this.timers.delete(label);
 
-      this.log("info", `Timer: ${label}`, context, {
+      this.log('info', `Timer: ${label}`, context, {
         ...metadata,
         performance: { duration: Math.round(duration * 100) / 100 },
       });
@@ -149,9 +125,7 @@ export class MoroLogger implements Logger {
 
   child(context: string, metadata?: Record<string, any>): Logger {
     const childLogger = new MoroLogger(this.options);
-    childLogger.contextPrefix = this.contextPrefix
-      ? `${this.contextPrefix}:${context}`
-      : context;
+    childLogger.contextPrefix = this.contextPrefix ? `${this.contextPrefix}:${context}` : context;
     childLogger.contextMetadata = { ...this.contextMetadata, ...metadata };
     childLogger.outputs = this.outputs;
     childLogger.filters = this.filters;
@@ -187,12 +161,8 @@ export class MoroLogger implements Logger {
     const now = Date.now();
     const uptime = (now - this.startTime) / 1000; // seconds
     const avgRate = uptime > 0 ? this.metrics.totalLogs / uptime : 0;
-    const errorCount =
-      this.metrics.logsByLevel.error + this.metrics.logsByLevel.fatal;
-    const errorRate =
-      this.metrics.totalLogs > 0
-        ? (errorCount / this.metrics.totalLogs) * 100
-        : 0;
+    const errorCount = this.metrics.logsByLevel.error + this.metrics.logsByLevel.fatal;
+    const errorRate = this.metrics.totalLogs > 0 ? (errorCount / this.metrics.totalLogs) * 100 : 0;
 
     return {
       ...this.metrics,
@@ -218,7 +188,7 @@ export class MoroLogger implements Logger {
     level: LogLevel,
     message: string,
     context?: string,
-    metadata?: Record<string, any>,
+    metadata?: Record<string, any>
   ): void {
     // Check level threshold
     if (MoroLogger.LEVELS[level] < MoroLogger.LEVELS[this.level]) {
@@ -261,14 +231,11 @@ export class MoroLogger implements Logger {
 
     // Write to outputs
     for (const output of this.outputs.values()) {
-      if (
-        !output.level ||
-        MoroLogger.LEVELS[level] >= MoroLogger.LEVELS[output.level]
-      ) {
+      if (!output.level || MoroLogger.LEVELS[level] >= MoroLogger.LEVELS[output.level]) {
         try {
           output.write(entry);
         } catch (error) {
-          console.error("Logger output error:", error);
+          console.error('Logger output error:', error);
         }
       }
     }
@@ -285,16 +252,16 @@ export class MoroLogger implements Logger {
   }
 
   private writeToConsole(entry: LogEntry): void {
-    const format = this.options.format || "pretty";
+    const format = this.options.format || 'pretty';
 
-    if (format === "json") {
+    if (format === 'json') {
       console.log(JSON.stringify(entry));
       return;
     }
 
-    if (format === "compact") {
+    if (format === 'compact') {
       const level = entry.level.toUpperCase().padEnd(5);
-      const context = entry.context ? `[${entry.context}] ` : "";
+      const context = entry.context ? `[${entry.context}] ` : '';
       console.log(`${level} ${context}${entry.message}`);
       return;
     }
@@ -309,26 +276,21 @@ export class MoroLogger implements Logger {
 
     // Timestamp
     if (this.options.enableTimestamp !== false) {
-      const timestamp = entry.timestamp
-        .toISOString()
-        .replace("T", " ")
-        .slice(0, 19);
+      const timestamp = entry.timestamp.toISOString().replace('T', ' ').slice(0, 19);
       parts.push(
-        colors
-          ? `${MoroLogger.COLORS.timestamp}${timestamp}${MoroLogger.RESET}`
-          : timestamp,
+        colors ? `${MoroLogger.COLORS.timestamp}${timestamp}${MoroLogger.RESET}` : timestamp
       );
     }
 
     // Level with color (remove icons)
-    const levelColor = colors ? MoroLogger.COLORS[entry.level] : "";
-    const levelReset = colors ? MoroLogger.RESET : "";
+    const levelColor = colors ? MoroLogger.COLORS[entry.level] : '';
+    const levelReset = colors ? MoroLogger.RESET : '';
     const levelText = entry.level.toUpperCase();
     parts.push(`${levelColor}${MoroLogger.BOLD}${levelText}${levelReset}`);
 
     // Context
     if (entry.context && this.options.enableContext !== false) {
-      const contextColor = colors ? MoroLogger.COLORS.context : "";
+      const contextColor = colors ? MoroLogger.COLORS.context : '';
       parts.push(`${contextColor}[${entry.context}]${levelReset}`);
     }
 
@@ -337,7 +299,7 @@ export class MoroLogger implements Logger {
 
     // Performance info
     if (entry.performance && this.options.enablePerformance !== false) {
-      const perfColor = colors ? MoroLogger.COLORS.performance : "";
+      const perfColor = colors ? MoroLogger.COLORS.performance : '';
       const perfParts: string[] = [];
 
       if (entry.performance.duration !== undefined) {
@@ -348,7 +310,7 @@ export class MoroLogger implements Logger {
       }
 
       if (perfParts.length > 0) {
-        parts.push(`${perfColor}(${perfParts.join(", ")})${levelReset}`);
+        parts.push(`${perfColor}(${perfParts.join(', ')})${levelReset}`);
       }
     }
 
@@ -358,7 +320,7 @@ export class MoroLogger implements Logger {
       Object.keys(entry.metadata).length > 0 &&
       this.options.enableMetadata !== false
     ) {
-      const metaColor = colors ? MoroLogger.COLORS.metadata : "";
+      const metaColor = colors ? MoroLogger.COLORS.metadata : '';
       const cleanMetadata = { ...entry.metadata };
       delete cleanMetadata.stack; // Handle stack separately
 
@@ -368,14 +330,11 @@ export class MoroLogger implements Logger {
     }
 
     // Output main log line
-    console.log(parts.join(" "));
+    console.log(parts.join(' '));
 
     // Stack trace for errors
-    if (
-      entry.metadata?.stack &&
-      (entry.level === "error" || entry.level === "fatal")
-    ) {
-      const stackColor = colors ? MoroLogger.COLORS.error : "";
+    if (entry.metadata?.stack && (entry.level === 'error' || entry.level === 'fatal')) {
+      const stackColor = colors ? MoroLogger.COLORS.error : '';
       console.log(`${stackColor}${entry.metadata.stack}${levelReset}`);
     }
   }
@@ -385,12 +344,12 @@ export class MoroLogger implements Logger {
 const initialLogLevel =
   process.env.LOG_LEVEL ||
   process.env.MORO_LOG_LEVEL ||
-  (process.env.NODE_ENV === "production" ? "warn" : "debug");
+  (process.env.NODE_ENV === 'production' ? 'warn' : 'debug');
 
 export const logger = new MoroLogger({
   level: initialLogLevel as LogLevel,
   enableColors: !process.env.NO_COLOR,
-  format: (process.env.LOG_FORMAT as any) || "pretty",
+  format: (process.env.LOG_FORMAT as any) || 'pretty',
 });
 
 /**
@@ -410,7 +369,7 @@ export function configureGlobalLogger(options: Partial<LoggerOptions>): void {
  */
 export function applyLoggingConfiguration(
   configLogging?: any,
-  appOptions?: Partial<LoggerOptions> | boolean,
+  appOptions?: Partial<LoggerOptions> | boolean
 ): void {
   // First apply config system settings (from environment variables)
   if (configLogging?.level) {
@@ -421,8 +380,8 @@ export function applyLoggingConfiguration(
   if (appOptions !== undefined) {
     if (appOptions === false) {
       // Disable logging by setting to fatal level
-      configureGlobalLogger({ level: "fatal" });
-    } else if (typeof appOptions === "object") {
+      configureGlobalLogger({ level: 'fatal' });
+    } else if (typeof appOptions === 'object') {
       configureGlobalLogger(appOptions);
     }
   }
@@ -430,5 +389,5 @@ export function applyLoggingConfiguration(
 
 // Framework-specific logger
 export const createFrameworkLogger = (context: string) => {
-  return logger.child("Moro", { framework: "moro", context });
+  return logger.child('Moro', { framework: 'moro', context });
 };
