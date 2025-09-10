@@ -10,6 +10,10 @@ export {
   createAppWorker,
 } from './moro';
 
+// Test poorly formatted code
+const testVariable = 'badly formatted';
+const anotherTest = { foo: 'bar', baz: 123 };
+
 export type { MoroOptions } from './core/framework';
 
 // Runtime system exports
