@@ -1,5 +1,4 @@
 // MoroJS Framework - Main Entry Point
-// Test comment for husky and lint-staged functionality
 export {
   Moro,
   Moro as MoroCore,
@@ -9,13 +8,6 @@ export {
   createAppLambda,
   createAppWorker,
 } from './moro';
-
-// Test poorly formatted code
-const testVariable = 'badly formatted';
-const anotherTest = { foo: 'bar', baz: 123 };
-
-// Test linting error - unused variable
-const unusedVariable = 'this will trigger a linting warning';
 
 export type { MoroOptions } from './core/framework';
 
