@@ -14,6 +14,9 @@ export {
 const testVariable = 'badly formatted';
 const anotherTest = { foo: 'bar', baz: 123 };
 
+// Test linting error - unused variable
+const unusedVariable = 'this will trigger a linting warning';
+
 export type { MoroOptions } from './core/framework';
 
 // Runtime system exports
