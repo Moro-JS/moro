@@ -1,6 +1,6 @@
 {
   "name": "@morojs/moro",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, type-safe Zod validation, and functional architecture",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,9 +31,9 @@
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-            "format": "prettier --write \"src/**/*.ts\"",
-        "format:check": "prettier --check \"src/**/*.ts\"",
-        "lint-staged": "lint-staged",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "lint-staged": "lint-staged",
     "docs:build": "typedoc --out docs src/index.ts",
     "docs:serve": "http-server docs -p 8080"
   },
@@ -178,7 +178,9 @@
     "forceExit": false,
     "detectOpenHandles": true,
     "openHandlesTimeout": 1000,
-    "extensionsToTreatAsEsm": [".ts"]
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ]
   },
   "lint-staged": {
     "src/**/*.ts": [
