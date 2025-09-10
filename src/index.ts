@@ -1,6 +1,8 @@
 // MoroJS Framework - Main Entry Point
+// Test comment for husky and lint-staged functionality
 export {
   Moro,
+  Moro as MoroCore,
   createApp,
   createAppNode,
   createAppEdge,
@@ -38,7 +40,20 @@ export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-worke
 export { MoroHttpServer, middleware as httpMiddleware } from './core/http';
 export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in';
 export { WebSocketManager } from './core/networking';
-export { Container } from './core/utilities';
+export {
+  Container,
+  FunctionalContainer,
+  ServiceScope,
+  ServiceLifecycle,
+  withLogging,
+  withCaching,
+  withRetry,
+  withTimeout,
+  CircuitBreaker,
+  HookManager,
+  HOOK_EVENTS,
+  middleware,
+} from './core/utilities';
 export { createFrameworkLogger, logger } from './core/logger';
 
 // Validation System (Zod-based)
@@ -69,8 +84,20 @@ export type {
   ExecutionPhase,
 } from './core/routing';
 
-// Additional exports if needed
-// export { Moro as MoroCore } from './core/framework';
+// Configuration utilities
+export {
+  getConfig,
+  createModuleConfig,
+  getEnvVar,
+  getEnvArray,
+  getEnvJson,
+  isDevelopment,
+  isProduction,
+  isStaging,
+  requireEnvVars,
+  envVar,
+  getConfigValue,
+} from './core/config/utils';
 
 // Types
 export type * from './types/core';
