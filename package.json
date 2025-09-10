@@ -1,6 +1,6 @@
 {
   "name": "@morojs/moro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, type-safe Zod validation, and functional architecture",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
