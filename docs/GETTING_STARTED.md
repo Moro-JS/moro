@@ -8,6 +8,7 @@ Welcome to MoroJS! This guide will help you get up and running with the high-per
 - [Your First Application](#your-first-application)
 - [Multi-Runtime Deployment](#multi-runtime-deployment)
 - [Core Concepts](#core-concepts)
+- [Configuration](#configuration)
 - [Building a REST API](#building-a-rest-api)
 - [Working with Modules](#working-with-modules)
 - [Adding Validation](#adding-validation)
@@ -249,6 +250,218 @@ const UserSchema = z.object({
 
 type User = z.infer<typeof UserSchema>; // Automatic TypeScript type!
 ```
+
+## Configuration
+
+MoroJS supports flexible configuration through config files, environment variables, or both. Let's set up configuration for your application.
+
+### Create a Configuration File
+
+Create a `moro.config.js` file in your project root:
+
+```javascript
+// moro.config.js
+module.exports = {
+  server: {
+    port: 3000,
+    host: 'localhost',
+    environment: 'development'
+  },
+  database: {
+    type: 'sqlite',
+    database: './dev.db'
+  },
+  logging: {
+    level: 'debug'
+  },
+  security: {
+    cors: {
+      enabled: true,
+      origin: ['http://localhost:3000', 'http://localhost:5173']
+    },
+    rateLimit: {
+      enabled: true,
+      requests: 100,
+      window: 60000
+    }
+  },
+  performance: {
+    compression: {
+      enabled: true
+    },
+    cache: {
+      enabled: true,
+      adapter: 'memory',
+      ttl: 300
+    }
+  }
+};
+```
+
+### Using Environment Variables
+
+Create a `.env` file for environment-specific settings:
+
+```bash
+# .env
+NODE_ENV=development
+PORT=3000
+HOST=localhost
+
+# Database
+DATABASE_TYPE=sqlite
+DATABASE_PATH=./dev.db
+
+# Logging
+LOG_LEVEL=debug
+
+# Security
+CORS_ORIGIN=http://localhost:3000,http://localhost:5173
+```
+
+### Update Your Application
+
+Modify your `src/server.ts` to use the configuration:
+
+```typescript
+import { createApp } from 'moro';
+
+const app = createApp();
+
+// Configuration is automatically loaded from moro.config.js and .env
+const config = app.getConfig();
+
+// Simple route that uses configuration
+app.get('/', (req, res) => {
+  return {
+    message: 'Hello from MoroJS!',
+    timestamp: new Date().toISOString(),
+    framework: 'MoroJS',
+    environment: config.server.environment,
+    port: config.server.port
+  };
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  return {
+    status: 'healthy',
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    config: {
+      environment: config.server.environment,
+      database: config.database.type
+    }
+  };
+});
+
+// Use configuration for server startup
+const PORT = config.server.port;
+const HOST = config.server.host;
+
+app.listen(PORT, HOST, () => {
+  console.log(`MoroJS server running on http://${HOST}:${PORT}`);
+  console.log(`Environment: ${config.server.environment}`);
+  console.log(`Database: ${config.database.type}`);
+  console.log(`Health check: http://${HOST}:${PORT}/health`);
+});
+```
+
+### Environment-Specific Configuration
+
+For different environments, you can create conditional configurations:
+
+```javascript
+// moro.config.js
+const environment = process.env.NODE_ENV || 'development';
+
+const baseConfig = {
+  server: {
+    port: process.env.PORT || 3000,
+    host: process.env.HOST || 'localhost'
+  },
+  security: {
+    cors: {
+      enabled: true
+    }
+  }
+};
+
+const configs = {
+  development: {
+    ...baseConfig,
+    server: {
+      ...baseConfig.server,
+      environment: 'development'
+    },
+    database: {
+      type: 'sqlite',
+      database: './dev.db'
+    },
+    logging: {
+      level: 'debug'
+    }
+  },
+
+  production: {
+    ...baseConfig,
+    server: {
+      ...baseConfig.server,
+      environment: 'production'
+    },
+    database: {
+      type: 'postgresql',
+      host: process.env.DATABASE_HOST,
+      port: parseInt(process.env.DATABASE_PORT || '5432'),
+      username: process.env.DATABASE_USERNAME,
+      password: process.env.DATABASE_PASSWORD,
+      database: process.env.DATABASE_NAME
+    },
+    logging: {
+      level: 'info',
+      format: 'json'
+    }
+  }
+};
+
+module.exports = configs[environment];
+```
+
+### TypeScript Configuration
+
+For TypeScript projects, you can create a `moro.config.ts` file:
+
+```typescript
+// moro.config.ts
+import type { AppConfig } from 'moro';
+
+const config: Partial<AppConfig> = {
+  server: {
+    port: 3000,
+    host: 'localhost',
+    environment: 'development'
+  },
+  database: {
+    type: 'sqlite',
+    database: './dev.db'
+  },
+  logging: {
+    level: 'debug'
+  }
+};
+
+export default config;
+```
+
+### Configuration Priority
+
+MoroJS loads configuration in this priority order:
+
+1. **Environment Variables** (highest priority)
+2. **Configuration File** (`moro.config.js` or `moro.config.ts`)
+3. **Schema Defaults** (lowest priority)
+
+This means you can set defaults in your config file and override them with environment variables for different deployments.
 
 ## Building a REST API
 

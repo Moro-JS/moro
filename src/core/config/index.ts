@@ -2,6 +2,7 @@
 export * from './schema';
 export * from './loader';
 export * from './utils';
+export * from './file-loader';
 
 // Re-export common Zod utilities for configuration
 export { z } from 'zod';
@@ -9,6 +10,7 @@ export { z } from 'zod';
 // Main configuration loading function
 import { loadConfig } from './loader';
 import type { AppConfig } from './schema';
+import { setConfig } from './utils';
 
 // Global configuration instance
 let globalConfig: AppConfig | null = null;
@@ -23,6 +25,10 @@ export function initializeConfig(): AppConfig {
   }
 
   globalConfig = loadConfig();
+
+  // Also set the config for utils functions
+  setConfig(globalConfig);
+
   return globalConfig;
 }
 
@@ -42,4 +48,16 @@ export function getGlobalConfig(): AppConfig {
  */
 export function isConfigInitialized(): boolean {
   return globalConfig !== null;
+}
+
+/**
+ * Reset the global configuration state (for testing purposes)
+ * @internal
+ */
+export function resetConfig(): void {
+  globalConfig = null;
+
+  // Also reset the utils config (by setting it to null via direct access)
+  const { setConfig } = require('./utils');
+  setConfig(null as any);
 }

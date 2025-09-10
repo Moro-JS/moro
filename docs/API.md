@@ -1495,63 +1495,324 @@ export default defineModule({
 
 ## Configuration
 
-### Application Configuration
+MoroJS provides a flexible configuration system that supports multiple methods for defining your application settings.
 
-MoroJS supports environment-based configuration:
+### Configuration Methods
+
+MoroJS supports configuration through:
+
+1. **Configuration Files** (`moro.config.js` or `moro.config.ts`) - **Recommended**
+2. **Environment Variables** - For deployment and sensitive data
+3. **Schema Defaults** - Fallback values
+
+**Configuration Priority (highest to lowest):**
+- Environment Variables
+- Configuration File
+- Schema Defaults
+
+### Configuration Files
+
+#### moro.config.js (Recommended)
+
+Create a `moro.config.js` file in your project root:
+
+```javascript
+// moro.config.js
+module.exports = {
+  server: {
+    port: 3000,
+    host: '0.0.0.0',
+    environment: 'development'
+  },
+  database: {
+    type: 'postgresql',
+    host: 'localhost',
+    port: 5432,
+    username: 'myapp',
+    password: 'development-password',
+    database: 'myapp_dev'
+  },
+  security: {
+    cors: {
+      enabled: true,
+      origin: ['http://localhost:3000', 'http://localhost:3001']
+    },
+    helmet: {
+      enabled: true
+    },
+    rateLimit: {
+      enabled: true,
+      requests: 100,
+      window: 60000
+    }
+  },
+  performance: {
+    compression: {
+      enabled: true,
+      level: 6
+    },
+    cache: {
+      enabled: true,
+      adapter: 'memory',
+      ttl: 300
+    }
+  },
+  logging: {
+    level: 'info',
+    format: 'json'
+  }
+};
+```
+
+#### moro.config.ts (TypeScript)
+
+For TypeScript projects, you can use a `.ts` config file:
 
 ```typescript
-// config/default.json
-{
-  "server": {
-    "port": 3000,
-    "host": "localhost",
-    "environment": "development"
+// moro.config.ts
+import type { AppConfig } from 'moro';
+
+const config: Partial<AppConfig> = {
+  server: {
+    port: 3000,
+    host: '0.0.0.0',
+    environment: 'development'
   },
-  "database": {
-    "type": "mysql",
-    "host": "localhost",
-    "port": 3306,
-    "username": "root",
-    "password": "",
-    "database": "myapp"
+  database: {
+    type: 'postgresql',
+    host: 'localhost',
+    port: 5432,
+    username: 'myapp',
+    password: 'development-password',
+    database: 'myapp_dev'
   },
-  "security": {
-    "cors": {
-      "enabled": true,
-      "origin": ["http://localhost:3000"]
-    },
-    "helmet": {
-      "enabled": true
-    },
-    "rateLimit": {
-      "enabled": true,
-      "requests": 100,
-      "window": 60000
-    }
-  },
-  "performance": {
-    "compression": {
-      "enabled": true,
-      "level": 6
-    },
-    "cache": {
-      "enabled": true,
-      "adapter": "memory",
-      "ttl": 300
+  security: {
+    cors: {
+      enabled: true,
+      origin: ['http://localhost:3000']
     }
   }
-}
+};
+
+export default config;
 ```
 
 ### Environment Variables
+
+Environment variables take precedence over config files, making them perfect for deployment and sensitive data:
 
 ```bash
 # .env
 NODE_ENV=production
 PORT=3000
-DATABASE_URL=mysql://user:password@localhost:3306/myapp
-REDIS_URL=redis://localhost:6379
+HOST=0.0.0.0
+
+# Database
+DATABASE_TYPE=postgresql
+DATABASE_HOST=db.example.com
+DATABASE_PORT=5432
+DATABASE_USERNAME=myapp
+DATABASE_PASSWORD=secure-production-password
+DATABASE_NAME=myapp_prod
+
+# Security
 JWT_SECRET=your-secret-key
+CORS_ORIGIN=https://myapp.com,https://api.myapp.com
+
+# Performance
+CACHE_ADAPTER=redis
+REDIS_URL=redis://localhost:6379
+
+# Logging
+LOG_LEVEL=warn
+LOG_FORMAT=json
+```
+
+### Configuration Examples
+
+#### Development Environment
+
+```javascript
+// moro.config.js
+module.exports = {
+  server: {
+    port: 3000,
+    environment: 'development'
+  },
+  database: {
+    type: 'sqlite',
+    database: './dev.db'
+  },
+  logging: {
+    level: 'debug'
+  },
+  security: {
+    cors: {
+      enabled: true,
+      origin: ['http://localhost:3000', 'http://localhost:5173']
+    }
+  }
+};
+```
+
+#### Production Environment
+
+```javascript
+// moro.config.js
+module.exports = {
+  server: {
+    port: process.env.PORT || 3000,
+    host: '0.0.0.0',
+    environment: 'production'
+  },
+  database: {
+    type: 'postgresql',
+    host: process.env.DATABASE_HOST,
+    port: parseInt(process.env.DATABASE_PORT || '5432'),
+    username: process.env.DATABASE_USERNAME,
+    password: process.env.DATABASE_PASSWORD,
+    database: process.env.DATABASE_NAME,
+    ssl: true
+  },
+  security: {
+    cors: {
+      enabled: true,
+      origin: process.env.CORS_ORIGIN?.split(',') || []
+    },
+    helmet: {
+      enabled: true
+    },
+    rateLimit: {
+      enabled: true,
+      requests: 1000,
+      window: 60000
+    }
+  },
+  performance: {
+    compression: {
+      enabled: true,
+      level: 9
+    },
+    cache: {
+      enabled: true,
+      adapter: 'redis',
+      redis: {
+        url: process.env.REDIS_URL
+      },
+      ttl: 3600
+    }
+  },
+  logging: {
+    level: 'info',
+    format: 'json'
+  }
+};
+```
+
+#### Multi-Environment Config
+
+```javascript
+// moro.config.js
+const environment = process.env.NODE_ENV || 'development';
+
+const baseConfig = {
+  server: {
+    port: process.env.PORT || 3000,
+    host: process.env.HOST || 'localhost'
+  },
+  security: {
+    cors: {
+      enabled: true
+    }
+  }
+};
+
+const environmentConfigs = {
+  development: {
+    ...baseConfig,
+    server: {
+      ...baseConfig.server,
+      environment: 'development'
+    },
+    database: {
+      type: 'sqlite',
+      database: './dev.db'
+    },
+    logging: {
+      level: 'debug'
+    }
+  },
+
+  test: {
+    ...baseConfig,
+    server: {
+      ...baseConfig.server,
+      environment: 'test'
+    },
+    database: {
+      type: 'sqlite',
+      database: ':memory:'
+    },
+    logging: {
+      level: 'error'
+    }
+  },
+
+  production: {
+    ...baseConfig,
+    server: {
+      ...baseConfig.server,
+      environment: 'production'
+    },
+    database: {
+      type: 'postgresql',
+      host: process.env.DATABASE_HOST,
+      port: parseInt(process.env.DATABASE_PORT || '5432'),
+      username: process.env.DATABASE_USERNAME,
+      password: process.env.DATABASE_PASSWORD,
+      database: process.env.DATABASE_NAME,
+      ssl: true
+    },
+    logging: {
+      level: 'info',
+      format: 'json'
+    }
+  }
+};
+
+module.exports = environmentConfigs[environment];
+```
+
+### Module Configuration
+
+MoroJS also supports module-specific configuration using `createModuleConfig`:
+
+```typescript
+import { createModuleConfig, z } from 'moro';
+
+// Define module schema
+const EmailModuleSchema = z.object({
+  apiKey: z.string(),
+  timeout: z.number().default(5000),
+  retries: z.number().default(3),
+  enabled: z.boolean().default(true)
+});
+
+// Create module config with environment override support
+const emailConfig = createModuleConfig(
+  EmailModuleSchema,
+  {
+    apiKey: 'default-key',
+    timeout: 3000
+  },
+  'EMAIL_' // Environment prefix
+);
+
+// Now emailConfig will merge:
+// 1. Environment variables (EMAIL_API_KEY, EMAIL_TIMEOUT, etc.)
+// 2. Global app config
+// 3. Default values passed above
+// 4. Schema defaults
 ```
 
 ### Configuration Usage
@@ -1563,6 +1824,13 @@ const app = createApp();
 const config = app.getConfig();
 console.log('Server port:', config.server.port);
 console.log('Database host:', config.database.host);
+console.log('Environment:', config.server.environment);
+
+// Configuration is fully typed!
+// TypeScript will provide intellisense and type checking
+if (config.server.environment === 'development') {
+  console.log('Development mode enabled');
+}
 
 // Environment-specific config
 if (config.server.environment === 'production') {

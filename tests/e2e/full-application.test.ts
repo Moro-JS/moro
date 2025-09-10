@@ -21,7 +21,7 @@ describe('End-to-End Application Tests', () => {
     } catch (error) {
       // Ignore close errors
     }
-    
+
     // Close Socket.IO if it exists
     try {
       if (app.core && app.core.io) {
@@ -32,7 +32,7 @@ describe('End-to-End Application Tests', () => {
     } catch (error) {
       // Ignore close errors
     }
-    
+
     // Destroy the container to clean up intervals
     try {
       if (app.core && app.core.container && typeof app.core.container.destroy === 'function') {
@@ -41,7 +41,7 @@ describe('End-to-End Application Tests', () => {
     } catch (error) {
       // Ignore destroy errors
     }
-    
+
     await delay(100);
   });
 
@@ -66,7 +66,7 @@ describe('End-to-End Application Tests', () => {
                 { id: 1, name: 'John Doe', email: 'john@example.com' },
                 { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
               ];
-              
+
               return {
                 success: true,
                 data: users.slice(0, req.query.limit),
@@ -89,7 +89,7 @@ describe('End-to-End Application Tests', () => {
                 ...req.body,
                 createdAt: new Date().toISOString()
               };
-              
+
               return {
                 success: true,
                 data: newUser,
@@ -105,7 +105,7 @@ describe('End-to-End Application Tests', () => {
 
       // Add some direct routes
       app.get('/health', () => ({ status: 'healthy', timestamp: new Date().toISOString() }));
-      
+
       app.get('/api/info', () => ({
         name: 'Test API',
         version: '1.0.0',
@@ -118,7 +118,7 @@ describe('End-to-End Application Tests', () => {
           resolve();
         });
       });
-      
+
       await delay(200);
 
       const baseUrl = `http://localhost:${port}`;
@@ -201,13 +201,13 @@ describe('End-to-End Application Tests', () => {
       });
 
       await app.loadModule(ValidationModule);
-      
+
       await new Promise<void>((resolve) => {
         app.listen(port, () => {
           resolve();
         });
       });
-      
+
       await delay(100);
 
       const baseUrl = `http://localhost:${port}`;
@@ -280,13 +280,13 @@ describe('End-to-End Application Tests', () => {
       });
 
       await app.loadModule(ComplexModule);
-      
+
       await new Promise<void>((resolve) => {
         app.listen(port, () => {
           resolve();
         });
       });
-      
+
       await delay(100);
 
       const baseUrl = `http://localhost:${port}`;
@@ -335,7 +335,7 @@ describe('End-to-End Application Tests', () => {
           resolve();
         });
       });
-      
+
       await delay(100);
 
       const response = await request(`http://localhost:${port}`)
@@ -351,7 +351,7 @@ describe('End-to-End Application Tests', () => {
           resolve();
         });
       });
-      
+
       await delay(100);
 
       await request(`http://localhost:${port}`)
@@ -359,4 +359,4 @@ describe('End-to-End Application Tests', () => {
         .expect(404);
     });
   });
-}); 
+});

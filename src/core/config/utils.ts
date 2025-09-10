@@ -27,6 +27,42 @@ export function getConfig(): AppConfig {
 }
 
 /**
+ * Coerce environment variable string values to appropriate types
+ */
+function coerceEnvironmentValue(value: string): any {
+  // Handle boolean values
+  if (value.toLowerCase() === 'true') return true;
+  if (value.toLowerCase() === 'false') return false;
+
+  // Handle numeric values
+  if (/^\d+$/.test(value)) {
+    const num = parseInt(value, 10);
+    return num;
+  }
+
+  if (/^\d+\.\d+$/.test(value)) {
+    const num = parseFloat(value);
+    return num;
+  }
+
+  // Handle JSON objects/arrays
+  if (
+    (value.startsWith('{') && value.endsWith('}')) ||
+    (value.startsWith('[') && value.endsWith(']'))
+  ) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      // If JSON parsing fails, return as string
+      return value;
+    }
+  }
+
+  // Return as string for all other cases
+  return value;
+}
+
+/**
  * Create module-specific configuration with environment override support
  */
 export function createModuleConfig<T>(
@@ -34,9 +70,17 @@ export function createModuleConfig<T>(
   defaultConfig: Partial<T>,
   envPrefix?: string
 ): T {
-  const globalConfig = getConfig();
+  // Try to get global config, but don't fail if not initialized
+  let globalConfig = {};
+  try {
+    const { getGlobalConfig } = require('./index');
+    globalConfig = getGlobalConfig();
+  } catch {
+    // Global config not initialized - use empty object (module config can still work independently)
+    globalConfig = {};
+  }
 
-  // Build environment configuration object
+  // Build environment configuration object with type coercion
   const envConfig: Record<string, any> = {};
 
   if (envPrefix) {
@@ -48,14 +92,20 @@ export function createModuleConfig<T>(
           .toLowerCase()
           .replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 
-        envConfig[configKey] = process.env[key];
+        const envValue = process.env[key];
+        if (envValue !== undefined) {
+          // Attempt basic type coercion for common types
+          envConfig[configKey] = coerceEnvironmentValue(envValue);
+        }
       }
     });
   }
 
   // Merge default config, global defaults, and environment overrides
+  // Priority: environment variables > global config > default config
   const mergedConfig = {
     ...defaultConfig,
+    ...globalConfig, // Now actually using global config!
     ...envConfig,
   };
 

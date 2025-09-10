@@ -21,7 +21,7 @@ describe('MoroJS Basic Integration', () => {
     } catch (error) {
       // Ignore close errors
     }
-    
+
     // Close Socket.IO if it exists
     try {
       if (app.core && app.core.io) {
@@ -32,7 +32,7 @@ describe('MoroJS Basic Integration', () => {
     } catch (error) {
       // Ignore close errors
     }
-    
+
     // Destroy the container to clean up intervals
     try {
       if (app.core && app.core.container && typeof app.core.container.destroy === 'function') {
@@ -41,7 +41,7 @@ describe('MoroJS Basic Integration', () => {
     } catch (error) {
       // Ignore destroy errors
     }
-    
+
     await delay(100);
   });
 
@@ -57,7 +57,7 @@ describe('MoroJS Basic Integration', () => {
         resolve();
       });
     });
-    
+
     await delay(100);
 
     const response = await request(`http://localhost:${port}`)
@@ -86,7 +86,7 @@ describe('MoroJS Basic Integration', () => {
         resolve();
       });
     });
-    
+
     await delay(100);
 
     const testData = { name: 'John Doe', email: 'john@example.com' };
@@ -134,7 +134,7 @@ describe('MoroJS Basic Integration', () => {
         resolve();
       });
     });
-    
+
     await delay(100);
 
     const baseUrl = `http://localhost:${port}`;
@@ -191,7 +191,7 @@ describe('MoroJS Basic Integration', () => {
         resolve();
       });
     });
-    
+
     await delay(100);
 
     const baseUrl = `http://localhost:${port}`;
@@ -208,7 +208,7 @@ describe('MoroJS Basic Integration', () => {
     // Test error route - may return 500 or 404 depending on error handling
     const errorResponse = await request(baseUrl)
       .get('/error');
-    
+
     // Accept either 404 or 500, since error handling may vary
     expect([404, 500]).toContain(errorResponse.status);
 
@@ -244,7 +244,7 @@ describe('MoroJS Basic Integration', () => {
         resolve();
       });
     });
-    
+
     await delay(100);
 
     const baseUrl = `http://localhost:${port}`;
@@ -269,4 +269,4 @@ describe('MoroJS Basic Integration', () => {
         expect(res.body.message).toBe('User 123 found');
       });
   });
-}); 
+});

@@ -136,7 +136,10 @@ export {
   getConfigValue,
 } from './core/config/utils';
 
-export { initializeConfig, getGlobalConfig, isConfigInitialized } from './core/config';
+export { initializeConfig, getGlobalConfig, isConfigInitialized, resetConfig } from './core/config';
+
+// Export configuration types for TypeScript users
+export type { AppConfig } from './core/config';
 
 // Middleware System
 export { MiddlewareManager } from './core/middleware';

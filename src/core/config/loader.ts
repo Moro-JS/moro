@@ -2,15 +2,31 @@
 import { ZodError } from 'zod';
 import { ConfigSchema, AppConfig } from './schema';
 import { createFrameworkLogger } from '../logger';
+import { loadConfigFileSync, applyConfigAsEnvironmentVariables } from './file-loader';
 
 const logger = createFrameworkLogger('Config');
 
 /**
- * Load and validate configuration from environment variables
+ * Load and validate configuration from config files and environment variables
+ * Priority: Environment Variables > Config File > Schema Defaults
  * @returns Validated and typed application configuration
  */
 export function loadConfig(): AppConfig {
-  logger.debug('Loading configuration from environment variables');
+  logger.debug('Loading configuration from config files and environment variables');
+
+  // First, try to load from config file and apply as environment variables (synchronously)
+  try {
+    const fileConfig = loadConfigFileSync();
+    if (fileConfig) {
+      logger.debug('Applying config file values as environment variables');
+      applyConfigAsEnvironmentVariables(fileConfig);
+    }
+  } catch (error) {
+    logger.warn(
+      'Config file loading failed, continuing with environment variables only:',
+      String(error)
+    );
+  }
 
   // Map environment variables to configuration structure
   const envConfig = {
