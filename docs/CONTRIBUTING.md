@@ -29,7 +29,7 @@ Thank you for considering contributing to MoroJS! This guide will help you get s
 ### Before You Start
 
 1. Check existing [issues](https://github.com/Moro-JS/moro/issues) and [pull requests](https://github.com/Moro-JS/moro/pulls)
-2. Join our [Discord community](https://discord.gg/morojs) for discussions
+2. Join our [Discord community](https://morojs.com/discord) for discussions
 3. Read our [Code of Conduct](./CODE_OF_CONDUCT.md)
 4. Review this contributing guide
 

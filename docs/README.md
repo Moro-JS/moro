@@ -69,7 +69,7 @@ Complete documentation for the MoroJS framework.
 - **[Examples Repository](https://github.com/Moro-JS/examples)** - Real-world usage examples
 - **[npm Package](https://www.npmjs.com/package/moro)** - Official npm package
 - **[GitHub Repository](https://github.com/Moro-JS/moro)** - Source code and issues
-- **[Discord Community](https://discord.gg/morojs)** - Get help and discuss
+- **[Discord Community](https://morojs.com/discord)** - Get help and discuss
 
 ## Documentation Categories
 

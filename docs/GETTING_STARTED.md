@@ -961,7 +961,7 @@ Check out the [examples repository](https://github.com/Moro-JS/examples) for:
 
 ### 3. Community and Support
 - [GitHub Repository](https://github.com/Moro-JS/moro)
-- [Discord Community](https://discord.gg/morojs)
+- [Discord Community](https://morojs.com/discord)
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/morojs)
 - [Documentation](https://morojs.com)
 

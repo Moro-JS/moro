@@ -228,6 +228,6 @@ MIT © [Moro Framework Team](https://morojs.com)
 
 **Ready to deploy everywhere with one codebase?**
 
-[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro)
+[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro) • [Discord](https://morojs.com/discord)
 
 </div>
