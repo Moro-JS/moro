@@ -4,7 +4,7 @@ exports.AWSLambdaAdapter = void 0;
 // AWS Lambda runtime adapter
 const base_adapter_1 = require("./base-adapter");
 class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
-    type = "aws-lambda";
+    type = 'aws-lambda';
     async adaptRequest(event, context) {
         const { pathname, query } = this.parseUrl(event.path);
         // Merge query parameters from event
@@ -15,11 +15,9 @@ class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
         // Parse body
         let body;
         if (event.body) {
-            const contentType = event.headers?.["content-type"] ||
-                event.headers?.["Content-Type"] ||
-                "";
+            const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'] || '';
             if (event.isBase64Encoded) {
-                body = Buffer.from(event.body, "base64").toString();
+                body = Buffer.from(event.body, 'base64').toString();
             }
             else {
                 body = event.body;
@@ -33,10 +31,10 @@ class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
             query: mergedQuery,
             body,
             headers: event.headers || {},
-            ip: event.requestContext?.identity?.sourceIp || "unknown",
+            ip: event.requestContext?.identity?.sourceIp || 'unknown',
             params: event.pathParameters || {},
             requestId: context.awsRequestId,
-            cookies: this.parseCookies(event.headers?.cookie || ""),
+            cookies: this.parseCookies(event.headers?.cookie || ''),
             files: {},
         };
         return this.enhanceRequest(baseRequest);
@@ -47,12 +45,12 @@ class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
         const status = runtimeResponse.statusCode || 200;
         const headers = runtimeResponse.headers || {};
         // Convert body to string
-        if (typeof body === "object" && body !== null) {
+        if (typeof body === 'object' && body !== null) {
             body = JSON.stringify(body);
-            headers["Content-Type"] = "application/json";
+            headers['Content-Type'] = 'application/json';
         }
         else if (body === null || body === undefined) {
-            body = "";
+            body = '';
         }
         else {
             body = String(body);
@@ -76,11 +74,11 @@ class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
             catch (error) {
                 return {
                     statusCode: 500,
-                    headers: { "Content-Type": "application/json" },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         success: false,
-                        error: "Internal server error",
-                        message: error instanceof Error ? error.message : "Unknown error",
+                        error: 'Internal server error',
+                        message: error instanceof Error ? error.message : 'Unknown error',
                     }),
                 };
             }
@@ -91,10 +89,10 @@ class AWSLambdaAdapter extends base_adapter_1.BaseRuntimeAdapter {
     parseCookies(cookieHeader) {
         const cookies = {};
         if (cookieHeader) {
-            cookieHeader.split(";").forEach((cookie) => {
-                const [name, ...rest] = cookie.trim().split("=");
+            cookieHeader.split(';').forEach(cookie => {
+                const [name, ...rest] = cookie.trim().split('=');
                 if (name && rest.length > 0) {
-                    cookies[name] = rest.join("=");
+                    cookies[name] = rest.join('=');
                 }
             });
         }

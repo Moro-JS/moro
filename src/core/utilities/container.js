@@ -23,7 +23,7 @@ var ServiceScope;
 })(ServiceScope || (exports.ServiceScope = ServiceScope = {}));
 // Higher-order functions for service composition
 const withLogging = (logger) => (factory) => (deps, ctx) => {
-    logger.debug(`Creating service with dependencies: ${Object.keys(deps).join(", ")}`);
+    logger.debug(`Creating service with dependencies: ${Object.keys(deps).join(', ')}`);
     const start = Date.now();
     const result = factory(deps, ctx);
     logger.debug(`Service created in ${Date.now() - start}ms`);
@@ -33,7 +33,7 @@ exports.withLogging = withLogging;
 const withCaching = (ttl = 300000) => (factory) => {
     const cache = new Map();
     return async (deps, ctx) => {
-        const key = `${ctx?.requestId || "global"}_${JSON.stringify(deps)}`;
+        const key = `${ctx?.requestId || 'global'}_${JSON.stringify(deps)}`;
         const cached = cache.get(key);
         if (cached && cached.expires > Date.now()) {
             return cached.value;
@@ -53,7 +53,7 @@ const withRetry = (maxRetries = 3, delay = 1000) => (factory) => async (deps, ct
         catch (error) {
             lastError = error;
             if (i < maxRetries) {
-                await new Promise((resolve) => setTimeout(resolve, delay * Math.pow(2, i)));
+                await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
             }
         }
     }
@@ -190,9 +190,7 @@ class FunctionalContainer extends events_1.EventEmitter {
                 tags: service.metadata.tags,
                 lifecycle: instance?.lifecycle || ServiceLifecycle.UNINITIALIZED,
                 accessCount: instance?.accessCount || 0,
-                lastAccessed: instance?.lastAccessed
-                    ? new Date(instance.lastAccessed).toISOString()
-                    : null,
+                lastAccessed: instance?.lastAccessed ? new Date(instance.lastAccessed).toISOString() : null,
             };
         }
         return info;
@@ -210,7 +208,7 @@ class FunctionalContainer extends events_1.EventEmitter {
                 }
                 catch (error) {
                     instance.lifecycle = ServiceLifecycle.ERROR;
-                    this.emit("disposeError", { name, error });
+                    this.emit('disposeError', { name, error });
                 }
             }
         }
@@ -242,11 +240,11 @@ class FunctionalContainer extends events_1.EventEmitter {
                 await service.metadata.lifecycle.init();
             }
             instance.lifecycle = ServiceLifecycle.INITIALIZED;
-            this.emit("serviceCreated", { name, instance });
+            this.emit('serviceCreated', { name, instance });
         }
         catch (error) {
             instance.lifecycle = ServiceLifecycle.ERROR;
-            this.emit("serviceError", { name, error });
+            this.emit('serviceError', { name, error });
             // Try fallback if available
             if (service.metadata.fallback) {
                 instance.value = service.metadata.fallback();
@@ -306,9 +304,9 @@ class FunctionalContainer extends events_1.EventEmitter {
     getScopeKey(serviceName, scope, context) {
         switch (scope) {
             case ServiceScope.REQUEST:
-                return `${serviceName}:${context?.requestId || "default-request"}`;
+                return `${serviceName}:${context?.requestId || 'default-request'}`;
             case ServiceScope.MODULE:
-                return `${serviceName}:${context?.moduleId || "default-module"}`;
+                return `${serviceName}:${context?.moduleId || 'default-module'}`;
             default:
                 return serviceName; // Each singleton service gets its own key
         }
@@ -316,14 +314,14 @@ class FunctionalContainer extends events_1.EventEmitter {
     getInstanceMap(scope, context) {
         switch (scope) {
             case ServiceScope.REQUEST: {
-                const requestId = context?.requestId || "default-request";
+                const requestId = context?.requestId || 'default-request';
                 if (!this.requestScopes.has(requestId)) {
                     this.requestScopes.set(requestId, new Map());
                 }
                 return this.requestScopes.get(requestId);
             }
             case ServiceScope.MODULE: {
-                const moduleId = context?.moduleId || "default-module";
+                const moduleId = context?.moduleId || 'default-module';
                 if (!this.moduleScopes.has(moduleId)) {
                     this.moduleScopes.set(moduleId, new Map());
                 }
@@ -350,7 +348,7 @@ class FunctionalContainer extends events_1.EventEmitter {
             const now = Date.now();
             const timeout = 30 * 60 * 1000; // 30 minutes
             for (const [requestId, scope] of this.requestScopes) {
-                const hasRecentActivity = Array.from(scope.values()).some((instance) => now - instance.lastAccessed < timeout);
+                const hasRecentActivity = Array.from(scope.values()).some(instance => now - instance.lastAccessed < timeout);
                 if (!hasRecentActivity) {
                     this.clearRequestScope(requestId);
                 }
@@ -370,12 +368,12 @@ class FunctionalContainer extends events_1.EventEmitter {
         this.moduleScopes.clear();
         this.instances.clear();
         this.services.clear();
-        this.emit("containerDestroyed");
+        this.emit('containerDestroyed');
     }
     // Internal registration method
     _registerService(name, definition) {
         this.services.set(name, definition);
-        this.emit("serviceRegistered", { name, metadata: definition.metadata });
+        this.emit('serviceRegistered', { name, metadata: definition.metadata });
         return this;
     }
     // Check if service exists
@@ -420,10 +418,7 @@ class ServiceRegistrationBuilder {
     }
     // Dependencies
     dependsOn(...deps) {
-        this.metadata.dependencies = [
-            ...(this.metadata.dependencies || []),
-            ...deps,
-        ];
+        this.metadata.dependencies = [...(this.metadata.dependencies || []), ...deps];
         return this;
     }
     optionalDependsOn(...deps) {
@@ -469,7 +464,7 @@ class ServiceRegistrationBuilder {
     }
     compose(...compositionFns) {
         if (!this._factory) {
-            throw new Error("Factory must be set before composition");
+            throw new Error('Factory must be set before composition');
         }
         this._factory = compositionFns.reduce((acc, fn) => fn(acc), this._factory);
         return this;
@@ -513,7 +508,7 @@ class Container {
     register(name, factory, singleton = false) {
         this.functionalContainer
             .register(name)
-            .factory(() => factory())[singleton ? "singleton" : "transient"]()
+            .factory(() => factory())[singleton ? 'singleton' : 'transient']()
             .build();
     }
     resolve(name) {

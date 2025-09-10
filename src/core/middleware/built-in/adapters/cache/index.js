@@ -15,11 +15,11 @@ const file_2 = require("./file");
 // Adapter factory function for auto-loading
 function createCacheAdapter(type, options = {}) {
     switch (type.toLowerCase()) {
-        case "memory":
+        case 'memory':
             return new memory_2.MemoryCacheAdapter();
-        case "redis":
+        case 'redis':
             return new redis_2.RedisCacheAdapter(options);
-        case "file":
+        case 'file':
             return new file_2.FileCacheAdapter(options);
         default:
             throw new Error(`Unknown cache adapter type: ${type}`);

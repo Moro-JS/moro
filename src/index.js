@@ -14,10 +14,12 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RouteRegistry = exports.IntelligentRoutingManager = exports.EXECUTION_PHASES = exports.defineRoute = exports.createRoute = exports.defineModule = exports.z = exports.combineSchemas = exports.params = exports.query = exports.body = exports.validate = exports.logger = exports.createFrameworkLogger = exports.Container = exports.WebSocketManager = exports.simpleMiddleware = exports.builtInMiddleware = exports.httpMiddleware = exports.MoroHttpServer = exports.createWorkerHandler = exports.createLambdaHandler = exports.createEdgeHandler = exports.createNodeHandler = exports.createRuntimeAdapter = exports.CloudflareWorkersAdapter = exports.AWSLambdaAdapter = exports.VercelEdgeAdapter = exports.NodeRuntimeAdapter = exports.createAppWorker = exports.createAppLambda = exports.createAppEdge = exports.createAppNode = exports.createApp = exports.Moro = void 0;
+exports.getEnvVar = exports.createModuleConfig = exports.getConfig = exports.RouteRegistry = exports.IntelligentRoutingManager = exports.EXECUTION_PHASES = exports.defineRoute = exports.createRoute = exports.defineModule = exports.z = exports.combineSchemas = exports.params = exports.query = exports.body = exports.validate = exports.logger = exports.createFrameworkLogger = exports.middleware = exports.HOOK_EVENTS = exports.HookManager = exports.CircuitBreaker = exports.withTimeout = exports.withRetry = exports.withCaching = exports.withLogging = exports.ServiceLifecycle = exports.ServiceScope = exports.FunctionalContainer = exports.Container = exports.WebSocketManager = exports.simpleMiddleware = exports.builtInMiddleware = exports.httpMiddleware = exports.MoroHttpServer = exports.createWorkerHandler = exports.createLambdaHandler = exports.createEdgeHandler = exports.createNodeHandler = exports.createRuntimeAdapter = exports.CloudflareWorkersAdapter = exports.AWSLambdaAdapter = exports.VercelEdgeAdapter = exports.NodeRuntimeAdapter = exports.createAppWorker = exports.createAppLambda = exports.createAppEdge = exports.createAppNode = exports.createApp = exports.MoroCore = exports.Moro = void 0;
+exports.getConfigValue = exports.envVar = exports.requireEnvVars = exports.isStaging = exports.isProduction = exports.isDevelopment = exports.getEnvJson = exports.getEnvArray = void 0;
 // MoroJS Framework - Main Entry Point
 var moro_1 = require("./moro");
 Object.defineProperty(exports, "Moro", { enumerable: true, get: function () { return moro_1.Moro; } });
+Object.defineProperty(exports, "MoroCore", { enumerable: true, get: function () { return moro_1.Moro; } });
 Object.defineProperty(exports, "createApp", { enumerable: true, get: function () { return moro_1.createApp; } });
 Object.defineProperty(exports, "createAppNode", { enumerable: true, get: function () { return moro_1.createAppNode; } });
 Object.defineProperty(exports, "createAppEdge", { enumerable: true, get: function () { return moro_1.createAppEdge; } });
@@ -44,6 +46,17 @@ var networking_1 = require("./core/networking");
 Object.defineProperty(exports, "WebSocketManager", { enumerable: true, get: function () { return networking_1.WebSocketManager; } });
 var utilities_1 = require("./core/utilities");
 Object.defineProperty(exports, "Container", { enumerable: true, get: function () { return utilities_1.Container; } });
+Object.defineProperty(exports, "FunctionalContainer", { enumerable: true, get: function () { return utilities_1.FunctionalContainer; } });
+Object.defineProperty(exports, "ServiceScope", { enumerable: true, get: function () { return utilities_1.ServiceScope; } });
+Object.defineProperty(exports, "ServiceLifecycle", { enumerable: true, get: function () { return utilities_1.ServiceLifecycle; } });
+Object.defineProperty(exports, "withLogging", { enumerable: true, get: function () { return utilities_1.withLogging; } });
+Object.defineProperty(exports, "withCaching", { enumerable: true, get: function () { return utilities_1.withCaching; } });
+Object.defineProperty(exports, "withRetry", { enumerable: true, get: function () { return utilities_1.withRetry; } });
+Object.defineProperty(exports, "withTimeout", { enumerable: true, get: function () { return utilities_1.withTimeout; } });
+Object.defineProperty(exports, "CircuitBreaker", { enumerable: true, get: function () { return utilities_1.CircuitBreaker; } });
+Object.defineProperty(exports, "HookManager", { enumerable: true, get: function () { return utilities_1.HookManager; } });
+Object.defineProperty(exports, "HOOK_EVENTS", { enumerable: true, get: function () { return utilities_1.HOOK_EVENTS; } });
+Object.defineProperty(exports, "middleware", { enumerable: true, get: function () { return utilities_1.middleware; } });
 var logger_1 = require("./core/logger");
 Object.defineProperty(exports, "createFrameworkLogger", { enumerable: true, get: function () { return logger_1.createFrameworkLogger; } });
 Object.defineProperty(exports, "logger", { enumerable: true, get: function () { return logger_1.logger; } });
@@ -66,6 +79,19 @@ Object.defineProperty(exports, "EXECUTION_PHASES", { enumerable: true, get: func
 var app_integration_1 = require("./core/routing/app-integration");
 Object.defineProperty(exports, "IntelligentRoutingManager", { enumerable: true, get: function () { return app_integration_1.IntelligentRoutingManager; } });
 Object.defineProperty(exports, "RouteRegistry", { enumerable: true, get: function () { return app_integration_1.RouteRegistry; } });
+// Configuration utilities
+var utils_1 = require("./core/config/utils");
+Object.defineProperty(exports, "getConfig", { enumerable: true, get: function () { return utils_1.getConfig; } });
+Object.defineProperty(exports, "createModuleConfig", { enumerable: true, get: function () { return utils_1.createModuleConfig; } });
+Object.defineProperty(exports, "getEnvVar", { enumerable: true, get: function () { return utils_1.getEnvVar; } });
+Object.defineProperty(exports, "getEnvArray", { enumerable: true, get: function () { return utils_1.getEnvArray; } });
+Object.defineProperty(exports, "getEnvJson", { enumerable: true, get: function () { return utils_1.getEnvJson; } });
+Object.defineProperty(exports, "isDevelopment", { enumerable: true, get: function () { return utils_1.isDevelopment; } });
+Object.defineProperty(exports, "isProduction", { enumerable: true, get: function () { return utils_1.isProduction; } });
+Object.defineProperty(exports, "isStaging", { enumerable: true, get: function () { return utils_1.isStaging; } });
+Object.defineProperty(exports, "requireEnvVars", { enumerable: true, get: function () { return utils_1.requireEnvVars; } });
+Object.defineProperty(exports, "envVar", { enumerable: true, get: function () { return utils_1.envVar; } });
+Object.defineProperty(exports, "getConfigValue", { enumerable: true, get: function () { return utils_1.getConfigValue; } });
 // Adapters
 __exportStar(require("./core/middleware/built-in/adapters"), exports);
 __exportStar(require("./core/database/adapters"), exports);

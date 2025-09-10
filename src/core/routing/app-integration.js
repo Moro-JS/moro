@@ -5,7 +5,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.IntelligentRoutingManager = exports.RouteRegistry = void 0;
 const index_1 = require("./index");
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("AppIntegration");
+const logger = (0, logger_1.createFrameworkLogger)('AppIntegration');
 // Route registry for managing compiled routes
 class RouteRegistry {
     routes = new Map();
@@ -21,7 +21,7 @@ class RouteRegistry {
             method: route.schema.method,
             paramNames,
         });
-        logger.debug(`Registered route: ${key}`, "RouteRegistry", {
+        logger.debug(`Registered route: ${key}`, 'RouteRegistry', {
             path: route.schema.path,
             hasValidation: !!route.schema.validation,
             hasAuth: !!route.schema.auth,
@@ -56,10 +56,10 @@ class RouteRegistry {
         const paramNames = [];
         // Convert path parameters like :id to regex groups
         const regexPath = path
-            .replace(/\//g, "\\/") // Escape forward slashes
+            .replace(/\//g, '\\/') // Escape forward slashes
             .replace(/:([^/]+)/g, (match, paramName) => {
             paramNames.push(paramName);
-            return "([^/]+)"; // Match parameter value
+            return '([^/]+)'; // Match parameter value
         });
         return {
             pattern: new RegExp(`^${regexPath}$`),
@@ -73,25 +73,25 @@ class IntelligentRoutingManager {
     routeRegistry = new RouteRegistry();
     // Chainable route methods
     get(path) {
-        return this.createChainableRoute("GET", path);
+        return this.createChainableRoute('GET', path);
     }
     post(path) {
-        return this.createChainableRoute("POST", path);
+        return this.createChainableRoute('POST', path);
     }
     put(path) {
-        return this.createChainableRoute("PUT", path);
+        return this.createChainableRoute('PUT', path);
     }
     delete(path) {
-        return this.createChainableRoute("DELETE", path);
+        return this.createChainableRoute('DELETE', path);
     }
     patch(path) {
-        return this.createChainableRoute("PATCH", path);
+        return this.createChainableRoute('PATCH', path);
     }
     head(path) {
-        return this.createChainableRoute("HEAD", path);
+        return this.createChainableRoute('HEAD', path);
     }
     options(path) {
-        return this.createChainableRoute("OPTIONS", path);
+        return this.createChainableRoute('OPTIONS', path);
     }
     // Schema-first route method
     route(schema) {
@@ -113,10 +113,10 @@ class IntelligentRoutingManager {
     }
     // Direct route method (deprecated)
     directRoute(method, path, handler, options) {
-        logger.warn("Using deprecated direct route method", "DirectRoute", {
+        logger.warn('Using deprecated direct route method', 'DirectRoute', {
             method,
             path,
-            suggestion: "Use chainable or schema-first API instead",
+            suggestion: 'Use chainable or schema-first API instead',
         });
         // Convert direct options to new schema format
         const schema = {

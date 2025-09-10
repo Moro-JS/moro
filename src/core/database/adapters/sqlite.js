@@ -4,34 +4,30 @@ exports.SQLiteAdapter = void 0;
 const logger_1 = require("../../logger");
 class SQLiteAdapter {
     db;
-    logger = (0, logger_1.createFrameworkLogger)("SQLite");
+    logger = (0, logger_1.createFrameworkLogger)('SQLite');
     constructor(config = {}) {
         try {
-            const Database = require("better-sqlite3");
-            const filename = config.memory
-                ? ":memory:"
-                : config.filename || "moro_app.db";
+            const Database = require('better-sqlite3');
+            const filename = config.memory ? ':memory:' : config.filename || 'moro_app.db';
             this.db = new Database(filename, {
                 readonly: config.readonly || false,
                 fileMustExist: config.fileMustExist || false,
                 timeout: config.timeout || 5000,
-                verbose: config.verbose
-                    ? this.logger.debug.bind(this.logger)
-                    : undefined,
+                verbose: config.verbose ? this.logger.debug.bind(this.logger) : undefined,
             });
             // Enable foreign keys
-            this.db.pragma("foreign_keys = ON");
-            this.logger.info("SQLite connection established", "Connection", {
+            this.db.pragma('foreign_keys = ON');
+            this.logger.info('SQLite connection established', 'Connection', {
                 filename,
             });
         }
         catch (error) {
-            throw new Error("better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3");
+            throw new Error('better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3');
         }
     }
     async connect() {
         // SQLite doesn't require explicit connection - it's handled in constructor
-        this.logger.info("SQLite adapter ready", "Connection");
+        this.logger.info('SQLite adapter ready', 'Connection');
     }
     async disconnect() {
         this.db.close();
@@ -43,7 +39,7 @@ class SQLiteAdapter {
             return results;
         }
         catch (error) {
-            this.logger.error("SQLite query failed", "Query", {
+            this.logger.error('SQLite query failed', 'Query', {
                 sql,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -57,7 +53,7 @@ class SQLiteAdapter {
             return result || null;
         }
         catch (error) {
-            this.logger.error("SQLite queryOne failed", "Query", {
+            this.logger.error('SQLite queryOne failed', 'Query', {
                 sql,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -67,17 +63,19 @@ class SQLiteAdapter {
     async insert(table, data) {
         const keys = Object.keys(data);
         const values = Object.values(data);
-        const placeholders = keys.map(() => "?").join(", ");
-        const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+        const placeholders = keys.map(() => '?').join(', ');
+        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
         try {
             const stmt = this.db.prepare(sql);
             const info = stmt.run(values);
             // Return the inserted record
-            const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE rowid = ?`, [info.lastInsertRowid]);
+            const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE rowid = ?`, [
+                info.lastInsertRowid,
+            ]);
             return insertedRecord;
         }
         catch (error) {
-            this.logger.error("SQLite insert failed", "Insert", {
+            this.logger.error('SQLite insert failed', 'Insert', {
                 table,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -86,11 +84,11 @@ class SQLiteAdapter {
     }
     async update(table, data, where) {
         const setClause = Object.keys(data)
-            .map((key) => `${key} = ?`)
-            .join(", ");
+            .map(key => `${key} = ?`)
+            .join(', ');
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
         const params = [...Object.values(data), ...Object.values(where)];
         try {
@@ -101,7 +99,7 @@ class SQLiteAdapter {
             return updatedRecord;
         }
         catch (error) {
-            this.logger.error("SQLite update failed", "Update", {
+            this.logger.error('SQLite update failed', 'Update', {
                 table,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -110,8 +108,8 @@ class SQLiteAdapter {
     }
     async delete(table, where) {
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         try {
             const stmt = this.db.prepare(sql);
@@ -119,7 +117,7 @@ class SQLiteAdapter {
             return info.changes;
         }
         catch (error) {
-            this.logger.error("SQLite delete failed", "Delete", {
+            this.logger.error('SQLite delete failed', 'Delete', {
                 table,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -153,20 +151,22 @@ class SQLiteTransaction {
     async insert(table, data) {
         const keys = Object.keys(data);
         const values = Object.values(data);
-        const placeholders = keys.map(() => "?").join(", ");
-        const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+        const placeholders = keys.map(() => '?').join(', ');
+        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
         const stmt = this.db.prepare(sql);
         const info = stmt.run(values);
-        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE rowid = ?`, [info.lastInsertRowid]);
+        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE rowid = ?`, [
+            info.lastInsertRowid,
+        ]);
         return insertedRecord;
     }
     async update(table, data, where) {
         const setClause = Object.keys(data)
-            .map((key) => `${key} = ?`)
-            .join(", ");
+            .map(key => `${key} = ?`)
+            .join(', ');
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
         const params = [...Object.values(data), ...Object.values(where)];
         const stmt = this.db.prepare(sql);
@@ -176,8 +176,8 @@ class SQLiteTransaction {
     }
     async delete(table, where) {
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         const stmt = this.db.prepare(sql);
         const info = stmt.run(Object.values(where));
@@ -190,6 +190,6 @@ class SQLiteTransaction {
     async rollback() {
         // SQLite transactions are handled automatically by better-sqlite3
         // This is just for interface compatibility
-        throw new Error("Transaction rollback");
+        throw new Error('Transaction rollback');
     }
 }

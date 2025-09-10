@@ -51,7 +51,7 @@ class WebSocketManager {
             };
             // Add heartbeat mechanism
             socket.heartbeat = () => {
-                socket.emit("heartbeat", { timestamp: Date.now() });
+                socket.emit('heartbeat', { timestamp: Date.now() });
             };
             next();
         });
@@ -81,7 +81,7 @@ class WebSocketManager {
         return serialized.length > 1024; // Compress if larger than 1KB
     }
     async registerHandler(namespace, wsConfig, moduleConfig) {
-        namespace.on("connection", (socket) => {
+        namespace.on('connection', (socket) => {
             console.log(`WebSocket connected to /${moduleConfig.name}: ${socket.id}`);
             this.setupSocketHandlers(socket, wsConfig, moduleConfig);
             this.setupSocketMiddleware(socket, moduleConfig.name);
@@ -92,17 +92,16 @@ class WebSocketManager {
             const handlerKey = `${moduleConfig.name}.${wsConfig.handler}`;
             try {
                 // Rate limiting
-                if (wsConfig.rateLimit &&
-                    !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)) {
+                if (wsConfig.rateLimit && !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)) {
                     const error = {
                         success: false,
-                        error: "Rate limit exceeded",
-                        code: "RATE_LIMIT",
+                        error: 'Rate limit exceeded',
+                        code: 'RATE_LIMIT',
                     };
                     if (callback)
                         callback(error);
                     else
-                        socket.emit("error", error);
+                        socket.emit('error', error);
                     return;
                 }
                 // Validation (Zod-only)
@@ -114,9 +113,9 @@ class WebSocketManager {
                         if (validationError.issues) {
                             const error = {
                                 success: false,
-                                error: "Validation failed",
+                                error: 'Validation failed',
                                 details: validationError.issues.map((issue) => ({
-                                    field: issue.path.length > 0 ? issue.path.join(".") : "data",
+                                    field: issue.path.length > 0 ? issue.path.join('.') : 'data',
                                     message: issue.message,
                                     code: issue.code,
                                 })),
@@ -124,7 +123,7 @@ class WebSocketManager {
                             if (callback)
                                 callback(error);
                             else
-                                socket.emit("error", error);
+                                socket.emit('error', error);
                             return;
                         }
                         throw validationError;
@@ -149,7 +148,7 @@ class WebSocketManager {
             }
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                const errorCode = error?.code || "INTERNAL_ERROR";
+                const errorCode = error?.code || 'INTERNAL_ERROR';
                 console.error(`WebSocket error in ${handlerKey}:`, errorMessage);
                 const errorResponse = {
                     success: false,
@@ -160,18 +159,18 @@ class WebSocketManager {
                     callback(errorResponse);
                 }
                 else {
-                    socket.emit("error", errorResponse);
+                    socket.emit('error', errorResponse);
                 }
             }
         });
     }
     setupSocketMiddleware(socket, moduleName) {
-        socket.on("disconnect", (reason) => {
+        socket.on('disconnect', reason => {
             console.log(`WebSocket disconnected from /${moduleName}: ${socket.id} (${reason})`);
             this.cleanup(socket.id);
         });
-        socket.on("ping", () => {
-            socket.emit("pong");
+        socket.on('ping', () => {
+            socket.emit('pong');
         });
     }
     checkRateLimit(socketId, handlerKey, rateLimit) {
@@ -205,7 +204,7 @@ class WebSocketManager {
         return this.circuitBreakers.get(key);
     }
     cleanup(socketId) {
-        this.rateLimiters.forEach((limiter) => {
+        this.rateLimiters.forEach(limiter => {
             limiter.delete(socketId);
         });
     }

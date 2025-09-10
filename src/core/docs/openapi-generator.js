@@ -6,7 +6,7 @@ exports.defaultSecuritySchemes = exports.OpenAPIGenerator = void 0;
 exports.generateOpenAPIFromRoutes = generateOpenAPIFromRoutes;
 const zod_to_openapi_1 = require("./zod-to-openapi");
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("OpenAPIGenerator");
+const logger = (0, logger_1.createFrameworkLogger)('OpenAPIGenerator');
 // OpenAPI generator class
 class OpenAPIGenerator {
     options;
@@ -15,7 +15,7 @@ class OpenAPIGenerator {
     tags = new Set();
     constructor(options) {
         this.options = options;
-        logger.debug("OpenAPI Generator initialized", "Initialization", {
+        logger.debug('OpenAPI Generator initialized', 'Initialization', {
             includeExamples: options.includeExamples,
             includeSchemas: options.includeSchemas,
         });
@@ -24,27 +24,27 @@ class OpenAPIGenerator {
     addRoutes(routes) {
         this.routes.push(...routes);
         // Extract tags from routes
-        routes.forEach((route) => {
+        routes.forEach(route => {
             if (route.schema.tags) {
-                route.schema.tags.forEach((tag) => this.tags.add(tag));
+                route.schema.tags.forEach(tag => this.tags.add(tag));
             }
         });
-        logger.debug(`Added ${routes.length} routes to documentation`, "RouteAddition", {
+        logger.debug(`Added ${routes.length} routes to documentation`, 'RouteAddition', {
             totalRoutes: this.routes.length,
             uniqueTags: this.tags.size,
         });
     }
     // Generate complete OpenAPI specification
     generate() {
-        logger.info("Generating OpenAPI specification", "Generation", {
+        logger.info('Generating OpenAPI specification', 'Generation', {
             routeCount: this.routes.length,
             tagCount: this.tags.size,
         });
         const spec = {
-            openapi: "3.0.3",
+            openapi: '3.0.3',
             info: this.options.info,
             servers: this.options.servers || [
-                { url: "http://localhost:3000", description: "Development server" },
+                { url: 'http://localhost:3000', description: 'Development server' },
             ],
             paths: this.generatePaths(),
             tags: this.generateTags(),
@@ -56,7 +56,7 @@ class OpenAPIGenerator {
                 securitySchemes: this.options.securitySchemes,
             };
         }
-        logger.info("OpenAPI specification generated successfully", "Generation", {
+        logger.info('OpenAPI specification generated successfully', 'Generation', {
             pathCount: Object.keys(spec.paths).length,
             schemaCount: this.schemas.size,
             tagCount: spec.tags?.length || 0,
@@ -90,8 +90,7 @@ class OpenAPIGenerator {
             operation.parameters = parameters;
         }
         // Add request body (for POST, PUT, PATCH)
-        if (["POST", "PUT", "PATCH"].includes(route.method) &&
-            route.validation?.body) {
+        if (['POST', 'PUT', 'PATCH'].includes(route.method) && route.validation?.body) {
             operation.requestBody = this.generateRequestBody(route);
         }
         // Add security if auth is required
@@ -110,7 +109,7 @@ class OpenAPIGenerator {
                 for (const [name, schema] of Object.entries(paramSchema.properties)) {
                     parameters.push({
                         name,
-                        in: "path",
+                        in: 'path',
                         required: true,
                         schema,
                         description: schema.description,
@@ -127,7 +126,7 @@ class OpenAPIGenerator {
                     const isRequired = querySchema.required?.includes(name) || false;
                     parameters.push({
                         name,
-                        in: "query",
+                        in: 'query',
                         required: isRequired,
                         schema,
                         description: schema.description,
@@ -144,7 +143,7 @@ class OpenAPIGenerator {
                     const isRequired = headerSchema.required?.includes(name) || false;
                     parameters.push({
                         name,
-                        in: "header",
+                        in: 'header',
                         required: isRequired,
                         schema,
                         description: schema.description,
@@ -159,11 +158,11 @@ class OpenAPIGenerator {
     generateRequestBody(route) {
         if (!route.validation?.body) {
             return {
-                description: "Request body",
+                description: 'Request body',
                 required: true,
                 content: {
-                    "application/json": {
-                        schema: { type: "object" },
+                    'application/json': {
+                        schema: { type: 'object' },
                     },
                 },
             };
@@ -173,10 +172,10 @@ class OpenAPIGenerator {
             ? (0, zod_to_openapi_1.generateExampleFromSchema)(route.validation.body)
             : undefined;
         return {
-            description: "Request body",
+            description: 'Request body',
             required: true,
             content: {
-                "application/json": {
+                'application/json': {
                     schema: bodySchema,
                     example,
                 },
@@ -187,35 +186,35 @@ class OpenAPIGenerator {
     generateResponses(route) {
         const responses = {};
         // Success response
-        responses["200"] = {
-            description: "Successful response",
+        responses['200'] = {
+            description: 'Successful response',
             content: {
-                "application/json": {
+                'application/json': {
                     schema: {
-                        type: "object",
+                        type: 'object',
                         properties: {
-                            success: { type: "boolean", example: true },
-                            data: { type: "object", description: "Response data" },
-                            message: { type: "string", example: "Operation successful" },
+                            success: { type: 'boolean', example: true },
+                            data: { type: 'object', description: 'Response data' },
+                            message: { type: 'string', example: 'Operation successful' },
                         },
                     },
                 },
             },
         };
         // Add 201 for POST requests
-        if (route.method === "POST") {
-            responses["201"] = {
-                description: "Resource created successfully",
+        if (route.method === 'POST') {
+            responses['201'] = {
+                description: 'Resource created successfully',
                 content: {
-                    "application/json": {
+                    'application/json': {
                         schema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
-                                success: { type: "boolean", example: true },
-                                data: { type: "object", description: "Created resource" },
+                                success: { type: 'boolean', example: true },
+                                data: { type: 'object', description: 'Created resource' },
                                 message: {
-                                    type: "string",
-                                    example: "Resource created successfully",
+                                    type: 'string',
+                                    example: 'Resource created successfully',
                                 },
                             },
                         },
@@ -225,30 +224,30 @@ class OpenAPIGenerator {
         }
         // Validation error response
         if (route.validation) {
-            responses["400"] = {
-                description: "Validation error",
+            responses['400'] = {
+                description: 'Validation error',
                 content: {
-                    "application/json": {
+                    'application/json': {
                         schema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
-                                success: { type: "boolean", example: false },
-                                error: { type: "string", example: "Validation failed" },
+                                success: { type: 'boolean', example: false },
+                                error: { type: 'string', example: 'Validation failed' },
                                 details: {
-                                    type: "array",
+                                    type: 'array',
                                     items: {
-                                        type: "object",
+                                        type: 'object',
                                         properties: {
-                                            field: { type: "string", example: "email" },
+                                            field: { type: 'string', example: 'email' },
                                             message: {
-                                                type: "string",
-                                                example: "Invalid email address",
+                                                type: 'string',
+                                                example: 'Invalid email address',
                                             },
-                                            code: { type: "string", example: "invalid_format" },
+                                            code: { type: 'string', example: 'invalid_format' },
                                         },
                                     },
                                 },
-                                requestId: { type: "string", example: "req_123456" },
+                                requestId: { type: 'string', example: 'req_123456' },
                             },
                         },
                     },
@@ -257,31 +256,31 @@ class OpenAPIGenerator {
         }
         // Auth error response
         if (route.auth) {
-            responses["401"] = {
-                description: "Authentication required",
+            responses['401'] = {
+                description: 'Authentication required',
                 content: {
-                    "application/json": {
+                    'application/json': {
                         schema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
-                                success: { type: "boolean", example: false },
-                                error: { type: "string", example: "Authentication required" },
-                                requestId: { type: "string", example: "req_123456" },
+                                success: { type: 'boolean', example: false },
+                                error: { type: 'string', example: 'Authentication required' },
+                                requestId: { type: 'string', example: 'req_123456' },
                             },
                         },
                     },
                 },
             };
-            responses["403"] = {
-                description: "Insufficient permissions",
+            responses['403'] = {
+                description: 'Insufficient permissions',
                 content: {
-                    "application/json": {
+                    'application/json': {
                         schema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
-                                success: { type: "boolean", example: false },
-                                error: { type: "string", example: "Insufficient permissions" },
-                                requestId: { type: "string", example: "req_123456" },
+                                success: { type: 'boolean', example: false },
+                                error: { type: 'string', example: 'Insufficient permissions' },
+                                requestId: { type: 'string', example: 'req_123456' },
                             },
                         },
                     },
@@ -290,17 +289,17 @@ class OpenAPIGenerator {
         }
         // Rate limit error response
         if (route.rateLimit) {
-            responses["429"] = {
-                description: "Rate limit exceeded",
+            responses['429'] = {
+                description: 'Rate limit exceeded',
                 content: {
-                    "application/json": {
+                    'application/json': {
                         schema: {
-                            type: "object",
+                            type: 'object',
                             properties: {
-                                success: { type: "boolean", example: false },
-                                error: { type: "string", example: "Rate limit exceeded" },
-                                retryAfter: { type: "number", example: 60 },
-                                requestId: { type: "string", example: "req_123456" },
+                                success: { type: 'boolean', example: false },
+                                error: { type: 'string', example: 'Rate limit exceeded' },
+                                retryAfter: { type: 'number', example: 60 },
+                                requestId: { type: 'string', example: 'req_123456' },
                             },
                         },
                     },
@@ -308,16 +307,16 @@ class OpenAPIGenerator {
             };
         }
         // Server error response
-        responses["500"] = {
-            description: "Internal server error",
+        responses['500'] = {
+            description: 'Internal server error',
             content: {
-                "application/json": {
+                'application/json': {
                     schema: {
-                        type: "object",
+                        type: 'object',
                         properties: {
-                            success: { type: "boolean", example: false },
-                            error: { type: "string", example: "Internal server error" },
-                            requestId: { type: "string", example: "req_123456" },
+                            success: { type: 'boolean', example: false },
+                            error: { type: 'string', example: 'Internal server error' },
+                            requestId: { type: 'string', example: 'req_123456' },
                         },
                     },
                 },
@@ -338,7 +337,7 @@ class OpenAPIGenerator {
     }
     // Generate tags
     generateTags() {
-        return Array.from(this.tags).map((tag) => ({
+        return Array.from(this.tags).map(tag => ({
             name: tag,
             description: `Operations related to ${tag}`,
         }));
@@ -346,7 +345,7 @@ class OpenAPIGenerator {
     // Convert Moro path format to OpenAPI path format
     convertPathToOpenAPI(path) {
         // Convert :param to {param} format
-        return path.replace(/:([^/]+)/g, "{$1}");
+        return path.replace(/:([^/]+)/g, '{$1}');
     }
     // Generate JSON representation
     generateJSON() {
@@ -359,19 +358,19 @@ class OpenAPIGenerator {
     }
     // Simple YAML converter (basic implementation)
     objectToYAML(obj, indent = 0) {
-        const spaces = "  ".repeat(indent);
-        let yaml = "";
+        const spaces = '  '.repeat(indent);
+        let yaml = '';
         for (const [key, value] of Object.entries(obj)) {
             if (value === null || value === undefined)
                 continue;
             yaml += `${spaces}${key}:`;
-            if (typeof value === "object" && !Array.isArray(value)) {
-                yaml += "\n" + this.objectToYAML(value, indent + 1);
+            if (typeof value === 'object' && !Array.isArray(value)) {
+                yaml += '\n' + this.objectToYAML(value, indent + 1);
             }
             else if (Array.isArray(value)) {
-                yaml += "\n";
+                yaml += '\n';
                 for (const item of value) {
-                    if (typeof item === "object") {
+                    if (typeof item === 'object') {
                         yaml += `${spaces}  -\n` + this.objectToYAML(item, indent + 2);
                     }
                     else {
@@ -379,7 +378,7 @@ class OpenAPIGenerator {
                     }
                 }
             }
-            else if (typeof value === "string") {
+            else if (typeof value === 'string') {
                 yaml += ` "${value}"\n`;
             }
             else {
@@ -399,15 +398,15 @@ function generateOpenAPIFromRoutes(routes, options) {
 // Default security schemes
 exports.defaultSecuritySchemes = {
     bearerAuth: {
-        type: "http",
-        scheme: "bearer",
-        bearerFormat: "JWT",
-        description: "Bearer token authentication",
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Bearer token authentication',
     },
     apiKey: {
-        type: "apiKey",
-        in: "header",
-        name: "X-API-Key",
-        description: "API key authentication",
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+        description: 'API key authentication',
     },
 };

@@ -47,7 +47,7 @@ class ModuleDiscovery {
         this.options = {
             pattern: /\.(module|config)\.(ts|js)$/,
             recursive: true,
-            extensions: [".ts", ".js"],
+            extensions: ['.ts', '.js'],
             ...options,
         };
     }
@@ -70,7 +70,7 @@ class ModuleDiscovery {
         return modules;
     }
     // Find modules by directory structure
-    async discoverModuleDirectories(modulesDir = "src/modules") {
+    async discoverModuleDirectories(modulesDir = 'src/modules') {
         const modules = [];
         const fullPath = (0, path_1.join)(this.baseDir, modulesDir);
         try {
@@ -81,7 +81,7 @@ class ModuleDiscovery {
             for (const item of items) {
                 const itemPath = (0, path_1.join)(fullPath, item);
                 if ((0, fs_1.statSync)(itemPath).isDirectory()) {
-                    const indexPath = (0, path_1.join)(itemPath, "index.ts");
+                    const indexPath = (0, path_1.join)(itemPath, 'index.ts');
                     try {
                         if ((0, fs_1.statSync)(indexPath).isFile()) {
                             const module = await this.loadModule(indexPath);
@@ -93,7 +93,7 @@ class ModuleDiscovery {
                     }
                     catch {
                         // Try alternate patterns
-                        const alternates = ["module.ts", `${item}.module.ts`, "config.ts"];
+                        const alternates = ['module.ts', `${item}.module.ts`, 'config.ts'];
                         for (const alt of alternates) {
                             const altPath = (0, path_1.join)(itemPath, alt);
                             try {
@@ -123,7 +123,7 @@ class ModuleDiscovery {
     findModuleFiles() {
         const files = [];
         this.scanDirectory(this.baseDir, files);
-        return files.filter((file) => this.options.pattern?.test(file));
+        return files.filter(file => this.options.pattern?.test(file));
     }
     // Recursively scan directories for module files
     scanDirectory(dir, files) {
@@ -134,8 +134,7 @@ class ModuleDiscovery {
                 const stat = (0, fs_1.statSync)(fullPath);
                 if (stat.isDirectory()) {
                     // Skip node_modules and other common directories
-                    if (!["node_modules", ".git", "dist", "build"].includes(item) &&
-                        this.options.recursive) {
+                    if (!['node_modules', '.git', 'dist', 'build'].includes(item) && this.options.recursive) {
                         this.scanDirectory(fullPath, files);
                     }
                 }
@@ -161,7 +160,7 @@ class ModuleDiscovery {
                 module.module,
                 module.config,
                 module,
-                ...Object.values(module).filter((exp) => exp && typeof exp === "object" && "name" in exp && "version" in exp),
+                ...Object.values(module).filter(exp => exp && typeof exp === 'object' && 'name' in exp && 'version' in exp),
             ];
             for (const candidate of candidates) {
                 if (this.isValidModule(candidate)) {
@@ -177,18 +176,18 @@ class ModuleDiscovery {
     // Validate that an object is a valid ModuleConfig
     isValidModule(obj) {
         return (obj &&
-            typeof obj === "object" &&
-            typeof obj.name === "string" &&
-            typeof obj.version === "string" &&
+            typeof obj === 'object' &&
+            typeof obj.name === 'string' &&
+            typeof obj.version === 'string' &&
             (obj.routes === undefined || Array.isArray(obj.routes)) &&
             (obj.websockets === undefined || Array.isArray(obj.websockets)) &&
             (obj.services === undefined || Array.isArray(obj.services)));
     }
     // Watch for module changes (for development)
     watchModules(callback) {
-        const fs = require("fs");
+        const fs = require('fs');
         const modulePaths = this.findModuleFiles();
-        modulePaths.forEach((path) => {
+        modulePaths.forEach(path => {
             try {
                 fs.watchFile(path, async () => {
                     console.log(`Module file changed: ${path}`);

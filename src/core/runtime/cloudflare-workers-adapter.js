@@ -4,14 +4,14 @@ exports.CloudflareWorkersAdapter = void 0;
 // Cloudflare Workers runtime adapter
 const base_adapter_1 = require("./base-adapter");
 class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
-    type = "cloudflare-workers";
+    type = 'cloudflare-workers';
     async adaptRequest(request, env, ctx) {
         const { pathname, query } = this.parseUrl(request.url);
         // Parse body for POST/PUT/PATCH requests
         let body;
-        if (["POST", "PUT", "PATCH"].includes(request.method)) {
-            const contentType = request.headers.get("content-type") || "";
-            if (contentType.includes("application/json")) {
+        if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+            const contentType = request.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
                 try {
                     body = await request.json();
                 }
@@ -19,7 +19,7 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
                     body = await request.text();
                 }
             }
-            else if (contentType.includes("application/x-www-form-urlencoded")) {
+            else if (contentType.includes('application/x-www-form-urlencoded')) {
                 body = await request.formData();
                 // Convert FormData to object
                 const formObject = {};
@@ -46,8 +46,8 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
             headers,
             ip: this.getClientIP(headers, request),
             params: {},
-            requestId: "",
-            cookies: this.parseCookies(headers.cookie || ""),
+            requestId: '',
+            cookies: this.parseCookies(headers.cookie || ''),
             files: {},
             // Add Workers-specific context
             env,
@@ -62,8 +62,7 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
         let status = runtimeResponse.statusCode || 200;
         const headers = runtimeResponse.headers || {};
         // If it's a real HttpResponse, we need to extract the data differently
-        if ("statusCode" in moroResponse &&
-            typeof moroResponse.statusCode === "number") {
+        if ('statusCode' in moroResponse && typeof moroResponse.statusCode === 'number') {
             status = moroResponse.statusCode;
         }
         // Convert headers to Headers object
@@ -72,9 +71,9 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
             responseHeaders.set(key, value);
         });
         // Handle different body types
-        if (typeof body === "object" && body !== null) {
+        if (typeof body === 'object' && body !== null) {
             body = JSON.stringify(body);
-            responseHeaders.set("Content-Type", "application/json");
+            responseHeaders.set('Content-Type', 'application/json');
         }
         return new Response(body, {
             status,
@@ -93,11 +92,11 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
             catch (error) {
                 return new Response(JSON.stringify({
                     success: false,
-                    error: "Internal server error",
-                    message: error instanceof Error ? error.message : "Unknown error",
+                    error: 'Internal server error',
+                    message: error instanceof Error ? error.message : 'Unknown error',
                 }), {
                     status: 500,
-                    headers: { "Content-Type": "application/json" },
+                    headers: { 'Content-Type': 'application/json' },
                 });
             }
         };
@@ -106,18 +105,18 @@ class CloudflareWorkersAdapter extends base_adapter_1.BaseRuntimeAdapter {
     // listen method is optional in the interface
     getClientIP(headers, request) {
         // Cloudflare provides the real IP in CF-Connecting-IP header
-        return (headers["cf-connecting-ip"] ||
-            headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-            headers["x-real-ip"] ||
-            "unknown");
+        return (headers['cf-connecting-ip'] ||
+            headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+            headers['x-real-ip'] ||
+            'unknown');
     }
     parseCookies(cookieHeader) {
         const cookies = {};
         if (cookieHeader) {
-            cookieHeader.split(";").forEach((cookie) => {
-                const [name, ...rest] = cookie.trim().split("=");
+            cookieHeader.split(';').forEach(cookie => {
+                const [name, ...rest] = cookie.trim().split('=');
                 if (name && rest.length > 0) {
-                    cookies[name] = rest.join("=");
+                    cookies[name] = rest.join('=');
                 }
             });
         }

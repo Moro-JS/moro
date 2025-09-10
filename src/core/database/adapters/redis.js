@@ -4,12 +4,12 @@ exports.RedisAdapter = void 0;
 const logger_1 = require("../../logger");
 class RedisAdapter {
     client;
-    logger = (0, logger_1.createFrameworkLogger)("Redis");
+    logger = (0, logger_1.createFrameworkLogger)('Redis');
     keyPrefix;
     constructor(config = {}) {
         try {
-            const Redis = require("ioredis");
-            this.keyPrefix = config.keyPrefix || "moro:";
+            const Redis = require('ioredis');
+            this.keyPrefix = config.keyPrefix || 'moro:';
             if (config.cluster) {
                 // Redis Cluster
                 this.client = new Redis.Cluster(config.cluster.nodes, {
@@ -20,7 +20,7 @@ class RedisAdapter {
             else {
                 // Single Redis instance
                 this.client = new Redis({
-                    host: config.host || "localhost",
+                    host: config.host || 'localhost',
                     port: config.port || 6379,
                     password: config.password,
                     db: config.db || 0,
@@ -29,21 +29,21 @@ class RedisAdapter {
                     lazyConnect: config.lazyConnect || true,
                 });
             }
-            this.client.on("error", (err) => {
-                this.logger.error("Redis client error", "Redis", {
+            this.client.on('error', (err) => {
+                this.logger.error('Redis client error', 'Redis', {
                     error: err.message,
                 });
             });
-            this.client.on("connect", () => {
-                this.logger.info("Redis connected", "Connection");
+            this.client.on('connect', () => {
+                this.logger.info('Redis connected', 'Connection');
             });
-            this.client.on("disconnect", () => {
-                this.logger.warn("Redis disconnected", "Connection");
+            this.client.on('disconnect', () => {
+                this.logger.warn('Redis disconnected', 'Connection');
             });
-            this.logger.info("Redis adapter initialized", "Redis");
+            this.logger.info('Redis adapter initialized', 'Redis');
         }
         catch (error) {
-            throw new Error("ioredis package is required for Redis adapter. Install it with: npm install ioredis");
+            throw new Error('ioredis package is required for Redis adapter. Install it with: npm install ioredis');
         }
     }
     prefixKey(key) {
@@ -52,10 +52,10 @@ class RedisAdapter {
     async connect() {
         try {
             await this.client.ping();
-            this.logger.info("Redis connection established", "Connection");
+            this.logger.info('Redis connection established', 'Connection');
         }
         catch (error) {
-            this.logger.error("Redis connection failed", "Connection", {
+            this.logger.error('Redis connection failed', 'Connection', {
                 error: error instanceof Error ? error.message : String(error),
             });
             throw error;
@@ -72,12 +72,12 @@ class RedisAdapter {
                 return [];
             const values = await this.client.mget(keys);
             return values.map((value, index) => ({
-                key: keys[index].replace(this.keyPrefix, ""),
+                key: keys[index].replace(this.keyPrefix, ''),
                 value: value ? JSON.parse(value) : null,
             }));
         }
         catch (error) {
-            this.logger.error("Redis query failed", "Query", {
+            this.logger.error('Redis query failed', 'Query', {
                 pattern,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -90,7 +90,7 @@ class RedisAdapter {
             return value ? JSON.parse(value) : null;
         }
         catch (error) {
-            this.logger.error("Redis queryOne failed", "Query", {
+            this.logger.error('Redis queryOne failed', 'Query', {
                 key,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -104,7 +104,7 @@ class RedisAdapter {
             return data;
         }
         catch (error) {
-            this.logger.error("Redis insert failed", "Insert", {
+            this.logger.error('Redis insert failed', 'Insert', {
                 key,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -121,7 +121,7 @@ class RedisAdapter {
             return merged;
         }
         catch (error) {
-            this.logger.error("Redis update failed", "Update", {
+            this.logger.error('Redis update failed', 'Update', {
                 key,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -137,7 +137,7 @@ class RedisAdapter {
             return deletedCount;
         }
         catch (error) {
-            this.logger.error("Redis delete failed", "Delete", {
+            this.logger.error('Redis delete failed', 'Delete', {
                 pattern,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -202,7 +202,7 @@ class RedisAdapter {
         return parsed;
     }
     async lpush(list, ...values) {
-        const serialized = values.map((v) => JSON.stringify(v));
+        const serialized = values.map(v => JSON.stringify(v));
         return await this.client.lpush(this.prefixKey(list), ...serialized);
     }
     async rpop(list) {
@@ -219,7 +219,7 @@ class RedisAdapter {
     async subscribe(channel, callback) {
         const subscriber = this.client.duplicate();
         subscriber.subscribe(channel);
-        subscriber.on("message", (_channel, message) => {
+        subscriber.on('message', (_channel, message) => {
             callback(JSON.parse(message));
         });
     }
@@ -241,10 +241,10 @@ class RedisTransaction {
     async query(pattern, _params) {
         // Note: Redis transactions can't perform read operations during MULTI
         // This is a limitation of Redis transactions
-        throw new Error("Redis transactions cannot perform read operations. Use regular operations instead.");
+        throw new Error('Redis transactions cannot perform read operations. Use regular operations instead.');
     }
     async queryOne(_key, _params) {
-        throw new Error("Redis transactions cannot perform read operations. Use regular operations instead.");
+        throw new Error('Redis transactions cannot perform read operations. Use regular operations instead.');
     }
     async insert(key, data) {
         const value = JSON.stringify(data);

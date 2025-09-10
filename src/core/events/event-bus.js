@@ -19,7 +19,7 @@ class MoroEventBus {
     auditLog = [];
     latencySum = 0;
     errorCount = 0;
-    logger = (0, logger_1.createFrameworkLogger)("EventBus");
+    logger = (0, logger_1.createFrameworkLogger)('EventBus');
     constructor(options = {}) {
         this.options = options;
         this.emitter.setMaxListeners(options.maxListeners || 100);
@@ -29,7 +29,7 @@ class MoroEventBus {
         const startTime = Date.now();
         const fullContext = {
             timestamp: new Date(),
-            source: "framework",
+            source: 'framework',
             requestId: this.generateRequestId(),
             ...context,
         };
@@ -56,7 +56,7 @@ class MoroEventBus {
         }
         catch (error) {
             this.errorCount++;
-            this.logger.error(`Event emission error for ${event}`, "Emission", {
+            this.logger.error(`Event emission error for ${event}`, 'Emission', {
                 event,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -87,12 +87,12 @@ class MoroEventBus {
     createModuleBus(moduleId) {
         // Return existing bus if it already exists
         if (this.moduleBuses.has(moduleId)) {
-            this.logger.debug(`Reusing existing event bus for module: ${moduleId}`, "ModuleBus");
+            this.logger.debug(`Reusing existing event bus for module: ${moduleId}`, 'ModuleBus');
             return this.moduleBuses.get(moduleId);
         }
         const moduleBus = new ModuleEventBusImpl(moduleId, this);
         this.moduleBuses.set(moduleId, moduleBus);
-        this.logger.debug(`Created event bus for module: ${moduleId}`, "ModuleBus");
+        this.logger.debug(`Created event bus for module: ${moduleId}`, 'ModuleBus');
         return moduleBus;
     }
     // Clean up module resources
@@ -101,30 +101,26 @@ class MoroEventBus {
         if (moduleBus) {
             moduleBus.removeAllListeners();
             this.moduleBuses.delete(moduleId);
-            this.logger.debug(`Destroyed event bus for module: ${moduleId}`, "ModuleBus");
+            this.logger.debug(`Destroyed event bus for module: ${moduleId}`, 'ModuleBus');
         }
     }
     // Comprehensive event metrics
     getMetrics() {
         return {
             ...this.metrics,
-            averageLatency: this.metrics.totalEvents > 0
-                ? this.latencySum / this.metrics.totalEvents
-                : 0,
-            errorRate: this.metrics.totalEvents > 0
-                ? (this.errorCount / this.metrics.totalEvents) * 100
-                : 0,
+            averageLatency: this.metrics.totalEvents > 0 ? this.latencySum / this.metrics.totalEvents : 0,
+            errorRate: this.metrics.totalEvents > 0 ? (this.errorCount / this.metrics.totalEvents) * 100 : 0,
         };
     }
     // Enable audit logging for compliance
     enableAuditLog() {
         this.auditEnabled = true;
-        this.logger.info("Event audit logging enabled", "Audit");
+        this.logger.info('Event audit logging enabled', 'Audit');
     }
     disableAuditLog() {
         this.auditEnabled = false;
         this.auditLog = [];
-        this.logger.info("Event audit logging disabled", "Audit");
+        this.logger.info('Event audit logging disabled', 'Audit');
     }
     // Get audit log for compliance reporting
     getAuditLog() {
@@ -132,11 +128,9 @@ class MoroEventBus {
     }
     updateMetrics(event, moduleId) {
         this.metrics.totalEvents++;
-        this.metrics.eventsByType[event] =
-            (this.metrics.eventsByType[event] || 0) + 1;
+        this.metrics.eventsByType[event] = (this.metrics.eventsByType[event] || 0) + 1;
         if (moduleId) {
-            this.metrics.eventsByModule[moduleId] =
-                (this.metrics.eventsByModule[moduleId] || 0) + 1;
+            this.metrics.eventsByModule[moduleId] = (this.metrics.eventsByModule[moduleId] || 0) + 1;
         }
     }
     generateRequestId() {
@@ -156,7 +150,7 @@ class ModuleEventBusImpl {
         // Module events are namespaced to prevent conflicts
         const namespacedEvent = `module:${this.moduleId}:${event}`;
         return this.globalBus.emit(namespacedEvent, data, {
-            source: "module",
+            source: 'module',
             moduleId: this.moduleId,
         });
     }
@@ -183,8 +177,8 @@ class ModuleEventBusImpl {
         else {
             // Remove all module events - would need access to globalBus emitter
             // For now, this is a simplified implementation
-            const logger = (0, logger_1.createFrameworkLogger)("EventBus");
-            logger.warn(`Removing all listeners for module ${this.moduleId} not fully implemented`, "ModuleBus");
+            const logger = (0, logger_1.createFrameworkLogger)('EventBus');
+            logger.warn(`Removing all listeners for module ${this.moduleId} not fully implemented`, 'ModuleBus');
         }
         return this;
     }

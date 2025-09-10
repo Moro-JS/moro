@@ -34,9 +34,9 @@ class Moro extends events_1.EventEmitter {
         if (options.logger !== undefined) {
             if (options.logger === false) {
                 // Disable logging by setting level to fatal (highest level)
-                logger_1.logger.setLevel("fatal");
+                logger_1.logger.setLevel('fatal');
             }
-            else if (typeof options.logger === "object") {
+            else if (typeof options.logger === 'object') {
                 // Configure logger with provided options
                 if (options.logger.level) {
                     logger_1.logger.setLevel(options.logger.level);
@@ -46,7 +46,7 @@ class Moro extends events_1.EventEmitter {
             }
         }
         // Initialize framework logger after global configuration
-        this.logger = (0, logger_1.createFrameworkLogger)("Core");
+        this.logger = (0, logger_1.createFrameworkLogger)('Core');
         this.httpServer = new http_1.MoroHttpServer();
         // Create HTTP/2 or HTTP/1.1 server based on options
         if (options.http2) {
@@ -57,23 +57,23 @@ class Moro extends events_1.EventEmitter {
                 this.server = (0, http2_1.createServer)();
             }
             // Handle HTTP/2 streams manually
-            this.server.on("stream", (stream, headers) => {
+            this.server.on('stream', (stream, headers) => {
                 // Convert HTTP/2 stream to HTTP/1.1-like request/response
                 const req = stream;
                 const res = stream;
-                req.url = headers[":path"];
-                req.method = headers[":method"];
+                req.url = headers[':path'];
+                req.method = headers[':method'];
                 req.headers = headers;
-                this.httpServer["handleRequest"](req, res);
+                this.httpServer['handleRequest'](req, res);
             });
-            this.logger.info("HTTP/2 server created", "ServerInit");
+            this.logger.info('HTTP/2 server created', 'ServerInit');
         }
         else {
             this.server = this.httpServer.getServer();
         }
         this.io = new socket_io_1.Server(this.server, {
-            cors: { origin: "*" },
-            path: "/socket.io/",
+            cors: { origin: '*' },
+            path: '/socket.io/',
         });
         this.ioInstance = this.io;
         this.container = new utilities_1.Container();
@@ -90,10 +90,10 @@ class Moro extends events_1.EventEmitter {
         this.eventBus = new events_2.MoroEventBus({
             maxListeners: 200,
             enableMetrics: true,
-            isolation: "module",
+            isolation: 'module',
         });
         // Register event bus in DI container as factory
-        this.container.register("eventBus", () => this.eventBus);
+        this.container.register('eventBus', () => this.eventBus);
         this.setupCore();
     }
     // Middleware support
@@ -107,7 +107,7 @@ class Moro extends events_1.EventEmitter {
         this.httpServer.use(http_1.middleware.cors());
         // Performance middleware
         this.httpServer.use(http_1.middleware.compression());
-        this.httpServer.use(http_1.middleware.bodySize({ limit: "10mb" }));
+        this.httpServer.use(http_1.middleware.bodySize({ limit: '10mb' }));
         // Request tracking middleware
         this.httpServer.use(this.requestTrackingMiddleware());
         // Error boundary middleware
@@ -116,7 +116,7 @@ class Moro extends events_1.EventEmitter {
     requestTrackingMiddleware() {
         return (req, res, next) => {
             const startTime = Date.now();
-            res.on("finish", () => {
+            res.on('finish', () => {
                 const duration = Date.now() - startTime;
                 this.logger.info(`${req.method} ${req.path} - ${res.statusCode} - ${duration}ms [${req.requestId}]`);
             });
@@ -129,11 +129,11 @@ class Moro extends events_1.EventEmitter {
                 next();
             }
             catch (error) {
-                this.logger.error("Error:", error.message, error.stack);
+                this.logger.error('Error:', error.message, error.stack);
                 if (!res.headersSent) {
                     res.status(500).json({
                         success: false,
-                        error: "Internal server error",
+                        error: 'Internal server error',
                         requestId: req.requestId,
                     });
                 }
@@ -143,13 +143,13 @@ class Moro extends events_1.EventEmitter {
     // Public API for adding middleware
     addMiddleware(middleware) {
         this.httpServer.use(middleware);
-        this.emit("middleware:added", { middleware });
+        this.emit('middleware:added', { middleware });
         return this;
     }
     // Public API for database registration
     registerDatabase(adapter) {
-        this.container.register("database", () => adapter, true);
-        this.emit("database:registered", { adapter });
+        this.container.register('database', () => adapter, true);
+        this.emit('database:registered', { adapter });
         return this;
     }
     // Public API for accessing HTTP server
@@ -161,7 +161,7 @@ class Moro extends events_1.EventEmitter {
         return this.io;
     }
     async loadModule(moduleConfig) {
-        this.logger.info(`Loading module: ${moduleConfig.name}@${moduleConfig.version}`, "ModuleLoader");
+        this.logger.info(`Loading module: ${moduleConfig.name}@${moduleConfig.version}`, 'ModuleLoader');
         // Create module event bus once during module loading
         const moduleEventBus = this.eventBus.createModuleBus(moduleConfig.name);
         // Register services in DI container
@@ -173,19 +173,19 @@ class Moro extends events_1.EventEmitter {
             await this.setupWebSocketHandlers(moduleConfig);
         }
         // Mount with versioning
-        this.logger.debug(`Module version before basePath: "${moduleConfig.version}"`, "ModuleLoader");
+        this.logger.debug(`Module version before basePath: "${moduleConfig.version}"`, 'ModuleLoader');
         const basePath = `/api/v${moduleConfig.version}/${moduleConfig.name}`;
-        this.logger.debug(`Generated basePath: "${basePath}"`, "ModuleLoader");
+        this.logger.debug(`Generated basePath: "${basePath}"`, 'ModuleLoader');
         this.mountRouter(basePath, router);
-        this.logger.info(`Module loaded: ${moduleConfig.name}`, "ModuleLoader");
-        this.emit("moduleLoaded", moduleConfig.name);
+        this.logger.info(`Module loaded: ${moduleConfig.name}`, 'ModuleLoader');
+        this.emit('moduleLoaded', moduleConfig.name);
     }
     registerServices(config) {
         if (!config.services)
             return;
         for (const service of config.services) {
             const factory = () => {
-                const dependencies = (service.dependencies || []).map((dep) => this.container.resolve(dep));
+                const dependencies = (service.dependencies || []).map(dep => this.container.resolve(dep));
                 return new service.implementation(...dependencies);
             };
             this.container.register(service.name, factory, service.singleton || false);
@@ -205,24 +205,24 @@ class Moro extends events_1.EventEmitter {
     }
     async createModuleRouter(config, moduleEventBus) {
         const router = new http_2.Router();
-        this.logger.debug(`Creating router for module: ${config.name}`, "Router");
-        this.logger.debug(`Module has ${config.routes?.length || 0} routes`, "Router");
+        this.logger.debug(`Creating router for module: ${config.name}`, 'Router');
+        this.logger.debug(`Module has ${config.routes?.length || 0} routes`, 'Router');
         if (!config.routes)
             return router;
         for (const route of config.routes) {
-            this.logger.debug(`Adding route: ${route.method} ${route.path} -> ${route.handler}`, "Router");
+            this.logger.debug(`Adding route: ${route.method} ${route.path} -> ${route.handler}`, 'Router');
             const handler = await this.createResilientHandler(route, config, moduleEventBus);
             const method = route.method.toLowerCase();
             // Add route to router
             router[method](route.path, handler);
         }
-        this.logger.debug(`Router created with ${router.getRoutes().length} total routes`, "Router");
+        this.logger.debug(`Router created with ${router.getRoutes().length} total routes`, 'Router');
         return router;
     }
     async createResilientHandler(route, config, moduleEventBus) {
         const handlerKey = `${config.name}.${route.handler}`;
         return async (req, res) => {
-            const requestId = req.headers["x-request-id"] || Math.random().toString(36);
+            const requestId = req.headers['x-request-id'] || Math.random().toString(36);
             try {
                 // Try to get functional handler first, then fall back to service-based
                 let handler;
@@ -231,7 +231,7 @@ class Moro extends events_1.EventEmitter {
                     // New functional handler
                     handler = config.routeHandlers[route.handler];
                     useEnhancedReq = true;
-                    this.logger.debug(`Using functional handler: ${route.handler}`, "Handler", {
+                    this.logger.debug(`Using functional handler: ${route.handler}`, 'Handler', {
                         availableHandlers: Object.keys(config.routeHandlers || {}),
                     });
                 }
@@ -239,16 +239,16 @@ class Moro extends events_1.EventEmitter {
                     // Old service-based handler
                     const service = this.container.resolve(config.name);
                     handler = service[route.handler];
-                    this.logger.debug(`Using service handler: ${config.name}.${route.handler}`, "Handler");
+                    this.logger.debug(`Using service handler: ${config.name}.${route.handler}`, 'Handler');
                 }
                 else {
-                    this.logger.error(`No handler found for route ${route.method} ${route.path}`, "Handler", {
+                    this.logger.error(`No handler found for route ${route.method} ${route.path}`, 'Handler', {
                         routeHandlers: Object.keys(config.routeHandlers || {}),
                         containerHasModule: this.container.has(config.name),
                     });
                     throw new Error(`Handler ${route.handler} not found for module ${config.name}`);
                 }
-                if (!handler || typeof handler !== "function") {
+                if (!handler || typeof handler !== 'function') {
                     throw new Error(`Handler ${route.handler} is not a function`);
                 }
                 // Validate request if validation schema is provided
@@ -270,23 +270,23 @@ class Moro extends events_1.EventEmitter {
                         if (route.validation.headers && req.headers !== undefined) {
                             req.headers = route.validation.headers.parse(req.headers);
                         }
-                        this.logger.debug("Module route validation passed", "ModuleValidation", {
+                        this.logger.debug('Module route validation passed', 'ModuleValidation', {
                             route: `${route.method} ${route.path}`,
                             module: config.name,
                         });
                     }
                     catch (validationError) {
                         if (validationError.issues) {
-                            this.logger.debug("Module route validation failed", "ModuleValidation", {
+                            this.logger.debug('Module route validation failed', 'ModuleValidation', {
                                 route: `${route.method} ${route.path}`,
                                 module: config.name,
                                 errors: validationError.issues.length,
                             });
                             res.status(400).json({
                                 success: false,
-                                error: "Validation failed",
+                                error: 'Validation failed',
                                 details: validationError.issues.map((issue) => ({
-                                    field: issue.path.length > 0 ? issue.path.join(".") : "request",
+                                    field: issue.path.length > 0 ? issue.path.join('.') : 'request',
                                     message: issue.message,
                                     code: issue.code,
                                 })),
@@ -303,15 +303,15 @@ class Moro extends events_1.EventEmitter {
                     // Use the pre-created module event bus
                     requestToUse = {
                         ...req,
-                        database: this.container.has("database")
-                            ? this.container.resolve("database")
+                        database: this.container.has('database')
+                            ? this.container.resolve('database')
                             : undefined,
                         events: moduleEventBus, // Use pre-created event bus
                         app: {
-                            get: (key) => key === "io" ? this.ioInstance : undefined,
+                            get: (key) => (key === 'io' ? this.ioInstance : undefined),
                         },
                     };
-                    this.logger.debug(`Database available: ${!!requestToUse.database}`, "Handler", {
+                    this.logger.debug(`Database available: ${!!requestToUse.database}`, 'Handler', {
                         moduleId: config.name,
                     });
                 }
@@ -319,11 +319,8 @@ class Moro extends events_1.EventEmitter {
                 const circuitBreaker = this.getCircuitBreaker(handlerKey);
                 const result = await circuitBreaker.execute(() => handler(requestToUse, res));
                 // For functional handlers, ensure the response is sent
-                if (useEnhancedReq &&
-                    result !== undefined &&
-                    result !== null &&
-                    !res.headersSent) {
-                    this.logger.debug(`Sending functional handler result`, "Handler", {
+                if (useEnhancedReq && result !== undefined && result !== null && !res.headersSent) {
+                    this.logger.debug(`Sending functional handler result`, 'Handler', {
                         result,
                     });
                     res.json(result);
@@ -331,7 +328,7 @@ class Moro extends events_1.EventEmitter {
                 return result;
             }
             catch (error) {
-                this.logger.error(`Route handler error [${requestId}]: ${error.message}`, "Handler", {
+                this.logger.error(`Route handler error [${requestId}]: ${error.message}`, 'Handler', {
                     requestId,
                     handlerKey,
                     stack: error.stack,
@@ -339,7 +336,7 @@ class Moro extends events_1.EventEmitter {
                 if (!res.headersSent) {
                     res.status(500).json({
                         success: false,
-                        error: "Internal server error",
+                        error: 'Internal server error',
                         requestId,
                     });
                 }
@@ -348,29 +345,27 @@ class Moro extends events_1.EventEmitter {
         };
     }
     mountRouter(basePath, router) {
-        this.logger.debug(`Mounting router for basePath: ${basePath}`, "Router");
+        this.logger.debug(`Mounting router for basePath: ${basePath}`, 'Router');
         // Enterprise-grade middleware integration with performance optimization
         this.httpServer.use(async (req, res, next) => {
             if (req.path.startsWith(basePath)) {
-                this.logger.debug(`Module middleware handling: ${req.method} ${req.path}`, "Middleware", {
+                this.logger.debug(`Module middleware handling: ${req.method} ${req.path}`, 'Middleware', {
                     basePath,
                 });
                 try {
                     const handled = await router.handle(req, res, basePath);
-                    this.logger.debug(`Route handled: ${handled}`, "Router");
+                    this.logger.debug(`Route handled: ${handled}`, 'Router');
                     if (!handled) {
                         next(); // Let other middleware handle it
                     }
                     // If handled, the router already sent the response, so don't call next()
                 }
                 catch (error) {
-                    this.logger.error("Router error", "Router", {
+                    this.logger.error('Router error', 'Router', {
                         error: error instanceof Error ? error.message : String(error),
                     });
                     if (!res.headersSent) {
-                        res
-                            .status(500)
-                            .json({ success: false, error: "Internal server error" });
+                        res.status(500).json({ success: false, error: 'Internal server error' });
                     }
                 }
             }
@@ -378,7 +373,7 @@ class Moro extends events_1.EventEmitter {
                 next();
             }
         });
-        this.logger.info(`Router mounted for ${basePath}`, "Router");
+        this.logger.info(`Router mounted for ${basePath}`, 'Router');
     }
     async setupWebSocketHandlers(config) {
         const namespace = this.io.of(`/${config.name}`);
@@ -417,7 +412,7 @@ class Moro extends events_1.EventEmitter {
         return this.circuitBreakers.get(key);
     }
     listen(port, host, callback) {
-        if (typeof host === "function") {
+        if (typeof host === 'function') {
             this.httpServer.listen(port, host);
         }
         else if (host) {
@@ -429,12 +424,12 @@ class Moro extends events_1.EventEmitter {
     }
     // Compatibility method for existing controllers
     set(key, value) {
-        if (key === "io") {
+        if (key === 'io') {
             this.ioInstance = value;
         }
     }
     get(key) {
-        if (key === "io") {
+        if (key === 'io') {
             return this.ioInstance;
         }
         return undefined;

@@ -6,16 +6,16 @@ class CircuitBreaker {
     options;
     failures = 0;
     lastFailTime = 0;
-    state = "CLOSED";
+    state = 'CLOSED';
     constructor(options) {
         this.options = options;
     }
     async execute(fn) {
-        if (this.state === "OPEN") {
+        if (this.state === 'OPEN') {
             if (Date.now() - this.lastFailTime < this.options.resetTimeout) {
-                throw new Error("Circuit breaker is OPEN");
+                throw new Error('Circuit breaker is OPEN');
             }
-            this.state = "HALF_OPEN";
+            this.state = 'HALF_OPEN';
         }
         try {
             const result = await fn();
@@ -29,13 +29,13 @@ class CircuitBreaker {
     }
     onSuccess() {
         this.failures = 0;
-        this.state = "CLOSED";
+        this.state = 'CLOSED';
     }
     onFailure() {
         this.failures++;
         this.lastFailTime = Date.now();
         if (this.failures >= this.options.failureThreshold) {
-            this.state = "OPEN";
+            this.state = 'OPEN';
         }
     }
 }

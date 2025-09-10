@@ -23,7 +23,7 @@ class MiddlewareManager extends events_1.EventEmitter {
     middleware = new Map();
     simpleMiddleware = new Map();
     hooks;
-    logger = (0, logger_1.createFrameworkLogger)("Middleware");
+    logger = (0, logger_1.createFrameworkLogger)('Middleware');
     constructor() {
         super();
         this.hooks = new utilities_1.HookManager();
@@ -34,22 +34,22 @@ class MiddlewareManager extends events_1.EventEmitter {
             throw new Error(`Middleware ${name} is already registered`);
         }
         this.middleware.set(name, middleware);
-        this.logger.debug(`Registered middleware: ${name}`, "Registration");
-        this.emit("registered", { name, middleware });
+        this.logger.debug(`Registered middleware: ${name}`, 'Registration');
+        this.emit('registered', { name, middleware });
     }
     // Install simple function-style middleware
     install(middleware, options = {}) {
-        if (typeof middleware === "function") {
+        if (typeof middleware === 'function') {
             // Simple function-style middleware
-            const simpleName = middleware.name || "anonymous";
-            this.logger.debug(`Installing simple middleware: ${simpleName}`, "Installation");
+            const simpleName = middleware.name || 'anonymous';
+            this.logger.debug(`Installing simple middleware: ${simpleName}`, 'Installation');
             this.simpleMiddleware.set(simpleName, middleware);
-            this.emit("installed", { name: simpleName, type: "simple" });
-            this.logger.info(`Simple middleware installed: ${simpleName}`, "Installation");
+            this.emit('installed', { name: simpleName, type: 'simple' });
+            this.logger.info(`Simple middleware installed: ${simpleName}`, 'Installation');
             return;
         }
         // Advanced middleware with dependencies and lifecycle
-        const name = middleware.metadata?.name || "unknown";
+        const name = middleware.metadata?.name || 'unknown';
         if (this.middleware.has(name)) {
             throw new Error(`Middleware ${name} is already installed`);
         }
@@ -63,13 +63,13 @@ class MiddlewareManager extends events_1.EventEmitter {
         }
         // Store middleware
         this.middleware.set(name, middleware);
-        this.logger.debug(`Installing middleware: ${name}`, "Installation");
+        this.logger.debug(`Installing middleware: ${name}`, 'Installation');
         // Initialize middleware
         if (middleware.install) {
             middleware.install(this.hooks, options);
         }
-        this.emit("installed", { name, middleware, options });
-        this.logger.info(`Middleware installed: ${name}`, "Installation");
+        this.emit('installed', { name, middleware, options });
+        this.logger.info(`Middleware installed: ${name}`, 'Installation');
     }
     // Uninstall middleware and clean up
     uninstall(name) {
@@ -77,14 +77,14 @@ class MiddlewareManager extends events_1.EventEmitter {
             throw new Error(`Middleware ${name} is not installed`);
         }
         const middleware = this.middleware.get(name);
-        this.logger.debug(`Uninstalling middleware: ${name}`, "Uninstallation");
+        this.logger.debug(`Uninstalling middleware: ${name}`, 'Uninstallation');
         // Call cleanup if available
         if (middleware.uninstall) {
             middleware.uninstall(this.hooks);
         }
         this.middleware.delete(name);
-        this.emit("uninstalled", { name, middleware });
-        this.logger.info(`Middleware uninstalled: ${name}`, "Uninstallation");
+        this.emit('uninstalled', { name, middleware });
+        this.logger.info(`Middleware uninstalled: ${name}`, 'Uninstallation');
     }
     // Get installed middleware
     getInstalled() {
@@ -125,7 +125,7 @@ class MiddlewareManager extends events_1.EventEmitter {
                 // Visit dependencies first
                 if (middlewareItem.dependencies) {
                     for (const depName of middlewareItem.dependencies) {
-                        const dependency = middleware.find((m) => m.name === depName);
+                        const dependency = middleware.find(m => m.name === depName);
                         if (dependency) {
                             visit(dependency);
                         }

@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MemoryCacheAdapter = void 0;
 const logger_1 = require("../../../../logger");
-const logger = (0, logger_1.createFrameworkLogger)("MemoryCacheAdapter");
+const logger = (0, logger_1.createFrameworkLogger)('MemoryCacheAdapter');
 class MemoryCacheAdapter {
     cache = new Map();
     timers = new Map();
@@ -31,7 +31,7 @@ class MemoryCacheAdapter {
             this.timers.delete(key);
         }, ttl * 1000);
         this.timers.set(key, timer);
-        logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, "MemoryCache");
+        logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, 'MemoryCache');
     }
     async del(key) {
         this.cache.delete(key);
@@ -40,13 +40,13 @@ class MemoryCacheAdapter {
             clearTimeout(timer);
             this.timers.delete(key);
         }
-        logger.debug(`Deleted cache item: ${key}`, "MemoryCache");
+        logger.debug(`Deleted cache item: ${key}`, 'MemoryCache');
     }
     async clear() {
         this.cache.clear();
-        this.timers.forEach((timer) => clearTimeout(timer));
+        this.timers.forEach(timer => clearTimeout(timer));
         this.timers.clear();
-        logger.debug("Cleared all cache items", "MemoryCache");
+        logger.debug('Cleared all cache items', 'MemoryCache');
     }
     async exists(key) {
         return this.cache.has(key) && Date.now() <= this.cache.get(key).expires;

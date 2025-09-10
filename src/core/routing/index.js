@@ -6,19 +6,19 @@ exports.ExecutableRoute = exports.IntelligentRouteBuilder = exports.EXECUTION_PH
 exports.createRoute = createRoute;
 exports.defineRoute = defineRoute;
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("IntelligentRouting");
+const logger = (0, logger_1.createFrameworkLogger)('IntelligentRouting');
 // Execution phases in optimal order
 exports.EXECUTION_PHASES = [
-    "security", // CORS, Helmet (framework-managed)
-    "parsing", // Body/query parsing (framework-managed)
-    "rateLimit", // Rate limiting (early protection)
-    "before", // Custom pre-processing middleware
-    "auth", // Authentication/authorization
-    "validation", // Request validation
-    "transform", // Data transformation middleware
-    "cache", // Caching logic
-    "after", // Custom post-processing middleware
-    "handler", // Route handler (always last)
+    'security', // CORS, Helmet (framework-managed)
+    'parsing', // Body/query parsing (framework-managed)
+    'rateLimit', // Rate limiting (early protection)
+    'before', // Custom pre-processing middleware
+    'auth', // Authentication/authorization
+    'validation', // Request validation
+    'transform', // Data transformation middleware
+    'cache', // Caching logic
+    'after', // Custom post-processing middleware
+    'handler', // Route handler (always last)
 ];
 // Route builder implementation
 class IntelligentRouteBuilder {
@@ -77,28 +77,19 @@ class IntelligentRouteBuilder {
     before(...middleware) {
         if (!this.schema.middleware)
             this.schema.middleware = {};
-        this.schema.middleware.before = [
-            ...(this.schema.middleware.before || []),
-            ...middleware,
-        ];
+        this.schema.middleware.before = [...(this.schema.middleware.before || []), ...middleware];
         return this;
     }
     after(...middleware) {
         if (!this.schema.middleware)
             this.schema.middleware = {};
-        this.schema.middleware.after = [
-            ...(this.schema.middleware.after || []),
-            ...middleware,
-        ];
+        this.schema.middleware.after = [...(this.schema.middleware.after || []), ...middleware];
         return this;
     }
     transform(...middleware) {
         if (!this.schema.middleware)
             this.schema.middleware = {};
-        this.schema.middleware.transform = [
-            ...(this.schema.middleware.transform || []),
-            ...middleware,
-        ];
+        this.schema.middleware.transform = [...(this.schema.middleware.transform || []), ...middleware];
         return this;
     }
     use(...middleware) {
@@ -116,13 +107,13 @@ class IntelligentRouteBuilder {
     // Terminal method - compiles the route
     handler(handler) {
         if (!handler) {
-            throw new Error("Handler is required");
+            throw new Error('Handler is required');
         }
         const completeSchema = {
             ...this.schema,
             handler,
         };
-        logger.debug(`Compiled route: ${completeSchema.method} ${completeSchema.path}`, "RouteCompilation", {
+        logger.debug(`Compiled route: ${completeSchema.method} ${completeSchema.path}`, 'RouteCompilation', {
             hasValidation: !!completeSchema.validation,
             hasAuth: !!completeSchema.auth,
             hasRateLimit: !!completeSchema.rateLimit,
@@ -147,20 +138,20 @@ class ExecutableRoute {
         const validatedReq = req;
         try {
             // Execute middleware in intelligent order
-            await this.executePhase("before", validatedReq, res);
-            await this.executePhase("rateLimit", validatedReq, res);
-            await this.executePhase("auth", validatedReq, res);
-            await this.executePhase("validation", validatedReq, res);
-            await this.executePhase("transform", validatedReq, res);
-            await this.executePhase("cache", validatedReq, res);
-            await this.executePhase("after", validatedReq, res);
+            await this.executePhase('before', validatedReq, res);
+            await this.executePhase('rateLimit', validatedReq, res);
+            await this.executePhase('auth', validatedReq, res);
+            await this.executePhase('validation', validatedReq, res);
+            await this.executePhase('transform', validatedReq, res);
+            await this.executePhase('cache', validatedReq, res);
+            await this.executePhase('after', validatedReq, res);
             // Execute handler last
             if (!res.headersSent) {
-                await this.executePhase("handler", validatedReq, res);
+                await this.executePhase('handler', validatedReq, res);
             }
         }
         catch (error) {
-            logger.error("Route execution error", "RouteExecution", {
+            logger.error('Route execution error', 'RouteExecution', {
                 error: error instanceof Error ? error.message : String(error),
                 route: `${this.schema.method} ${this.schema.path}`,
                 requestId: req.requestId,
@@ -168,7 +159,7 @@ class ExecutableRoute {
             if (!res.headersSent) {
                 res.status(500).json({
                     success: false,
-                    error: "Internal server error",
+                    error: 'Internal server error',
                     requestId: req.requestId,
                 });
             }
@@ -176,48 +167,48 @@ class ExecutableRoute {
     }
     async executePhase(phase, req, res) {
         switch (phase) {
-            case "before":
+            case 'before':
                 if (this.schema.middleware?.before) {
                     for (const middleware of this.schema.middleware.before) {
                         await this.executeMiddleware(middleware, req, res);
                     }
                 }
                 break;
-            case "rateLimit":
+            case 'rateLimit':
                 if (this.schema.rateLimit) {
                     await this.executeRateLimit(req, res);
                 }
                 break;
-            case "auth":
+            case 'auth':
                 if (this.schema.auth) {
                     await this.executeAuth(req, res);
                 }
                 break;
-            case "validation":
+            case 'validation':
                 if (this.schema.validation) {
                     await this.executeValidation(req, res);
                 }
                 break;
-            case "transform":
+            case 'transform':
                 if (this.schema.middleware?.transform) {
                     for (const middleware of this.schema.middleware.transform) {
                         await this.executeMiddleware(middleware, req, res);
                     }
                 }
                 break;
-            case "cache":
+            case 'cache':
                 if (this.schema.cache) {
                     await this.executeCache(req, res);
                 }
                 break;
-            case "after":
+            case 'after':
                 if (this.schema.middleware?.after) {
                     for (const middleware of this.schema.middleware.after) {
                         await this.executeMiddleware(middleware, req, res);
                     }
                 }
                 break;
-            case "handler": {
+            case 'handler': {
                 const result = await this.schema.handler(req, res);
                 if (result !== undefined && !res.headersSent) {
                     res.json(result);
@@ -242,14 +233,14 @@ class ExecutableRoute {
     }
     async executeRateLimit(req, res) {
         // Rate limiting implementation will be added
-        logger.debug("Rate limit check", "RateLimit", {
+        logger.debug('Rate limit check', 'RateLimit', {
             config: this.schema.rateLimit,
             ip: req.ip,
         });
     }
     async executeAuth(req, res) {
         // Authentication implementation will be added
-        logger.debug("Auth check", "Auth", {
+        logger.debug('Auth check', 'Auth', {
             config: this.schema.auth,
         });
     }
@@ -264,7 +255,7 @@ class ExecutableRoute {
                 req.body = req.validatedBody; // Update original for compatibility
             }
             catch (error) {
-                this.sendValidationError(res, error, "body", req.requestId);
+                this.sendValidationError(res, error, 'body', req.requestId);
                 return;
             }
         }
@@ -275,7 +266,7 @@ class ExecutableRoute {
                 req.query = req.validatedQuery; // Update original for compatibility
             }
             catch (error) {
-                this.sendValidationError(res, error, "query", req.requestId);
+                this.sendValidationError(res, error, 'query', req.requestId);
                 return;
             }
         }
@@ -286,7 +277,7 @@ class ExecutableRoute {
                 req.params = req.validatedParams; // Update original for compatibility
             }
             catch (error) {
-                this.sendValidationError(res, error, "params", req.requestId);
+                this.sendValidationError(res, error, 'params', req.requestId);
                 return;
             }
         }
@@ -296,11 +287,11 @@ class ExecutableRoute {
                 req.validatedHeaders = await headers.parseAsync(req.headers);
             }
             catch (error) {
-                this.sendValidationError(res, error, "headers", req.requestId);
+                this.sendValidationError(res, error, 'headers', req.requestId);
                 return;
             }
         }
-        logger.debug("Validation passed", "Validation", {
+        logger.debug('Validation passed', 'Validation', {
             route: `${this.schema.method} ${this.schema.path}`,
             validatedFields: Object.keys(this.schema.validation),
         });
@@ -311,7 +302,7 @@ class ExecutableRoute {
                 success: false,
                 error: `Validation failed for ${field}`,
                 details: error.issues.map((issue) => ({
-                    field: issue.path.length > 0 ? issue.path.join(".") : field,
+                    field: issue.path.length > 0 ? issue.path.join('.') : field,
                     message: issue.message,
                     code: issue.code,
                 })),
@@ -328,7 +319,7 @@ class ExecutableRoute {
     }
     async executeCache(req, res) {
         // Caching implementation will be added
-        logger.debug("Cache check", "Cache", {
+        logger.debug('Cache check', 'Cache', {
             config: this.schema.cache,
         });
     }

@@ -5,21 +5,21 @@ exports.middleware = exports.HookManager = exports.HOOK_EVENTS = void 0;
 const events_1 = require("events");
 const logger_1 = require("../logger");
 exports.HOOK_EVENTS = {
-    BEFORE_REQUEST: "before:request",
-    AFTER_REQUEST: "after:request",
-    BEFORE_RESPONSE: "before:response",
-    AFTER_RESPONSE: "after:response",
-    ERROR: "error",
+    BEFORE_REQUEST: 'before:request',
+    AFTER_REQUEST: 'after:request',
+    BEFORE_RESPONSE: 'before:response',
+    AFTER_RESPONSE: 'after:response',
+    ERROR: 'error',
 };
 class HookManager extends events_1.EventEmitter {
     hooks = new Map();
     beforeHooks = new Map();
     afterHooks = new Map();
-    logger = (0, logger_1.createFrameworkLogger)("Hooks");
+    logger = (0, logger_1.createFrameworkLogger)('Hooks');
     constructor() {
         super();
         // Initialize hook arrays
-        Object.values(exports.HOOK_EVENTS).forEach((event) => {
+        Object.values(exports.HOOK_EVENTS).forEach(event => {
             this.hooks.set(event, []);
             this.beforeHooks.set(event, []);
             this.afterHooks.set(event, []);
@@ -76,9 +76,9 @@ class HookManager extends events_1.EventEmitter {
             await hook(context);
         }
         catch (error) {
-            this.logger.error("Hook execution error", "HookExecution", {
+            this.logger.error('Hook execution error', 'HookExecution', {
                 error: error instanceof Error ? error.message : String(error),
-                context: context.request?.method || "unknown",
+                context: context.request?.method || 'unknown',
             });
             throw error;
         }
@@ -91,7 +91,7 @@ class HookManager extends events_1.EventEmitter {
             this.afterHooks.delete(event);
         }
         else {
-            [this.hooks, this.beforeHooks, this.afterHooks].forEach((map) => {
+            [this.hooks, this.beforeHooks, this.afterHooks].forEach(map => {
                 const hooks = map.get(event);
                 if (hooks) {
                     const index = hooks.indexOf(fn);
@@ -118,7 +118,7 @@ class HookManager extends events_1.EventEmitter {
             ...this.beforeHooks.keys(),
             ...this.afterHooks.keys(),
         ]);
-        allEvents.forEach((event) => {
+        allEvents.forEach(event => {
             allHooks[event] = this.getHooks(event);
         });
         return allHooks;

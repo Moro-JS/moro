@@ -4,33 +4,33 @@ exports.MySQLAdapter = void 0;
 const logger_1 = require("../../logger");
 class MySQLAdapter {
     pool;
-    logger = (0, logger_1.createFrameworkLogger)("MySQL");
+    logger = (0, logger_1.createFrameworkLogger)('MySQL');
     constructor(config) {
         try {
-            const mysql = require("mysql2/promise");
+            const mysql = require('mysql2/promise');
             this.pool = mysql.createPool({
-                host: config.host || "localhost",
+                host: config.host || 'localhost',
                 port: config.port || 3306,
-                user: config.user || "root",
-                password: config.password || "",
-                database: config.database || "moro_app",
+                user: config.user || 'root',
+                password: config.password || '',
+                database: config.database || 'moro_app',
                 waitForConnections: true,
                 connectionLimit: config.connectionLimit || 10,
                 queueLimit: 0,
             });
         }
         catch (error) {
-            throw new Error("mysql2 package is required for MySQL adapter. Install it with: npm install mysql2");
+            throw new Error('mysql2 package is required for MySQL adapter. Install it with: npm install mysql2');
         }
     }
     async connect() {
         try {
             const connection = await this.pool.getConnection();
             connection.release();
-            this.logger.info("MySQL connection established", "Connection");
+            this.logger.info('MySQL connection established', 'Connection');
         }
         catch (error) {
-            this.logger.error("MySQL connection failed", "Connection", {
+            this.logger.error('MySQL connection failed', 'Connection', {
                 error: error instanceof Error ? error.message : String(error),
             });
             throw error;
@@ -50,20 +50,22 @@ class MySQLAdapter {
     async insert(table, data) {
         const keys = Object.keys(data);
         const values = Object.values(data);
-        const placeholders = keys.map(() => "?").join(", ");
-        const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+        const placeholders = keys.map(() => '?').join(', ');
+        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
         const [result] = (await this.pool.execute(sql, values));
         // Return the inserted record
-        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE id = ?`, [result.insertId]);
+        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE id = ?`, [
+            result.insertId,
+        ]);
         return insertedRecord;
     }
     async update(table, data, where) {
         const setClause = Object.keys(data)
-            .map((key) => `${key} = ?`)
-            .join(", ");
+            .map(key => `${key} = ?`)
+            .join(', ');
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
         const params = [...Object.values(data), ...Object.values(where)];
         await this.pool.execute(sql, params);
@@ -73,8 +75,8 @@ class MySQLAdapter {
     }
     async delete(table, where) {
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         const [result] = (await this.pool.execute(sql, Object.values(where)));
         return result.affectedRows;
@@ -114,19 +116,21 @@ class MySQLTransaction {
     async insert(table, data) {
         const keys = Object.keys(data);
         const values = Object.values(data);
-        const placeholders = keys.map(() => "?").join(", ");
-        const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+        const placeholders = keys.map(() => '?').join(', ');
+        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
         const [result] = (await this.connection.execute(sql, values));
-        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE id = ?`, [result.insertId]);
+        const insertedRecord = await this.queryOne(`SELECT * FROM ${table} WHERE id = ?`, [
+            result.insertId,
+        ]);
         return insertedRecord;
     }
     async update(table, data, where) {
         const setClause = Object.keys(data)
-            .map((key) => `${key} = ?`)
-            .join(", ");
+            .map(key => `${key} = ?`)
+            .join(', ');
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause}`;
         const params = [...Object.values(data), ...Object.values(where)];
         await this.connection.execute(sql, params);
@@ -135,8 +139,8 @@ class MySQLTransaction {
     }
     async delete(table, where) {
         const whereClause = Object.keys(where)
-            .map((key) => `${key} = ?`)
-            .join(" AND ");
+            .map(key => `${key} = ?`)
+            .join(' AND ');
         const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
         const [result] = (await this.connection.execute(sql, Object.values(where)));
         return result.affectedRows;

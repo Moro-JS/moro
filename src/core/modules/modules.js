@@ -100,17 +100,14 @@ class ModuleLoader {
             const entries = await fs_1.promises.readdir(moduleDir, { withFileTypes: true });
             for (const entry of entries) {
                 if (entry.isDirectory()) {
-                    const modulePath = path_1.default.join(moduleDir, entry.name, "index.ts");
+                    const modulePath = path_1.default.join(moduleDir, entry.name, 'index.ts');
                     try {
                         await fs_1.promises.access(modulePath);
                         const moduleExports = await Promise.resolve(`${modulePath}`).then(s => __importStar(require(s)));
                         // Look for exported module config
                         for (const exportName of Object.keys(moduleExports)) {
                             const exported = moduleExports[exportName];
-                            if (exported &&
-                                typeof exported === "object" &&
-                                exported.name &&
-                                exported.version) {
+                            if (exported && typeof exported === 'object' && exported.name && exported.version) {
                                 modules.push(exported);
                             }
                         }
@@ -122,7 +119,7 @@ class ModuleLoader {
             }
         }
         catch (error) {
-            console.error("Failed to discover modules:", error);
+            console.error('Failed to discover modules:', error);
         }
         return modules;
     }

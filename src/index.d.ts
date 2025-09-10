@@ -1,5 +1,6 @@
 export {
   Moro,
+  Moro as MoroCore,
   createApp,
   createAppNode,
   createAppEdge,
@@ -29,7 +30,20 @@ export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-worke
 export { MoroHttpServer, middleware as httpMiddleware } from './core/http';
 export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in';
 export { WebSocketManager } from './core/networking';
-export { Container } from './core/utilities';
+export {
+  Container,
+  FunctionalContainer,
+  ServiceScope,
+  ServiceLifecycle,
+  withLogging,
+  withCaching,
+  withRetry,
+  withTimeout,
+  CircuitBreaker,
+  HookManager,
+  HOOK_EVENTS,
+  middleware,
+} from './core/utilities';
 export { createFrameworkLogger, logger } from './core/logger';
 export { validate, body, query, params, combineSchemas, z } from './core/validation';
 export type {
@@ -53,6 +67,19 @@ export type {
   MiddlewarePhases,
   ExecutionPhase,
 } from './core/routing';
+export {
+  getConfig,
+  createModuleConfig,
+  getEnvVar,
+  getEnvArray,
+  getEnvJson,
+  isDevelopment,
+  isProduction,
+  isStaging,
+  requireEnvVars,
+  envVar,
+  getConfigValue,
+} from './core/config/utils';
 export type * from './types/core';
 export type * from './types/http';
 export type * from './types/hooks';

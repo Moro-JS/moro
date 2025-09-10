@@ -4,15 +4,15 @@ exports.VercelEdgeAdapter = void 0;
 // Vercel Edge runtime adapter
 const base_adapter_1 = require("./base-adapter");
 class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
-    type = "vercel-edge";
+    type = 'vercel-edge';
     async adaptRequest(request) {
         const url = new URL(request.url);
         const { pathname, query } = this.parseUrl(request.url);
         // Parse body for POST/PUT/PATCH requests
         let body;
-        if (["POST", "PUT", "PATCH"].includes(request.method)) {
-            const contentType = request.headers.get("content-type") || "";
-            if (contentType.includes("application/json")) {
+        if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+            const contentType = request.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
                 try {
                     body = await request.json();
                 }
@@ -38,7 +38,7 @@ class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
             headers,
             ip: this.getClientIP(headers),
             params: {},
-            requestId: "",
+            requestId: '',
             cookies: {},
             files: {},
         };
@@ -51,8 +51,7 @@ class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
         let status = runtimeResponse.statusCode || 200;
         const headers = runtimeResponse.headers || {};
         // If it's a real HttpResponse, we need to extract the data differently
-        if ("statusCode" in moroResponse &&
-            typeof moroResponse.statusCode === "number") {
+        if ('statusCode' in moroResponse && typeof moroResponse.statusCode === 'number') {
             status = moroResponse.statusCode;
         }
         // Convert headers to Headers object
@@ -61,9 +60,9 @@ class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
             responseHeaders.set(key, value);
         });
         // Handle different body types
-        if (typeof body === "object" && body !== null) {
+        if (typeof body === 'object' && body !== null) {
             body = JSON.stringify(body);
-            responseHeaders.set("Content-Type", "application/json");
+            responseHeaders.set('Content-Type', 'application/json');
         }
         return new Response(body, {
             status,
@@ -82,11 +81,11 @@ class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
             catch (error) {
                 return new Response(JSON.stringify({
                     success: false,
-                    error: "Internal server error",
-                    message: error instanceof Error ? error.message : "Unknown error",
+                    error: 'Internal server error',
+                    message: error instanceof Error ? error.message : 'Unknown error',
                 }), {
                     status: 500,
-                    headers: { "Content-Type": "application/json" },
+                    headers: { 'Content-Type': 'application/json' },
                 });
             }
         };
@@ -94,9 +93,7 @@ class VercelEdgeAdapter extends base_adapter_1.BaseRuntimeAdapter {
     // Vercel Edge doesn't have a listen method - it's handled by the platform
     // listen method is optional in the interface
     getClientIP(headers) {
-        return (headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-            headers["x-real-ip"] ||
-            "unknown");
+        return headers['x-forwarded-for']?.split(',')[0]?.trim() || headers['x-real-ip'] || 'unknown';
     }
 }
 exports.VercelEdgeAdapter = VercelEdgeAdapter;

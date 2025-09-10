@@ -24,13 +24,13 @@ const aws_lambda_adapter_2 = require("./aws-lambda-adapter");
 const cloudflare_workers_adapter_2 = require("./cloudflare-workers-adapter");
 function createRuntimeAdapter(type) {
     switch (type) {
-        case "node":
+        case 'node':
             return new node_adapter_2.NodeRuntimeAdapter();
-        case "vercel-edge":
+        case 'vercel-edge':
             return new vercel_edge_adapter_2.VercelEdgeAdapter();
-        case "aws-lambda":
+        case 'aws-lambda':
             return new aws_lambda_adapter_2.AWSLambdaAdapter();
-        case "cloudflare-workers":
+        case 'cloudflare-workers':
             return new cloudflare_workers_adapter_2.CloudflareWorkersAdapter();
         default:
             throw new Error(`Unsupported runtime type: ${type}`);

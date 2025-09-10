@@ -22,7 +22,7 @@ exports.generateDocsFromIntelligentRoutes = generateDocsFromIntelligentRoutes;
 const openapi_generator_1 = require("./openapi-generator");
 const swagger_ui_1 = require("./swagger-ui");
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("DocumentationSystem");
+const logger = (0, logger_1.createFrameworkLogger)('DocumentationSystem');
 // Main documentation system class
 class DocumentationSystem {
     generator;
@@ -30,7 +30,7 @@ class DocumentationSystem {
     config;
     constructor(config) {
         this.config = {
-            basePath: "/docs",
+            basePath: '/docs',
             includeExamples: true,
             includeSchemas: true,
             enableAuth: true,
@@ -48,15 +48,13 @@ class DocumentationSystem {
             servers: this.config.servers,
             includeExamples: this.config.includeExamples,
             includeSchemas: this.config.includeSchemas,
-            securitySchemes: this.config.enableAuth
-                ? openapi_generator_1.defaultSecuritySchemes
-                : undefined,
+            securitySchemes: this.config.enableAuth ? openapi_generator_1.defaultSecuritySchemes : undefined,
         };
         this.generator = new openapi_generator_1.OpenAPIGenerator(generationOptions);
         // Initialize with empty spec
         const initialSpec = this.generator.generate();
         this.swaggerUI = new swagger_ui_1.SwaggerUIMiddleware(initialSpec, this.config.swaggerUI);
-        logger.info("Documentation system initialized", "Initialization", {
+        logger.info('Documentation system initialized', 'Initialization', {
             title: this.config.title,
             basePath: this.config.basePath,
             includeExamples: this.config.includeExamples,
@@ -68,7 +66,7 @@ class DocumentationSystem {
         const spec = this.generator.generate();
         // Update Swagger UI with new spec
         this.swaggerUI.updateSpec(spec);
-        logger.info("Documentation generated from routes", "Generation", {
+        logger.info('Documentation generated from routes', 'Generation', {
             routeCount: routes.length,
             pathCount: Object.keys(spec.paths).length,
         });
@@ -93,7 +91,7 @@ class DocumentationSystem {
     // Update configuration
     updateConfig(newConfig) {
         this.config = { ...this.config, ...newConfig };
-        logger.debug("Documentation configuration updated", "ConfigUpdate", {
+        logger.debug('Documentation configuration updated', 'ConfigUpdate', {
             title: this.config.title,
             basePath: this.config.basePath,
         });
@@ -111,7 +109,7 @@ class AppDocumentationManager {
         // Generate docs from current routes
         const routes = routingManager.getIntelligentRoutes();
         this.docSystem.generateFromRoutes(routes);
-        logger.info("Documentation enabled for app", "AppIntegration", {
+        logger.info('Documentation enabled for app', 'AppIntegration', {
             title: config.title,
             routeCount: routes.length,
             basePath: config.basePath,
@@ -120,39 +118,39 @@ class AppDocumentationManager {
     // Get documentation middleware
     getDocsMiddleware() {
         if (!this.docSystem) {
-            throw new Error("Documentation not enabled. Call enableDocs() first.");
+            throw new Error('Documentation not enabled. Call enableDocs() first.');
         }
         return this.docSystem.createMiddleware();
     }
     // Refresh documentation (useful after adding new routes)
     refreshDocs() {
         if (!this.docSystem || !this.routingManager) {
-            throw new Error("Documentation not enabled. Call enableDocs() first.");
+            throw new Error('Documentation not enabled. Call enableDocs() first.');
         }
         const routes = this.routingManager.getIntelligentRoutes();
         this.docSystem.generateFromRoutes(routes);
-        logger.debug("Documentation refreshed", "Refresh", {
+        logger.debug('Documentation refreshed', 'Refresh', {
             routeCount: routes.length,
         });
     }
     // Get current OpenAPI spec
     getOpenAPISpec() {
         if (!this.docSystem) {
-            throw new Error("Documentation not enabled. Call enableDocs() first.");
+            throw new Error('Documentation not enabled. Call enableDocs() first.');
         }
         return this.docSystem.getSpec();
     }
     // Get docs as JSON
     getDocsJSON() {
         if (!this.docSystem) {
-            throw new Error("Documentation not enabled. Call enableDocs() first.");
+            throw new Error('Documentation not enabled. Call enableDocs() first.');
         }
         return this.docSystem.getOpenAPIJSON();
     }
     // Get docs as YAML
     getDocsYAML() {
         if (!this.docSystem) {
-            throw new Error("Documentation not enabled. Call enableDocs() first.");
+            throw new Error('Documentation not enabled. Call enableDocs() first.');
         }
         return this.docSystem.getOpenAPIYAML();
     }

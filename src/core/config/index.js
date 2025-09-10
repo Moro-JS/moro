@@ -46,7 +46,7 @@ function initializeConfig() {
  */
 function getGlobalConfig() {
     if (!globalConfig) {
-        throw new Error("Configuration not initialized. Call initializeConfig() first.");
+        throw new Error('Configuration not initialized. Call initializeConfig() first.');
     }
     return globalConfig;
 }

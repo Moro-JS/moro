@@ -48,7 +48,7 @@ class MoroHttpServer {
     globalMiddleware = [];
     compressionEnabled = true;
     compressionThreshold = 1024;
-    logger = (0, logger_1.createFrameworkLogger)("HttpServer");
+    logger = (0, logger_1.createFrameworkLogger)('HttpServer');
     constructor() {
         this.server = (0, http_1.createServer)(this.handleRequest.bind(this));
     }
@@ -58,19 +58,19 @@ class MoroHttpServer {
     }
     // Routing methods
     get(path, ...handlers) {
-        this.addRoute("GET", path, handlers);
+        this.addRoute('GET', path, handlers);
     }
     post(path, ...handlers) {
-        this.addRoute("POST", path, handlers);
+        this.addRoute('POST', path, handlers);
     }
     put(path, ...handlers) {
-        this.addRoute("PUT", path, handlers);
+        this.addRoute('PUT', path, handlers);
     }
     delete(path, ...handlers) {
-        this.addRoute("DELETE", path, handlers);
+        this.addRoute('DELETE', path, handlers);
     }
     patch(path, ...handlers) {
-        this.addRoute("PATCH", path, handlers);
+        this.addRoute('PATCH', path, handlers);
     }
     addRoute(method, path, handlers) {
         const { pattern, paramNames } = this.pathToRegex(path);
@@ -91,9 +91,9 @@ class MoroHttpServer {
         const regexPattern = path
             .replace(/\/:([^/]+)/g, (match, paramName) => {
             paramNames.push(paramName);
-            return "/([^/]+)";
+            return '/([^/]+)';
         })
-            .replace(/\//g, "\\/");
+            .replace(/\//g, '\\/');
         return {
             pattern: new RegExp(`^${regexPattern}$`),
             paramNames,
@@ -108,7 +108,7 @@ class MoroHttpServer {
             httpReq.path = url.pathname;
             httpReq.query = Object.fromEntries(url.searchParams);
             // Parse body for POST/PUT/PATCH requests
-            if (["POST", "PUT", "PATCH"].includes(req.method)) {
+            if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
                 httpReq.body = await this.parseBody(req);
             }
             // Execute global middleware first
@@ -120,7 +120,7 @@ class MoroHttpServer {
             // Find matching route
             const route = this.findRoute(req.method, httpReq.path);
             if (!route) {
-                httpRes.status(404).json({ success: false, error: "Not found" });
+                httpRes.status(404).json({ success: false, error: 'Not found' });
                 return;
             }
             // Extract path parameters
@@ -137,7 +137,7 @@ class MoroHttpServer {
             await route.handler(httpReq, httpRes);
         }
         catch (error) {
-            this.logger.error("Request error", "RequestHandler", {
+            this.logger.error('Request error', 'RequestHandler', {
                 error: error instanceof Error ? error.message : String(error),
                 requestId: httpReq.requestId,
                 method: req.method,
@@ -146,7 +146,7 @@ class MoroHttpServer {
             if (!httpRes.headersSent) {
                 httpRes.status(500).json({
                     success: false,
-                    error: "Internal server error",
+                    error: 'Internal server error',
                     requestId: httpReq.requestId,
                 });
             }
@@ -157,20 +157,20 @@ class MoroHttpServer {
         httpReq.params = {};
         httpReq.query = {};
         httpReq.body = null;
-        httpReq.path = "";
-        httpReq.ip = req.socket.remoteAddress || "";
+        httpReq.path = '';
+        httpReq.ip = req.socket.remoteAddress || '';
         httpReq.requestId = Math.random().toString(36).substring(7);
         httpReq.headers = req.headers;
         // Parse cookies
-        httpReq.cookies = this.parseCookies(req.headers.cookie || "");
+        httpReq.cookies = this.parseCookies(req.headers.cookie || '');
         return httpReq;
     }
     parseCookies(cookieHeader) {
         const cookies = {};
         if (!cookieHeader)
             return cookies;
-        cookieHeader.split(";").forEach((cookie) => {
-            const [name, value] = cookie.trim().split("=");
+        cookieHeader.split(';').forEach(cookie => {
+            const [name, value] = cookie.trim().split('=');
             if (name && value) {
                 cookies[name] = decodeURIComponent(value);
             }
@@ -184,27 +184,26 @@ class MoroHttpServer {
                 return;
             const jsonString = JSON.stringify(data);
             const buffer = Buffer.from(jsonString);
-            httpRes.setHeader("Content-Type", "application/json; charset=utf-8");
+            httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
             // Compression
-            if (this.compressionEnabled &&
-                buffer.length > this.compressionThreshold) {
-                const acceptEncoding = httpRes.req.headers["accept-encoding"] || "";
-                if (acceptEncoding.includes("gzip")) {
+            if (this.compressionEnabled && buffer.length > this.compressionThreshold) {
+                const acceptEncoding = httpRes.req.headers['accept-encoding'] || '';
+                if (acceptEncoding.includes('gzip')) {
                     const compressed = await gzip(buffer);
-                    httpRes.setHeader("Content-Encoding", "gzip");
-                    httpRes.setHeader("Content-Length", compressed.length);
+                    httpRes.setHeader('Content-Encoding', 'gzip');
+                    httpRes.setHeader('Content-Length', compressed.length);
                     httpRes.end(compressed);
                     return;
                 }
-                else if (acceptEncoding.includes("deflate")) {
+                else if (acceptEncoding.includes('deflate')) {
                     const compressed = await deflate(buffer);
-                    httpRes.setHeader("Content-Encoding", "deflate");
-                    httpRes.setHeader("Content-Length", compressed.length);
+                    httpRes.setHeader('Content-Encoding', 'deflate');
+                    httpRes.setHeader('Content-Length', compressed.length);
                     httpRes.end(compressed);
                     return;
                 }
             }
-            httpRes.setHeader("Content-Length", buffer.length);
+            httpRes.setHeader('Content-Length', buffer.length);
             httpRes.end(buffer);
         };
         httpRes.status = (code) => {
@@ -215,21 +214,21 @@ class MoroHttpServer {
             if (httpRes.headersSent)
                 return;
             // Auto-detect content type if not already set
-            if (!httpRes.getHeader("Content-Type")) {
-                if (typeof data === "string") {
+            if (!httpRes.getHeader('Content-Type')) {
+                if (typeof data === 'string') {
                     // Check if it's JSON
                     try {
                         JSON.parse(data);
-                        httpRes.setHeader("Content-Type", "application/json; charset=utf-8");
+                        httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
                     }
                     catch {
                         // Default to plain text
-                        httpRes.setHeader("Content-Type", "text/plain; charset=utf-8");
+                        httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
                     }
                 }
                 else {
                     // Buffer data - default to octet-stream
-                    httpRes.setHeader("Content-Type", "application/octet-stream");
+                    httpRes.setHeader('Content-Type', 'application/octet-stream');
                 }
             }
             httpRes.end(data);
@@ -242,90 +241,90 @@ class MoroHttpServer {
             if (options.expires)
                 cookieString += `; Expires=${options.expires.toUTCString()}`;
             if (options.httpOnly)
-                cookieString += "; HttpOnly";
+                cookieString += '; HttpOnly';
             if (options.secure)
-                cookieString += "; Secure";
+                cookieString += '; Secure';
             if (options.sameSite)
                 cookieString += `; SameSite=${options.sameSite}`;
             if (options.domain)
                 cookieString += `; Domain=${options.domain}`;
             if (options.path)
                 cookieString += `; Path=${options.path}`;
-            const existingCookies = httpRes.getHeader("Set-Cookie") || [];
+            const existingCookies = httpRes.getHeader('Set-Cookie') || [];
             const cookies = Array.isArray(existingCookies)
                 ? [...existingCookies]
                 : [existingCookies];
             cookies.push(cookieString);
-            httpRes.setHeader("Set-Cookie", cookies);
+            httpRes.setHeader('Set-Cookie', cookies);
             return httpRes;
         };
         httpRes.clearCookie = (name, options = {}) => {
             const clearOptions = { ...options, expires: new Date(0), maxAge: 0 };
-            return httpRes.cookie(name, "", clearOptions);
+            return httpRes.cookie(name, '', clearOptions);
         };
         httpRes.redirect = (url, status = 302) => {
             if (httpRes.headersSent)
                 return;
             httpRes.statusCode = status;
-            httpRes.setHeader("Location", url);
+            httpRes.setHeader('Location', url);
             httpRes.end();
         };
         httpRes.sendFile = async (filePath) => {
             if (httpRes.headersSent)
                 return;
             try {
-                const fs = await Promise.resolve().then(() => __importStar(require("fs/promises")));
-                const path = await Promise.resolve().then(() => __importStar(require("path")));
+                const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                const path = await Promise.resolve().then(() => __importStar(require('path')));
                 const extension = path.extname(filePath);
                 const mime = await this.getMimeType(extension);
                 const stats = await fs.stat(filePath);
                 const data = await fs.readFile(filePath);
                 // Add charset for text-based files
                 const contentType = this.addCharsetIfNeeded(mime);
-                httpRes.setHeader("Content-Type", contentType);
-                httpRes.setHeader("Content-Length", stats.size);
+                httpRes.setHeader('Content-Type', contentType);
+                httpRes.setHeader('Content-Length', stats.size);
                 // Add security headers for file downloads
-                httpRes.setHeader("X-Content-Type-Options", "nosniff");
+                httpRes.setHeader('X-Content-Type-Options', 'nosniff');
                 // Add caching headers
-                httpRes.setHeader("Last-Modified", stats.mtime.toUTCString());
-                httpRes.setHeader("Cache-Control", "public, max-age=31536000"); // 1 year for static files
+                httpRes.setHeader('Last-Modified', stats.mtime.toUTCString());
+                httpRes.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year for static files
                 httpRes.end(data);
             }
             catch (error) {
-                httpRes.status(404).json({ success: false, error: "File not found" });
+                httpRes.status(404).json({ success: false, error: 'File not found' });
             }
         };
         return httpRes;
     }
     async getMimeType(ext) {
         const mimeTypes = {
-            ".html": "text/html",
-            ".css": "text/css",
-            ".js": "application/javascript",
-            ".json": "application/json",
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".svg": "image/svg+xml",
-            ".ico": "image/x-icon",
-            ".pdf": "application/pdf",
-            ".txt": "text/plain",
-            ".xml": "application/xml",
+            '.html': 'text/html',
+            '.css': 'text/css',
+            '.js': 'application/javascript',
+            '.json': 'application/json',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.svg': 'image/svg+xml',
+            '.ico': 'image/x-icon',
+            '.pdf': 'application/pdf',
+            '.txt': 'text/plain',
+            '.xml': 'application/xml',
         };
-        return mimeTypes[ext.toLowerCase()] || "application/octet-stream";
+        return mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
     }
     addCharsetIfNeeded(mimeType) {
         // Add charset for text-based content types
         const textTypes = [
-            "text/",
-            "application/json",
-            "application/javascript",
-            "application/xml",
-            "image/svg+xml",
+            'text/',
+            'application/json',
+            'application/javascript',
+            'application/xml',
+            'image/svg+xml',
         ];
-        const needsCharset = textTypes.some((type) => mimeType.startsWith(type));
-        if (needsCharset && !mimeType.includes("charset")) {
+        const needsCharset = textTypes.some(type => mimeType.startsWith(type));
+        if (needsCharset && !mimeType.includes('charset')) {
             return `${mimeType}; charset=utf-8`;
         }
         return mimeType;
@@ -335,25 +334,25 @@ class MoroHttpServer {
             const chunks = [];
             let totalLength = 0;
             const maxSize = 10 * 1024 * 1024; // 10MB limit
-            req.on("data", (chunk) => {
+            req.on('data', (chunk) => {
                 totalLength += chunk.length;
                 if (totalLength > maxSize) {
-                    reject(new Error("Request body too large"));
+                    reject(new Error('Request body too large'));
                     return;
                 }
                 chunks.push(chunk);
             });
-            req.on("end", () => {
+            req.on('end', () => {
                 try {
                     const body = Buffer.concat(chunks);
-                    const contentType = req.headers["content-type"] || "";
-                    if (contentType.includes("application/json")) {
+                    const contentType = req.headers['content-type'] || '';
+                    if (contentType.includes('application/json')) {
                         resolve(JSON.parse(body.toString()));
                     }
-                    else if (contentType.includes("application/x-www-form-urlencoded")) {
+                    else if (contentType.includes('application/x-www-form-urlencoded')) {
                         resolve(this.parseUrlEncoded(body.toString()));
                     }
-                    else if (contentType.includes("multipart/form-data")) {
+                    else if (contentType.includes('multipart/form-data')) {
                         resolve(this.parseMultipart(body, contentType));
                     }
                     else {
@@ -364,20 +363,20 @@ class MoroHttpServer {
                     reject(error);
                 }
             });
-            req.on("error", reject);
+            req.on('error', reject);
         });
     }
     parseMultipart(buffer, contentType) {
-        const boundary = contentType.split("boundary=")[1];
+        const boundary = contentType.split('boundary=')[1];
         if (!boundary) {
-            throw new Error("Invalid multipart boundary");
+            throw new Error('Invalid multipart boundary');
         }
-        const parts = buffer.toString("binary").split("--" + boundary);
+        const parts = buffer.toString('binary').split('--' + boundary);
         const fields = {};
         const files = {};
         for (let i = 1; i < parts.length - 1; i++) {
             const part = parts[i];
-            const [headers, content] = part.split("\r\n\r\n");
+            const [headers, content] = part.split('\r\n\r\n');
             if (!headers || content === undefined)
                 continue;
             const nameMatch = headers.match(/name="([^"]+)"/);
@@ -388,15 +387,13 @@ class MoroHttpServer {
                 if (filenameMatch) {
                     // This is a file
                     const filename = filenameMatch[1];
-                    const mimeType = contentTypeMatch
-                        ? contentTypeMatch[1]
-                        : "application/octet-stream";
+                    const mimeType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
                     const fileContent = content.substring(0, content.length - 2); // Remove trailing \r\n
                     files[name] = {
                         filename,
                         mimetype: mimeType,
-                        data: Buffer.from(fileContent, "binary"),
-                        size: Buffer.byteLength(fileContent, "binary"),
+                        data: Buffer.from(fileContent, 'binary'),
+                        size: Buffer.byteLength(fileContent, 'binary'),
                     };
                 }
                 else {
@@ -416,7 +413,7 @@ class MoroHttpServer {
         return result;
     }
     findRoute(method, path) {
-        return (this.routes.find((route) => route.method === method && route.pattern.test(path)) || null);
+        return this.routes.find(route => route.method === method && route.pattern.test(path)) || null;
     }
     async executeMiddleware(middleware, req, res) {
         for (const mw of middleware) {
@@ -448,7 +445,7 @@ class MoroHttpServer {
     }
     listen(port, host, callback) {
         // Handle overloaded parameters (port, callback) or (port, host, callback)
-        if (typeof host === "function") {
+        if (typeof host === 'function') {
             callback = host;
             host = undefined;
         }
@@ -460,7 +457,7 @@ class MoroHttpServer {
         }
     }
     close() {
-        return new Promise((resolve) => {
+        return new Promise(resolve => {
             this.server.close(() => resolve());
         });
     }
@@ -473,14 +470,14 @@ exports.MoroHttpServer = MoroHttpServer;
 exports.middleware = {
     cors: (options = {}) => {
         return (req, res, next) => {
-            res.setHeader("Access-Control-Allow-Origin", options.origin || "*");
-            res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-            res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            res.setHeader('Access-Control-Allow-Origin', options.origin || '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
             if (options.credentials) {
-                res.setHeader("Access-Control-Allow-Credentials", "true");
+                res.setHeader('Access-Control-Allow-Credentials', 'true');
             }
-            if (req.method === "OPTIONS") {
-                res.status(200).send("");
+            if (req.method === 'OPTIONS') {
+                res.status(200).send('');
                 return;
             }
             next();
@@ -488,21 +485,21 @@ exports.middleware = {
     },
     helmet: () => {
         return (req, res, next) => {
-            res.setHeader("X-Content-Type-Options", "nosniff");
-            res.setHeader("X-Frame-Options", "DENY");
-            res.setHeader("X-XSS-Protection", "1; mode=block");
-            res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-            res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-            res.setHeader("Content-Security-Policy", "default-src 'self'");
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('X-Frame-Options', 'DENY');
+            res.setHeader('X-XSS-Protection', '1; mode=block');
+            res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+            res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+            res.setHeader('Content-Security-Policy', "default-src 'self'");
             next();
         };
     },
     compression: (options = {}) => {
-        const zlib = require("zlib");
+        const zlib = require('zlib');
         const threshold = options.threshold || 1024;
         const level = options.level || 6;
         return (req, res, next) => {
-            const acceptEncoding = req.headers["accept-encoding"] || "";
+            const acceptEncoding = req.headers['accept-encoding'] || '';
             // Override res.json to compress responses
             const originalJson = res.json;
             const originalSend = res.send;
@@ -510,45 +507,37 @@ exports.middleware = {
                 const content = isJson ? JSON.stringify(data) : data;
                 const buffer = Buffer.from(content);
                 if (buffer.length < threshold) {
-                    return isJson
-                        ? originalJson.call(res, data)
-                        : originalSend.call(res, data);
+                    return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
                 }
-                if (acceptEncoding.includes("gzip")) {
-                    res.setHeader("Content-Encoding", "gzip");
+                if (acceptEncoding.includes('gzip')) {
+                    res.setHeader('Content-Encoding', 'gzip');
                     zlib.gzip(buffer, { level }, (err, compressed) => {
                         if (err) {
-                            return isJson
-                                ? originalJson.call(res, data)
-                                : originalSend.call(res, data);
+                            return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
                         }
-                        res.setHeader("Content-Length", compressed.length);
+                        res.setHeader('Content-Length', compressed.length);
                         res.writeHead(res.statusCode || 200, res.getHeaders());
                         res.end(compressed);
                     });
                 }
-                else if (acceptEncoding.includes("deflate")) {
-                    res.setHeader("Content-Encoding", "deflate");
+                else if (acceptEncoding.includes('deflate')) {
+                    res.setHeader('Content-Encoding', 'deflate');
                     zlib.deflate(buffer, { level }, (err, compressed) => {
                         if (err) {
-                            return isJson
-                                ? originalJson.call(res, data)
-                                : originalSend.call(res, data);
+                            return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
                         }
-                        res.setHeader("Content-Length", compressed.length);
+                        res.setHeader('Content-Length', compressed.length);
                         res.writeHead(res.statusCode || 200, res.getHeaders());
                         res.end(compressed);
                     });
                 }
                 else {
-                    return isJson
-                        ? originalJson.call(res, data)
-                        : originalSend.call(res, data);
+                    return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
                 }
             };
             res.json = function (data) {
                 // Ensure charset is set for Safari compatibility
-                this.setHeader("Content-Type", "application/json; charset=utf-8");
+                this.setHeader('Content-Type', 'application/json; charset=utf-8');
                 compressResponse(data, true);
                 return this;
             };
@@ -562,7 +551,7 @@ exports.middleware = {
     requestLogger: () => {
         return (req, res, next) => {
             const start = Date.now();
-            res.on("finish", () => {
+            res.on('finish', () => {
                 const duration = Date.now() - start;
                 // Request completed - logged by framework
             });
@@ -570,14 +559,14 @@ exports.middleware = {
         };
     },
     bodySize: (options = {}) => {
-        const limit = options.limit || "10mb";
+        const limit = options.limit || '10mb';
         const limitBytes = parseSize(limit);
         return (req, res, next) => {
-            const contentLength = parseInt(req.headers["content-length"] || "0");
+            const contentLength = parseInt(req.headers['content-length'] || '0');
             if (contentLength > limitBytes) {
                 res.status(413).json({
                     success: false,
-                    error: "Request entity too large",
+                    error: 'Request entity too large',
                     limit: limit,
                 });
                 return;
@@ -588,28 +577,28 @@ exports.middleware = {
     static: (options) => {
         return async (req, res, next) => {
             // Only handle GET and HEAD requests
-            if (req.method !== "GET" && req.method !== "HEAD") {
+            if (req.method !== 'GET' && req.method !== 'HEAD') {
                 next();
                 return;
             }
             try {
-                const fs = await Promise.resolve().then(() => __importStar(require("fs/promises")));
-                const path = await Promise.resolve().then(() => __importStar(require("path")));
-                const crypto = await Promise.resolve().then(() => __importStar(require("crypto")));
+                const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                const path = await Promise.resolve().then(() => __importStar(require('path')));
+                const crypto = await Promise.resolve().then(() => __importStar(require('crypto')));
                 let filePath = path.join(options.root, req.path);
                 // Security: prevent directory traversal
                 if (!filePath.startsWith(path.resolve(options.root))) {
-                    res.status(403).json({ success: false, error: "Forbidden" });
+                    res.status(403).json({ success: false, error: 'Forbidden' });
                     return;
                 }
                 // Handle dotfiles
                 const basename = path.basename(filePath);
-                if (basename.startsWith(".")) {
-                    if (options.dotfiles === "deny") {
-                        res.status(403).json({ success: false, error: "Forbidden" });
+                if (basename.startsWith('.')) {
+                    if (options.dotfiles === 'deny') {
+                        res.status(403).json({ success: false, error: 'Forbidden' });
                         return;
                     }
-                    else if (options.dotfiles === "ignore") {
+                    else if (options.dotfiles === 'ignore') {
                         next();
                         return;
                     }
@@ -624,7 +613,7 @@ exports.middleware = {
                 }
                 // Handle directories
                 if (stats.isDirectory()) {
-                    const indexFiles = options.index || ["index.html", "index.htm"];
+                    const indexFiles = options.index || ['index.html', 'index.htm'];
                     let indexFound = false;
                     for (const indexFile of indexFiles) {
                         const indexPath = path.join(filePath, indexFile);
@@ -649,48 +638,46 @@ exports.middleware = {
                 // Set headers with proper mime type and charset
                 const ext = path.extname(filePath);
                 const mimeTypes = {
-                    ".html": "text/html",
-                    ".css": "text/css",
-                    ".js": "application/javascript",
-                    ".json": "application/json",
-                    ".png": "image/png",
-                    ".jpg": "image/jpeg",
-                    ".jpeg": "image/jpeg",
-                    ".gif": "image/gif",
-                    ".svg": "image/svg+xml",
-                    ".ico": "image/x-icon",
-                    ".pdf": "application/pdf",
-                    ".txt": "text/plain",
-                    ".xml": "application/xml",
+                    '.html': 'text/html',
+                    '.css': 'text/css',
+                    '.js': 'application/javascript',
+                    '.json': 'application/json',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.svg': 'image/svg+xml',
+                    '.ico': 'image/x-icon',
+                    '.pdf': 'application/pdf',
+                    '.txt': 'text/plain',
+                    '.xml': 'application/xml',
                 };
-                const baseMimeType = mimeTypes[ext.toLowerCase()] || "application/octet-stream";
+                const baseMimeType = mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
                 // Add charset for text-based files
                 const textTypes = [
-                    "text/",
-                    "application/json",
-                    "application/javascript",
-                    "application/xml",
-                    "image/svg+xml",
+                    'text/',
+                    'application/json',
+                    'application/javascript',
+                    'application/xml',
+                    'image/svg+xml',
                 ];
-                const needsCharset = textTypes.some((type) => baseMimeType.startsWith(type));
-                const contentType = needsCharset
-                    ? `${baseMimeType}; charset=utf-8`
-                    : baseMimeType;
-                res.setHeader("Content-Type", contentType);
-                res.setHeader("Content-Length", stats.size);
+                const needsCharset = textTypes.some(type => baseMimeType.startsWith(type));
+                const contentType = needsCharset ? `${baseMimeType}; charset=utf-8` : baseMimeType;
+                res.setHeader('Content-Type', contentType);
+                res.setHeader('Content-Length', stats.size);
                 // Cache headers
                 if (options.maxAge) {
-                    res.setHeader("Cache-Control", `public, max-age=${options.maxAge}`);
+                    res.setHeader('Cache-Control', `public, max-age=${options.maxAge}`);
                 }
                 // ETag support
                 if (options.etag !== false) {
                     const etag = crypto
-                        .createHash("md5")
+                        .createHash('md5')
                         .update(`${stats.mtime.getTime()}-${stats.size}`)
-                        .digest("hex");
-                    res.setHeader("ETag", `"${etag}"`);
+                        .digest('hex');
+                    res.setHeader('ETag', `"${etag}"`);
                     // Handle conditional requests
-                    const ifNoneMatch = req.headers["if-none-match"];
+                    const ifNoneMatch = req.headers['if-none-match'];
                     if (ifNoneMatch === `"${etag}"`) {
                         res.statusCode = 304;
                         res.end();
@@ -698,7 +685,7 @@ exports.middleware = {
                     }
                 }
                 // Handle HEAD requests
-                if (req.method === "HEAD") {
+                if (req.method === 'HEAD') {
                     res.end();
                     return;
                 }
@@ -707,16 +694,14 @@ exports.middleware = {
                 res.end(data);
             }
             catch (error) {
-                res
-                    .status(500)
-                    .json({ success: false, error: "Internal server error" });
+                res.status(500).json({ success: false, error: 'Internal server error' });
             }
         };
     },
     upload: (options = {}) => {
         return (req, res, next) => {
-            const contentType = req.headers["content-type"] || "";
-            if (!contentType.includes("multipart/form-data")) {
+            const contentType = req.headers['content-type'] || '';
+            if (!contentType.includes('multipart/form-data')) {
                 next();
                 return;
             }
@@ -767,8 +752,8 @@ exports.middleware = {
             // Add render method to response
             res.render = async (template, data = {}) => {
                 try {
-                    const fs = await Promise.resolve().then(() => __importStar(require("fs/promises")));
-                    const path = await Promise.resolve().then(() => __importStar(require("path")));
+                    const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                    const path = await Promise.resolve().then(() => __importStar(require('path')));
                     const templatePath = path.join(options.views, `${template}.html`);
                     let templateContent;
                     // Check cache first
@@ -776,7 +761,7 @@ exports.middleware = {
                         templateContent = templateCache.get(templatePath);
                     }
                     else {
-                        templateContent = await fs.readFile(templatePath, "utf-8");
+                        templateContent = await fs.readFile(templatePath, 'utf-8');
                         if (options.cache) {
                             templateCache.set(templatePath, templateContent);
                         }
@@ -789,44 +774,40 @@ exports.middleware = {
                     });
                     // Handle nested object properties like {{user.name}}
                     rendered = rendered.replace(/\{\{([\w.]+)\}\}/g, (match, key) => {
-                        const value = key
-                            .split(".")
-                            .reduce((obj, prop) => obj?.[prop], data);
+                        const value = key.split('.').reduce((obj, prop) => obj?.[prop], data);
                         return value !== undefined ? String(value) : match;
                     });
                     // Handle loops: {{#each items}}{{name}}{{/each}}
                     rendered = rendered.replace(/\{\{#each (\w+)\}\}(.*?)\{\{\/each\}\}/gs, (match, arrayKey, template) => {
                         const array = data[arrayKey];
                         if (!Array.isArray(array))
-                            return "";
+                            return '';
                         return array
-                            .map((item) => {
+                            .map(item => {
                             let itemTemplate = template;
                             // Replace variables in the loop template
                             itemTemplate = itemTemplate.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-                                return item[key] !== undefined
-                                    ? String(item[key])
-                                    : match;
+                                return item[key] !== undefined ? String(item[key]) : match;
                             });
                             return itemTemplate;
                         })
-                            .join("");
+                            .join('');
                     });
                     // Handle conditionals: {{#if condition}}content{{/if}}
                     rendered = rendered.replace(/\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/gs, (match, conditionKey, content) => {
                         const condition = data[conditionKey];
-                        return condition ? content : "";
+                        return condition ? content : '';
                     });
                     // Handle layout
                     if (options.defaultLayout) {
-                        const layoutPath = path.join(options.views, "layouts", `${options.defaultLayout}.html`);
+                        const layoutPath = path.join(options.views, 'layouts', `${options.defaultLayout}.html`);
                         try {
                             let layoutContent;
                             if (options.cache && templateCache.has(layoutPath)) {
                                 layoutContent = templateCache.get(layoutPath);
                             }
                             else {
-                                layoutContent = await fs.readFile(layoutPath, "utf-8");
+                                layoutContent = await fs.readFile(layoutPath, 'utf-8');
                                 if (options.cache) {
                                     templateCache.set(layoutPath, layoutContent);
                                 }
@@ -837,13 +818,11 @@ exports.middleware = {
                             // Layout not found, use template as-is
                         }
                     }
-                    res.setHeader("Content-Type", "text/html");
+                    res.setHeader('Content-Type', 'text/html');
                     res.end(rendered);
                 }
                 catch (error) {
-                    res
-                        .status(500)
-                        .json({ success: false, error: "Template rendering failed" });
+                    res.status(500).json({ success: false, error: 'Template rendering failed' });
                 }
             };
             next();
@@ -855,13 +834,11 @@ exports.middleware = {
             // Add HTTP/2 push capability to response
             res.push = (path, options = {}) => {
                 // Check if HTTP/2 is supported
-                if (req.httpVersion === "2.0" &&
-                    res.stream &&
-                    res.stream.pushAllowed) {
+                if (req.httpVersion === '2.0' && res.stream && res.stream.pushAllowed) {
                     try {
                         const pushStream = res.stream.pushStream({
-                            ":method": "GET",
-                            ":path": path,
+                            ':method': 'GET',
+                            ':path': path,
                             ...options.headers,
                         });
                         if (pushStream) {
@@ -880,7 +857,7 @@ exports.middleware = {
                 for (const resource of options.resources) {
                     res.push?.(resource.path, {
                         headers: {
-                            "content-type": resource.type || "text/plain",
+                            'content-type': resource.type || 'text/plain',
                         },
                     });
                 }
@@ -892,16 +869,14 @@ exports.middleware = {
     sse: (options = {}) => {
         return (req, res, next) => {
             // Only handle SSE requests
-            if (req.headers.accept?.includes("text/event-stream")) {
+            if (req.headers.accept?.includes('text/event-stream')) {
                 // Set SSE headers
                 res.writeHead(200, {
-                    "Content-Type": "text/event-stream",
-                    "Cache-Control": "no-cache",
-                    Connection: "keep-alive",
-                    "Access-Control-Allow-Origin": options.cors ? "*" : undefined,
-                    "Access-Control-Allow-Headers": options.cors
-                        ? "Cache-Control"
-                        : undefined,
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive',
+                    'Access-Control-Allow-Origin': options.cors ? '*' : undefined,
+                    'Access-Control-Allow-Headers': options.cors ? 'Cache-Control' : undefined,
                 });
                 // Add SSE methods to response
                 res.sendEvent = (data, event, id) => {
@@ -909,7 +884,7 @@ exports.middleware = {
                         res.write(`id: ${id}\n`);
                     if (event)
                         res.write(`event: ${event}\n`);
-                    res.write(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`);
+                    res.write(`data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`);
                 };
                 res.sendComment = (comment) => {
                     res.write(`: ${comment}\n\n`);
@@ -921,7 +896,7 @@ exports.middleware = {
                 let heartbeatInterval = null;
                 if (options.heartbeat) {
                     heartbeatInterval = setInterval(() => {
-                        res.sendComment("heartbeat");
+                        res.sendComment('heartbeat');
                     }, options.heartbeat);
                 }
                 // Set retry if configured
@@ -929,7 +904,7 @@ exports.middleware = {
                     res.sendRetry(options.retry);
                 }
                 // Clean up on close
-                req.on("close", () => {
+                req.on('close', () => {
                     if (heartbeatInterval) {
                         clearInterval(heartbeatInterval);
                     }
@@ -946,28 +921,28 @@ exports.middleware = {
             // Add range support to response
             res.sendRange = async (filePath, stats) => {
                 try {
-                    const fs = await Promise.resolve().then(() => __importStar(require("fs/promises")));
-                    const path = await Promise.resolve().then(() => __importStar(require("path")));
+                    const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                    const path = await Promise.resolve().then(() => __importStar(require('path')));
                     if (!stats) {
                         stats = await fs.stat(filePath);
                     }
                     const fileSize = stats.size;
                     const range = req.headers.range;
                     // Set Accept-Ranges header
-                    res.setHeader("Accept-Ranges", options.acceptRanges || "bytes");
+                    res.setHeader('Accept-Ranges', options.acceptRanges || 'bytes');
                     if (!range) {
                         // No range requested, send entire file
-                        res.setHeader("Content-Length", fileSize);
+                        res.setHeader('Content-Length', fileSize);
                         const data = await fs.readFile(filePath);
                         res.end(data);
                         return;
                     }
                     // Parse range header
                     const ranges = range
-                        .replace(/bytes=/, "")
-                        .split(",")
-                        .map((r) => {
-                        const [start, end] = r.split("-");
+                        .replace(/bytes=/, '')
+                        .split(',')
+                        .map(r => {
+                        const [start, end] = r.split('-');
                         return {
                             start: start ? parseInt(start) : 0,
                             end: end ? parseInt(end) : fileSize - 1,
@@ -975,7 +950,7 @@ exports.middleware = {
                     });
                     // Validate ranges
                     if (options.maxRanges && ranges.length > options.maxRanges) {
-                        res.status(416).json({ success: false, error: "Too many ranges" });
+                        res.status(416).json({ success: false, error: 'Too many ranges' });
                         return;
                     }
                     if (ranges.length === 1) {
@@ -983,15 +958,15 @@ exports.middleware = {
                         const { start, end } = ranges[0];
                         const chunkSize = end - start + 1;
                         if (start >= fileSize || end >= fileSize) {
-                            res.status(416).setHeader("Content-Range", `bytes */${fileSize}`);
-                            res.json({ success: false, error: "Range not satisfiable" });
+                            res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+                            res.json({ success: false, error: 'Range not satisfiable' });
                             return;
                         }
                         res.status(206);
-                        res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
-                        res.setHeader("Content-Length", chunkSize);
+                        res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+                        res.setHeader('Content-Length', chunkSize);
                         // Stream the range
-                        const stream = require("fs").createReadStream(filePath, {
+                        const stream = require('fs').createReadStream(filePath, {
                             start,
                             end,
                         });
@@ -999,21 +974,21 @@ exports.middleware = {
                     }
                     else {
                         // Multiple ranges - multipart response
-                        const boundary = "MULTIPART_BYTERANGES";
+                        const boundary = 'MULTIPART_BYTERANGES';
                         res.status(206);
-                        res.setHeader("Content-Type", `multipart/byteranges; boundary=${boundary}`);
+                        res.setHeader('Content-Type', `multipart/byteranges; boundary=${boundary}`);
                         for (const { start, end } of ranges) {
                             if (start >= fileSize || end >= fileSize)
                                 continue;
                             const chunkSize = end - start + 1;
                             res.write(`\r\n--${boundary}\r\n`);
                             res.write(`Content-Range: bytes ${start}-${end}/${fileSize}\r\n\r\n`);
-                            const stream = require("fs").createReadStream(filePath, {
+                            const stream = require('fs').createReadStream(filePath, {
                                 start,
                                 end,
                             });
-                            await new Promise((resolve) => {
-                                stream.on("end", resolve);
+                            await new Promise(resolve => {
+                                stream.on('end', resolve);
                                 stream.pipe(res, { end: false });
                             });
                         }
@@ -1022,9 +997,7 @@ exports.middleware = {
                     }
                 }
                 catch (error) {
-                    res
-                        .status(500)
-                        .json({ success: false, error: "Range request failed" });
+                    res.status(500).json({ success: false, error: 'Range request failed' });
                 }
             };
             next();
@@ -1032,14 +1005,14 @@ exports.middleware = {
     },
     // CSRF Protection middleware
     csrf: (options = {}) => {
-        const secret = options.secret || "moro-csrf-secret";
+        const secret = options.secret || 'moro-csrf-secret';
         const tokenLength = options.tokenLength || 32;
-        const cookieName = options.cookieName || "_csrf";
-        const headerName = options.headerName || "x-csrf-token";
-        const ignoreMethods = options.ignoreMethods || ["GET", "HEAD", "OPTIONS"];
+        const cookieName = options.cookieName || '_csrf';
+        const headerName = options.headerName || 'x-csrf-token';
+        const ignoreMethods = options.ignoreMethods || ['GET', 'HEAD', 'OPTIONS'];
         const generateToken = () => {
-            const crypto = require("crypto");
-            return crypto.randomBytes(tokenLength).toString("hex");
+            const crypto = require('crypto');
+            return crypto.randomBytes(tokenLength).toString('hex');
         };
         const verifyToken = (token, sessionToken) => {
             return token && sessionToken && token === sessionToken;
@@ -1052,9 +1025,8 @@ exports.middleware = {
                     // Set token in cookie
                     res.cookie(cookieName, req._csrfToken, {
                         httpOnly: true,
-                        sameSite: options.sameSite !== false ? "strict" : undefined,
-                        secure: req.headers["x-forwarded-proto"] === "https" ||
-                            req.socket.encrypted,
+                        sameSite: options.sameSite !== false ? 'strict' : undefined,
+                        secure: req.headers['x-forwarded-proto'] === 'https' || req.socket.encrypted,
                     });
                 }
                 return req._csrfToken;
@@ -1065,16 +1037,14 @@ exports.middleware = {
                 return;
             }
             // Get token from header or body
-            const token = req.headers[headerName] ||
-                (req.body && req.body._csrf) ||
-                (req.query && req.query._csrf);
+            const token = req.headers[headerName] || (req.body && req.body._csrf) || (req.query && req.query._csrf);
             // Get session token from cookie
             const sessionToken = req.cookies?.[cookieName];
-            if (!verifyToken(token, sessionToken || "")) {
+            if (!verifyToken(token, sessionToken || '')) {
                 res.status(403).json({
                     success: false,
-                    error: "Invalid CSRF token",
-                    code: "CSRF_TOKEN_MISMATCH",
+                    error: 'Invalid CSRF token',
+                    code: 'CSRF_TOKEN_MISMATCH',
                 });
                 return;
             }
@@ -1088,7 +1058,7 @@ exports.middleware = {
                 defaultSrc: ["'self'"],
                 scriptSrc: ["'self'"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
-                imgSrc: ["'self'", "data:", "https:"],
+                imgSrc: ["'self'", 'data:', 'https:'],
                 connectSrc: ["'self'"],
                 fontSrc: ["'self'"],
                 objectSrc: ["'none'"],
@@ -1098,30 +1068,27 @@ exports.middleware = {
             // Generate nonce if requested
             let nonce;
             if (options.nonce) {
-                const crypto = require("crypto");
-                nonce = crypto.randomBytes(16).toString("base64");
+                const crypto = require('crypto');
+                nonce = crypto.randomBytes(16).toString('base64');
                 req.cspNonce = nonce;
             }
             // Build CSP header value
             const cspParts = [];
             for (const [directive, sources] of Object.entries(directives)) {
-                if (directive === "upgradeInsecureRequests" && sources === true) {
-                    cspParts.push("upgrade-insecure-requests");
+                if (directive === 'upgradeInsecureRequests' && sources === true) {
+                    cspParts.push('upgrade-insecure-requests');
                 }
-                else if (directive === "blockAllMixedContent" && sources === true) {
-                    cspParts.push("block-all-mixed-content");
+                else if (directive === 'blockAllMixedContent' && sources === true) {
+                    cspParts.push('block-all-mixed-content');
                 }
                 else if (Array.isArray(sources)) {
-                    let sourceList = sources.join(" ");
+                    let sourceList = sources.join(' ');
                     // Add nonce to script-src and style-src if enabled
-                    if (nonce &&
-                        (directive === "scriptSrc" || directive === "styleSrc")) {
+                    if (nonce && (directive === 'scriptSrc' || directive === 'styleSrc')) {
                         sourceList += ` 'nonce-${nonce}'`;
                     }
                     // Convert camelCase to kebab-case
-                    const kebabDirective = directive
-                        .replace(/([A-Z])/g, "-$1")
-                        .toLowerCase();
+                    const kebabDirective = directive.replace(/([A-Z])/g, '-$1').toLowerCase();
                     cspParts.push(`${kebabDirective} ${sourceList}`);
                 }
             }
@@ -1129,10 +1096,10 @@ exports.middleware = {
             if (options.reportUri) {
                 cspParts.push(`report-uri ${options.reportUri}`);
             }
-            const cspValue = cspParts.join("; ");
+            const cspValue = cspParts.join('; ');
             const headerName = options.reportOnly
-                ? "Content-Security-Policy-Report-Only"
-                : "Content-Security-Policy";
+                ? 'Content-Security-Policy-Report-Only'
+                : 'Content-Security-Policy';
             res.setHeader(headerName, cspValue);
             next();
         };
@@ -1149,6 +1116,6 @@ function parseSize(size) {
     if (!match)
         return 1024 * 1024; // Default 1MB
     const value = parseFloat(match[1]);
-    const unit = match[2] || "b";
+    const unit = match[2] || 'b';
     return Math.round(value * units[unit]);
 }

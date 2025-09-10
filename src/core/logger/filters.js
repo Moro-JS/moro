@@ -12,11 +12,11 @@ const levelFilter = (minLevel) => ({
 exports.levelFilter = levelFilter;
 // Context-based filter
 const contextFilter = (allowedContexts) => ({
-    name: "context-filter",
+    name: 'context-filter',
     filter: (entry) => {
         if (!entry.context)
             return true;
-        return allowedContexts.some((ctx) => entry.context.includes(ctx));
+        return allowedContexts.some(ctx => entry.context.includes(ctx));
     },
 });
 exports.contextFilter = contextFilter;
@@ -24,7 +24,7 @@ exports.contextFilter = contextFilter;
 const rateLimitFilter = (maxPerSecond) => {
     const timestamps = [];
     return {
-        name: "rate-limit",
+        name: 'rate-limit',
         filter: (entry) => {
             const now = Date.now();
             const oneSecondAgo = now - 1000;
@@ -43,14 +43,14 @@ const rateLimitFilter = (maxPerSecond) => {
 };
 exports.rateLimitFilter = rateLimitFilter;
 // Sensitive data filter
-const sanitizeFilter = (sensitiveKeys = ["password", "token", "key", "secret"]) => ({
-    name: "sanitize",
+const sanitizeFilter = (sensitiveKeys = ['password', 'token', 'key', 'secret']) => ({
+    name: 'sanitize',
     filter: (entry) => {
         if (entry.metadata) {
             const sanitized = { ...entry.metadata };
             for (const key of sensitiveKeys) {
                 if (sanitized[key]) {
-                    sanitized[key] = "[REDACTED]";
+                    sanitized[key] = '[REDACTED]';
                 }
             }
             entry.metadata = sanitized;
@@ -58,8 +58,8 @@ const sanitizeFilter = (sensitiveKeys = ["password", "token", "key", "secret"]) 
         // Also sanitize message content
         let sanitizedMessage = entry.message;
         for (const key of sensitiveKeys) {
-            const regex = new RegExp(`(${key}["\\s]*[:=]["\\s]*)([^"\\s]+)`, "gi");
-            sanitizedMessage = sanitizedMessage.replace(regex, "$1[REDACTED]");
+            const regex = new RegExp(`(${key}["\\s]*[:=]["\\s]*)([^"\\s]+)`, 'gi');
+            sanitizedMessage = sanitizedMessage.replace(regex, '$1[REDACTED]');
         }
         entry.message = sanitizedMessage;
         return true;
@@ -68,7 +68,7 @@ const sanitizeFilter = (sensitiveKeys = ["password", "token", "key", "secret"]) 
 exports.sanitizeFilter = sanitizeFilter;
 // Performance filter - only log slow operations
 const performanceFilter = (minDuration) => ({
-    name: "performance",
+    name: 'performance',
     filter: (entry) => {
         if (!entry.performance?.duration)
             return true;
@@ -80,11 +80,11 @@ exports.performanceFilter = performanceFilter;
 const errorAggregationFilter = (maxSameErrors = 5, timeWindow = 60000) => {
     const errorCounts = new Map();
     return {
-        name: "error-aggregation",
+        name: 'error-aggregation',
         filter: (entry) => {
-            if (entry.level !== "error" && entry.level !== "fatal")
+            if (entry.level !== 'error' && entry.level !== 'fatal')
                 return true;
-            const errorKey = `${entry.message}:${entry.context || ""}`;
+            const errorKey = `${entry.message}:${entry.context || ''}`;
             const now = Date.now();
             const existing = errorCounts.get(errorKey);
             if (!existing) {
@@ -110,11 +110,11 @@ exports.errorAggregationFilter = errorAggregationFilter;
 const environmentFilter = (environment) => ({
     name: `env-${environment}`,
     filter: (entry) => {
-        if (environment === "production") {
+        if (environment === 'production') {
             // In production, filter out debug logs and sensitive development info
-            if (entry.level === "debug")
+            if (entry.level === 'debug')
                 return false;
-            if (entry.context?.includes("dev") || entry.context?.includes("test"))
+            if (entry.context?.includes('dev') || entry.context?.includes('test'))
                 return false;
         }
         return true;
@@ -123,7 +123,7 @@ const environmentFilter = (environment) => ({
 exports.environmentFilter = environmentFilter;
 // Module-specific filter
 const moduleFilter = (allowedModules) => ({
-    name: "module-filter",
+    name: 'module-filter',
     filter: (entry) => {
         if (!entry.moduleId)
             return true;

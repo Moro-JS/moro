@@ -5,7 +5,7 @@ const logger_1 = require("../../logger");
 const memory_1 = require("./adapters/cache/memory");
 const redis_1 = require("./adapters/cache/redis");
 const file_1 = require("./adapters/cache/file");
-const logger = (0, logger_1.createFrameworkLogger)("SessionMiddleware");
+const logger = (0, logger_1.createFrameworkLogger)('SessionMiddleware');
 class Session {
     data = {};
     id;
@@ -61,21 +61,21 @@ class Session {
             await this.store.set(this.id, this.data, ttl);
             this.isModified = false;
             this.isNew = false;
-            logger.debug(`Session saved: ${this.id}`, "SessionSave");
+            logger.debug(`Session saved: ${this.id}`, 'SessionSave');
         }
     }
     async destroy() {
         await this.store.del(this.id);
         this.data = {};
         this.isModified = false;
-        logger.debug(`Session destroyed: ${this.id}`, "SessionDestroy");
+        logger.debug(`Session destroyed: ${this.id}`, 'SessionDestroy');
     }
     async regenerate() {
         await this.destroy();
         this.id = this.generateId();
         this.isNew = true;
         this.isModified = true;
-        logger.debug(`Session regenerated: ${this.id}`, "SessionRegenerate");
+        logger.debug(`Session regenerated: ${this.id}`, 'SessionRegenerate');
         return this.id;
     }
     async touch() {
@@ -88,29 +88,29 @@ class Session {
         if (this.options.genid) {
             return this.options.genid();
         }
-        const crypto = require("crypto");
-        return crypto.randomBytes(24).toString("hex");
+        const crypto = require('crypto');
+        return crypto.randomBytes(24).toString('hex');
     }
     get sessionID() {
         return this.id;
     }
 }
 const session = (options = {}) => ({
-    name: "session",
-    version: "1.0.0",
+    name: 'session',
+    version: '1.0.0',
     metadata: {
-        name: "session",
-        version: "1.0.0",
-        description: "Session management middleware with multiple store adapters",
-        author: "MoroJS Team",
+        name: 'session',
+        version: '1.0.0',
+        description: 'Session management middleware with multiple store adapters',
+        author: 'MoroJS Team',
     },
     install: async (hooks, middlewareOptions = {}) => {
-        logger.debug("Installing session middleware", "Installation");
+        logger.debug('Installing session middleware', 'Installation');
         // Merge options
         const config = {
-            store: "memory",
-            name: "connect.sid",
-            secret: "moro-session-secret",
+            store: 'memory',
+            name: 'connect.sid',
+            secret: 'moro-session-secret',
             rolling: false,
             resave: false,
             saveUninitialized: false,
@@ -118,29 +118,29 @@ const session = (options = {}) => ({
                 maxAge: 24 * 60 * 60 * 1000, // 24 hours
                 httpOnly: true,
                 secure: false,
-                sameSite: "lax",
-                path: "/",
+                sameSite: 'lax',
+                path: '/',
             },
-            unset: "keep",
+            unset: 'keep',
             ...options,
             ...middlewareOptions,
         };
         // Initialize store
         let store;
-        if (typeof config.store === "string") {
+        if (typeof config.store === 'string') {
             switch (config.store) {
-                case "redis":
+                case 'redis':
                     store = new redis_1.RedisCacheAdapter({
-                        keyPrefix: "sess:",
+                        keyPrefix: 'sess:',
                         ...config.storeOptions,
                     });
                     break;
-                case "file":
+                case 'file':
                     store = new file_1.FileCacheAdapter({
-                        cacheDir: config.storeOptions?.path || "./sessions",
+                        cacheDir: config.storeOptions?.path || './sessions',
                     });
                     break;
-                case "memory":
+                case 'memory':
                 default:
                     store = new memory_1.MemoryCacheAdapter();
                     break;
@@ -154,10 +154,10 @@ const session = (options = {}) => ({
             if (config.genid) {
                 return config.genid();
             }
-            const crypto = require("crypto");
-            return crypto.randomBytes(24).toString("hex");
+            const crypto = require('crypto');
+            return crypto.randomBytes(24).toString('hex');
         };
-        hooks.before("request", async (context) => {
+        hooks.before('request', async (context) => {
             const req = context.request;
             const res = context.response;
             // Get session ID from cookie
@@ -167,10 +167,10 @@ const session = (options = {}) => ({
             if (sessionId) {
                 try {
                     sessionData = (await store.get(sessionId)) || {};
-                    logger.debug(`Session loaded: ${sessionId}`, "SessionLoad");
+                    logger.debug(`Session loaded: ${sessionId}`, 'SessionLoad');
                 }
                 catch (error) {
-                    logger.warn(`Failed to load session: ${sessionId}`, "SessionLoadError", { error });
+                    logger.warn(`Failed to load session: ${sessionId}`, 'SessionLoadError', { error });
                     sessionId = generateSessionId();
                     isNew = true;
                 }
@@ -185,27 +185,24 @@ const session = (options = {}) => ({
             if (isNew || config.rolling) {
                 res.cookie(config.name, sessionId, {
                     ...config.cookie,
-                    secure: config.cookie?.secure ||
-                        (config.proxy && req.headers["x-forwarded-proto"] === "https"),
+                    secure: config.cookie?.secure || (config.proxy && req.headers['x-forwarded-proto'] === 'https'),
                 });
             }
         });
-        hooks.after("response", async (context) => {
+        hooks.after('response', async (context) => {
             const req = context.request;
             if (req.session) {
                 try {
-                    if (config.saveUninitialized ||
-                        !req.session.isNew ||
-                        req.session.isModified) {
+                    if (config.saveUninitialized || !req.session.isNew || req.session.isModified) {
                         await req.session.save();
                     }
                 }
                 catch (error) {
-                    logger.error("Failed to save session", "SessionSaveError", { error });
+                    logger.error('Failed to save session', 'SessionSaveError', { error });
                 }
             }
         });
-        logger.info(`Session middleware installed with ${config.store} store`, "Installation");
+        logger.info(`Session middleware installed with ${config.store} store`, 'Installation');
     },
 });
 exports.session = session;

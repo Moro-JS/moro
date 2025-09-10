@@ -37,12 +37,12 @@ exports.NodeRuntimeAdapter = void 0;
 const base_adapter_1 = require("./base-adapter");
 const http_server_1 = require("../http/http-server");
 class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
-    type = "node";
+    type = 'node';
     async adaptRequest(req) {
-        const { pathname, query } = this.parseUrl(req.url || "/");
+        const { pathname, query } = this.parseUrl(req.url || '/');
         // Parse body for POST/PUT/PATCH requests
         let body;
-        if (["POST", "PUT", "PATCH"].includes(req.method)) {
+        if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
             body = await this.parseRequestBody(req);
         }
         const baseRequest = {
@@ -60,7 +60,7 @@ class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
             body,
             ip: this.getClientIP(req),
             params: {},
-            requestId: "",
+            requestId: '',
             cookies: {},
             files: {},
         };
@@ -75,8 +75,8 @@ class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
         const httpServer = new http_server_1.MoroHttpServer();
         // Replace the default request handler with our runtime-aware handler
         const originalServer = httpServer.getServer();
-        originalServer.removeAllListeners("request");
-        originalServer.on("request", async (req, res) => {
+        originalServer.removeAllListeners('request');
+        originalServer.on('request', async (req, res) => {
             try {
                 const moroReq = await this.adaptRequest(req);
                 const moroRes = this.enhanceResponse(res);
@@ -85,11 +85,11 @@ class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
             catch (error) {
                 if (!res.headersSent) {
                     res.statusCode = 500;
-                    res.setHeader("Content-Type", "application/json");
+                    res.setHeader('Content-Type', 'application/json');
                     res.end(JSON.stringify({
                         success: false,
-                        error: "Internal server error",
-                        message: error instanceof Error ? error.message : "Unknown error",
+                        error: 'Internal server error',
+                        message: error instanceof Error ? error.message : 'Unknown error',
                     }));
                 }
             }
@@ -102,35 +102,35 @@ class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
     // Helper methods
     async parseRequestBody(req) {
         return new Promise((resolve, reject) => {
-            let body = "";
-            req.on("data", (chunk) => {
+            let body = '';
+            req.on('data', chunk => {
                 body += chunk.toString();
             });
-            req.on("end", () => {
+            req.on('end', () => {
                 try {
-                    const contentType = req.headers["content-type"] || "";
+                    const contentType = req.headers['content-type'] || '';
                     resolve(this.parseBody(body, contentType));
                 }
                 catch (error) {
                     reject(error);
                 }
             });
-            req.on("error", reject);
+            req.on('error', reject);
         });
     }
     getClientIP(req) {
-        const forwarded = req.headers["x-forwarded-for"];
+        const forwarded = req.headers['x-forwarded-for'];
         if (forwarded) {
-            return forwarded.split(",")[0].trim();
+            return forwarded.split(',')[0].trim();
         }
-        return req.socket.remoteAddress || "unknown";
+        return req.socket.remoteAddress || 'unknown';
     }
     enhanceResponse(res) {
         const enhanced = res;
         // Add MoroJS response methods if they don't exist
         if (!enhanced.json) {
             enhanced.json = function (data) {
-                this.setHeader("Content-Type", "application/json");
+                this.setHeader('Content-Type', 'application/json');
                 this.end(JSON.stringify(data));
             };
         }
@@ -148,49 +148,49 @@ class NodeRuntimeAdapter extends base_adapter_1.BaseRuntimeAdapter {
         if (!enhanced.cookie) {
             enhanced.cookie = function (name, value, options) {
                 const cookieString = `${name}=${value}`;
-                this.setHeader("Set-Cookie", cookieString);
+                this.setHeader('Set-Cookie', cookieString);
                 return this;
             };
         }
         if (!enhanced.clearCookie) {
             enhanced.clearCookie = function (name, options) {
-                this.setHeader("Set-Cookie", `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`);
+                this.setHeader('Set-Cookie', `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`);
                 return this;
             };
         }
         if (!enhanced.redirect) {
             enhanced.redirect = function (url, status) {
                 this.statusCode = status || 302;
-                this.setHeader("Location", url);
+                this.setHeader('Location', url);
                 this.end();
             };
         }
         if (!enhanced.sendFile) {
             enhanced.sendFile = async function (filePath) {
-                const fs = await Promise.resolve().then(() => __importStar(require("fs")));
-                const path = await Promise.resolve().then(() => __importStar(require("path")));
+                const fs = await Promise.resolve().then(() => __importStar(require('fs')));
+                const path = await Promise.resolve().then(() => __importStar(require('path')));
                 try {
                     const data = await fs.promises.readFile(filePath);
                     const ext = path.extname(filePath);
                     // Basic content type detection
                     const contentTypes = {
-                        ".html": "text/html",
-                        ".js": "application/javascript",
-                        ".css": "text/css",
-                        ".json": "application/json",
-                        ".png": "image/png",
-                        ".jpg": "image/jpeg",
-                        ".jpeg": "image/jpeg",
-                        ".gif": "image/gif",
-                        ".svg": "image/svg+xml",
+                        '.html': 'text/html',
+                        '.js': 'application/javascript',
+                        '.css': 'text/css',
+                        '.json': 'application/json',
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif',
+                        '.svg': 'image/svg+xml',
                     };
-                    const contentType = contentTypes[ext] || "application/octet-stream";
-                    this.setHeader("Content-Type", contentType);
+                    const contentType = contentTypes[ext] || 'application/octet-stream';
+                    this.setHeader('Content-Type', contentType);
                     this.end(data);
                 }
                 catch (error) {
                     this.statusCode = 404;
-                    this.end("File not found");
+                    this.end('File not found');
                 }
             };
         }

@@ -13,7 +13,7 @@ exports.isDevelopment = isDevelopment;
 exports.isProduction = isProduction;
 exports.isStaging = isStaging;
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("ConfigUtils");
+const logger = (0, logger_1.createFrameworkLogger)('ConfigUtils');
 // Global configuration store
 let appConfig = null;
 /**
@@ -21,14 +21,14 @@ let appConfig = null;
  */
 function setConfig(config) {
     appConfig = config;
-    logger.debug("Global configuration updated");
+    logger.debug('Global configuration updated');
 }
 /**
  * Get the global configuration
  */
 function getConfig() {
     if (!appConfig) {
-        throw new Error("Configuration not initialized. Call loadConfig() first.");
+        throw new Error('Configuration not initialized. Call loadConfig() first.');
     }
     return appConfig;
 }
@@ -41,7 +41,7 @@ function createModuleConfig(schema, defaultConfig, envPrefix) {
     const envConfig = {};
     if (envPrefix) {
         // Extract environment variables with the given prefix
-        Object.keys(process.env).forEach((key) => {
+        Object.keys(process.env).forEach(key => {
             if (key.startsWith(envPrefix)) {
                 const configKey = key
                     .substring(envPrefix.length)
@@ -82,10 +82,10 @@ function getEnvVar(key, defaultValue, converter) {
         }
     }
     // Default type conversions
-    if (typeof defaultValue === "boolean") {
-        return (value.toLowerCase() === "true");
+    if (typeof defaultValue === 'boolean') {
+        return (value.toLowerCase() === 'true');
     }
-    if (typeof defaultValue === "number") {
+    if (typeof defaultValue === 'number') {
         const num = Number(value);
         return (isNaN(num) ? defaultValue : num);
     }
@@ -100,8 +100,8 @@ function getEnvArray(key, defaultValue = []) {
         return defaultValue;
     }
     return value
-        .split(",")
-        .map((item) => item.trim())
+        .split(',')
+        .map(item => item.trim())
         .filter(Boolean);
 }
 /**
@@ -125,13 +125,13 @@ function getEnvJson(key, defaultValue) {
  */
 function requireEnvVars(...keys) {
     const missing = [];
-    keys.forEach((key) => {
+    keys.forEach(key => {
         if (!process.env[key]) {
             missing.push(key);
         }
     });
     if (missing.length > 0) {
-        throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
     }
 }
 /**
@@ -145,7 +145,7 @@ function envVar(prefix, name) {
  */
 function getConfigValue(path) {
     const config = getConfig();
-    return path.split(".").reduce((obj, key) => {
+    return path.split('.').reduce((obj, key) => {
         return obj && obj[key] !== undefined ? obj[key] : undefined;
     }, config);
 }
@@ -154,10 +154,10 @@ function getConfigValue(path) {
  */
 function isDevelopment() {
     try {
-        return getConfig().server.environment === "development";
+        return getConfig().server.environment === 'development';
     }
     catch {
-        return process.env.NODE_ENV === "development";
+        return process.env.NODE_ENV === 'development';
     }
 }
 /**
@@ -165,10 +165,10 @@ function isDevelopment() {
  */
 function isProduction() {
     try {
-        return getConfig().server.environment === "production";
+        return getConfig().server.environment === 'production';
     }
     catch {
-        return process.env.NODE_ENV === "production";
+        return process.env.NODE_ENV === 'production';
     }
 }
 /**
@@ -176,9 +176,9 @@ function isProduction() {
  */
 function isStaging() {
     try {
-        return getConfig().server.environment === "staging";
+        return getConfig().server.environment === 'staging';
     }
     catch {
-        return process.env.NODE_ENV === "staging";
+        return process.env.NODE_ENV === 'staging';
     }
 }

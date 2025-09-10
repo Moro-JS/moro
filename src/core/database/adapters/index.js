@@ -24,22 +24,22 @@ const drizzle_2 = require("./drizzle");
 // Adapter factory function for auto-loading
 function createDatabaseAdapter(type, options = {}) {
     switch (type.toLowerCase()) {
-        case "mysql":
+        case 'mysql':
             return new mysql_2.MySQLAdapter(options);
-        case "postgresql":
-        case "postgres":
-        case "pg":
+        case 'postgresql':
+        case 'postgres':
+        case 'pg':
             return new postgresql_2.PostgreSQLAdapter(options);
-        case "sqlite":
-        case "sqlite3":
+        case 'sqlite':
+        case 'sqlite3':
             return new sqlite_2.SQLiteAdapter(options);
-        case "mongodb":
-        case "mongo":
+        case 'mongodb':
+        case 'mongo':
             return new mongodb_2.MongoDBAdapter(options);
-        case "redis":
+        case 'redis':
             return new redis_2.RedisAdapter(options);
-        case "drizzle":
-        case "orm":
+        case 'drizzle':
+        case 'orm':
             return new drizzle_2.DrizzleAdapter(options);
         default:
             throw new Error(`Unknown database adapter type: ${type}. Available types: mysql, postgresql, sqlite, mongodb, redis, drizzle`);

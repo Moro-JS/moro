@@ -4,21 +4,21 @@ exports.Router = void 0;
 const logger_1 = require("../logger");
 class Router {
     routes = [];
-    logger = (0, logger_1.createFrameworkLogger)("Router");
+    logger = (0, logger_1.createFrameworkLogger)('Router');
     get(path, ...handlers) {
-        this.addRoute("GET", path, handlers);
+        this.addRoute('GET', path, handlers);
     }
     post(path, ...handlers) {
-        this.addRoute("POST", path, handlers);
+        this.addRoute('POST', path, handlers);
     }
     put(path, ...handlers) {
-        this.addRoute("PUT", path, handlers);
+        this.addRoute('PUT', path, handlers);
     }
     delete(path, ...handlers) {
-        this.addRoute("DELETE", path, handlers);
+        this.addRoute('DELETE', path, handlers);
     }
     patch(path, ...handlers) {
-        this.addRoute("PATCH", path, handlers);
+        this.addRoute('PATCH', path, handlers);
     }
     addRoute(method, path, handlers) {
         const { pattern, paramNames } = this.pathToRegex(path);
@@ -39,25 +39,23 @@ class Router {
         const regexPattern = path
             .replace(/\/:([^/]+)/g, (match, paramName) => {
             paramNames.push(paramName);
-            return "/([^/]+)";
+            return '/([^/]+)';
         })
-            .replace(/\//g, "\\/");
+            .replace(/\//g, '\\/');
         return {
             pattern: new RegExp(`^${regexPattern}$`),
             paramNames,
         };
     }
-    async handle(req, res, basePath = "") {
-        let path = req.path.startsWith(basePath)
-            ? req.path.substring(basePath.length)
-            : req.path;
+    async handle(req, res, basePath = '') {
+        let path = req.path.startsWith(basePath) ? req.path.substring(basePath.length) : req.path;
         // If removing basePath results in empty string, default to '/'
-        if (path === "" || path === undefined) {
-            path = "/";
+        if (path === '' || path === undefined) {
+            path = '/';
         }
-        this.logger.debug(`Router processing: originalPath="${req.path}", basePath="${basePath}", processedPath="${path}"`, "Processing");
-        const route = this.routes.find((r) => r.method === req.method && r.pattern.test(path));
-        this.logger.debug(`Found route: ${!!route}${route ? ` ${route.method} ${route.path}` : " none"}`, "RouteMatch");
+        this.logger.debug(`Router processing: originalPath="${req.path}", basePath="${basePath}", processedPath="${path}"`, 'Processing');
+        const route = this.routes.find(r => r.method === req.method && r.pattern.test(path));
+        this.logger.debug(`Found route: ${!!route}${route ? ` ${route.method} ${route.path}` : ' none'}`, 'RouteMatch');
         if (!route) {
             return false; // Route not found
         }

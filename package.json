@@ -31,8 +31,9 @@
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+            "format": "prettier --write \"src/**/*.ts\"",
+        "format:check": "prettier --check \"src/**/*.ts\"",
+        "lint-staged": "lint-staged",
     "docs:build": "typedoc --out docs src/index.ts",
     "docs:serve": "http-server docs -p 8080"
   },

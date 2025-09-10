@@ -5,42 +5,38 @@ const logger_1 = require("../../logger");
 class MongoDBAdapter {
     client;
     db;
-    logger = (0, logger_1.createFrameworkLogger)("MongoDB");
+    logger = (0, logger_1.createFrameworkLogger)('MongoDB');
     constructor(config) {
         try {
-            const { MongoClient } = require("mongodb");
+            const { MongoClient } = require('mongodb');
             const url = config.url || this.buildConnectionString(config);
             this.client = new MongoClient(url, {
                 maxPoolSize: config.maxPoolSize || 10,
                 minPoolSize: config.minPoolSize || 0,
                 ssl: config.ssl || false,
             });
-            this.db = this.client.db(config.database || "moro_app");
-            this.logger.info("MongoDB adapter initialized", "MongoDB");
+            this.db = this.client.db(config.database || 'moro_app');
+            this.logger.info('MongoDB adapter initialized', 'MongoDB');
         }
         catch (error) {
-            throw new Error("mongodb package is required for MongoDB adapter. Install it with: npm install mongodb");
+            throw new Error('mongodb package is required for MongoDB adapter. Install it with: npm install mongodb');
         }
     }
     buildConnectionString(config) {
-        const host = config.host || "localhost";
+        const host = config.host || 'localhost';
         const port = config.port || 27017;
-        const auth = config.username && config.password
-            ? `${config.username}:${config.password}@`
-            : "";
-        const authSource = config.authSource
-            ? `?authSource=${config.authSource}`
-            : "";
-        return `mongodb://${auth}${host}:${port}/${config.database || "moro_app"}${authSource}`;
+        const auth = config.username && config.password ? `${config.username}:${config.password}@` : '';
+        const authSource = config.authSource ? `?authSource=${config.authSource}` : '';
+        return `mongodb://${auth}${host}:${port}/${config.database || 'moro_app'}${authSource}`;
     }
     async connect() {
         try {
             await this.client.connect();
-            await this.client.db("admin").command({ ping: 1 });
-            this.logger.info("MongoDB connection established", "Connection");
+            await this.client.db('admin').command({ ping: 1 });
+            this.logger.info('MongoDB connection established', 'Connection');
         }
         catch (error) {
-            this.logger.error("MongoDB connection failed", "Connection", {
+            this.logger.error('MongoDB connection failed', 'Connection', {
                 error: error instanceof Error ? error.message : String(error),
             });
             throw error;
@@ -70,7 +66,7 @@ class MongoDBAdapter {
             }
         }
         catch (error) {
-            this.logger.error("MongoDB query failed", "Query", {
+            this.logger.error('MongoDB query failed', 'Query', {
                 collection,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -83,7 +79,7 @@ class MongoDBAdapter {
             return await coll.findOne(query || {});
         }
         catch (error) {
-            this.logger.error("MongoDB queryOne failed", "Query", {
+            this.logger.error('MongoDB queryOne failed', 'Query', {
                 collection,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -98,7 +94,7 @@ class MongoDBAdapter {
             return { ...data, _id: result.insertedId };
         }
         catch (error) {
-            this.logger.error("MongoDB insert failed", "Insert", {
+            this.logger.error('MongoDB insert failed', 'Insert', {
                 collection,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -108,11 +104,11 @@ class MongoDBAdapter {
     async update(collection, data, where) {
         try {
             const coll = this.db.collection(collection);
-            const result = await coll.findOneAndUpdate(where, { $set: data }, { returnDocument: "after" });
+            const result = await coll.findOneAndUpdate(where, { $set: data }, { returnDocument: 'after' });
             return result.value;
         }
         catch (error) {
-            this.logger.error("MongoDB update failed", "Update", {
+            this.logger.error('MongoDB update failed', 'Update', {
                 collection,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -126,7 +122,7 @@ class MongoDBAdapter {
             return result.deletedCount || 0;
         }
         catch (error) {
-            this.logger.error("MongoDB delete failed", "Delete", {
+            this.logger.error('MongoDB delete failed', 'Delete', {
                 collection,
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -201,7 +197,7 @@ class MongoDBTransaction {
     }
     async update(collection, data, where) {
         const coll = this.db.collection(collection);
-        const result = await coll.findOneAndUpdate(where, { $set: data }, { returnDocument: "after", session: this.session });
+        const result = await coll.findOneAndUpdate(where, { $set: data }, { returnDocument: 'after', session: this.session });
         return result.value;
     }
     async delete(collection, where) {

@@ -15,11 +15,11 @@ const azure_2 = require("./azure");
 // Adapter factory function for auto-loading
 function createCDNAdapter(type, options = {}) {
     switch (type.toLowerCase()) {
-        case "cloudflare":
+        case 'cloudflare':
             return new cloudflare_2.CloudflareCDNAdapter(options);
-        case "cloudfront":
+        case 'cloudfront':
             return new cloudfront_2.CloudFrontCDNAdapter(options);
-        case "azure":
+        case 'azure':
             return new azure_2.AzureCDNAdapter(options);
         default:
             throw new Error(`Unknown CDN adapter type: ${type}`);

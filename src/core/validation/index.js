@@ -10,7 +10,7 @@ exports.params = params;
 exports.combineSchemas = combineSchemas;
 const zod_1 = require("zod");
 const logger_1 = require("../logger");
-const logger = (0, logger_1.createFrameworkLogger)("Validation");
+const logger = (0, logger_1.createFrameworkLogger)('Validation');
 // Main validation wrapper function
 function validate(config, handler) {
     return async (req, res) => {
@@ -18,40 +18,40 @@ function validate(config, handler) {
             const validatedReq = req;
             // Validate body
             if (config.body) {
-                const result = await validateField(config.body, req.body, "body");
+                const result = await validateField(config.body, req.body, 'body');
                 if (!result.success) {
-                    return sendValidationError(res, result.errors, "body");
+                    return sendValidationError(res, result.errors, 'body');
                 }
                 validatedReq.validatedBody = result.data;
                 validatedReq.body = result.data; // Also update original body for compatibility
             }
             // Validate query parameters
             if (config.query) {
-                const result = await validateField(config.query, req.query, "query");
+                const result = await validateField(config.query, req.query, 'query');
                 if (!result.success) {
-                    return sendValidationError(res, result.errors, "query");
+                    return sendValidationError(res, result.errors, 'query');
                 }
                 validatedReq.validatedQuery = result.data;
                 validatedReq.query = result.data; // Also update original query for compatibility
             }
             // Validate path parameters
             if (config.params) {
-                const result = await validateField(config.params, req.params, "params");
+                const result = await validateField(config.params, req.params, 'params');
                 if (!result.success) {
-                    return sendValidationError(res, result.errors, "params");
+                    return sendValidationError(res, result.errors, 'params');
                 }
                 validatedReq.validatedParams = result.data;
                 validatedReq.params = result.data; // Also update original params for compatibility
             }
             // Validate headers
             if (config.headers) {
-                const result = await validateField(config.headers, req.headers, "headers");
+                const result = await validateField(config.headers, req.headers, 'headers');
                 if (!result.success) {
-                    return sendValidationError(res, result.errors, "headers");
+                    return sendValidationError(res, result.errors, 'headers');
                 }
                 validatedReq.validatedHeaders = result.data;
             }
-            logger.debug("Request validation passed", "ValidationSuccess", {
+            logger.debug('Request validation passed', 'ValidationSuccess', {
                 path: req.path,
                 method: req.method,
                 validatedFields: Object.keys(config),
@@ -60,7 +60,7 @@ function validate(config, handler) {
             return await handler(validatedReq, res);
         }
         catch (error) {
-            logger.error("Validation wrapper error", "ValidationError", {
+            logger.error('Validation wrapper error', 'ValidationError', {
                 error: error instanceof Error ? error.message : String(error),
                 path: req.path,
                 method: req.method,
@@ -68,7 +68,7 @@ function validate(config, handler) {
             if (!res.headersSent) {
                 res.status(500).json({
                     success: false,
-                    error: "Internal validation error",
+                    error: 'Internal validation error',
                     requestId: req.requestId,
                 });
             }
@@ -87,11 +87,11 @@ async function validateField(schema, data, fieldName) {
     catch (error) {
         if (error instanceof zod_1.ZodError) {
             const errors = error.issues.map((err) => ({
-                field: err.path.length > 0 ? err.path.join(".") : fieldName,
+                field: err.path.length > 0 ? err.path.join('.') : fieldName,
                 message: err.message,
                 code: err.code,
             }));
-            logger.debug("Field validation failed", "ValidationFailed", {
+            logger.debug('Field validation failed', 'ValidationFailed', {
                 field: fieldName,
                 errors: errors.length,
                 details: errors,
@@ -107,7 +107,7 @@ async function validateField(schema, data, fieldName) {
 }
 // Send validation error response
 function sendValidationError(res, errors, field) {
-    logger.debug("Sending validation error response", "ValidationResponse", {
+    logger.debug('Sending validation error response', 'ValidationResponse', {
         field,
         errorCount: errors.length,
     });
