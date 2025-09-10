@@ -81,22 +81,22 @@ Deploy the **same code** everywhere:
 
 ```typescript
 // Node.js (default)
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 const app = createApp();
 app.listen(3000);
 
 // Vercel Edge Functions
-import { createAppEdge } from 'moro';
+import { createAppEdge } from '@morojs/moro';
 const app = createAppEdge();
 export default app.getHandler();
 
 // AWS Lambda
-import { createAppLambda } from 'moro';
+import { createAppLambda } from '@morojs/moro';
 const app = createAppLambda();
 export const handler = app.getHandler();
 
 // Cloudflare Workers
-import { createAppWorker } from 'moro';
+import { createAppWorker } from '@morojs/moro';
 const app = createAppWorker();
 export default { fetch: app.getHandler() };
 ```
@@ -197,7 +197,7 @@ await app.loadModule(UsersModule);
 - [**Migration Guide**](./docs/MIGRATION.md) - From Express, Fastify, NestJS
 - [**Performance Guide**](./docs/PERFORMANCE.md) - Optimization and benchmarks
 - [**Runtime System**](./docs/RUNTIME.md) - Multi-runtime deployment guide
-- [**Examples Repository**](../MoroJS%20Examples/) - Working examples
+- [**Examples Repository**](../Moro-JS/examples/) - Working examples
 
 ### **Key Concepts**
 - **Multi-Runtime Support** - Same API works on Node.js, Edge, Lambda, and Workers
