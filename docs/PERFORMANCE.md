@@ -171,7 +171,7 @@ app.get('/user-dashboard/:id')
     const user = await getUser(req.params.id);
     const posts = await getUserPosts(req.params.id);
     const followers = await getUserFollowers(req.params.id);
-    
+
     return { user, posts, followers };
   });
 
@@ -183,7 +183,7 @@ app.get('/user-dashboard/:id')
       getUserPosts(req.params.id),
       getUserFollowers(req.params.id)
     ]);
-    
+
     return { user, posts, followers };
   });
 ```
@@ -265,10 +265,10 @@ app.post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     const user = await createUser(req.body);
-    
+
     // Invalidate related caches
     req.cache.invalidateTags(['users', 'stats']);
-    
+
     return { success: true, data: user };
   });
 
@@ -276,11 +276,11 @@ app.post('/users')
 app.delete('/users/:id')
   .handler(async (req, res) => {
     await deleteUser(req.params.id);
-    
+
     // Invalidate specific cache entries
     req.cache.delete(`user:${req.params.id}`);
     req.cache.delete('users:list');
-    
+
     return { success: true };
   });
 ```
@@ -456,13 +456,13 @@ const db = new MySQLAdapter({
   user: 'app',
   password: 'password',
   database: 'myapp',
-  
+
   // Performance settings
   connectionLimit: 20,
   acquireTimeout: 60000,
   timeout: 60000,
   reconnect: true,
-  
+
   // Query optimization
   dateStrings: false,
   supportBigNumbers: true,
@@ -507,14 +507,14 @@ app.get('/expensive-report')
   })
   .handler(async (req, res) => {
     const report = await db.query(`
-      SELECT 
+      SELECT
         COUNT(*) as total_orders,
         SUM(amount) as total_revenue,
         AVG(amount) as avg_order_value
-      FROM orders 
+      FROM orders
       WHERE DATE(created_at) = ?
     `, [req.query.date]);
-    
+
     return { report };
   });
 ```
@@ -527,7 +527,7 @@ app.post('/complex-operation')
   .body(ComplexOperationSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
-    
+
     try {
       // Batch operations where possible
       const results = await Promise.all([
@@ -535,7 +535,7 @@ app.post('/complex-operation')
         transaction.insert('table2', req.body.data2),
         transaction.update('table3', { id: req.body.id }, req.body.updates)
       ]);
-      
+
       await transaction.commit();
       return { success: true, results };
     } catch (error) {
@@ -558,11 +558,11 @@ import os from 'os';
 
 if (cluster.isMaster) {
   const numCPUs = os.cpus().length;
-  
+
   for (let i = 0; i < numCPUs; i++) {
     cluster.fork();
   }
-  
+
   cluster.on('exit', (worker) => {
     console.log(`Worker ${worker.process.pid} died`);
     cluster.fork(); // Restart worker
@@ -572,7 +572,7 @@ if (cluster.isMaster) {
     cluster: true,
     workerId: cluster.worker.id
   });
-  
+
   app.listen(3000);
 }
 ```
@@ -642,12 +642,12 @@ app.get('/api/config')
     if (cached) {
       return JSON.parse(cached);
     }
-    
+
     const config = await fetchConfig();
     await env.API_CACHE.put('config', JSON.stringify(config), {
       expirationTtl: 3600
     });
-    
+
     return config;
   });
 ```
@@ -671,7 +671,7 @@ const app = createApp({
 // Custom metrics
 app.use((req, res, next) => {
   const start = Date.now();
-  
+
   res.on('finish', () => {
     const duration = Date.now() - start;
     req.metrics.histogram('request_duration', duration, {
@@ -680,7 +680,7 @@ app.use((req, res, next) => {
       status: res.statusCode
     });
   });
-  
+
   next();
 });
 ```
@@ -691,12 +691,12 @@ app.use((req, res, next) => {
 // Performance-focused logging
 app.use(async (req, res, next) => {
   const start = process.hrtime.bigint();
-  
+
   await next();
-  
+
   const end = process.hrtime.bigint();
   const duration = Number(end - start) / 1000000; // Convert to ms
-  
+
   if (duration > 1000) { // Log slow requests
     console.warn(`Slow request: ${req.method} ${req.path} took ${duration}ms`);
   }
@@ -715,7 +715,7 @@ app.get('/health', async (req, res) => {
     memory: process.memoryUsage(),
     version: process.env.npm_package_version
   };
-  
+
   // Check database connectivity
   try {
     await req.database.query('SELECT 1');
@@ -724,7 +724,7 @@ app.get('/health', async (req, res) => {
     health.database = 'disconnected';
     health.status = 'unhealthy';
   }
-  
+
   // Check external dependencies
   try {
     await fetch('https://api.external.com/health');
@@ -733,7 +733,7 @@ app.get('/health', async (req, res) => {
     health.external = 'unavailable';
     // Don't mark as unhealthy for external service issues
   }
-  
+
   const statusCode = health.status === 'healthy' ? 200 : 503;
   return res.status(statusCode).json(health);
 });
@@ -756,7 +756,7 @@ app.post('/subscribe')
     };
     eventEmitter.on('data', listener);
     // Listener never removed!
-    
+
     return { subscribed: true };
   });
 
@@ -766,14 +766,14 @@ app.post('/subscribe')
     const listener = (data) => {
       // Process data
     };
-    
+
     eventEmitter.on('data', listener);
-    
+
     // Clean up on client disconnect
     req.on('close', () => {
       eventEmitter.removeListener('data', listener);
     });
-    
+
     return { subscribed: true };
   });
 ```
@@ -805,7 +805,7 @@ app.get('/cpu-intensive')
         resolve(result);
       });
     });
-    
+
     return { result };
   });
 ```
@@ -816,14 +816,14 @@ app.get('/cpu-intensive')
 // Monitor database connection pool
 app.events.on('database:connection:error', ({ error, pool }) => {
   console.error('Database connection error:', error);
-  
+
   // Check pool status
   console.log('Pool status:', {
     total: pool.totalConnections,
     active: pool.activeConnections,
     idle: pool.idleConnections
   });
-  
+
   // Alert if pool is exhausted
   if (pool.activeConnections === pool.connectionLimit) {
     console.error('Database connection pool exhausted!');
@@ -839,7 +839,7 @@ app.events.on('database:connection:error', ({ error, pool }) => {
 app.use(async (req, res, next) => {
   if (req.query.debug === 'performance') {
     const timers = {};
-    
+
     req.timer = {
       start: (name) => {
         timers[name] = process.hrtime.bigint();
@@ -853,7 +853,7 @@ app.use(async (req, res, next) => {
       }
     };
   }
-  
+
   await next();
 });
 ```
@@ -885,4 +885,4 @@ const app = createApp({
 
 ---
 
-This performance guide provides comprehensive strategies for optimizing MoroJS applications. For specific performance issues or questions, check the [examples repository](https://github.com/MoroJS/examples) or join our community discussions. 
+This performance guide provides comprehensive strategies for optimizing MoroJS applications. For specific performance issues or questions, check the [examples repository](https://github.com/Moro-JS/examples) or join our community discussions.

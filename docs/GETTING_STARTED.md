@@ -140,9 +140,9 @@ import { createAppEdge } from 'moro';
 const app = createAppEdge();
 
 app.get('/api/hello', (req, res) => {
-  return { 
+  return {
     message: 'Hello from Vercel Edge!',
-    region: process.env.VERCEL_REGION 
+    region: process.env.VERCEL_REGION
   };
 });
 
@@ -157,10 +157,10 @@ import { createAppLambda } from 'moro';
 const app = createAppLambda();
 
 app.get('/api/users/:id', (req, res) => {
-  return { 
+  return {
     userId: req.params.id,
     lambda: true,
-    region: process.env.AWS_REGION 
+    region: process.env.AWS_REGION
   };
 });
 
@@ -293,19 +293,19 @@ app.get('/users')
   .cache({ ttl: 60 })
   .handler(async (req, res) => {
     const { page, limit, search } = req.query;
-    
+
     let filteredUsers = users;
     if (search) {
-      filteredUsers = users.filter(user => 
+      filteredUsers = users.filter(user =>
         user.name.toLowerCase().includes(search.toLowerCase()) ||
         user.email.toLowerCase().includes(search.toLowerCase())
       );
     }
-    
+
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
     const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
-    
+
     return {
       success: true,
       data: paginatedUsers,
@@ -324,14 +324,14 @@ app.get('/users/:id')
   .cache({ ttl: 300 })
   .handler(async (req, res) => {
     const user = users.find(u => u.id === req.params.id);
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
         error: 'User not found'
       });
     }
-    
+
     return { success: true, data: user };
   });
 
@@ -348,15 +348,15 @@ app.post('/users')
         error: 'Email already exists'
       });
     }
-    
+
     const newUser = {
       id: nextId++,
       ...req.body,
       createdAt: new Date().toISOString()
     };
-    
+
     users.push(newUser);
-    
+
     return {
       success: true,
       data: newUser,
@@ -370,14 +370,14 @@ app.put('/users/:id')
   .body(UpdateUserSchema)
   .handler(async (req, res) => {
     const userIndex = users.findIndex(u => u.id === req.params.id);
-    
+
     if (userIndex === -1) {
       return res.status(404).json({
         success: false,
         error: 'User not found'
       });
     }
-    
+
     // Check if email already exists (if being updated)
     if (req.body.email) {
       const existingUser = users.find(u => u.email === req.body.email && u.id !== req.params.id);
@@ -388,13 +388,13 @@ app.put('/users/:id')
         });
       }
     }
-    
+
     users[userIndex] = {
       ...users[userIndex],
       ...req.body,
       updatedAt: new Date().toISOString()
     };
-    
+
     return {
       success: true,
       data: users[userIndex],
@@ -407,16 +407,16 @@ app.delete('/users/:id')
   .params(z.object({ id: z.coerce.number() }))
   .handler(async (req, res) => {
     const userIndex = users.findIndex(u => u.id === req.params.id);
-    
+
     if (userIndex === -1) {
       return res.status(404).json({
         success: false,
         error: 'User not found'
       });
     }
-    
+
     const deletedUser = users.splice(userIndex, 1)[0];
-    
+
     return {
       success: true,
       data: deletedUser,
@@ -583,22 +583,22 @@ const registrationSchema = z.object({
     .min(3, 'Username must be at least 3 characters')
     .max(20, 'Username must be less than 20 characters')
     .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
-  
+
   email: z.string().email('Invalid email format'),
-  
+
   password: z.string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Password must contain at least one lowercase letter, one uppercase letter, and one number'),
-  
+
   confirmPassword: z.string(),
-  
+
   profile: z.object({
     firstName: z.string().min(1, 'First name is required'),
     lastName: z.string().min(1, 'Last name is required'),
     bio: z.string().max(500, 'Bio must be less than 500 characters').optional(),
     tags: z.array(z.string()).max(5, 'Maximum 5 tags allowed').default([])
   }),
-  
+
   preferences: z.object({
     newsletter: z.boolean().default(false),
     notifications: z.boolean().default(true),
@@ -635,7 +635,7 @@ app.get('/search')
   .handler(async (req, res) => {
     const { q, category, sort, page, limit, includeInactive } = req.query;
     // All parameters are validated and typed
-    return { 
+    return {
       results: [],
       query: { q, category, sort, page, limit, includeInactive }
     };
@@ -680,7 +680,7 @@ app.post('/users')
       'INSERT INTO users (name, email) VALUES (?, ?)',
       [req.body.name, req.body.email]
     );
-    
+
     return {
       success: true,
       data: { id: result.insertId, ...req.body }
@@ -695,29 +695,29 @@ app.post('/transfer')
   .body(TransferSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
-    
+
     try {
       // Debit from source account
       await transaction.query(
         'UPDATE accounts SET balance = balance - ? WHERE id = ?',
         [req.body.amount, req.body.fromAccount]
       );
-      
+
       // Credit to destination account
       await transaction.query(
         'UPDATE accounts SET balance = balance + ? WHERE id = ?',
         [req.body.amount, req.body.toAccount]
       );
-      
+
       // Record transaction
       await transaction.query(
         'INSERT INTO transactions (from_account, to_account, amount) VALUES (?, ?, ?)',
         [req.body.fromAccount, req.body.toAccount, req.body.amount]
       );
-      
+
       await transaction.commit();
       return { success: true, message: 'Transfer completed' };
-      
+
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -741,7 +741,7 @@ app.websocket('/chat', {
     console.log(`User connected: ${socket.id}`);
     socket.emit('welcome', { message: 'Welcome to the chat!' });
   },
-  
+
   // Join room event
   'join-room': {
     validation: z.object({
@@ -752,17 +752,17 @@ app.websocket('/chat', {
       socket.join(data.room);
       socket.username = data.username;
       socket.currentRoom = data.room;
-      
+
       socket.to(data.room).emit('user-joined', {
         username: data.username,
         message: `${data.username} joined the room`,
         timestamp: new Date()
       });
-      
+
       return { success: true, room: data.room };
     }
   },
-  
+
   // Send message event
   'send-message': {
     validation: z.object({
@@ -777,11 +777,11 @@ app.websocket('/chat', {
         room: data.room,
         timestamp: new Date()
       });
-      
+
       return { success: true };
     }
   },
-  
+
   // Disconnect event
   disconnect: (socket) => {
     if (socket.currentRoom && socket.username) {
@@ -817,19 +817,19 @@ app.listen(3000, () => {
 
     <script>
         const socket = io('/chat');
-        
+
         // Join a room
         socket.emit('join-room', {
             room: 'general',
             username: 'User' + Math.floor(Math.random() * 1000)
         });
-        
+
         // Listen for messages
         socket.on('new-message', (data) => {
             const messages = document.getElementById('messages');
             messages.innerHTML += `<div><strong>${data.username}:</strong> ${data.message}</div>`;
         });
-        
+
         // Send message
         function sendMessage() {
             const input = document.getElementById('messageInput');
@@ -881,9 +881,9 @@ describe('MoroJS Application', () => {
 
   beforeAll(() => {
     app = createApp();
-    
+
     app.get('/test', () => ({ message: 'Hello Test!' }));
-    
+
     app.post('/users')
       .body(z.object({
         name: z.string().min(2),
@@ -910,7 +910,7 @@ describe('MoroJS Application', () => {
 
   it('should validate POST /users', async () => {
     const validUser = { name: 'John Doe', email: 'john@example.com' };
-    
+
     const response = await request(server)
       .post('/users')
       .send(validUser)
@@ -924,7 +924,7 @@ describe('MoroJS Application', () => {
 
   it('should reject invalid user data', async () => {
     const invalidUser = { name: 'J', email: 'invalid-email' };
-    
+
     await request(server)
       .post('/users')
       .send(invalidUser)
@@ -952,7 +952,7 @@ Congratulations! You've learned the basics of MoroJS. Here are some next steps:
 - [Deployment](./DEPLOYMENT.md) - Production deployment guide
 
 ### 2. Example Applications
-Check out the [examples repository](https://github.com/MoroJS/examples) for:
+Check out the [examples repository](https://github.com/Moro-JS/examples) for:
 - Enterprise applications
 - Microservices architecture
 - Real-time chat applications
@@ -960,7 +960,7 @@ Check out the [examples repository](https://github.com/MoroJS/examples) for:
 - Authentication systems
 
 ### 3. Community and Support
-- [GitHub Repository](https://github.com/MoroJS/moro)
+- [GitHub Repository](https://github.com/Moro-JS/moro)
 - [Discord Community](https://discord.gg/morojs)
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/morojs)
 - [Documentation](https://morojs.com)
@@ -971,4 +971,4 @@ MoroJS is open source! Contributions are welcome:
 - [Code of Conduct](../CODE_OF_CONDUCT.md)
 - [Development Setup](../DEVELOPMENT.md)
 
-Happy coding with MoroJS! 
+Happy coding with MoroJS!

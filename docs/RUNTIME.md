@@ -124,11 +124,11 @@ import { createApp } from 'moro';
 
 if (cluster.isMaster) {
   const numCPUs = os.cpus().length;
-  
+
   for (let i = 0; i < numCPUs; i++) {
     cluster.fork();
   }
-  
+
   cluster.on('exit', (worker) => {
     console.log(`Worker ${worker.process.pid} died`);
     cluster.fork();
@@ -138,7 +138,7 @@ if (cluster.isMaster) {
     cluster: true,
     workerId: cluster.worker.id
   });
-  
+
   app.listen(3000);
 }
 ```
@@ -191,9 +191,9 @@ import { createAppEdge } from 'moro';
 const app = createAppEdge();
 
 app.get('/api/hello', (req, res) => {
-  return { 
+  return {
     message: 'Hello from the Edge!',
-    region: process.env.VERCEL_REGION 
+    region: process.env.VERCEL_REGION
   };
 });
 
@@ -217,14 +217,14 @@ export default app.getHandler();
 const app = createAppEdge({
   // Enable streaming for large responses
   streaming: true,
-  
+
   // Cache configuration
   cache: {
     edge: true,
     maxAge: 3600,
     staleWhileRevalidate: 86400
   },
-  
+
   // Deploy to specific regions
   regions: ['iad1', 'sfo1', 'cdg1']
 });
@@ -291,10 +291,10 @@ const app = createAppLambda({
 });
 
 app.get('/api/users/:id', (req, res) => {
-  return { 
+  return {
     userId: req.params.id,
     lambda: true,
-    requestId: req.context.awsRequestId 
+    requestId: req.context.awsRequestId
   };
 });
 
@@ -442,21 +442,21 @@ app.get('/api/cache/:key')
   .handler(async (req, res, env) => {
     // Read from KV
     const value = await env.API_CACHE.get(req.params.key);
-    
+
     if (value) {
       return { value: JSON.parse(value), cached: true };
     }
-    
+
     // Generate new value
     const newValue = await generateValue(req.params.key);
-    
+
     // Store in KV with TTL
     await env.API_CACHE.put(
-      req.params.key, 
+      req.params.key,
       JSON.stringify(newValue),
       { expirationTtl: 3600 }
     );
-    
+
     return { value: newValue, cached: false };
   });
 ```
@@ -484,7 +484,7 @@ app.post('/api/increment/:id')
     const stub = env.COUNTER.get(id);
     const response = await stub.fetch(req);
     const data = await response.json();
-    
+
     return { success: true, data };
   });
 ```
@@ -528,7 +528,7 @@ const UserSchema = z.object({
 
 export function setupRoutes(app: any) {
   app.get('/api/health', () => ({ status: 'healthy' }));
-  
+
   app.post('/api/users')
     .body(UserSchema)
     .rateLimit({ requests: 100, window: 60000 })
@@ -537,7 +537,7 @@ export function setupRoutes(app: any) {
       const user = await createUser(req.body);
       return { success: true, data: user };
     });
-  
+
   app.get('/api/users/:id')
     .params(z.object({ id: z.string().uuid() }))
     .cache({ ttl: 300 })
@@ -596,7 +596,7 @@ export function setupRoutes(app: any) {
   // Common routes work everywhere
   app.get('/api/info', (req, res) => {
     const runtime = app.getRuntimeType();
-    
+
     return {
       runtime,
       timestamp: new Date(),
@@ -613,7 +613,7 @@ export function setupRoutes(app: any) {
       })
     };
   });
-  
+
   // Runtime-specific routes
   if (app.getRuntimeType() === 'node') {
     app.websocket('/ws', {
@@ -759,7 +759,7 @@ export function getRuntimeConfig(runtime: string) {
         cluster: process.env.NODE_ENV === 'production',
         websockets: true
       };
-      
+
     case 'vercel-edge':
       return {
         ...baseConfig,
@@ -767,7 +767,7 @@ export function getRuntimeConfig(runtime: string) {
         regions: ['iad1', 'sfo1'],
         cache: { edge: true }
       };
-      
+
     case 'aws-lambda':
       return {
         ...baseConfig,
@@ -775,14 +775,14 @@ export function getRuntimeConfig(runtime: string) {
         memorySize: 1024,
         timeout: 30
       };
-      
+
     case 'cloudflare-workers':
       return {
         ...baseConfig,
         kv: { enabled: true },
         durableObjects: true
       };
-      
+
     default:
       return baseConfig;
   }
@@ -816,7 +816,7 @@ app.get('/api/files', async (req, res) => {
 // ✅ Good - Graceful degradation
 app.get('/api/features', (req, res) => {
   const runtime = app.getRuntimeType();
-  
+
   return {
     websockets: runtime === 'node',
     fileSystem: runtime === 'node',
@@ -864,18 +864,18 @@ const runtimes = [
 
 describe.each(runtimes)('$name runtime', ({ name, factory }) => {
   let app;
-  
+
   beforeEach(() => {
     app = factory();
     setupRoutes(app);
   });
-  
+
   test('health check works', async () => {
     const response = await request(app).get('/api/health');
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('healthy');
   });
-  
+
   test('user creation works', async () => {
     const userData = { name: 'John Doe', email: 'john@example.com' };
     const response = await request(app).post('/api/users').send(userData);
@@ -891,7 +891,7 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
 // monitoring.ts
 export function setupMonitoring(app: any) {
   const runtime = app.getRuntimeType();
-  
+
   // Universal monitoring
   app.use((req, res, next) => {
     const start = Date.now();
@@ -901,17 +901,17 @@ export function setupMonitoring(app: any) {
     });
     next();
   });
-  
+
   // Runtime-specific monitoring
   switch (runtime) {
     case 'node':
       app.use(middleware.prometheus({ endpoint: '/metrics' }));
       break;
-      
+
     case 'aws-lambda':
       app.use(middleware.cloudWatch({ namespace: 'MoroAPI' }));
       break;
-      
+
     case 'cloudflare-workers':
       app.use(middleware.analytics({ datadog: true }));
       break;
@@ -921,4 +921,4 @@ export function setupMonitoring(app: any) {
 
 ---
 
-This runtime guide provides comprehensive information for deploying MoroJS applications across all supported environments. For specific deployment examples, check the [examples repository](https://github.com/MoroJS/examples/tree/main/runtime-examples). 
+This runtime guide provides comprehensive information for deploying MoroJS applications across all supported environments. For specific deployment examples, check the [examples repository](https://github.com/Moro-JS/examples/tree/main/runtime-examples).

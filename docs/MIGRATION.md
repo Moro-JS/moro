@@ -25,7 +25,7 @@ const express = require('express');
 const app = express();
 
 app.use(cors());                    // Must be first
-app.use(helmet());                  // Must be early  
+app.use(helmet());                  // Must be early
 app.use(express.json());            // Must be before validation
 app.use(rateLimit({ ... }));        // Must be before routes
 app.use('/users', validateUser);    // Manual validation middleware
@@ -62,7 +62,7 @@ app.post('/users')
    // Before
    const express = require('express');
    const app = express();
-   
+
    // After
    import { createApp } from 'moro';
    const app = createApp();
@@ -75,7 +75,7 @@ app.post('/users')
    app.use(helmet());
    app.use(rateLimit(config));
    app.post('/users', validate(schema), handler);
-   
+
    // After
    app.post('/users')
      .body(schema)
@@ -88,7 +88,7 @@ app.post('/users')
    ```typescript
    // Before
    const { body, validationResult } = require('express-validator');
-   
+
    app.post('/users', [
      body('name').isLength({ min: 2 }),
      body('email').isEmail()
@@ -99,7 +99,7 @@ app.post('/users')
      }
      // Handle valid request
    });
-   
+
    // After
    app.post('/users')
      .body(z.object({
@@ -118,7 +118,7 @@ app.post('/users')
    app.use((err, req, res, next) => {
      res.status(500).json({ error: err.message });
    });
-   
+
    // After - Global error handling works the same
    app.use((err, req, res, next) => {
      res.status(500).json({ error: err.message });
@@ -177,7 +177,7 @@ app.post('/users')
    ```typescript
    // Before
    const fastify = require('fastify')({ logger: true });
-   
+
    // After
    import { createApp } from 'moro';
    const app = createApp({ logging: true });
@@ -197,7 +197,7 @@ app.post('/users')
        }
      }
    };
-   
+
    // After
    const userSchema = z.object({
      name: z.string().min(2).max(50),
@@ -216,7 +216,7 @@ app.post('/users')
        return { user: request.body };
      }
    });
-   
+
    // After
    app.post('/users')
      .body(userSchema)
@@ -232,7 +232,7 @@ app.post('/users')
    // Before
    await fastify.register(require('./plugins/database'));
    await fastify.register(require('./plugins/auth'));
-   
+
    // After
    await app.loadModule('./modules/database');
    await app.loadModule('./modules/auth');
@@ -287,15 +287,15 @@ app.post('/users')
    // Before
    import { NestFactory } from '@nestjs/core';
    import { AppModule } from './app.module';
-   
+
    async function bootstrap() {
      const app = await NestFactory.create(AppModule);
      await app.listen(3000);
    }
-   
+
    // After
    import { createApp } from 'moro';
-   
+
    const app = createApp();
    app.listen(3000);
    ```
@@ -309,21 +309,21 @@ app.post('/users')
      async findAll(@Query() query: GetUsersDto) {
        return this.usersService.findAll(query);
      }
-     
+
      @Post()
      @UsePipes(ValidationPipe)
      async create(@Body() createUserDto: CreateUserDto) {
        return this.usersService.create(createUserDto);
      }
    }
-   
+
    // After
    app.get('/users')
      .query(GetUsersSchema)
      .handler(async (req, res) => {
        return { users: await findAllUsers(req.query) };
      });
-   
+
    app.post('/users')
      .body(CreateUserSchema)
      .handler(async (req, res) => {
@@ -339,16 +339,16 @@ app.post('/users')
      @MinLength(2)
      @MaxLength(50)
      name: string;
-     
+
      @IsEmail()
      email: string;
-     
+
      @IsOptional()
      @IsInt()
      @Min(18)
      age?: number;
    }
-   
+
    // After
    const CreateUserSchema = z.object({
      name: z.string().min(2).max(50),
@@ -367,10 +367,10 @@ app.post('/users')
        return validateUser(request.headers.authorization);
      }
    }
-   
+
    // After - Built into route definition
    app.get('/protected')
-     .auth({ 
+     .auth({
        required: true,
        validator: (req) => validateUser(req.headers.authorization)
      })
@@ -386,7 +386,7 @@ app.post('/users')
      exports: [UsersService]
    })
    export class UsersModule {}
-   
+
    // After
    export default defineModule({
      name: 'users',
@@ -460,7 +460,7 @@ app.post('/users')
    // Before
    const Koa = require('koa');
    const app = new Koa();
-   
+
    // After
    import { createApp } from 'moro';
    const app = createApp();
@@ -473,7 +473,7 @@ app.post('/users')
      console.log(`${ctx.method} ${ctx.url}`);
      await next();
    });
-   
+
    // After
    app.use(async (req, res, next) => {
      console.log(`${req.method} ${req.url}`);
@@ -486,11 +486,11 @@ app.post('/users')
    // Before
    const Router = require('koa-router');
    const router = new Router();
-   
+
    router.get('/users', async (ctx) => {
      ctx.body = { users: await getUsers() };
    });
-   
+
    // After
    app.get('/users', async (req, res) => {
      return { users: await getUsers() };
@@ -656,6 +656,6 @@ app.get('/users', async (req, res) => {
 
 ### Need Help?
 
-- Check the [Examples Repository](https://github.com/MoroJS/examples) for real migration examples
+- Check the [Examples Repository](https://github.com/Moro-JS/examples) for real migration examples
 - See [Performance Guide](./PERFORMANCE.md) for optimization tips
-- Join our community for migration support 
+- Join our community for migration support

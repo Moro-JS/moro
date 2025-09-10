@@ -549,19 +549,19 @@ app.post('/api/orders')
       zipCode: z.string().regex(/^\d{5}$/)
     })
   }))
-  .auth({ 
+  .auth({
     required: true,
     roles: ['customer'],
-    permissions: ['orders:create'] 
+    permissions: ['orders:create']
   })
-  .rateLimit({ 
-    requests: 5, 
+  .rateLimit({
+    requests: 5,
     window: 60000,
     keyGenerator: (req) => `orders:${req.user.id}`
   })
-  .cache({ 
+  .cache({
     ttl: 0, // No caching for orders
-    strategy: 'none' 
+    strategy: 'none'
   })
   .before(
     validateInventory,
@@ -583,16 +583,16 @@ app.post('/api/orders')
       createdAt: new Date()
     });
 
-    req.events.emit('order:created', { 
-      order, 
+    req.events.emit('order:created', {
+      order,
       user: req.user,
-      timestamp: new Date() 
+      timestamp: new Date()
     });
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       data: order,
-      message: 'Order created successfully' 
+      message: 'Order created successfully'
     };
   });
 ```
@@ -756,12 +756,12 @@ interface ModuleSocket {
 ```typescript
 // modules/orders/index.ts
 import { defineModule, z } from 'moro';
-import { 
-  createOrder, 
-  getOrders, 
-  getOrderById, 
+import {
+  createOrder,
+  getOrders,
+  getOrderById,
   updateOrderStatus,
-  cancelOrder 
+  cancelOrder
 } from './services/OrderService';
 
 const OrderSchema = z.object({
@@ -790,11 +790,11 @@ export default defineModule({
   version: '2.1.0',
   dependencies: ['users@1.0.0', 'payments@1.5.0', 'inventory@2.0.0'],
   config: {
-    database: { 
+    database: {
       table: 'orders',
       indexes: ['userId', 'status', 'createdAt']
     },
-    features: { 
+    features: {
       realTimeTracking: true,
       automaticInventoryUpdate: true,
       emailNotifications: true
@@ -810,12 +810,12 @@ export default defineModule({
       method: 'POST',
       path: '/orders',
       validation: { body: OrderSchema },
-      auth: { 
+      auth: {
         required: true,
         roles: ['customer']
       },
-      rateLimit: { 
-        requests: 5, 
+      rateLimit: {
+        requests: 5,
         window: 60000,
         keyGenerator: (req) => `orders:create:${req.user.id}`
       },
@@ -828,13 +828,13 @@ export default defineModule({
         });
 
         // Emit module-scoped event
-        req.events.emit('order:created', { 
-          order, 
-          user: req.user 
+        req.events.emit('order:created', {
+          order,
+          user: req.user
         });
 
-        return { 
-          success: true, 
+        return {
+          success: true,
           data: order,
           message: 'Order created successfully'
         };
@@ -855,7 +855,7 @@ export default defineModule({
         })
       },
       auth: { required: true },
-      cache: { 
+      cache: {
         ttl: 60,
         key: (req) => `orders:list:${req.user.id}:${JSON.stringify(req.query)}`
       },
@@ -876,14 +876,14 @@ export default defineModule({
           id: z.string().uuid()
         })
       },
-      auth: { 
+      auth: {
         required: true,
         validator: async (req) => {
           const order = await getOrderById(req.params.id);
           return order?.userId === req.user.id || req.user.roles.includes('admin');
         }
       },
-      cache: { 
+      cache: {
         ttl: 300,
         key: (req) => `order:${req.params.id}`
       },
@@ -891,7 +891,7 @@ export default defineModule({
       tags: ['orders', 'detail'],
       handler: async (req, res) => {
         const order = await getOrderById(req.params.id);
-        
+
         if (!order) {
           return res.status(404).json({
             success: false,
@@ -911,7 +911,7 @@ export default defineModule({
         params: z.object({ id: z.string().uuid() }),
         body: OrderUpdateSchema
       },
-      auth: { 
+      auth: {
         required: true,
         roles: ['admin', 'fulfillment']
       },
@@ -920,7 +920,7 @@ export default defineModule({
       tags: ['orders', 'admin', 'status'],
       handler: async (req, res) => {
         const order = await updateOrderStatus(req.params.id, req.body);
-        
+
         req.events.emit('order:status_updated', {
           order,
           updatedBy: req.user,
@@ -939,11 +939,11 @@ export default defineModule({
       validation: {
         params: z.object({ id: z.string().uuid() })
       },
-      auth: { 
+      auth: {
         required: true,
         validator: async (req) => {
           const order = await getOrderById(req.params.id);
-          return (order?.userId === req.user.id && order?.status === 'pending') || 
+          return (order?.userId === req.user.id && order?.status === 'pending') ||
                  req.user.roles.includes('admin');
         }
       },
@@ -952,16 +952,16 @@ export default defineModule({
       tags: ['orders', 'cancel'],
       handler: async (req, res) => {
         const order = await cancelOrder(req.params.id, req.user.id);
-        
+
         req.events.emit('order:cancelled', {
           order,
           cancelledBy: req.user,
           reason: 'user_cancelled'
         });
 
-        return { 
-          success: true, 
-          message: 'Order cancelled successfully' 
+        return {
+          success: true,
+          message: 'Order cancelled successfully'
         };
       }
     }
@@ -977,16 +977,16 @@ export default defineModule({
       rateLimit: { requests: 20, window: 60000 },
       handler: async (socket, data) => {
         const order = await getOrderById(data.orderId);
-        
+
         if (!order) {
           return { success: false, error: 'Order not found' };
         }
 
         // Join order-specific room for updates
         socket.join(`order-${data.orderId}`);
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           data: order,
           message: 'Now tracking order updates'
         };
@@ -1148,7 +1148,7 @@ const OrderSchema = z.object({
 // Conditional validation based on environment
 const ConfigSchema = z.object({
   database: z.object({
-    url: process.env.NODE_ENV === 'production' 
+    url: process.env.NODE_ENV === 'production'
       ? z.string().url().startsWith('postgres://')
       : z.string().min(1),
     ssl: z.boolean().default(process.env.NODE_ENV === 'production'),
@@ -1364,18 +1364,18 @@ app.post('/transfer')
   .body(TransferSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
-    
+
     try {
-      await transaction.update('accounts', 
-        { id: req.body.fromAccount }, 
+      await transaction.update('accounts',
+        { id: req.body.fromAccount },
         { balance: { decrement: req.body.amount } }
       );
-      
+
       await transaction.update('accounts',
         { id: req.body.toAccount },
         { balance: { increment: req.body.amount } }
       );
-      
+
       await transaction.commit();
       return { success: true };
     } catch (error) {
@@ -1396,11 +1396,11 @@ app.websocket('/chat', {
   connection: (socket) => {
     console.log('User connected:', socket.id);
   },
-  
+
   disconnect: (socket) => {
     console.log('User disconnected:', socket.id);
   },
-  
+
   message: (socket, data) => {
     socket.broadcast.emit('message', {
       id: socket.id,
@@ -1424,16 +1424,16 @@ app.websocket('/chat', {
     handler: (socket, data) => {
       socket.join(data.room);
       socket.username = data.username;
-      
+
       socket.to(data.room).emit('user-joined', {
         username: data.username,
         timestamp: new Date()
       });
-      
+
       return { success: true, room: data.room };
     }
   },
-  
+
   message: {
     validation: z.object({
       room: z.string(),
@@ -1446,7 +1446,7 @@ app.websocket('/chat', {
         content: data.content,
         timestamp: new Date()
       });
-      
+
       return { success: true };
     }
   }
@@ -1606,21 +1606,21 @@ app.post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     const user = await createUser(req.body);
-    
+
     // Emit custom event
     req.events.emit('user:created', {
       user,
       timestamp: new Date(),
       ip: req.ip
     });
-    
+
     return { success: true, data: user };
   });
 
 // Listen to custom events
 app.events.on('user:created', ({ user, timestamp, ip }) => {
   console.log(`New user ${user.name} created from ${ip} at ${timestamp}`);
-  
+
   // Send welcome email, update analytics, etc.
   sendWelcomeEmail(user);
   updateAnalytics('user_created', { userId: user.id });
@@ -1641,10 +1641,10 @@ export default defineModule({
       path: '/orders',
       handler: async (req, res) => {
         const order = await createOrder(req.body);
-        
+
         // Module-scoped event
         req.events.emit('order:created', { order });
-        
+
         return { success: true, data: order };
       }
     }
@@ -1768,11 +1768,11 @@ app.get('/external-api')
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error:', err);
-  
+
   if (res.headersSent) {
     return next(err);
   }
-  
+
   res.status(err.status || 500).json({
     success: false,
     error: err.message || 'Internal server error',
@@ -1789,14 +1789,14 @@ app.get('/users/:id')
   .handler(async (req, res) => {
     try {
       const user = await getUserById(req.params.id);
-      
+
       if (!user) {
         return res.status(404).json({
           success: false,
           error: 'User not found'
         });
       }
-      
+
       return { success: true, data: user };
     } catch (error) {
       console.error('Error fetching user:', error);
@@ -1826,15 +1826,15 @@ class NotFoundError extends Error {
 app.get('/users/:id')
   .handler(async (req, res) => {
     const user = await getUserById(req.params.id);
-    
+
     if (!user) {
       throw new NotFoundError('User');
     }
-    
+
     return { success: true, data: user };
   });
 ```
 
 ---
 
-This API reference covers the core functionality of MoroJS. For more examples and advanced usage patterns, see the [examples repository](https://github.com/MoroJS/examples) and other documentation in this `/docs` folder. 
+This API reference covers the core functionality of MoroJS. For more examples and advanced usage patterns, see the [examples repository](https://github.com/Moro-JS/examples) and other documentation in this `/docs` folder.

@@ -28,7 +28,7 @@ Thank you for considering contributing to MoroJS! This guide will help you get s
 
 ### Before You Start
 
-1. Check existing [issues](https://github.com/MoroJS/moro/issues) and [pull requests](https://github.com/MoroJS/moro/pulls)
+1. Check existing [issues](https://github.com/Moro-JS/moro/issues) and [pull requests](https://github.com/Moro-JS/moro/pulls)
 2. Join our [Discord community](https://discord.gg/morojs) for discussions
 3. Read our [Code of Conduct](./CODE_OF_CONDUCT.md)
 4. Review this contributing guide
@@ -52,7 +52,7 @@ git clone https://github.com/YOUR_USERNAME/moro.git
 cd moro
 
 # Add upstream remote
-git remote add upstream https://github.com/MoroJS/moro.git
+git remote add upstream https://github.com/Moro-JS/moro.git
 ```
 
 ### Install Dependencies
@@ -189,7 +189,7 @@ interface RouteConfig {
 }
 
 // Prefer functional patterns
-const validateRequest = (schema: ZodSchema) => 
+const validateRequest = (schema: ZodSchema) =>
   (req: Request, res: Response, next: NextFunction) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
@@ -249,27 +249,27 @@ describe('Validation System', () => {
       name: z.string().min(2),
       email: z.string().email()
     });
-    
+
     const validData = {
       name: 'John Doe',
       email: 'john@example.com'
     };
-    
+
     const result = schema.safeParse(validData);
     expect(result.success).toBe(true);
   });
-  
+
   test('should reject invalid data', () => {
     const schema = z.object({
       name: z.string().min(2),
       email: z.string().email()
     });
-    
+
     const invalidData = {
       name: 'J',
       email: 'invalid-email'
     };
-    
+
     const result = schema.safeParse(invalidData);
     expect(result.success).toBe(false);
   });
@@ -305,9 +305,9 @@ const runtimes = [
 describe.each(runtimes)('$name runtime', ({ name, factory }) => {
   test('basic functionality works', async () => {
     const app = factory();
-    
+
     app.get('/test', () => ({ runtime: name }));
-    
+
     const response = await request(app).get('/test');
     expect(response.status).toBe(200);
     expect(response.body.runtime).toBe(name);
@@ -331,7 +331,7 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
 ```typescript
 /**
  * Validates request data using Zod schema
- * 
+ *
  * @example
  * ```typescript
  * app.post('/users')
@@ -341,7 +341,7 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
  *   }))
  *   .handler(createUser);
  * ```
- * 
+ *
  * @param schema - Zod schema for validation
  * @returns Middleware function that validates request data
  */
@@ -498,4 +498,4 @@ npm run create-example my-new-example
 
 ---
 
-Thank you for contributing to MoroJS! Your contributions help make the framework better for everyone. If you have any questions, don't hesitate to reach out to the community. 
+Thank you for contributing to MoroJS! Your contributions help make the framework better for everyone. If you have any questions, don't hesitate to reach out to the community.

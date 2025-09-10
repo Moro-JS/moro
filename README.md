@@ -4,7 +4,7 @@
 
 ![Moro Logo](https://img.shields.io/badge/MoroJS-2563eb?style=for-the-badge&logo=typescript&logoColor=white)
 
-**High-performance multi-runtime framework with intelligent routing**  
+**High-performance multi-runtime framework with intelligent routing**
 *Functional • Type-safe • Multi-environment • Production-ready*
 
 [![npm version](https://badge.fury.io/js/@morojs%2Fmoro.svg)](https://badge.fury.io/js/@morojs%2Fmoro)
@@ -109,7 +109,7 @@ export default { fetch: app.getHandler() };
 ```typescript
 // Express - Order matters, easy to break
 app.use(cors());           // Must be first
-app.use(helmet());         // Must be early  
+app.use(helmet());         // Must be early
 app.use(bodyParser());     // Must be before validation
 app.use(rateLimit());      // Must be before routes
 app.use(validation());     // Must be before handler
@@ -207,12 +207,12 @@ await app.loadModule(UsersModule);
 
 ## Why Choose Moro?
 
-**Same API everywhere** - Write once, deploy to any runtime  
-**No middleware dependencies** - Framework handles optimal ordering  
-**Full type safety** - Zod provides end-to-end TypeScript inference  
-**Clean APIs** - Chainable and schema-first approaches  
-**Production ready** - Circuit breakers, rate limiting, events  
-**Performance optimized** - Runtime-specific adapters  
+**Same API everywhere** - Write once, deploy to any runtime
+**No middleware dependencies** - Framework handles optimal ordering
+**Full type safety** - Zod provides end-to-end TypeScript inference
+**Clean APIs** - Chainable and schema-first approaches
+**Production ready** - Circuit breakers, rate limiting, events
+**Performance optimized** - Runtime-specific adapters
 
 ## Contributing
 
@@ -228,6 +228,6 @@ MIT © [Moro Framework Team](https://morojs.com)
 
 **Ready to deploy everywhere with one codebase?**
 
-[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/MoroJS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro)
+[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro)
 
-</div> 
+</div>

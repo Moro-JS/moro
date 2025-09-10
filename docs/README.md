@@ -23,7 +23,7 @@ Complete documentation for the MoroJS framework.
 ### For New Users
 1. Start with the **[Main README](../README.md)** for an overview
 2. Follow the **[Getting Started](./GETTING_STARTED.md)** guide
-3. Check out the **[Examples Repository](https://github.com/MoroJS/examples)**
+3. Check out the **[Examples Repository](https://github.com/Moro-JS/examples)**
 
 ### For Developers
 1. Read the **[API Reference](./API.md)** for complete technical details
@@ -66,9 +66,9 @@ Complete documentation for the MoroJS framework.
 
 ## External Resources
 
-- **[Examples Repository](https://github.com/MoroJS/examples)** - Real-world usage examples
+- **[Examples Repository](https://github.com/Moro-JS/examples)** - Real-world usage examples
 - **[npm Package](https://www.npmjs.com/package/moro)** - Official npm package
-- **[GitHub Repository](https://github.com/MoroJS/moro)** - Source code and issues
+- **[GitHub Repository](https://github.com/Moro-JS/moro)** - Source code and issues
 - **[Discord Community](https://discord.gg/morojs)** - Get help and discuss
 
 ## Documentation Categories
@@ -78,7 +78,7 @@ Complete documentation for the MoroJS framework.
 **Beginners:**
 - [Main README](../README.md) - Overview and quick start
 - [Getting Started](./GETTING_STARTED.md) - Detailed setup guide
-- [Examples](https://github.com/MoroJS/examples) - Working examples
+- [Examples](https://github.com/Moro-JS/examples) - Working examples
 
 **Developers:**
 - [API Reference](./API.md) - Complete technical reference
@@ -128,9 +128,9 @@ Complete documentation for the MoroJS framework.
 ## 🆘 Getting Help
 
 ### Documentation Issues
-- **Missing Information?** - [Create an issue](https://github.com/MoroJS/moro/issues/new) with the "documentation" label
-- **Outdated Content?** - [Submit a pull request](https://github.com/MoroJS/moro/pulls) with updates
-- **Need Clarification?** - [Start a discussion](https://github.com/MoroJS/moro/discussions) or ask in Discord
+- **Missing Information?** - [Create an issue](https://github.com/Moro-JS/moro/issues/new) with the "documentation" label
+- **Outdated Content?** - [Submit a pull request](https://github.com/Moro-JS/moro/pulls) with updates
+- **Need Clarification?** - [Start a discussion](https://github.com/Moro-JS/moro/discussions) or ask in Discord
 
 ### Technical Support
 1. **Check Documentation** - Search through guides and API reference
@@ -156,4 +156,4 @@ We welcome documentation improvements! See our [Contributing Guide](./CONTRIBUTI
 
 ---
 
-**Need something specific?** Check the navigation above or use the search functionality in GitHub to find what you're looking for. 
+**Need something specific?** Check the navigation above or use the search functionality in GitHub to find what you're looking for.
