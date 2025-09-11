@@ -18,6 +18,28 @@ export { session } from './session';
 export { cache } from './cache';
 export { cdn } from './cdn';
 
+// Auth Helpers and Extended Providers
+export {
+  requireAuth,
+  requireRole,
+  requirePermission,
+  requireAdmin,
+  guestOnly,
+  optionalAuth,
+  withAuth,
+  protectedRoute,
+  authUtils,
+  authResponses,
+  sessionHelpers,
+} from './auth-helpers';
+
+export {
+  extendedProviders,
+  enterpriseProviders,
+  createCustomOAuthProvider,
+  createCustomOIDCProvider,
+} from './auth-providers';
+
 // Import for collections
 import { auth } from './auth';
 import { rateLimit } from './rate-limit';

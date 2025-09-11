@@ -11,6 +11,7 @@ import {
   logger as globalLogger,
   applyLoggingConfiguration,
 } from './core/logger';
+import { MiddlewareManager } from './core/middleware';
 import { IntelligentRoutingManager } from './core/routing/app-integration';
 import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing';
 import { AppDocumentationManager, DocsConfig } from './core/docs';
@@ -46,6 +47,8 @@ export class Moro extends EventEmitter {
   // Runtime system
   private runtimeAdapter: RuntimeAdapter;
   private runtimeType: RuntimeType;
+  // Middleware system
+  private middlewareManager: MiddlewareManager;
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
@@ -76,6 +79,15 @@ export class Moro extends EventEmitter {
     this.logger.info(`Runtime system initialized: ${this.runtimeType}`, 'Runtime');
 
     this.coreFramework = new MoroCore();
+
+    // Initialize middleware system
+    this.middlewareManager = new MiddlewareManager();
+
+    // Integrate hooks system with HTTP server
+    const httpServer = (this.coreFramework as any).httpServer;
+    if (httpServer && httpServer.setHookManager) {
+      httpServer.setHookManager((this.middlewareManager as any).hooks);
+    }
 
     // Access enterprise event bus from core framework
     this.eventBus = (this.coreFramework as any).eventBus;
@@ -263,7 +275,23 @@ export class Moro extends EventEmitter {
       return this;
     }
 
-    // Advanced middleware pipeline integration
+    // Advanced middleware pipeline integration - check if it's a MiddlewareInterface
+    if (
+      middlewareOrFunction &&
+      typeof middlewareOrFunction === 'object' &&
+      middlewareOrFunction.install &&
+      middlewareOrFunction.metadata
+    ) {
+      // This is a MiddlewareInterface object - install it with the MiddlewareManager
+      this.logger.debug(
+        `Installing MiddlewareInterface: ${middlewareOrFunction.metadata.name}`,
+        'Middleware'
+      );
+      this.middlewareManager.install(middlewareOrFunction, config);
+      return this;
+    }
+
+    // Fallback: emit event for unknown middleware types
     this.eventBus.emit('middleware:advanced', {
       middleware: middlewareOrFunction,
       config,

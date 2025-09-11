@@ -9,7 +9,9 @@ Complete documentation for the MoroJS framework.
 - **[API Reference](./API.md)** - Comprehensive framework API documentation
 - **[Migration Guide](./MIGRATION.md)** - Migrate from Express, Fastify, NestJS, and Koa
 
-### Core Concepts
+### Core Features
+- **[Authentication Guide](./AUTH_GUIDE.md)** - Complete Auth.js integration with RBAC and security
+- **[Native Auth Adapter](./NATIVE_AUTH_ADAPTER.md)** - Custom `@auth/morojs` adapter for contribution to Auth.js
 - **[Runtime System](./RUNTIME.md)** - Multi-runtime deployment guide (Node.js, Edge, Lambda, Workers)
 - **[Performance Guide](./PERFORMANCE.md)** - Optimization, benchmarks, and monitoring
 - **[Testing Guide](./TESTING_GUIDE.md)** - Testing strategies and best practices
@@ -57,6 +59,7 @@ Complete documentation for the MoroJS framework.
 ### Advanced Topics
 - ✅ **Module System** - Functional module architecture
 - ✅ **Validation** - Zod schema validation with type inference
+- ✅ **Authentication** - Auth.js integration with RBAC and native adapter
 - ✅ **Caching** - Memory, Redis, and edge caching strategies
 - ✅ **Rate Limiting** - Built-in protection against abuse
 - ✅ **Circuit Breakers** - Automatic failure protection
@@ -82,6 +85,7 @@ Complete documentation for the MoroJS framework.
 
 **Developers:**
 - [API Reference](./API.md) - Complete technical reference
+- [Authentication Guide](./AUTH_GUIDE.md) - Auth.js integration and security
 - [Performance Guide](./PERFORMANCE.md) - Optimization strategies
 - [Testing Guide](./TESTING_GUIDE.md) - Testing best practices
 

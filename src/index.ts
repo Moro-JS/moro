@@ -11,6 +11,32 @@ export {
 
 export type { MoroOptions } from './core/framework';
 
+// Export auth types and middleware
+export type {
+  AuthOptions,
+  AuthProvider,
+  AuthUser,
+  AuthSession,
+  AuthRequest,
+  AuthAccount,
+  AuthJWT,
+  AuthCallbacks,
+  AuthEvents,
+  AuthPages,
+  AuthAdapter,
+  OAuthProvider,
+  CredentialsProvider,
+  EmailProvider,
+  SignInOptions,
+  SignOutOptions,
+} from './types/auth';
+
+// Export native @auth/morojs adapter
+export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter';
+
+// Export Auth.js middleware and providers
+export { auth, providers } from './core/middleware/built-in/auth';
+
 // Runtime system exports
 export type {
   RuntimeType,

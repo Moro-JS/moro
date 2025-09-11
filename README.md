@@ -24,6 +24,7 @@ Moro eliminates the pain points of traditional Node.js frameworks with **intelli
 
 - **Multi-Runtime Support** - Deploy to Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
 - **Intelligent Routing** - Chainable + schema-first APIs with automatic middleware ordering
+- **Enterprise Authentication** - Auth.js integration with RBAC, OAuth, and native adapter
 - **Zod Validation** - Type-safe, functional validation with full TypeScript inference
 - **Native Performance** - Zero framework overhead, optimized for each runtime
 - **Functional Architecture** - No decorators, pure functional patterns
@@ -167,6 +168,56 @@ app.route({
 });
 ```
 
+### Authentication & Security
+
+Built-in Auth.js integration with enterprise features:
+
+```typescript
+import { auth, requireAuth, authUtils } from '@morojs/moro/middleware';
+
+// Setup Auth.js with multiple providers
+app.use(auth({
+  providers: [
+    providers.github({
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    }),
+    providers.google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  ],
+  secret: process.env.AUTH_SECRET!,
+}));
+
+// Protect routes with role-based access
+app.get('/admin/users', withMiddleware(requireAuth({
+  roles: ['admin']
+}), (req, res) => {
+  return { users: getAllUsers() };
+}));
+
+// Manual authentication checks
+app.get('/profile', (req, res) => {
+  if (!authUtils.isAuthenticated(req)) {
+    return authResponses.unauthorized(res);
+  }
+
+  return {
+    user: authUtils.getUser(req),
+    permissions: authUtils.getUserPermissions(req)
+  };
+});
+```
+
+**Features:**
+- **OAuth Providers** - GitHub, Google, Microsoft, LinkedIn, Discord
+- **Enterprise SSO** - Okta, Auth0, AWS Cognito
+- **Role-Based Access Control (RBAC)** - Fine-grained permissions
+- **Native Auth.js Adapter** - Zero external dependencies
+- **Security Audit Logging** - Track authentication events
+- **Production Ready** - JWT sessions, CSRF protection, secure cookies
+
 ### Functional Modules
 
 ```typescript
@@ -193,6 +244,8 @@ await app.loadModule(UsersModule);
 
 ### **Complete Guides**
 - [**Getting Started**](./docs/GETTING_STARTED.md) - Detailed setup and first app
+- [**Authentication Guide**](./docs/AUTH_GUIDE.md) - Complete Auth.js integration with RBAC
+- [**Native Auth Adapter**](./docs/NATIVE_AUTH_ADAPTER.md) - Custom `@auth/morojs` adapter
 - [**API Reference**](./docs/API.md) - Complete framework API documentation
 - [**Migration Guide**](./docs/MIGRATION.md) - From Express, Fastify, NestJS
 - [**Performance Guide**](./docs/PERFORMANCE.md) - Optimization and benchmarks
@@ -202,6 +255,7 @@ await app.loadModule(UsersModule);
 ### **Key Concepts**
 - **Multi-Runtime Support** - Same API works on Node.js, Edge, Lambda, and Workers
 - **Intelligent Routing** - Automatic middleware ordering eliminates Express.js pain points
+- **Enterprise Authentication** - Auth.js integration with OAuth, RBAC, and native adapter
 - **Functional Architecture** - No decorators, pure functions, better performance
 - **Type Safety** - Zod provides compile-time and runtime type safety
 
@@ -209,9 +263,10 @@ await app.loadModule(UsersModule);
 
 **Same API everywhere** - Write once, deploy to any runtime
 **No middleware dependencies** - Framework handles optimal ordering
+**Enterprise authentication** - Auth.js integration with native adapter
 **Full type safety** - Zod provides end-to-end TypeScript inference
 **Clean APIs** - Chainable and schema-first approaches
-**Production ready** - Circuit breakers, rate limiting, events
+**Production ready** - Circuit breakers, rate limiting, events, RBAC
 **Performance optimized** - Runtime-specific adapters
 
 ## Contributing

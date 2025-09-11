@@ -16,6 +16,7 @@ export class MoroHttpServer {
   private compressionEnabled = true;
   private compressionThreshold = 1024;
   private logger = createFrameworkLogger('HttpServer');
+  private hookManager: any;
 
   constructor() {
     this.server = createServer(this.handleRequest.bind(this));
@@ -24,6 +25,11 @@ export class MoroHttpServer {
   // Middleware management
   use(middleware: Middleware): void {
     this.globalMiddleware.push(middleware);
+  }
+
+  // Set hooks manager for request processing
+  setHookManager(hookManager: any): void {
+    this.hookManager = hookManager;
   }
 
   // Routing methods
@@ -94,6 +100,14 @@ export class MoroHttpServer {
         httpReq.body = await this.parseBody(req);
       }
 
+      // Execute hooks before request processing
+      if (this.hookManager) {
+        await this.hookManager.execute('request', {
+          request: httpReq,
+          response: httpRes,
+        });
+      }
+
       // Execute global middleware first
       await this.executeMiddleware(this.globalMiddleware, httpReq, httpRes);
 
@@ -124,6 +138,14 @@ export class MoroHttpServer {
       // Execute handler
       await route.handler(httpReq, httpRes);
     } catch (error) {
+      // Debug: Log the actual error and where it came from
+      console.log('🚨 MoroJS Request Error Details:');
+      console.log('📍 Error type:', typeof error);
+      console.log('📍 Error message:', error instanceof Error ? error.message : String(error));
+      console.log('📍 Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.log('📍 Request path:', req.url);
+      console.log('📍 Request method:', req.method);
+
       this.logger.error('Request error', 'RequestHandler', {
         error: error instanceof Error ? error.message : String(error),
         requestId: httpReq.requestId,
@@ -132,11 +154,39 @@ export class MoroHttpServer {
       });
 
       if (!httpRes.headersSent) {
-        httpRes.status(500).json({
-          success: false,
-          error: 'Internal server error',
-          requestId: httpReq.requestId,
-        });
+        // Ensure response is properly enhanced before using custom methods
+        if (typeof httpRes.status === 'function' && typeof httpRes.json === 'function') {
+          httpRes.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            requestId: httpReq.requestId,
+          });
+        } else {
+          // Ultra-defensive fallback - check each method individually
+          if (typeof httpRes.setHeader === 'function') {
+            httpRes.statusCode = 500;
+            httpRes.setHeader('Content-Type', 'application/json');
+          } else {
+            // Even setHeader doesn't exist - object is completely wrong
+            console.error(
+              '❌ Response object is not a proper ServerResponse:',
+              typeof httpRes,
+              Object.keys(httpRes)
+            );
+          }
+
+          if (typeof httpRes.end === 'function') {
+            httpRes.end(
+              JSON.stringify({
+                success: false,
+                error: 'Internal server error',
+                requestId: httpReq.requestId,
+              })
+            );
+          } else {
+            console.error('❌ Cannot send error response - end() method missing');
+          }
+        }
       }
     }
   }
@@ -174,6 +224,12 @@ export class MoroHttpServer {
   private enhanceResponse(res: ServerResponse): HttpResponse {
     const httpRes = res as HttpResponse;
 
+    // BULLETPROOF status method - always works
+    httpRes.status = (code: number) => {
+      httpRes.statusCode = code;
+      return httpRes;
+    };
+
     httpRes.json = async (data: any) => {
       if (httpRes.headersSent) return;
 
@@ -203,11 +259,6 @@ export class MoroHttpServer {
 
       httpRes.setHeader('Content-Length', buffer.length);
       httpRes.end(buffer);
-    };
-
-    httpRes.status = (code: number) => {
-      httpRes.statusCode = code;
-      return httpRes;
     };
 
     httpRes.send = (data: string | Buffer) => {
