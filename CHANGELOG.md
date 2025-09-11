@@ -5,6 +5,34 @@ All notable changes to the MoroJS framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-09-11
+
+### Fixed
+
+#### Configuration System
+- **CRITICAL: Fixed logger configuration from config files not being applied** - Configuration file logging settings (like `logging.level: 'warn'`) now properly override the global logger
+- **Fixed child logger level inheritance** - Framework loggers created with `createFrameworkLogger()` now correctly inherit level changes from the parent logger
+- **Fixed configuration timing issue** - Logger configuration from config files is now applied after the configuration system initializes, ensuring proper precedence
+- **Improved configuration application flow** - Added proper sequencing: Environment variables → Config file → createApp options (with correct precedence)
+
+#### Logger System
+- **Enhanced child logger architecture** - Child loggers now maintain a reference to their parent for proper level inheritance
+- **Fixed log level checking** - Child loggers now respect the parent logger's level when filtering log messages
+- **Improved configuration validation** - Better error handling and validation for invalid log levels and configuration options
+
+### Technical Details
+- Fixed initialization sequence in `Moro` constructor to apply config file logging settings after config loading
+- Enhanced `MoroLogger.child()` method to maintain parent reference for level inheritance
+- Updated log level checking logic to use parent level for child loggers
+- Maintained backward compatibility with existing logger API
+
+### Migration Notes
+- **No breaking changes** - This is a pure bug fix release
+- Existing applications using config files for logging will now work as expected
+- No code changes required for existing applications
+
+---
+
 ## [1.2.0] - 2025-09-11
 
 ### Added

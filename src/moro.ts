@@ -63,6 +63,11 @@ export class Moro extends EventEmitter {
     // Initialize configuration system
     this.config = initializeConfig();
 
+    // Apply logging configuration from the loaded config (this happens after config file processing)
+    if (this.config.logging) {
+      applyLoggingConfiguration(this.config.logging, undefined);
+    }
+
     // Apply additional logging configuration from createApp options (takes precedence)
     if (options.logger !== undefined) {
       applyLoggingConfiguration(undefined, options.logger);

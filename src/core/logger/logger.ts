@@ -29,6 +29,7 @@ export class MoroLogger implements Logger {
   private startTime = Date.now();
   private contextPrefix?: string;
   private contextMetadata?: Record<string, any>;
+  private parent?: MoroLogger; // Reference to parent logger for level inheritance
 
   private static readonly LEVELS: Record<LogLevel, number> = {
     debug: 0,
@@ -129,6 +130,10 @@ export class MoroLogger implements Logger {
     childLogger.contextMetadata = { ...this.contextMetadata, ...metadata };
     childLogger.outputs = this.outputs;
     childLogger.filters = this.filters;
+
+    // Keep reference to parent for level inheritance
+    (childLogger as any).parent = this;
+
     return childLogger;
   }
 
@@ -190,8 +195,9 @@ export class MoroLogger implements Logger {
     context?: string,
     metadata?: Record<string, any>
   ): void {
-    // Check level threshold
-    if (MoroLogger.LEVELS[level] < MoroLogger.LEVELS[this.level]) {
+    // Check level threshold - use parent level if available (for child loggers)
+    const effectiveLevel = this.parent ? this.parent.level : this.level;
+    if (MoroLogger.LEVELS[level] < MoroLogger.LEVELS[effectiveLevel as LogLevel]) {
       return;
     }
 
