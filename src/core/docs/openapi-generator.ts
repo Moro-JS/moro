@@ -2,7 +2,8 @@
 // Extracts route information from intelligent routing and generates OpenAPI 3.0 specs
 
 import { CompiledRoute, RouteSchema } from '../routing';
-import { zodToOpenAPI, generateExampleFromSchema, OpenAPISchema } from './zod-to-openapi';
+import { OpenAPISchema } from './zod-to-openapi';
+import { schemaToOpenAPI, generateExampleFromValidationSchema } from './schema-to-openapi';
 import { createFrameworkLogger } from '../logger';
 
 const logger = createFrameworkLogger('OpenAPIGenerator');
@@ -241,7 +242,7 @@ export class OpenAPIGenerator {
 
     // Path parameters
     if (route.validation?.params) {
-      const paramSchema = zodToOpenAPI(route.validation.params, this.options);
+      const paramSchema = schemaToOpenAPI(route.validation.params, this.options);
       if (paramSchema.properties) {
         for (const [name, schema] of Object.entries(paramSchema.properties)) {
           parameters.push({
@@ -258,7 +259,7 @@ export class OpenAPIGenerator {
 
     // Query parameters
     if (route.validation?.query) {
-      const querySchema = zodToOpenAPI(route.validation.query, this.options);
+      const querySchema = schemaToOpenAPI(route.validation.query, this.options);
       if (querySchema.properties) {
         for (const [name, schema] of Object.entries(querySchema.properties)) {
           const isRequired = querySchema.required?.includes(name) || false;
@@ -276,7 +277,7 @@ export class OpenAPIGenerator {
 
     // Header parameters
     if (route.validation?.headers) {
-      const headerSchema = zodToOpenAPI(route.validation.headers, this.options);
+      const headerSchema = schemaToOpenAPI(route.validation.headers, this.options);
       if (headerSchema.properties) {
         for (const [name, schema] of Object.entries(headerSchema.properties)) {
           const isRequired = headerSchema.required?.includes(name) || false;
@@ -309,9 +310,9 @@ export class OpenAPIGenerator {
       };
     }
 
-    const bodySchema = zodToOpenAPI(route.validation.body, this.options);
+    const bodySchema = schemaToOpenAPI(route.validation.body, this.options);
     const example = this.options.includeExamples
-      ? generateExampleFromSchema(route.validation.body)
+      ? generateExampleFromValidationSchema(route.validation.body)
       : undefined;
 
     return {

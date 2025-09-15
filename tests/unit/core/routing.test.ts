@@ -17,7 +17,7 @@ describe('Intelligent Routing System', () => {
 
     it('should create routes for all HTTP methods', () => {
       const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] as const;
-      
+
       methods.forEach(method => {
         const builder = createRoute(method, '/test');
         expect(builder).toBeDefined();
@@ -44,7 +44,7 @@ describe('Intelligent Routing System', () => {
     it('should define all required execution phases', () => {
       expect(EXECUTION_PHASES).toBeDefined();
       expect(Array.isArray(EXECUTION_PHASES)).toBe(true);
-      
+
       // Check that the phases exist in the array
       expect(EXECUTION_PHASES).toContain('security');
       expect(EXECUTION_PHASES).toContain('parsing');
@@ -114,7 +114,7 @@ describe('Intelligent Routing System', () => {
       // Test schema functionality
       const validQuery = { page: '2', limit: '25', search: 'test' };
       const result = querySchema.parse(validQuery);
-      
+
       expect(result).toEqual({ page: 2, limit: 25, search: 'test' });
 
       // Test route creation
@@ -212,7 +212,7 @@ describe('Intelligent Routing System', () => {
         password: z.string().min(8),
         confirmPassword: z.string()
       }).refine(
-        data => data.password === data.confirmPassword,
+        (data: any) => data.password === data.confirmPassword,
         {
           message: "Passwords don't match",
           path: ['confirmPassword']
@@ -295,4 +295,4 @@ describe('Intelligent Routing System', () => {
       expect(module.sockets).toBeUndefined();
     });
   });
-}); 
+});

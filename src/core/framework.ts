@@ -1,10 +1,9 @@
-// src/core/framework.ts
+// Core Moro Framework with Pluggable WebSocket Adapters
 import { createServer, Server } from 'http';
 import {
   createSecureServer as createHttp2SecureServer,
   createServer as createHttp2Server,
 } from 'http2';
-import { Server as SocketIOServer } from 'socket.io';
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse, middleware } from './http';
 import { Router } from './http';
@@ -16,6 +15,7 @@ import { MoroEventBus } from './events';
 import { createFrameworkLogger, logger as globalLogger } from './logger';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module';
 import { LogLevel, LoggerOptions } from '../types/logger';
+import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter';
 
 export interface MoroOptions {
   http2?: boolean;
@@ -28,23 +28,27 @@ export interface MoroOptions {
     enabled?: boolean;
     threshold?: number;
   };
-  websocket?: {
-    compression?: boolean;
-    customIdGenerator?: () => string;
-  };
+  websocket?:
+    | {
+        enabled?: boolean;
+        adapter?: WebSocketAdapter;
+        compression?: boolean;
+        customIdGenerator?: () => string;
+        options?: WebSocketAdapterOptions;
+      }
+    | false;
   logger?: LoggerOptions | boolean;
 }
 
 export class Moro extends EventEmitter {
   private httpServer: MoroHttpServer;
   private server: Server | any; // HTTP/2 server type
-  private io: SocketIOServer;
+  private websocketAdapter?: WebSocketAdapter;
   private container: Container;
   private moduleLoader: ModuleLoader;
-  private websocketManager: WebSocketManager;
+  private websocketManager?: WebSocketManager;
   private circuitBreakers = new Map<string, CircuitBreaker>();
   private rateLimiters = new Map<string, Map<string, { count: number; resetTime: number }>>();
-  private ioInstance: SocketIOServer;
   // Enterprise-grade event system
   private eventBus: MoroEventBus;
   // Framework logger
@@ -99,23 +103,12 @@ export class Moro extends EventEmitter {
       this.server = this.httpServer.getServer();
     }
 
-    this.io = new SocketIOServer(this.server, {
-      cors: { origin: '*' },
-      path: '/socket.io/',
-    });
-
-    this.ioInstance = this.io;
     this.container = new Container();
     this.moduleLoader = new ModuleLoader(this.container);
-    this.websocketManager = new WebSocketManager(this.io, this.container);
 
-    // Configure WebSocket advanced features
-    if (options.websocket?.customIdGenerator) {
-      this.websocketManager.setCustomIdGenerator(options.websocket.customIdGenerator);
-    }
-
-    if (options.websocket?.compression) {
-      this.websocketManager.enableCompression();
+    // Setup WebSocket adapter if enabled
+    if (options.websocket !== false) {
+      this.setupWebSockets(options.websocket || {});
     }
 
     // Initialize enterprise event bus
@@ -151,6 +144,71 @@ export class Moro extends EventEmitter {
 
     // Error boundary middleware
     this.httpServer.use(this.errorBoundaryMiddleware());
+  }
+
+  /**
+   * Setup WebSocket adapter and manager
+   */
+  private async setupWebSockets(wsConfig: any): Promise<void> {
+    try {
+      // Use provided adapter or try to auto-detect
+      if (wsConfig.adapter) {
+        this.websocketAdapter = wsConfig.adapter;
+      } else {
+        this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
+      }
+
+      if (this.websocketAdapter) {
+        await this.websocketAdapter.initialize(this.server, wsConfig.options);
+        this.websocketManager = new WebSocketManager(this.websocketAdapter, this.container);
+
+        // Configure adapter features
+        if (wsConfig.compression) {
+          this.websocketAdapter.setCompression(true);
+        }
+        if (wsConfig.customIdGenerator) {
+          this.websocketAdapter.setCustomIdGenerator(wsConfig.customIdGenerator);
+        }
+
+        this.logger.info(
+          `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
+          'WebSocketSetup'
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        'WebSocket setup failed, continuing without WebSocket support',
+        'WebSocketSetup',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  }
+
+  /**
+   * Auto-detect available WebSocket adapter
+   */
+  private async detectWebSocketAdapter(): Promise<WebSocketAdapter | null> {
+    // Try socket.io first
+    try {
+      const { SocketIOAdapter } = await import('./networking/adapters');
+      return new SocketIOAdapter();
+    } catch {
+      // socket.io not available
+    }
+
+    // Try native ws library
+    try {
+      const { WSAdapter } = await import('./networking/adapters');
+      return new WSAdapter();
+    } catch {
+      // ws not available
+    }
+
+    this.logger.warn(
+      'No WebSocket adapter found. Install socket.io or ws for WebSocket support',
+      'AdapterDetection'
+    );
+    return null;
   }
 
   private requestTrackingMiddleware() {
@@ -206,8 +264,31 @@ export class Moro extends EventEmitter {
   }
 
   // Public API for accessing Socket.IO server
+  /**
+   * Get WebSocket adapter (for backward compatibility)
+   * @deprecated Use getWebSocketAdapter() instead
+   */
   getIOServer() {
-    return this.io;
+    if (!this.websocketAdapter) {
+      throw new Error(
+        'WebSocket adapter not available. Install socket.io or configure a WebSocket adapter.'
+      );
+    }
+    return this.websocketAdapter;
+  }
+
+  /**
+   * Get the WebSocket adapter
+   */
+  getWebSocketAdapter(): WebSocketAdapter | undefined {
+    return this.websocketAdapter;
+  }
+
+  /**
+   * Get the WebSocket manager
+   */
+  getWebSocketManager(): WebSocketManager | undefined {
+    return this.websocketManager;
   }
 
   async loadModule(moduleConfig: ModuleConfig): Promise<void> {
@@ -392,7 +473,7 @@ export class Moro extends EventEmitter {
               : undefined,
             events: moduleEventBus, // Use pre-created event bus
             app: {
-              get: (key: string) => (key === 'io' ? this.ioInstance : undefined),
+              get: (key: string) => (key === 'io' ? this.websocketAdapter : undefined),
             },
           };
           this.logger.debug(`Database available: ${!!requestToUse.database}`, 'Handler', {
@@ -466,7 +547,15 @@ export class Moro extends EventEmitter {
   }
 
   private async setupWebSocketHandlers(config: ModuleConfig): Promise<void> {
-    const namespace = this.io.of(`/${config.name}`);
+    if (!this.websocketAdapter || !this.websocketManager) {
+      this.logger.warn(
+        `Module ${config.name} defines WebSocket handlers but no WebSocket adapter is available`,
+        'WebSocketSetup'
+      );
+      return;
+    }
+
+    const namespace = this.websocketAdapter.createNamespace(`/${config.name}`);
 
     for (const wsConfig of config.websockets || []) {
       await this.websocketManager.registerHandler(namespace, wsConfig, config);
@@ -530,13 +619,17 @@ export class Moro extends EventEmitter {
   // Compatibility method for existing controllers
   set(key: string, value: any): void {
     if (key === 'io') {
-      this.ioInstance = value;
+      // Deprecated: Use websocket adapter instead
+      this.logger.warn(
+        'Setting io instance is deprecated. Use websocket adapter configuration.',
+        'Deprecated'
+      );
     }
   }
 
   get(key: string): any {
     if (key === 'io') {
-      return this.ioInstance;
+      return this.websocketAdapter;
     }
     return undefined;
   }

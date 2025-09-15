@@ -47,11 +47,11 @@ describe('Framework Component Integration', () => {
 
       expect(module.name).toBe('integrated-users');
       expect(module.routes).toHaveLength(2);
-      
+
       // Test that validation schemas are properly attached
       expect(module.routes![0].validation).toEqual({ query: querySchema });
       expect(module.routes![1].validation).toEqual({ body: userSchema });
-      
+
       // Test that other configurations are attached
       expect(module.routes![0].cache).toEqual({ ttl: 60 });
       expect(module.routes![0].rateLimit).toEqual({ requests: 100, window: 60000 });
@@ -145,7 +145,7 @@ describe('Framework Component Integration', () => {
               message: 'Name must be at least 3 characters'
             }),
             expect.objectContaining({
-              field: 'email', 
+              field: 'email',
               message: 'Invalid email format'
             }),
             expect.objectContaining({
@@ -216,17 +216,17 @@ describe('Framework Component Integration', () => {
       expect(chatModule.name).toBe('chat-system');
       expect(chatModule.sockets).toHaveLength(3);
       expect(chatModule.socketHandlers).toBeDefined();
-      
+
       // Verify socket handlers are properly created
       expect(chatModule.socketHandlers).toHaveProperty('socket_handler_0');
       expect(chatModule.socketHandlers).toHaveProperty('socket_handler_1');
       expect(chatModule.socketHandlers).toHaveProperty('socket_handler_2');
-      
+
       // Verify validation schemas are attached
       expect(chatModule.sockets![0].validation).toBeDefined();
       expect(chatModule.sockets![1].validation).toBeDefined();
       expect(chatModule.sockets![2].validation).toBeDefined();
-      
+
       // Verify rate limiting is attached where specified
       expect(chatModule.sockets![1].rateLimit).toEqual({ requests: 10, window: 60000 });
     });
@@ -350,7 +350,7 @@ describe('Framework Component Integration', () => {
                 success: true,
                 timestamp: new Date().toISOString()
               }));
-              
+
               socket.emit('bulk-update-complete', { results });
               return { success: true, processed: results.length };
             }
@@ -362,23 +362,23 @@ describe('Framework Component Integration', () => {
       expect(enterpriseModule.name).toBe('enterprise-user-management');
       expect(enterpriseModule.version).toBe('3.2.1');
       expect(enterpriseModule.dependencies).toEqual(['auth@2.0.0', 'audit@1.5.0', 'analytics@1.0.0']);
-      
+
       // Validate configuration structure
       expect(enterpriseModule.config).toHaveProperty('features');
       expect(enterpriseModule.config.features.auditLogging).toBe(true);
       expect(enterpriseModule.config.features.multiFactorAuth).toBe(false);
-      
+
       // Validate routes
       expect(enterpriseModule.routes).toHaveLength(3);
       expect(enterpriseModule.routeHandlers).toHaveProperty('route_handler_0');
       expect(enterpriseModule.routeHandlers).toHaveProperty('route_handler_1');
       expect(enterpriseModule.routeHandlers).toHaveProperty('route_handler_2');
-      
+
       // Validate WebSocket handlers
       expect(enterpriseModule.sockets).toHaveLength(2);
       expect(enterpriseModule.socketHandlers).toHaveProperty('socket_handler_0');
       expect(enterpriseModule.socketHandlers).toHaveProperty('socket_handler_1');
-      
+
       // Validate rate limiting configurations
       expect(enterpriseModule.routes![0].rateLimit).toEqual({ requests: 5, window: 300000 });
       expect(enterpriseModule.routes![1].rateLimit).toEqual({ requests: 100, window: 60000 });
@@ -392,7 +392,7 @@ describe('Framework Component Integration', () => {
           username: z.string().min(3).max(20),
           password: z.string().min(8),
           confirmPassword: z.string()
-        }).refine(data => data.password === data.confirmPassword, {
+        }).refine((data: any) => data.password === data.confirmPassword, {
           message: "Passwords don't match",
           path: ['confirmPassword']
         }),
@@ -542,7 +542,7 @@ describe('Framework Component Integration', () => {
 
       expect(highVolumeModule.routes).toHaveLength(50);
       expect(Object.keys(highVolumeModule.routeHandlers!)).toHaveLength(50);
-      
+
       // Verify each route handler is properly indexed
       for (let i = 0; i < 50; i++) {
         expect(highVolumeModule.routeHandlers).toHaveProperty(`route_handler_${i}`);
@@ -551,7 +551,7 @@ describe('Framework Component Integration', () => {
 
     it('should handle complex validation performance', () => {
       const startTime = performance.now();
-      
+
       // Create complex nested schema
       const complexSchema = z.object({
         level1: z.object({
@@ -594,4 +594,4 @@ describe('Framework Component Integration', () => {
       expect(duration).toBeLessThan(100); // Should validate in under 100ms
     });
   });
-}); 
+});

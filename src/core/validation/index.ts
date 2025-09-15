@@ -1,28 +1,41 @@
-// Functional Validation System for Moro Framework
-// Elegant, type-safe validation using Zod with functional composition
+// Universal Validation System for Moro Framework
+// Works with Zod, Joi, Yup, and any validation library via adapters
 
-import { z, ZodSchema, ZodError } from 'zod';
 import { HttpRequest, HttpResponse } from '../http';
 import { createFrameworkLogger } from '../logger';
+import {
+  ValidationSchema,
+  ValidationError,
+  normalizeValidationError,
+  InferSchemaType,
+} from './schema-interface';
+
+// Re-export zod if available (for backward compatibility)
+let z: any;
+try {
+  z = require('zod').z;
+} catch {
+  // Zod not available - that's fine!
+}
 
 const logger = createFrameworkLogger('Validation');
 
-// Validation configuration interface
+// Universal validation configuration interface
 export interface ValidationConfig {
-  body?: ZodSchema;
-  query?: ZodSchema;
-  params?: ZodSchema;
-  headers?: ZodSchema;
+  body?: ValidationSchema;
+  query?: ValidationSchema;
+  params?: ValidationSchema;
+  headers?: ValidationSchema;
 }
 
 // Validation result types
 export interface ValidationResult<T = any> {
   success: boolean;
   data?: T;
-  errors?: ValidationError[];
+  errors?: ValidationErrorDetail[];
 }
 
-export interface ValidationError {
+export interface ValidationErrorDetail {
   field: string;
   message: string;
   code: string;
@@ -110,9 +123,9 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
   };
 }
 
-// Validate individual field
+// Validate individual field using universal schema interface
 async function validateField(
-  schema: ZodSchema,
+  schema: ValidationSchema,
   data: any,
   fieldName: string
 ): Promise<ValidationResult> {
@@ -123,32 +136,32 @@ async function validateField(
       data: validated,
     };
   } catch (error) {
-    if (error instanceof ZodError) {
-      const errors: ValidationError[] = error.issues.map((err: any) => ({
-        field: err.path.length > 0 ? err.path.join('.') : fieldName,
-        message: err.message,
-        code: err.code,
-      }));
+    const normalizedError = normalizeValidationError(error);
+    const errors: ValidationErrorDetail[] = normalizedError.issues.map(issue => ({
+      field: issue.path.length > 0 ? issue.path.join('.') : fieldName,
+      message: issue.message,
+      code: issue.code,
+    }));
 
-      logger.debug('Field validation failed', 'ValidationFailed', {
-        field: fieldName,
-        errors: errors.length,
-        details: errors,
-      });
+    logger.debug('Field validation failed', 'ValidationFailed', {
+      field: fieldName,
+      errors: errors.length,
+      details: errors,
+    });
 
-      return {
-        success: false,
-        errors,
-      };
-    }
-
-    // Re-throw unexpected errors
-    throw error;
+    return {
+      success: false,
+      errors,
+    };
   }
 }
 
 // Send validation error response
-function sendValidationError(res: HttpResponse, errors: ValidationError[], field: string): void {
+function sendValidationError(
+  res: HttpResponse,
+  errors: ValidationErrorDetail[],
+  field: string
+): void {
   logger.debug('Sending validation error response', 'ValidationResponse', {
     field,
     errorCount: errors.length,
@@ -163,19 +176,19 @@ function sendValidationError(res: HttpResponse, errors: ValidationError[], field
 }
 
 // Convenience functions for single-field validation
-export function body<T>(schema: ZodSchema<T>) {
+export function body<T>(schema: ValidationSchema<T>) {
   return (handler: (req: ValidatedRequest<T>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ body: schema }, handler);
   };
 }
 
-export function query<T>(schema: ZodSchema<T>) {
+export function query<T>(schema: ValidationSchema<T>) {
   return (handler: (req: ValidatedRequest<any>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ query: schema }, handler);
   };
 }
 
-export function params<T>(schema: ZodSchema<T>) {
+export function params<T>(schema: ValidationSchema<T>) {
   return (handler: (req: ValidatedRequest<any>, res: HttpResponse) => any | Promise<any>) => {
     return validate({ params: schema }, handler);
   };
@@ -186,5 +199,14 @@ export function combineSchemas(schemas: ValidationConfig): ValidationConfig {
   return schemas;
 }
 
-// Re-export Zod for convenience
-export { z } from 'zod';
+// Re-export common validation tools
+export {
+  ValidationSchema,
+  ValidationError,
+  normalizeValidationError,
+  InferSchemaType,
+} from './schema-interface';
+export { joi, yup, fn as customValidator, classValidator } from './adapters';
+
+// Re-export Zod if available (optional dependency)
+export { z };

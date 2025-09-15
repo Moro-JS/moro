@@ -5,7 +5,45 @@ All notable changes to the MoroJS framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2025-09-15
+## [1.4.0] - 2024-12-15
+
+### Added
+
+#### Comprehensive Validation System
+- **NEW: Multi-library validation adapter system** - Support for Zod, Joi, Yup, and class-validator with unified interface
+- **NEW: Schema interface standardization** - Common validation interface across all supported validation libraries
+- **NEW: Advanced validation adapters** - Custom validation function support with seamless integration
+- **NEW: TypeScript validation configuration** - Enhanced TypeScript config loading and validation
+- **NEW: Validation error normalization** - Consistent error handling across different validation libraries
+
+#### WebSocket Adapter System
+- **NEW: Socket.IO adapter** - Full Socket.IO integration with room management and event handling
+- **NEW: Native WebSocket adapter** - High-performance native WebSocket support with connection pooling
+- **NEW: WebSocket adapter interface** - Standardized interface for different WebSocket implementations
+- **NEW: Connection management** - Advanced connection lifecycle management with cleanup and monitoring
+
+#### Configuration System Enhancements
+- **NEW: TypeScript configuration loader** - Advanced TypeScript config file loading with validation
+- **NEW: Configuration file validation** - Schema-based validation for configuration files
+- **NEW: Enhanced configuration types** - Better TypeScript support for configuration options
+
+#### Documentation and OpenAPI
+- **NEW: Schema-to-OpenAPI conversion** - Automatic OpenAPI schema generation from validation schemas
+- **NEW: Enhanced OpenAPI generator** - Improved OpenAPI documentation generation with better schema support
+- **NEW: Zod-to-OpenAPI enhancement** - Better Zod schema conversion to OpenAPI specifications
+
+### Enhanced
+- **Improved validation system architecture** - Better performance and extensibility
+- **Enhanced WebSocket management** - More robust connection handling and error recovery
+- **Better configuration merging** - Improved configuration precedence and validation
+- **Enhanced test coverage** - New comprehensive tests for validation adapters and WebSocket functionality
+
+### Fixed
+- **Configuration loading edge cases** - Better error handling for malformed configuration files
+- **WebSocket connection cleanup** - Proper resource cleanup on connection termination
+- **Validation error handling** - More consistent error messages across validation libraries
+
+## [1.3.0] - 2024-09-15
 
 ### Added
 

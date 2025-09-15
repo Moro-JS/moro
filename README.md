@@ -25,7 +25,8 @@ Moro eliminates the pain points of traditional Node.js frameworks with **intelli
 - **Multi-Runtime Support** - Deploy to Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
 - **Intelligent Routing** - Chainable + schema-first APIs with automatic middleware ordering
 - **Enterprise Authentication** - Auth.js integration with RBAC, OAuth, and native adapter
-- **Zod Validation** - Type-safe, functional validation with full TypeScript inference
+- **Universal Validation** - Support for Zod, Joi, Yup, Class Validator with full TypeScript inference
+- **WebSocket Support** - Pluggable adapters for Socket.IO, native WebSockets, or auto-detection
 - **Native Performance** - Zero framework overhead, optimized for each runtime
 - **Functional Architecture** - No decorators, pure functional patterns
 - **Zero Order Dependencies** - Framework handles optimal middleware execution
@@ -127,20 +128,30 @@ app.post('/users')
    .handler(createUser);   // Always executed last
 ```
 
-### **Full Type Safety with Zod**
+### **Universal Validation with Full Type Safety**
 
 ```typescript
+// Use any validation library - Zod (default)
+import { z } from '@morojs/moro';
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
   email: z.string().email(),
   age: z.number().min(18).optional()
 });
 
+// Or Joi with adapter
+import { joi } from '@morojs/moro';
+import Joi from 'joi';
+const UserSchema = joi(Joi.object({
+  name: Joi.string().min(2).max(50).required(),
+  email: Joi.string().email().required(),
+  age: Joi.number().min(18).optional()
+}));
+
 app.post('/users')
-   .body(UserSchema)
+   .body(UserSchema)  // Works with any validation library!
    .handler((req, res) => {
-     // req.body is typed as z.infer<typeof UserSchema>
-     // Full IDE support, no type assertions needed!
+     // req.body is fully typed regardless of validation library
      const user = req.body; // ✨ Fully typed
      return { success: true, data: user };
    });
@@ -165,6 +176,45 @@ app.route({
   path: '/users/:id',
   validation: { params: z.object({ id: z.string().uuid() }) },
   handler: getUserById
+});
+```
+
+### WebSocket Support
+
+Pluggable WebSocket adapters with auto-detection:
+
+```typescript
+import { createApp, SocketIOAdapter, WSAdapter } from '@morojs/moro';
+
+const app = createApp({
+  // Auto-detect available WebSocket library
+  websocket: { enabled: true },
+
+  // Or use specific adapter
+  websocket: { adapter: new SocketIOAdapter() },
+
+  // Or native WebSockets
+  websocket: { adapter: new WSAdapter() }
+});
+
+// Define WebSocket handlers
+app.websocket('/chat', {
+  connect: (socket) => {
+    console.log(`Client connected: ${socket.id}`);
+    socket.join('general');
+  },
+
+  message: (socket, data) => {
+    socket.to('general').emit('message', {
+      user: socket.user,
+      text: data.text,
+      timestamp: new Date()
+    });
+  },
+
+  disconnect: (socket) => {
+    console.log(`Client disconnected: ${socket.id}`);
+  }
 });
 ```
 
@@ -256,15 +306,19 @@ await app.loadModule(UsersModule);
 - **Multi-Runtime Support** - Same API works on Node.js, Edge, Lambda, and Workers
 - **Intelligent Routing** - Automatic middleware ordering eliminates Express.js pain points
 - **Enterprise Authentication** - Auth.js integration with OAuth, RBAC, and native adapter
+- **Universal Validation** - Support for any validation library with full type safety
+- **WebSocket Flexibility** - Choose between Socket.IO, native WebSockets, or auto-detection
 - **Functional Architecture** - No decorators, pure functions, better performance
-- **Type Safety** - Zod provides compile-time and runtime type safety
+- **Type Safety** - Universal validation with compile-time and runtime type safety
 
 ## Why Choose Moro?
 
 **Same API everywhere** - Write once, deploy to any runtime
 **No middleware dependencies** - Framework handles optimal ordering
 **Enterprise authentication** - Auth.js integration with native adapter
-**Full type safety** - Zod provides end-to-end TypeScript inference
+**Validation flexibility** - Use any validation library (Zod, Joi, Yup, Class Validator)
+**WebSocket choice** - Socket.IO, native WebSockets, or auto-detection
+**Full type safety** - Universal validation provides end-to-end TypeScript inference
 **Clean APIs** - Chainable and schema-first approaches
 **Production ready** - Circuit breakers, rate limiting, events, RBAC
 **Performance optimized** - Runtime-specific adapters

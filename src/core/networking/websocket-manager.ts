@@ -1,115 +1,114 @@
-// src/core/websocket-manager.ts
-import { Server as SocketIOServer, Socket, Namespace } from 'socket.io';
+// WebSocket Manager for Moro Framework
+// Manages WebSocket connections using pluggable adapters
 import { Container } from '../utilities';
 import { CircuitBreaker } from '../utilities';
 import { ModuleConfig, WebSocketDefinition } from '../../types/module';
+import { WebSocketAdapter, WebSocketNamespace, WebSocketConnection } from './websocket-adapter';
+import { createFrameworkLogger } from '../logger';
 
 export class WebSocketManager {
   private circuitBreakers = new Map<string, CircuitBreaker>();
   private rateLimiters = new Map<string, Map<string, { count: number; resetTime: number }>>();
-  private compressionEnabled = true;
-  private customIdGenerator?: () => string;
+  private logger = createFrameworkLogger('WebSocketManager');
 
   constructor(
-    private io: SocketIOServer,
+    private adapter: WebSocketAdapter,
     private container: Container
   ) {
-    this.setupAdvancedFeatures();
+    this.logger.info(`Initialized with ${adapter.getAdapterName()} adapter`, 'AdapterInit');
   }
 
-  private setupAdvancedFeatures() {
-    // Enable compression for WebSocket messages
-    if (this.compressionEnabled) {
-      (this.io.engine as any).compression = true;
-      (this.io.engine as any).perMessageDeflate = {
-        threshold: 1024,
-        concurrencyLimit: 10,
-        memLevel: 8,
-      };
-    }
-
-    // Custom session ID generation if provided
-    if (this.customIdGenerator) {
-      (this.io.engine as any).generateId = this.customIdGenerator;
-    }
-
-    // Global WebSocket middleware for advanced features
-    this.io.use((socket, next) => {
-      // Add binary message handling
-      socket.onAny((event, ...args) => {
-        // Handle binary frames efficiently
-        args.forEach((arg, index) => {
-          if (Buffer.isBuffer(arg)) {
-            // Process binary data with optimizations
-            args[index] = this.processBinaryData(arg);
-          }
-        });
-      });
-
-      // Add compression per message
-      (socket as any).compressedEmit = (event: string, data: any) => {
-        if (this.compressionEnabled && this.shouldCompress(data)) {
-          socket.compress(true).emit(event, data);
-        } else {
-          socket.emit(event, data);
-        }
-      };
-
-      // Add heartbeat mechanism
-      (socket as any).heartbeat = () => {
-        socket.emit('heartbeat', { timestamp: Date.now() });
-      };
-
-      next();
-    });
+  /**
+   * Set custom ID generator for the adapter
+   */
+  setCustomIdGenerator(generator: () => string): void {
+    this.adapter.setCustomIdGenerator(generator);
   }
 
-  setCustomIdGenerator(generator: () => string) {
-    this.customIdGenerator = generator;
-    (this.io.engine as any).generateId = generator;
+  /**
+   * Enable compression for the adapter
+   */
+  enableCompression(options?: any): void {
+    this.adapter.setCompression(true, options);
   }
 
-  enableCompression(options?: {
-    threshold?: number;
-    concurrencyLimit?: number;
-    memLevel?: number;
-  }) {
-    this.compressionEnabled = true;
-    if (options) {
-      (this.io.engine as any).perMessageDeflate = {
-        threshold: options.threshold || 1024,
-        concurrencyLimit: options.concurrencyLimit || 10,
-        memLevel: options.memLevel || 8,
-      };
-    }
+  /**
+   * Get the underlying adapter
+   */
+  getAdapter(): WebSocketAdapter {
+    return this.adapter;
   }
 
-  private processBinaryData(buffer: Buffer): Buffer {
-    // Optimize binary data processing
-    // Could add compression, validation, etc.
-    return buffer;
+  /**
+   * Get connection count across all namespaces
+   */
+  getConnectionCount(): number {
+    return this.adapter.getConnectionCount();
   }
 
-  private shouldCompress(data: any): boolean {
-    // Determine if data should be compressed
-    const serialized = JSON.stringify(data);
-    return serialized.length > 1024; // Compress if larger than 1KB
+  /**
+   * Create or get a namespace
+   */
+  getNamespace(namespace: string): WebSocketNamespace {
+    return this.adapter.createNamespace(namespace);
   }
 
+  /**
+   * Register WebSocket handlers for a module
+   */
   async registerHandler(
-    namespace: Namespace,
+    namespace: WebSocketNamespace,
     wsConfig: WebSocketDefinition,
     moduleConfig: ModuleConfig
   ): Promise<void> {
-    namespace.on('connection', (socket: Socket) => {
-      console.log(`WebSocket connected to /${moduleConfig.name}: ${socket.id}`);
-      this.setupSocketHandlers(socket, wsConfig, moduleConfig);
+    namespace.on('connection', (socket: WebSocketConnection) => {
+      this.logger.debug(`New connection: ${socket.id}`, 'Connection', {
+        namespace: namespace.constructor.name,
+        module: moduleConfig.name,
+      });
+
       this.setupSocketMiddleware(socket, moduleConfig.name);
+      this.setupSocketHandlers(socket, wsConfig, moduleConfig);
     });
   }
 
+  /**
+   * Setup socket-specific middleware
+   */
+  private setupSocketMiddleware(socket: WebSocketConnection, moduleName: string): void {
+    // Add module context to socket data
+    socket.data.module = moduleName;
+    socket.data.connectedAt = Date.now();
+
+    // Setup heartbeat if supported
+    if (socket.compressedEmit) {
+      const heartbeatInterval = setInterval(() => {
+        if (socket.connected) {
+          socket.emit('heartbeat', { timestamp: Date.now() });
+        } else {
+          clearInterval(heartbeatInterval);
+        }
+      }, 30000); // 30 seconds
+
+      socket.on('disconnect', () => {
+        clearInterval(heartbeatInterval);
+      });
+    }
+
+    // Log disconnection
+    socket.on('disconnect', () => {
+      this.logger.debug(`Socket disconnected: ${socket.id}`, 'Disconnect', {
+        module: moduleName,
+        duration: Date.now() - socket.data.connectedAt,
+      });
+    });
+  }
+
+  /**
+   * Setup handlers for a specific WebSocket configuration
+   */
   private setupSocketHandlers(
-    socket: Socket,
+    socket: WebSocketConnection,
     wsConfig: WebSocketDefinition,
     moduleConfig: ModuleConfig
   ): void {
@@ -129,7 +128,7 @@ export class WebSocketManager {
           return;
         }
 
-        // Validation (Zod-only)
+        // Validation using Zod
         if (wsConfig.validation) {
           try {
             data = wsConfig.validation.parse(data);
@@ -163,42 +162,56 @@ export class WebSocketManager {
         // Handle response
         if (callback) {
           callback({ success: true, data: result });
-        } else if (wsConfig.broadcast && result?.event) {
-          socket.broadcast.emit(result.event, result.data);
-        } else if (result) {
-          socket.emit(`${wsConfig.event}:response`, result);
+        } else if (result !== undefined) {
+          socket.emit(`${wsConfig.event}:response`, { success: true, data: result });
+        }
+
+        // Handle room operations
+        if (wsConfig.rooms) {
+          wsConfig.rooms.forEach(room => socket.join(room));
+        }
+
+        // Handle broadcasting
+        if (wsConfig.broadcast && result !== undefined) {
+          socket.broadcast.emit(wsConfig.event, { success: true, data: result });
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const errorCode = (error as any)?.code || 'INTERNAL_ERROR';
-        console.error(`WebSocket error in ${handlerKey}:`, errorMessage);
+        this.logger.error('WebSocket handler error', 'HandlerError', {
+          handler: handlerKey,
+          error: error instanceof Error ? error.message : String(error),
+          socketId: socket.id,
+        });
 
         const errorResponse = {
           success: false,
-          error: errorMessage,
-          code: errorCode,
+          error: 'Internal server error',
+          code: 'HANDLER_ERROR',
         };
 
-        if (callback) {
-          callback(errorResponse);
-        } else {
-          socket.emit('error', errorResponse);
-        }
+        if (callback) callback(errorResponse);
+        else socket.emit('error', errorResponse);
       }
     });
   }
 
-  private setupSocketMiddleware(socket: Socket, moduleName: string): void {
-    socket.on('disconnect', reason => {
-      console.log(`WebSocket disconnected from /${moduleName}: ${socket.id} (${reason})`);
-      this.cleanup(socket.id);
-    });
-
-    socket.on('ping', () => {
-      socket.emit('pong');
-    });
+  /**
+   * Get or create circuit breaker for handler
+   */
+  private getCircuitBreaker(handlerKey: string): CircuitBreaker {
+    if (!this.circuitBreakers.has(handlerKey)) {
+      const circuitBreaker = new CircuitBreaker({
+        failureThreshold: 5,
+        resetTimeout: 60000,
+        monitoringPeriod: 10000,
+      });
+      this.circuitBreakers.set(handlerKey, circuitBreaker);
+    }
+    return this.circuitBreakers.get(handlerKey)!;
   }
 
+  /**
+   * Check rate limit for socket and handler
+   */
   private checkRateLimit(
     socketId: string,
     handlerKey: string,
@@ -210,41 +223,86 @@ export class WebSocketManager {
 
     const handlerLimiter = this.rateLimiters.get(handlerKey)!;
     const now = Date.now();
-    const socketLimit = handlerLimiter.get(socketId);
+    const windowStart = now - rateLimit.window;
 
-    if (!socketLimit || now > socketLimit.resetTime) {
-      handlerLimiter.set(socketId, {
-        count: 1,
-        resetTime: now + rateLimit.window,
-      });
+    // Clean old entries
+    for (const [id, data] of handlerLimiter.entries()) {
+      if (data.resetTime < windowStart) {
+        handlerLimiter.delete(id);
+      }
+    }
+
+    // Check current socket
+    const socketData = handlerLimiter.get(socketId);
+    if (!socketData) {
+      handlerLimiter.set(socketId, { count: 1, resetTime: now });
       return true;
     }
 
-    if (socketLimit.count >= rateLimit.requests) {
+    if (socketData.resetTime < windowStart) {
+      socketData.count = 1;
+      socketData.resetTime = now;
+      return true;
+    }
+
+    if (socketData.count >= rateLimit.requests) {
       return false;
     }
 
-    socketLimit.count++;
+    socketData.count++;
     return true;
   }
 
-  private getCircuitBreaker(key: string): CircuitBreaker {
-    if (!this.circuitBreakers.has(key)) {
-      this.circuitBreakers.set(
-        key,
-        new CircuitBreaker({
-          failureThreshold: 5,
-          resetTimeout: 30000,
-          monitoringPeriod: 10000,
-        })
-      );
+  /**
+   * Process binary data efficiently
+   */
+  private processBinaryData(buffer: Buffer): any {
+    // Example binary processing - can be extended based on needs
+    if (buffer.length === 0) return buffer;
+
+    // Simple compression check
+    if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
+      // This is gzipped data
+      try {
+        const zlib = require('zlib');
+        return zlib.gunzipSync(buffer);
+      } catch {
+        return buffer;
+      }
     }
-    return this.circuitBreakers.get(key)!;
+
+    return buffer;
   }
 
-  private cleanup(socketId: string): void {
-    this.rateLimiters.forEach(limiter => {
-      limiter.delete(socketId);
-    });
+  /**
+   * Check if data should be compressed
+   */
+  private shouldCompress(data: any): boolean {
+    if (typeof data === 'string') {
+      return data.length > 1024;
+    }
+    if (Buffer.isBuffer(data)) {
+      return data.length > 1024;
+    }
+    if (typeof data === 'object') {
+      return JSON.stringify(data).length > 1024;
+    }
+    return false;
+  }
+
+  /**
+   * Close the WebSocket manager and underlying adapter
+   */
+  async close(): Promise<void> {
+    this.logger.info('Closing WebSocket manager', 'Shutdown');
+
+    // Clear rate limiters
+    this.rateLimiters.clear();
+
+    // Clear circuit breakers
+    this.circuitBreakers.clear();
+
+    // Close adapter
+    await this.adapter.close();
   }
 }

@@ -1,7 +1,7 @@
 // Intelligent Routing System for Moro Framework
 // Schema-first with automatic middleware ordering and chainable API
 
-import { z, ZodSchema } from 'zod';
+import { ValidationSchema } from '../validation/schema-interface';
 import { HttpRequest, HttpResponse } from '../http';
 import { createFrameworkLogger } from '../logger';
 
@@ -18,10 +18,10 @@ export type Middleware = (
 
 // Configuration interfaces
 export interface ValidationConfig {
-  body?: ZodSchema;
-  query?: ZodSchema;
-  params?: ZodSchema;
-  headers?: ZodSchema;
+  body?: ValidationSchema;
+  query?: ValidationSchema;
+  params?: ValidationSchema;
+  headers?: ValidationSchema;
 }
 
 export interface AuthConfig {
@@ -98,10 +98,10 @@ export interface ValidatedRequest<T = any> extends HttpRequest {
 export interface RouteBuilder {
   // Validation methods
   validate(config: ValidationConfig): RouteBuilder;
-  body<T>(schema: ZodSchema<T>): RouteBuilder;
-  query<T>(schema: ZodSchema<T>): RouteBuilder;
-  params<T>(schema: ZodSchema<T>): RouteBuilder;
-  headers<T>(schema: ZodSchema<T>): RouteBuilder;
+  body<T>(schema: ValidationSchema<T>): RouteBuilder;
+  query<T>(schema: ValidationSchema<T>): RouteBuilder;
+  params<T>(schema: ValidationSchema<T>): RouteBuilder;
+  headers<T>(schema: ValidationSchema<T>): RouteBuilder;
 
   // Security/Auth methods
   auth(config: AuthConfig): RouteBuilder;
@@ -148,25 +148,25 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     return this;
   }
 
-  body<T>(schema: ZodSchema<T>): RouteBuilder {
+  body<T>(schema: ValidationSchema<T>): RouteBuilder {
     if (!this.schema.validation) this.schema.validation = {};
     this.schema.validation.body = schema;
     return this;
   }
 
-  query<T>(schema: ZodSchema<T>): RouteBuilder {
+  query<T>(schema: ValidationSchema<T>): RouteBuilder {
     if (!this.schema.validation) this.schema.validation = {};
     this.schema.validation.query = schema;
     return this;
   }
 
-  params<T>(schema: ZodSchema<T>): RouteBuilder {
+  params<T>(schema: ValidationSchema<T>): RouteBuilder {
     if (!this.schema.validation) this.schema.validation = {};
     this.schema.validation.params = schema;
     return this;
   }
 
-  headers<T>(schema: ZodSchema<T>): RouteBuilder {
+  headers<T>(schema: ValidationSchema<T>): RouteBuilder {
     if (!this.schema.validation) this.schema.validation = {};
     this.schema.validation.headers = schema;
     return this;

@@ -387,10 +387,19 @@ export class Moro extends EventEmitter {
 
   // WebSocket helper with events
   websocket(namespace: string, handlers: Record<string, Function>) {
+    const adapter = this.coreFramework.getWebSocketAdapter();
+    if (!adapter) {
+      throw new Error(
+        'WebSocket features require a WebSocket adapter. Install socket.io or configure an adapter:\n' +
+          'npm install socket.io\n' +
+          'or\n' +
+          'new Moro({ websocket: { adapter: new SocketIOAdapter() } })'
+      );
+    }
+
     this.emit('websocket:registering', { namespace, handlers });
 
-    const io = this.coreFramework.getIOServer();
-    const ns = io.of(namespace);
+    const ns = adapter.createNamespace(namespace);
 
     Object.entries(handlers).forEach(([event, handler]) => {
       ns.on('connection', socket => {

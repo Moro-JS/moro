@@ -105,14 +105,23 @@ export type {
 // Logger System
 export { createFrameworkLogger, logger } from './core/logger';
 
-// Validation System (Zod-based)
+// Universal Validation System
 export { validate, body, query, params, combineSchemas, z } from './core/validation';
 export type {
   ValidationConfig,
   ValidationResult,
-  ValidationError,
+  ValidationErrorDetail,
   ValidatedRequest,
 } from './core/validation';
+
+// Universal Validation Interfaces and Adapters
+export type {
+  ValidationSchema,
+  ValidationError,
+  InferSchemaType,
+} from './core/validation/schema-interface';
+export { normalizeValidationError } from './core/validation/schema-interface';
+export { joi, yup, fn as customValidator, classValidator } from './core/validation/adapters';
 
 // Module System
 export {
@@ -122,6 +131,20 @@ export {
   autoDiscoverModuleDirectories,
 } from './core/modules';
 export type { ModuleDefinition, ModuleRoute, ModuleSocket, ModuleConfig } from './types/module';
+
+// WebSocket Adapter System
+export type {
+  WebSocketAdapter,
+  WebSocketAdapterOptions,
+  WebSocketNamespace,
+  WebSocketConnection,
+  WebSocketEmitter,
+  WebSocketMiddleware,
+  WebSocketEventHandler,
+} from './core/networking/websocket-adapter';
+
+// Built-in WebSocket Adapters
+export { SocketIOAdapter, WSAdapter } from './core/networking/adapters';
 
 // Intelligent Routing System
 export { createRoute, defineRoute, EXECUTION_PHASES } from './core/routing';

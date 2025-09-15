@@ -33,6 +33,8 @@ export interface OpenAPISchema {
   maximum?: number;
   minLength?: number;
   maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
   pattern?: string;
   default?: any;
   oneOf?: OpenAPISchema[];
