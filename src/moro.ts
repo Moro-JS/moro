@@ -1030,8 +1030,10 @@ export class Moro extends EventEmitter {
       }
 
       // Optimize garbage collection for workers
+      // eslint-disable-next-line no-undef
       if ((global as any).gc) {
         setInterval(() => {
+          // eslint-disable-next-line no-undef
           if ((global as any).gc) (global as any).gc();
         }, 60000); // GC every 60 seconds (less frequent)
       }
