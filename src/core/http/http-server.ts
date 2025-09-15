@@ -441,7 +441,6 @@ export class MoroHttpServer {
       if (httpRes.headersSent) return;
 
       // Ultra-fast JSON serialization with zero-copy buffers
-      let buffer: Buffer;
       let jsonString: string;
 
       // Enhanced JSON optimization for common API patterns
