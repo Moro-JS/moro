@@ -14,4 +14,22 @@ export interface MoroOptions {
   runtime?: RuntimeConfig;
   // Logger configuration
   logger?: LoggerOptions | boolean;
+  // Performance configuration
+  performance?: {
+    clustering?: {
+      enabled?: boolean;
+      workers?: number | 'auto';
+    };
+    compression?: {
+      enabled?: boolean;
+      level?: number;
+      threshold?: number;
+    };
+    circuitBreaker?: {
+      enabled?: boolean;
+      failureThreshold?: number;
+      resetTimeout?: number;
+      monitoringPeriod?: number;
+    };
+  };
 }

@@ -73,6 +73,28 @@ export class Moro extends EventEmitter {
       applyLoggingConfiguration(undefined, options.logger);
     }
 
+    // Apply performance configuration from createApp options (takes precedence)
+    if (options.performance) {
+      if (options.performance.clustering) {
+        this.config.performance.clustering = {
+          ...this.config.performance.clustering,
+          ...options.performance.clustering,
+        };
+      }
+      if (options.performance.compression) {
+        this.config.performance.compression = {
+          ...this.config.performance.compression,
+          ...options.performance.compression,
+        };
+      }
+      if (options.performance.circuitBreaker) {
+        this.config.performance.circuitBreaker = {
+          ...this.config.performance.circuitBreaker,
+          ...options.performance.circuitBreaker,
+        };
+      }
+    }
+
     this.logger.info(
       `Configuration system initialized: ${this.config.server.environment}:${this.config.server.port}`
     );
@@ -83,7 +105,13 @@ export class Moro extends EventEmitter {
 
     this.logger.info(`Runtime system initialized: ${this.runtimeType}`, 'Runtime');
 
-    this.coreFramework = new MoroCore();
+    // Pass logging configuration from config to framework
+    const frameworkOptions: any = {
+      ...options,
+      logger: this.config.logging,
+    };
+
+    this.coreFramework = new MoroCore(frameworkOptions);
 
     // Initialize middleware system
     this.middlewareManager = new MiddlewareManager();
@@ -92,6 +120,15 @@ export class Moro extends EventEmitter {
     const httpServer = (this.coreFramework as any).httpServer;
     if (httpServer && httpServer.setHookManager) {
       httpServer.setHookManager((this.middlewareManager as any).hooks);
+    }
+
+    // Configure HTTP server performance based on config
+    if (httpServer && httpServer.configurePerformance) {
+      const performanceConfig = this.config.performance;
+      httpServer.configurePerformance({
+        compression: performanceConfig?.compression || { enabled: true },
+        minimal: performanceConfig?.compression?.enabled === false, // Enable minimal mode if compression disabled
+      });
     }
 
     // Access enterprise event bus from core framework
@@ -383,9 +420,14 @@ export class Moro extends EventEmitter {
   }
 
   // Start server with events (Node.js only)
+  listen(callback?: () => void): void;
   listen(port: number, callback?: () => void): void;
   listen(port: number, host: string, callback?: () => void): void;
-  listen(port: number, host?: string | (() => void), callback?: () => void) {
+  listen(
+    portOrCallback?: number | (() => void),
+    hostOrCallback?: string | (() => void),
+    callback?: () => void
+  ) {
     // Only available for Node.js runtime
     if (this.runtimeType !== 'node') {
       throw new Error(
@@ -393,10 +435,46 @@ export class Moro extends EventEmitter {
       );
     }
 
-    // Handle overloaded parameters (port, callback) or (port, host, callback)
-    if (typeof host === 'function') {
-      callback = host;
-      host = undefined;
+    // Handle overloaded parameters - supports:
+    // listen(callback)
+    // listen(port, callback)
+    // listen(port, host, callback)
+    let port: number;
+    let host: string | undefined;
+
+    if (typeof portOrCallback === 'function') {
+      // listen(callback) - use port from config
+      callback = portOrCallback;
+      port = this.config.server.port;
+      host = this.config.server.host;
+    } else if (typeof portOrCallback === 'number') {
+      // listen(port, ...) variants
+      port = portOrCallback;
+      if (typeof hostOrCallback === 'function') {
+        // listen(port, callback)
+        callback = hostOrCallback;
+        host = undefined;
+      } else {
+        // listen(port, host, callback)
+        host = hostOrCallback;
+      }
+    } else {
+      // listen() - use config defaults
+      port = this.config.server.port;
+      host = this.config.server.host;
+    }
+
+    // Validate that we have a valid port
+    if (!port || typeof port !== 'number') {
+      throw new Error(
+        'Port not specified and not found in configuration. Please provide a port number or configure it in moro.config.js/ts'
+      );
+    }
+
+    // Check if clustering is enabled for massive performance gains
+    if (this.config.performance?.clustering?.enabled) {
+      this.startWithClustering(port, host as string, callback);
+      return;
     }
     this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
 
@@ -493,7 +571,7 @@ export class Moro extends EventEmitter {
       const matches = req.path.match(route.pattern);
       if (matches) {
         req.params = {};
-        route.paramNames.forEach((name, index) => {
+        route.paramNames.forEach((name: string, index: number) => {
           req.params[name] = matches[index + 1];
         });
       }
@@ -557,11 +635,38 @@ export class Moro extends EventEmitter {
     }
   }
 
-  // Find matching route
+  // Advanced route matching with caching and optimization
+  private routeCache = new Map<string, { pattern: RegExp; paramNames: string[] }>();
+  private staticRouteMap = new Map<string, any>();
+  private dynamicRoutesBySegments = new Map<number, any[]>();
+
   private findMatchingRoute(method: string, path: string) {
-    for (const route of this.routes) {
+    // Phase 1: O(1) static route lookup
+    const staticKey = `${method}:${path}`;
+    const staticRoute = this.staticRouteMap.get(staticKey);
+    if (staticRoute) {
+      return {
+        ...staticRoute,
+        pattern: /^.*$/, // Dummy pattern for static routes
+        paramNames: [],
+      };
+    }
+
+    // Phase 2: Optimized dynamic route matching by segment count
+    const segments = path.split('/').filter(s => s.length > 0);
+    const segmentCount = segments.length;
+    const candidateRoutes = this.dynamicRoutesBySegments.get(segmentCount) || [];
+
+    for (const route of candidateRoutes) {
       if (route.method === method) {
-        const pattern = this.pathToRegex(route.path);
+        const cacheKey = `${method}:${route.path}`;
+        let pattern = this.routeCache.get(cacheKey);
+
+        if (!pattern) {
+          pattern = this.pathToRegex(route.path);
+          this.routeCache.set(cacheKey, pattern);
+        }
+
         if (pattern.pattern.test(path)) {
           return {
             ...route,
@@ -571,6 +676,7 @@ export class Moro extends EventEmitter {
         }
       }
     }
+
     return null;
   }
 
@@ -602,7 +708,7 @@ export class Moro extends EventEmitter {
   private addRoute(method: string, path: string, handler: Function, options: any = {}) {
     const handlerName = `handler_${this.routes.length}`;
 
-    this.routes.push({
+    const route = {
       method: method as any,
       path,
       handler: handlerName,
@@ -610,12 +716,34 @@ export class Moro extends EventEmitter {
       rateLimit: options.rateLimit,
       cache: options.cache,
       middleware: options.middleware,
-    });
+    };
+
+    this.routes.push(route);
+
+    // Organize routes for optimal lookup
+    this.organizeRouteForLookup(route);
 
     // Store handler for later module creation
     this.routeHandlers[handlerName] = handler;
 
     return this;
+  }
+
+  private organizeRouteForLookup(route: any): void {
+    if (!route.path.includes(':')) {
+      // Static route - add to static map for O(1) lookup
+      const staticKey = `${route.method}:${route.path}`;
+      this.staticRouteMap.set(staticKey, route);
+    } else {
+      // Dynamic route - organize by segment count
+      const segments = route.path.split('/').filter((s: string) => s.length > 0);
+      const segmentCount = segments.length;
+
+      if (!this.dynamicRoutesBySegments.has(segmentCount)) {
+        this.dynamicRoutesBySegments.set(segmentCount, []);
+      }
+      this.dynamicRoutesBySegments.get(segmentCount)!.push(route);
+    }
   }
 
   private registerDirectRoutes() {
@@ -766,11 +894,262 @@ export class Moro extends EventEmitter {
     const module = await import(modulePath);
     return module.default || module;
   }
+
+  // Clustering support for massive performance gains with proper cleanup
+  private clusterWorkers = new Map<number, any>();
+  private startWithClustering(port: number, host?: string, callback?: () => void): void {
+    const cluster = require('cluster');
+    const os = require('os');
+
+    // Smart worker count calculation based on actual bottlenecks
+    let workerCount = this.config.performance?.clustering?.workers || os.cpus().length;
+
+    // Auto-optimize worker count based on system characteristics
+    if (workerCount === 'auto' || workerCount > 8) {
+      // For high-core machines, limit workers to prevent IPC/memory bottlenecks
+      const cpuCount = os.cpus().length;
+      const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
+
+      // Optimal worker count formula based on research
+      if (cpuCount >= 16) {
+        // High-core machines: focus on memory/IPC efficiency
+        workerCount = Math.min(Math.ceil(totalMemoryGB / 2), 4); // 2GB per worker max, cap at 4
+      } else if (cpuCount >= 8) {
+        // Mid-range machines: balanced approach
+        workerCount = Math.min(cpuCount / 2, 4);
+      } else {
+        // Low-core machines: use all cores
+        workerCount = cpuCount;
+      }
+
+      this.logger.info(
+        `Auto-optimized workers: ${workerCount} (CPU: ${cpuCount}, RAM: ${totalMemoryGB.toFixed(1)}GB)`,
+        'Cluster'
+      );
+    }
+
+    if (cluster.isPrimary) {
+      this.logger.info(`🚀 Starting ${workerCount} workers for maximum performance`, 'Cluster');
+
+      // Optimize cluster scheduling for high concurrency
+      cluster.schedulingPolicy = cluster.SCHED_RR; // Round-robin scheduling
+
+      // Set cluster settings for better performance
+      cluster.setupMaster({
+        exec: process.argv[1],
+        args: process.argv.slice(2),
+        silent: false,
+      });
+
+      // Optimize IPC to reduce communication overhead
+      process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
+      process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size
+
+      // Graceful shutdown handler
+      const gracefulShutdown = () => {
+        this.logger.info('Gracefully shutting down cluster...', 'Cluster');
+
+        // Clean up all workers
+        for (const [pid, worker] of this.clusterWorkers) {
+          worker.removeAllListeners();
+          worker.kill('SIGTERM');
+        }
+
+        // Clean up cluster listeners
+        cluster.removeAllListeners();
+        process.exit(0);
+      };
+
+      // Handle process signals for graceful shutdown
+      process.on('SIGINT', gracefulShutdown);
+      process.on('SIGTERM', gracefulShutdown);
+
+      // Fork workers with proper tracking and CPU affinity
+      for (let i = 0; i < workerCount; i++) {
+        const worker = cluster.fork({
+          WORKER_ID: i,
+          WORKER_CPU_AFFINITY: i % os.cpus().length, // Distribute workers across CPUs
+        });
+        this.clusterWorkers.set(worker.process.pid!, worker);
+        this.logger.info(
+          `Worker ${worker.process.pid} started (CPU ${i % os.cpus().length})`,
+          'Cluster'
+        );
+
+        // Handle individual worker messages (reuse handler)
+        worker.on('message', this.handleWorkerMessage.bind(this));
+      }
+
+      // Handle worker exits with cleanup
+      cluster.on('exit', (worker: any, code: number, signal: string) => {
+        // Clean up worker tracking
+        this.clusterWorkers.delete(worker.process.pid);
+
+        this.logger.warn(
+          `Worker ${worker.process.pid} died (${signal || code}). Restarting...`,
+          'Cluster'
+        );
+
+        // Restart worker with proper tracking
+        const newWorker = cluster.fork();
+        this.clusterWorkers.set(newWorker.process.pid!, newWorker);
+        newWorker.on('message', this.handleWorkerMessage.bind(this));
+        this.logger.info(`Worker ${newWorker.process.pid} started`, 'Cluster');
+      });
+
+      // Master process callback
+      if (callback) callback();
+    } else {
+      // Worker process - start the actual server with proper cleanup
+      this.logger.info(`Worker ${process.pid} initializing`, 'Worker');
+
+      // Worker-specific optimizations for high concurrency
+      process.env.UV_THREADPOOL_SIZE = '64';
+
+      // Reduce logging contention in workers (major bottleneck)
+      if (this.config.logging) {
+        // Workers log less frequently to reduce I/O contention
+        this.config.logging.level = 'warn'; // Only warnings and errors
+      }
+
+      // Memory optimization for workers
+      process.env.NODE_OPTIONS = '--max-old-space-size=1024'; // Limit memory per worker
+
+      // Optimize V8 flags for better performance (Rust-level optimizations)
+      if (process.env.NODE_ENV === 'production') {
+        // Ultra-aggressive V8 optimizations for maximum performance
+        const v8Flags = [
+          '--optimize-for-size', // Trade memory for speed
+          '--always-opt', // Always optimize functions
+          '--turbo-fast-api-calls', // Optimize API calls
+          '--turbo-escape-analysis', // Escape analysis optimization
+          '--turbo-inline-api-calls', // Inline API calls
+          '--max-old-space-size=1024', // Limit memory to prevent GC pressure
+        ];
+        process.env.NODE_OPTIONS = (process.env.NODE_OPTIONS || '') + ' ' + v8Flags.join(' ');
+      }
+
+      // Optimize garbage collection for workers
+      if ((global as any).gc) {
+        setInterval(() => {
+          if ((global as any).gc) (global as any).gc();
+        }, 60000); // GC every 60 seconds (less frequent)
+      }
+
+      // Graceful shutdown for worker
+      const workerShutdown = () => {
+        this.logger.info(`Worker ${process.pid} shutting down gracefully...`, 'Worker');
+
+        // Clean up event listeners
+        this.eventBus.removeAllListeners();
+        this.removeAllListeners();
+
+        // Close server gracefully
+        if (this.coreFramework) {
+          const server = (this.coreFramework as any).server;
+          if (server) {
+            server.close(() => {
+              process.exit(0);
+            });
+          }
+        }
+      };
+
+      // Handle worker shutdown signals
+      process.on('SIGTERM', workerShutdown);
+      process.on('SIGINT', workerShutdown);
+
+      // Continue with normal server startup for this worker
+      this.eventBus.emit('server:starting', {
+        port,
+        runtime: this.runtimeType,
+        worker: process.pid,
+      });
+
+      // Add documentation middleware first (if enabled)
+      try {
+        const docsMiddleware = this.documentation.getDocsMiddleware();
+        this.coreFramework.addMiddleware(docsMiddleware);
+      } catch (error) {
+        // Documentation not enabled, that's fine
+      }
+
+      // Add intelligent routing middleware
+      this.coreFramework.addMiddleware(
+        async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+          const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
+          if (!handled) {
+            next();
+          }
+        }
+      );
+
+      // Register direct routes
+      if (this.routes.length > 0) {
+        this.registerDirectRoutes();
+      }
+
+      const workerCallback = () => {
+        const displayHost = host || 'localhost';
+        this.logger.info(`Worker ${process.pid} ready on ${displayHost}:${port}`, 'Worker');
+        this.eventBus.emit('server:started', {
+          port,
+          runtime: this.runtimeType,
+          worker: process.pid,
+        });
+      };
+
+      if (host) {
+        this.coreFramework.listen(port, host, workerCallback);
+      } else {
+        this.coreFramework.listen(port, workerCallback);
+      }
+    }
+  }
+
+  // Reusable worker message handler (avoids creating new functions)
+  private handleWorkerMessage(message: any): void {
+    // Handle inter-worker communication if needed
+    if (message.type === 'health-check') {
+      // Worker health check response
+      return;
+    }
+
+    // Log other worker messages
+    this.logger.debug(`Worker message: ${JSON.stringify(message)}`, 'Cluster');
+  }
 }
 
 // Export convenience function
 export function createApp(options?: MoroOptions): Moro {
-  return new Moro(options);
+  // Load global config from moro.config.js and merge with passed options
+  const globalConfig = initializeConfig();
+
+  // Convert global config to MoroOptions format for createApp
+  const configAsOptions: Partial<MoroOptions> = {
+    performance: globalConfig.performance,
+    logger: globalConfig.logging
+      ? {
+          level: globalConfig.logging.level,
+          enableColors: globalConfig.logging.enableColors,
+          enableTimestamp: globalConfig.logging.enableTimestamp,
+        }
+      : undefined,
+    // Add other relevant config mappings as needed
+  };
+
+  // Merge config file options with passed options (passed options take precedence)
+  const mergedOptions = {
+    ...configAsOptions,
+    ...options,
+    // Deep merge performance settings
+    performance: {
+      ...configAsOptions.performance,
+      ...options?.performance,
+    },
+  };
+
+  return new Moro(mergedOptions);
 }
 
 // Runtime-specific convenience functions

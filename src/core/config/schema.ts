@@ -243,7 +243,7 @@ const PerformanceConfigSchema = z.object({
 
   clustering: z.object({
     enabled: z.coerce.boolean().default(false),
-    workers: z.coerce.number().min(1).default(1),
+    workers: z.union([z.coerce.number().min(1), z.literal('auto')]).default(1),
   }),
 });
 

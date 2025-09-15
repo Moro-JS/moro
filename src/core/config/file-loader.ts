@@ -23,11 +23,35 @@ export function loadConfigFileSync(cwd: string = process.cwd()): Partial<AppConf
     logger.debug('No configuration file found');
     return null;
   }
+  // Handle TypeScript files by trying dynamic import (works with tsx/ts-node runtimes)
+  if (configFile.endsWith('.ts')) {
+    logger.debug('Found TypeScript config file, attempting to load with dynamic import');
+    try {
+      // When running under tsx/ts-node, dynamic imports work synchronously for TypeScript
+      // We can use require() with the current environment that already has TypeScript support
+      const config = require(configFile);
+      const configData = config.default || config;
 
-  // Only support .js files for synchronous loading to avoid complexity
+      if (!configData || typeof configData !== 'object') {
+        logger.warn(`Configuration file ${configFile} did not export a valid configuration object`);
+        return null;
+      }
+
+      logger.info(`TypeScript configuration loaded from: ${configFile}`);
+      return configData;
+    } catch (error) {
+      logger.debug(
+        'TypeScript config loading failed in sync mode, this is expected if not running with tsx/ts-node'
+      );
+      logger.debug('Error details:', String(error));
+      return null;
+    }
+  }
+
+  // Only .js files use the standard synchronous loading
   if (!configFile.endsWith('.js')) {
     logger.debug(
-      'Found config file, but only JavaScript files are supported in sync mode. Use loadConfigFile() for TypeScript support.'
+      'Found config file with unsupported extension. Only .js and .ts files are supported.'
     );
     return null;
   }
@@ -129,7 +153,7 @@ async function importConfigFile(filePath: string): Promise<Partial<AppConfig> | 
       error.message.includes('Unknown file extension')
     ) {
       throw new Error(
-        `Failed to load TypeScript config file. Make sure you have ts-node installed: npm install --save-dev ts-node`
+        `Failed to load TypeScript config file. Run your application with tsx or ts-node: "tsx your-app.ts" or "ts-node your-app.ts"`
       );
     }
     throw error;
@@ -138,30 +162,15 @@ async function importConfigFile(filePath: string): Promise<Partial<AppConfig> | 
 
 /**
  * Setup TypeScript loader for .ts config files
+ * Note: This function is intentionally minimal because TypeScript config files
+ * should be handled by the runtime environment (tsx, ts-node, etc.) when the
+ * user runs their application, not by the framework itself.
  */
 async function setupTypeScriptLoader(): Promise<void> {
-  try {
-    // Try to register ts-node if available
-    const tsNode = await import('ts-node');
-    if (!tsNode.register) {
-      // ts-node might already be registered
-      return;
-    }
-
-    tsNode.register({
-      transpileOnly: true,
-      compilerOptions: {
-        module: 'commonjs',
-        target: 'es2020',
-        moduleResolution: 'node',
-        allowSyntheticDefaultImports: true,
-        esModuleInterop: true,
-      },
-    });
-  } catch (error) {
-    // ts-node not available, try other methods or fail gracefully
-    logger.debug('ts-node not available for TypeScript config loading');
-  }
+  // No-op: TypeScript loading is handled by the runtime environment
+  // When users run `tsx moro.config.ts` or `ts-node moro.config.ts`,
+  // the TypeScript transpilation is already handled by those tools.
+  logger.debug('TypeScript config loading delegated to runtime environment');
 }
 
 /**

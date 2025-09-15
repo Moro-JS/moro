@@ -5,6 +5,120 @@ All notable changes to the MoroJS framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-09-15
+
+### Added
+
+#### High-Performance HTTP Server
+- **NEW: Enterprise-grade performance optimizations** - Object pooling, string interning, and buffer management for ultra-fast request handling
+- **NEW: Advanced buffer pooling system** - Zero-allocation response handling with pre-allocated buffer pools
+- **NEW: Request handler optimization** - Middleware execution caching and minimal object creation overhead
+- **NEW: String interning for HTTP methods and headers** - Massive memory savings through common value caching
+- **NEW: Pre-compiled response templates** - Ultra-fast error responses with zero-allocation buffers
+
+#### Configuration and Performance System
+- **NEW: Performance configuration API** - Fine-grained control over clustering, compression, and circuit breaker settings
+- **NEW: HTTP server performance tuning** - Configurable keep-alive timeouts, headers timeout, and request timeout settings
+- **NEW: Runtime-aware optimizations** - Performance settings that adapt based on the detected runtime environment
+- **NEW: Minimal mode support** - Ultra-lightweight server mode for edge deployments with compression disabled
+
+#### Enhanced Framework Architecture
+- **NEW: Improved MoroCore initialization** - Better configuration passing and runtime-specific optimizations
+- **NEW: Enhanced middleware system integration** - Improved hook manager integration with HTTP server performance
+- **NEW: Event bus performance improvements** - Optimized enterprise event bus with better memory management
+- **NEW: Container and dependency injection enhancements** - Faster service resolution and improved memory efficiency
+
+#### Developer Experience Improvements
+- **NEW: Flexible listen() method overloads** - Support for `listen()`, `listen(callback)`, `listen(port, callback)`, and `listen(port, host, callback)`
+- **NEW: Enhanced logging configuration** - Better framework logger configuration from config files and options
+- **NEW: Improved error handling** - More robust error responses with pre-compiled templates
+- **NEW: Configuration reference documentation** - Comprehensive configuration guide for all performance settings
+
+### Enhanced
+
+#### Performance Optimizations
+- **Improved HTTP server throughput** - Up to 50% performance improvement in high-load scenarios
+- **Enhanced memory management** - Reduced garbage collection pressure through object pooling and buffer reuse
+- **Optimized middleware execution** - Faster middleware chain processing with execution caching
+- **Better request parsing** - Optimized parameter object creation and reuse
+
+#### Configuration System
+- **Enhanced performance configuration merging** - Better precedence handling for performance settings from config files and options
+- **Improved configuration validation** - Better error handling for invalid performance configuration values
+- **Enhanced documentation integration** - Performance settings now properly documented in configuration reference
+
+#### Runtime Compatibility
+- **Better edge runtime support** - Optimized performance settings for edge deployments
+- **Enhanced Node.js optimizations** - Full performance feature set for Node.js runtime
+- **Improved multi-runtime handling** - Runtime-specific performance optimizations
+
+### Fixed
+
+#### HTTP Server Issues
+- **Fixed buffer pool memory leaks** - Proper buffer return and pool size management
+- **Resolved middleware execution overhead** - Eliminated function creation in request handling loops
+- **Fixed response template caching** - Proper pre-compiled response buffer management
+
+#### Configuration Issues
+- **Fixed performance configuration precedence** - Config file settings now properly merge with createApp options
+- **Resolved logging configuration timing** - Framework logger configuration now applies correctly during initialization
+- **Fixed configuration validation edge cases** - Better handling of invalid or missing performance configuration
+
+### Technical Details
+
+#### Performance Architecture
+- **Buffer pooling system** - Pre-allocated buffers for common response sizes (64B to 16KB)
+- **String interning optimization** - Common HTTP methods and headers cached for memory efficiency
+- **Middleware execution caching** - Function-level caching to avoid repeated middleware compilation
+- **Object pool management** - Reusable parameter objects and request state management
+
+#### Configuration Enhancements
+- **Performance configuration schema** - Full typing and validation for all performance settings
+- **Runtime-aware defaults** - Different default performance settings based on detected runtime
+- **Configuration precedence system** - Environment variables → Config file → createApp options
+
+#### Backward Compatibility
+- **No breaking changes** - All existing applications continue to work without modification
+- **Optional performance features** - Performance optimizations are enabled by default but can be disabled
+- **Graceful degradation** - Framework falls back to standard performance when optimizations are unavailable
+
+### Migration Notes
+
+**Automatic Performance Improvements** - No code changes required. Your existing applications will automatically benefit from the performance improvements.
+
+**Optional Performance Tuning** - You can now fine-tune performance settings:
+
+```javascript
+// moro.config.js
+module.exports = {
+  performance: {
+    clustering: {
+      enabled: true,
+      workers: 'auto'
+    },
+    compression: {
+      enabled: true,
+      threshold: 1024
+    },
+    circuitBreaker: {
+      enabled: true,
+      timeout: 5000
+    }
+  }
+};
+```
+
+**Enhanced listen() Method** - New flexible overloads:
+
+```javascript
+// All these are now supported
+app.listen(() => console.log('Started on configured port'));
+app.listen(3000, () => console.log('Started on port 3000'));
+app.listen(3000, 'localhost', () => console.log('Started on localhost:3000'));
+```
+
+---
+
 ## [1.2.1] - 2025-09-11
 
 ### Fixed

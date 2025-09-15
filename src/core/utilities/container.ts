@@ -699,6 +699,7 @@ export class ServiceRegistrationBuilder<T> {
 // Standard Container class
 export class Container {
   private functionalContainer = new FunctionalContainer();
+  private resolutionCache = new Map<string, any>();
 
   register<T>(name: string, factory: () => T, singleton = false): void {
     this.functionalContainer
@@ -709,7 +710,19 @@ export class Container {
   }
 
   resolve<T>(name: string): T {
-    return this.functionalContainer.resolveSync<T>(name);
+    // Fast path for cached resolutions
+    if (this.resolutionCache.has(name)) {
+      return this.resolutionCache.get(name);
+    }
+
+    const resolved = this.functionalContainer.resolveSync<T>(name);
+
+    // Cache result (limit cache size)
+    if (this.resolutionCache.size < 50) {
+      this.resolutionCache.set(name, resolved);
+    }
+
+    return resolved;
   }
 
   has(name: string): boolean {

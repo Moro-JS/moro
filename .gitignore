@@ -11,3 +11,4 @@ dist
 .prettierrc
 .cursorignore
 coverage/
+docs-*

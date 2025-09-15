@@ -36,7 +36,7 @@ npm init -y
 
 ```bash
 npm install moro
-npm install -D @types/node typescript ts-node-dev
+npm install -D @types/node typescript tsx
 ```
 
 ### Setup TypeScript
@@ -69,7 +69,7 @@ Add scripts to your `package.json`:
 ```json
 {
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js"
   }
