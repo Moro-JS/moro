@@ -95,6 +95,28 @@ export class Moro extends EventEmitter {
       }
     }
 
+    // Apply modules configuration from createApp options (takes precedence)
+    if (options.modules) {
+      if (options.modules.cache) {
+        this.config.modules.cache = {
+          ...this.config.modules.cache,
+          ...options.modules.cache,
+        };
+      }
+      if (options.modules.rateLimit) {
+        this.config.modules.rateLimit = {
+          ...this.config.modules.rateLimit,
+          ...options.modules.rateLimit,
+        };
+      }
+      if (options.modules.validation) {
+        this.config.modules.validation = {
+          ...this.config.modules.validation,
+          ...options.modules.validation,
+        };
+      }
+    }
+
     this.logger.info(
       `Configuration system initialized: ${this.config.server.environment}:${this.config.server.port}`
     );
@@ -713,6 +735,14 @@ export class Moro extends EventEmitter {
     return this.coreFramework;
   }
 
+  // Force cleanup of pooled objects
+  forceCleanup(): void {
+    const httpServer = (this.coreFramework as any).httpServer;
+    if (httpServer && httpServer.forceCleanup) {
+      httpServer.forceCleanup();
+    }
+  }
+
   // Private methods
   private addRoute(method: string, path: string, handler: Function, options: any = {}) {
     const handlerName = `handler_${this.routes.length}`;
@@ -1134,34 +1164,7 @@ export class Moro extends EventEmitter {
 
 // Export convenience function
 export function createApp(options?: MoroOptions): Moro {
-  // Load global config from moro.config.js and merge with passed options
-  const globalConfig = initializeConfig();
-
-  // Convert global config to MoroOptions format for createApp
-  const configAsOptions: Partial<MoroOptions> = {
-    performance: globalConfig.performance,
-    logger: globalConfig.logging
-      ? {
-          level: globalConfig.logging.level,
-          enableColors: globalConfig.logging.enableColors,
-          enableTimestamp: globalConfig.logging.enableTimestamp,
-        }
-      : undefined,
-    // Add other relevant config mappings as needed
-  };
-
-  // Merge config file options with passed options (passed options take precedence)
-  const mergedOptions = {
-    ...configAsOptions,
-    ...options,
-    // Deep merge performance settings
-    performance: {
-      ...configAsOptions.performance,
-      ...options?.performance,
-    },
-  };
-
-  return new Moro(mergedOptions);
+  return new Moro(options);
 }
 
 // Runtime-specific convenience functions

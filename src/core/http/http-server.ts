@@ -18,7 +18,7 @@ export class MoroHttpServer {
   private hookManager: any;
   private requestCounter = 0;
 
-  // Minimal object pooling for frequently created objects
+  // Efficient object pooling with minimal overhead
   private paramObjectPool: Record<string, string>[] = [];
   private bufferPool: Buffer[] = [];
   private readonly maxPoolSize = 50;
@@ -213,6 +213,9 @@ export class MoroHttpServer {
     const httpReq = this.enhanceRequest(req);
     const httpRes = this.enhanceResponse(res);
 
+    // Store original params for efficient cleanup
+    const originalParams = httpReq.params;
+
     try {
       // Optimized URL and query parsing
       const urlString = req.url!;
@@ -327,15 +330,47 @@ export class MoroHttpServer {
           }
         }
       }
+    } finally {
+      // CRITICAL: Always release pooled objects back to the pool
+      // This prevents memory leaks and ensures consistent performance
+      if (originalParams && Object.keys(originalParams).length === 0) {
+        this.releaseParamObject(originalParams);
+      }
+      if (
+        httpReq.params &&
+        httpReq.params !== originalParams &&
+        Object.keys(httpReq.params).length === 0
+      ) {
+        this.releaseParamObject(httpReq.params);
+      }
     }
+
+    // Additional cleanup on response completion to ensure objects are returned to pool
+    res.once('finish', () => {
+      if (originalParams && Object.keys(originalParams).length === 0) {
+        this.releaseParamObject(originalParams);
+      }
+      if (
+        httpReq.params &&
+        httpReq.params !== originalParams &&
+        Object.keys(httpReq.params).length === 0
+      ) {
+        this.releaseParamObject(httpReq.params);
+      }
+    });
   }
 
-  // Object pooling for parameter objects
+  // Efficient object pooling for parameter objects with ES2022 optimizations
   private acquireParamObject(): Record<string, string> {
     const obj = this.paramObjectPool.pop();
     if (obj) {
-      // Clear existing properties
-      Object.keys(obj).forEach(key => delete obj[key]);
+      // ES2022: Use Object.hasOwn for safer property checks and faster clearing
+      // Clear existing properties more efficiently
+      for (const key in obj) {
+        if (Object.hasOwn(obj, key)) {
+          delete obj[key];
+        }
+      }
       return obj;
     }
     return {};
@@ -347,10 +382,24 @@ export class MoroHttpServer {
     }
   }
 
+  // Force cleanup of all pooled objects
+  private forceCleanupPools(): void {
+    // ES2022: More efficient array clearing
+    this.paramObjectPool.splice(0);
+    this.bufferPool.splice(0);
+
+    // Force garbage collection if available
+    // Use modern globalThis check with optional chaining
+    if (globalThis?.gc) {
+      globalThis.gc();
+    }
+  }
+
   private acquireBuffer(size: number): Buffer {
-    const buffer = this.bufferPool.find(b => b.length >= size);
-    if (buffer) {
-      this.bufferPool.splice(this.bufferPool.indexOf(buffer), 1);
+    // ES2022: Use findIndex for better performance than find + indexOf
+    const index = this.bufferPool.findIndex(b => b.length >= size);
+    if (index !== -1) {
+      const buffer = this.bufferPool.splice(index, 1)[0];
       return buffer.subarray(0, size);
     }
     return Buffer.allocUnsafe(size);
@@ -891,6 +940,11 @@ export class MoroHttpServer {
     return new Promise(resolve => {
       this.server.close(() => resolve());
     });
+  }
+
+  // Public method to force cleanup
+  forceCleanup(): void {
+    this.forceCleanupPools();
   }
 
   getServer(): Server {

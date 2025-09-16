@@ -14,6 +14,27 @@ export interface MoroOptions {
   runtime?: RuntimeConfig;
   // Logger configuration
   logger?: LoggerOptions | boolean;
+  // Module configuration
+  modules?: {
+    cache?: {
+      enabled?: boolean;
+      defaultTtl?: number;
+      maxSize?: number;
+      strategy?: 'lru' | 'lfu' | 'fifo';
+    };
+    rateLimit?: {
+      enabled?: boolean;
+      defaultRequests?: number;
+      defaultWindow?: number;
+      skipSuccessfulRequests?: boolean;
+      skipFailedRequests?: boolean;
+    };
+    validation?: {
+      enabled?: boolean;
+      stripUnknown?: boolean;
+      abortEarly?: boolean;
+    };
+  };
   // Performance configuration
   performance?: {
     clustering?: {
