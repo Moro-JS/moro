@@ -11,12 +11,7 @@ import {
 } from './schema-interface';
 
 // Re-export zod if available (for backward compatibility)
-let z: any;
-try {
-  z = require('zod').z;
-} catch {
-  // Zod not available - that's fine!
-}
+// The dynamic import is handled in the main index.ts
 
 const logger = createFrameworkLogger('Validation');
 
@@ -208,5 +203,4 @@ export {
 } from './schema-interface';
 export { joi, yup, fn as customValidator, classValidator } from './adapters';
 
-// Re-export Zod if available (optional dependency)
-export { z };
+// Note: z is re-exported from main index.ts with dynamic import

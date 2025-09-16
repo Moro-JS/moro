@@ -1,5 +1,5 @@
-// TypeScript-based Configuration Validation
-// Simple validation functions that replace Zod for config system
+// Configuration Validation Functions
+// Validation for config system with simple TypeScript functions
 
 export class ConfigValidationError extends Error {
   constructor(
@@ -12,7 +12,7 @@ export class ConfigValidationError extends Error {
   }
 }
 
-// Type-safe validation functions
+// Type-safe validation functions for configuration
 export function validatePort(value: unknown, field = 'port'): number {
   const num = Number(value);
   if (isNaN(num) || num < 1 || num > 65535) {
@@ -76,7 +76,7 @@ export function validateEnum<T extends string>(
   return str as T;
 }
 
-export function validateArray(value: unknown, field = 'array'): unknown[] {
+export function validateStringArray(value: unknown, field = 'string array'): string[] {
   if (!Array.isArray(value)) {
     // Try to parse comma-separated string
     if (typeof value === 'string') {
@@ -87,12 +87,7 @@ export function validateArray(value: unknown, field = 'array'): unknown[] {
     }
     throw new ConfigValidationError(field, value, 'Must be an array or comma-separated string');
   }
-  return value;
-}
-
-export function validateStringArray(value: unknown, field = 'string array'): string[] {
-  const arr = validateArray(value, field);
-  return arr.map((item, index) => validateString(item, `${field}[${index}]`));
+  return value.map((item, index) => validateString(item, `${field}[${index}]`));
 }
 
 export function validateOptional<T>(

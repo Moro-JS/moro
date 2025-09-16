@@ -1,5 +1,5 @@
 // Moro Framework Documentation System
-// Automatic API documentation generation from intelligent routes and Zod schemas
+// Automatic API documentation generation from intelligent routes and Validation schemas
 
 import { CompiledRoute } from '../routing';
 import { IntelligentRoutingManager } from '../routing/app-integration';

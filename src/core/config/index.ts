@@ -4,9 +4,6 @@ export * from './loader';
 export * from './utils';
 export * from './file-loader';
 
-// Re-export common Zod utilities for configuration
-export { z } from 'zod';
-
 // Main configuration loading function
 import { loadConfig } from './loader';
 import type { AppConfig } from './schema';

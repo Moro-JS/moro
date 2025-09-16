@@ -770,25 +770,26 @@ export class Moro extends EventEmitter {
           // Enhance request with events property for direct routes
           req.events = this.eventBus;
 
-          // Validation middleware (Zod-only)
+          // Universal validation middleware (works with any ValidationSchema)
           if (route.validation) {
             try {
-              const validated = route.validation.parse(req.body);
+              const validated = await route.validation.parseAsync(req.body);
               req.body = validated;
             } catch (error: any) {
-              if (error.issues) {
-                res.status(400).json({
-                  success: false,
-                  error: 'Validation failed',
-                  details: error.issues.map((issue: any) => ({
-                    field: issue.path.length > 0 ? issue.path.join('.') : 'body',
-                    message: issue.message,
-                    code: issue.code,
-                  })),
-                });
-                return;
-              }
-              throw error;
+              // Handle universal validation errors
+              const { normalizeValidationError } = require('./core/validation/schema-interface');
+              const normalizedError = normalizeValidationError(error);
+              res.status(400).json({
+                success: false,
+                error: 'Validation failed',
+                details: normalizedError.issues.map((issue: any) => ({
+                  field: issue.path.length > 0 ? issue.path.join('.') : 'body',
+                  message: issue.message,
+                  code: issue.code,
+                })),
+                requestId: req.requestId,
+              });
+              return;
             }
           }
 

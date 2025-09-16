@@ -106,7 +106,17 @@ export type {
 export { createFrameworkLogger, logger } from './core/logger';
 
 // Universal Validation System
-export { validate, body, query, params, combineSchemas, z } from './core/validation';
+export { validate, body, query, params, combineSchemas } from './core/validation';
+
+// Dynamic Zod export (optional dependency)
+let z: any;
+try {
+  z = require('zod').z;
+} catch {
+  // Zod not available - that's fine!
+  z = undefined;
+}
+export { z };
 export type {
   ValidationConfig,
   ValidationResult,

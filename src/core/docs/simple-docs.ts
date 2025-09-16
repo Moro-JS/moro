@@ -132,7 +132,7 @@ export class SimpleDocsGenerator {
   <div class="container">
     <h1>${this.options.title}</h1>
     <p>${this.options.description}</p>
-    
+
     <div class="example">
       <strong>Interactive Swagger UI:</strong> <a href="${this.options.basePath}" target="_blank">${this.options.basePath}</a><br>
       <strong>OpenAPI JSON:</strong> <a href="${this.options.basePath}/openapi.json" target="_blank">${this.options.basePath}/openapi.json</a>
@@ -189,11 +189,11 @@ export class SimpleDocsGenerator {
         <span class="method ${route.method}">${route.method}</span>
         <span class="path">${route.path}</span>
       </div>
-      
+
       ${route.description ? `<div class="description">${route.description}</div>` : ''}
-      
+
       ${route.tags ? `<div class="tags">${route.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>` : ''}
-      
+
       ${this.generateValidationInfo(route)}
       ${this.generateAuthInfo(route)}
       ${this.generateRateLimitInfo(route)}
@@ -215,7 +215,7 @@ export class SimpleDocsGenerator {
     return `
     <div class="validation">
       <strong>Validation:</strong> ${validationTypes.join(', ')}
-      <br><small>Request will be validated with Zod schemas for type safety</small>
+      <br><small>Request will be validated with Validation schemas for type safety</small>
     </div>`;
   }
 

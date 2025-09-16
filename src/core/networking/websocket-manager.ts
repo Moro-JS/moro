@@ -128,26 +128,26 @@ export class WebSocketManager {
           return;
         }
 
-        // Validation using Zod
+        // Universal validation (works with any ValidationSchema)
         if (wsConfig.validation) {
           try {
-            data = wsConfig.validation.parse(data);
+            data = await wsConfig.validation.parseAsync(data);
           } catch (validationError: any) {
-            if (validationError.issues) {
-              const error = {
-                success: false,
-                error: 'Validation failed',
-                details: validationError.issues.map((issue: any) => ({
-                  field: issue.path.length > 0 ? issue.path.join('.') : 'data',
-                  message: issue.message,
-                  code: issue.code,
-                })),
-              };
-              if (callback) callback(error);
-              else socket.emit('error', error);
-              return;
-            }
-            throw validationError;
+            // Handle universal validation errors
+            const { normalizeValidationError } = require('../validation/schema-interface');
+            const normalizedError = normalizeValidationError(validationError);
+            const error = {
+              success: false,
+              error: 'Validation failed',
+              details: normalizedError.issues.map((issue: any) => ({
+                field: issue.path.length > 0 ? issue.path.join('.') : 'data',
+                message: issue.message,
+                code: issue.code,
+              })),
+            };
+            if (callback) callback(error);
+            else socket.emit('error', error);
+            return;
           }
         }
 

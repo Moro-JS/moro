@@ -1,21 +1,39 @@
 // Zod to OpenAPI Schema Converter
 // Transforms Zod schemas into OpenAPI 3.0 schema definitions
 
-import {
-  ZodSchema,
-  ZodType,
-  ZodObject,
-  ZodArray,
-  ZodString,
-  ZodNumber,
-  ZodBoolean,
-  ZodEnum,
-  ZodOptional,
-  ZodDefault,
-  ZodUnion,
-  ZodLiteral,
-} from 'zod';
 import { createFrameworkLogger } from '../logger';
+
+// Dynamic Zod imports (optional dependency)
+let ZodSchema: any,
+  ZodType: any,
+  ZodObject: any,
+  ZodArray: any,
+  ZodString: any,
+  ZodNumber: any,
+  ZodBoolean: any,
+  ZodEnum: any,
+  ZodOptional: any,
+  ZodDefault: any,
+  ZodUnion: any,
+  ZodLiteral: any;
+
+try {
+  const zod = require('zod');
+  ZodSchema = zod.ZodSchema;
+  ZodType = zod.ZodType;
+  ZodObject = zod.ZodObject;
+  ZodArray = zod.ZodArray;
+  ZodString = zod.ZodString;
+  ZodNumber = zod.ZodNumber;
+  ZodBoolean = zod.ZodBoolean;
+  ZodEnum = zod.ZodEnum;
+  ZodOptional = zod.ZodOptional;
+  ZodDefault = zod.ZodDefault;
+  ZodUnion = zod.ZodUnion;
+  ZodLiteral = zod.ZodLiteral;
+} catch {
+  // Zod not available - that's fine!
+}
 
 const logger = createFrameworkLogger('ZodToOpenAPI');
 
@@ -52,7 +70,12 @@ export interface ConversionOptions {
 }
 
 // Main conversion function
-export function zodToOpenAPI(schema: ZodSchema, options: ConversionOptions = {}): OpenAPISchema {
+export function zodToOpenAPI(schema: any, options: ConversionOptions = {}): OpenAPISchema {
+  // Check if Zod is available
+  if (!ZodSchema) {
+    throw new Error('Zod is not installed. Please install zod to use zodToOpenAPI function.');
+  }
+
   const opts = {
     includeExamples: true,
     includeDescriptions: true,
@@ -367,7 +390,7 @@ function convertZodDefault(def: any, options: ConversionOptions): OpenAPISchema 
 
 // Convert ZodUnion
 function convertZodUnion(def: any, options: ConversionOptions): OpenAPISchema {
-  const schemas = def.options.map((option: ZodType) => convertZodType(option._def, options));
+  const schemas = def.options.map((option: any) => convertZodType(option._def, options));
 
   return {
     oneOf: schemas,
@@ -386,16 +409,23 @@ function convertZodLiteral(def: any, options: ConversionOptions): OpenAPISchema 
 }
 
 // Helper functions
-function isOptionalType(type: ZodType): boolean {
+function isOptionalType(type: any): boolean {
   return (type._def as any).typeName === 'ZodOptional';
 }
 
-function hasDefault(type: ZodType): boolean {
+function hasDefault(type: any): boolean {
   return (type._def as any).typeName === 'ZodDefault';
 }
 
 // Generate example data from Zod schema
-export function generateExampleFromSchema(schema: ZodSchema): any {
+export function generateExampleFromSchema(schema: any): any {
+  // Check if Zod is available
+  if (!ZodSchema) {
+    throw new Error(
+      'Zod is not installed. Please install zod to use generateExampleFromSchema function.'
+    );
+  }
+
   try {
     return generateExample(schema._def);
   } catch (error) {
@@ -441,7 +471,7 @@ function generateExample(def: any): any {
         }
 
         for (const [key, value] of Object.entries(shape)) {
-          const zodType = value as ZodType;
+          const zodType = value as any;
           if (!isOptionalType(zodType)) {
             example[key] = generateExample(zodType._def);
           }

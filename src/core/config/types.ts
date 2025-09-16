@@ -1,5 +1,4 @@
 // TypeScript-based Configuration Types for Moro Framework
-// Replaces Zod schemas with pure TypeScript interfaces
 
 export interface ServerConfig {
   port: number;

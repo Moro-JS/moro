@@ -1,5 +1,4 @@
 // Configuration Utilities for Modules and Environment Handling
-import { z } from 'zod';
 import { AppConfig } from './schema';
 import { createFrameworkLogger } from '../logger';
 
@@ -66,7 +65,7 @@ function coerceEnvironmentValue(value: string): any {
  * Create module-specific configuration with environment override support
  */
 export function createModuleConfig<T>(
-  schema: z.ZodSchema<T>,
+  schema: { parse: (data: any) => T },
   defaultConfig: Partial<T>,
   envPrefix?: string
 ): T {
