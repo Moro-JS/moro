@@ -1,5 +1,7 @@
 // Core Configuration Schema for Moro Framework
 
+import { AppConfig } from '../../types/config';
+
 // Default configuration values
 export const DEFAULT_CONFIG: AppConfig = {
   server: {
@@ -124,161 +126,18 @@ export const ConfigSchema = {
   parse: (data: any): AppConfig => data as AppConfig,
 };
 
-// TypeScript interfaces
-export interface AppConfig {
-  server: ServerConfig;
-  serviceDiscovery: ServiceDiscoveryConfig;
-  database: DatabaseConfig;
-  modules: ModuleDefaultsConfig;
-  logging: LoggingConfig;
-  security: SecurityConfig;
-  external: ExternalServicesConfig;
-  performance: PerformanceConfig;
-}
-
-export interface ServerConfig {
-  port: number;
-  host: string;
-  environment: 'development' | 'staging' | 'production';
-  maxConnections: number;
-  timeout: number;
-}
-
-export interface ServiceDiscoveryConfig {
-  enabled: boolean;
-  type: 'memory' | 'consul' | 'kubernetes';
-  consulUrl: string;
-  kubernetesNamespace: string;
-  healthCheckInterval: number;
-  retryAttempts: number;
-}
-
-export interface DatabaseConfig {
-  url?: string;
-  redis: {
-    url: string;
-    maxRetries: number;
-    retryDelay: number;
-    keyPrefix: string;
-  };
-  mysql?: {
-    host: string;
-    port: number;
-    database?: string;
-    username?: string;
-    password?: string;
-    connectionLimit: number;
-    acquireTimeout: number;
-    timeout: number;
-  };
-}
-
-export interface ModuleDefaultsConfig {
-  cache: {
-    enabled: boolean;
-    defaultTtl: number;
-    maxSize: number;
-    strategy: 'lru' | 'lfu' | 'fifo';
-  };
-  rateLimit: {
-    enabled: boolean;
-    defaultRequests: number;
-    defaultWindow: number;
-    skipSuccessfulRequests: boolean;
-    skipFailedRequests: boolean;
-  };
-  validation: {
-    enabled: boolean;
-    stripUnknown: boolean;
-    abortEarly: boolean;
-  };
-}
-
-export interface LoggingConfig {
-  level: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
-  format: 'pretty' | 'json' | 'compact';
-  enableColors: boolean;
-  enableTimestamp: boolean;
-  enableContext: boolean;
-  outputs: {
-    console: boolean;
-    file: {
-      enabled: boolean;
-      path: string;
-      maxSize: string;
-      maxFiles: number;
-    };
-    webhook: {
-      enabled: boolean;
-      url?: string;
-      headers: Record<string, string>;
-    };
-  };
-}
-
-export interface SecurityConfig {
-  cors: {
-    enabled: boolean;
-    origin: string | string[] | boolean;
-    methods: string[];
-    allowedHeaders: string[];
-    credentials: boolean;
-  };
-  helmet: {
-    enabled: boolean;
-    contentSecurityPolicy: boolean;
-    hsts: boolean;
-    noSniff: boolean;
-    frameguard: boolean;
-  };
-  rateLimit: {
-    global: {
-      enabled: boolean;
-      requests: number;
-      window: number;
-    };
-  };
-}
-
-export interface ExternalServicesConfig {
-  stripe?: {
-    secretKey?: string;
-    publishableKey?: string;
-    webhookSecret?: string;
-    apiVersion: string;
-  };
-  paypal?: {
-    clientId?: string;
-    clientSecret?: string;
-    webhookId?: string;
-    environment: 'sandbox' | 'production';
-  };
-  smtp?: {
-    host?: string;
-    port: number;
-    secure: boolean;
-    username?: string;
-    password?: string;
-  };
-}
-
-export interface PerformanceConfig {
-  compression: {
-    enabled: boolean;
-    level: number;
-    threshold: number;
-  };
-  circuitBreaker: {
-    enabled: boolean;
-    failureThreshold: number;
-    resetTimeout: number;
-    monitoringPeriod: number;
-  };
-  clustering: {
-    enabled: boolean;
-    workers: number | 'auto';
-  };
-}
+// Re-export types for backward compatibility
+export type {
+  AppConfig,
+  ServerConfig,
+  ServiceDiscoveryConfig,
+  DatabaseConfig,
+  ModuleDefaultsConfig,
+  LoggingConfig,
+  SecurityConfig,
+  ExternalServicesConfig,
+  PerformanceConfig,
+} from '../../types/config';
 
 // For backward compatibility with modules that expect schema objects
 export const ServerConfigSchema = { parse: (data: any) => data };

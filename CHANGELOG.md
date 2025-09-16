@@ -5,6 +5,45 @@ All notable changes to the MoroJS framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2025-01-16
+
+### Added
+
+#### Universal Validation System
+- **NEW: Zero-dependency core framework** - Core framework now has zero dependencies
+- **NEW: Universal validation interface** - Single ValidationSchema interface supporting multiple validation libraries
+- **NEW: Optional peer dependencies** - All validation libraries (Zod, Joi, Yup, class-validator) are now optional
+- **NEW: Dynamic validation loading** - Validation libraries loaded only when available
+- **NEW: Universal error handling** - Consistent validation error format across all libraries
+- **NEW: TypeScript-based configuration** - Pure TypeScript interfaces replace Zod schemas in core config
+
+#### Enhanced Developer Experience
+- **NEW: Complete validation library choice** - Users can choose any validation library or none at all
+- **NEW: Backward compatibility** - All existing code works unchanged
+- **NEW: Smaller bundle size** - Reduced framework size with optional dependencies
+- **NEW: Faster startup** - Improved performance with zero core dependencies
+
+### Changed
+
+#### Configuration System
+- **CHANGED: Core configuration** - Replaced Zod schemas with TypeScript interfaces
+- **CHANGED: Environment variable handling** - Enhanced type coercion and validation
+- **CHANGED: Validation middleware** - Updated to use universal ValidationSchema interface
+- **CHANGED: WebSocket validation** - Universal validation across HTTP and WebSocket
+
+#### Project Structure
+- **CHANGED: Type organization** - Moved configuration types to proper types directory
+- **CHANGED: Dependency management** - All validation libraries moved to peerDependencies
+
+### Technical Improvements
+- **IMPROVED: Bundle optimization** - Smaller production bundles
+- **IMPROVED: Memory usage** - Reduced memory footprint
+- **IMPROVED: Type safety** - Enhanced TypeScript integration
+- **IMPROVED: Error handling** - Universal error normalization
+
+### Breaking Changes
+- **NONE** - This release maintains 100% backward compatibility
+
 ## [1.4.0] - 2024-12-15
 
 ### Added
