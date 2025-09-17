@@ -1,5 +1,6 @@
 // Test Setup - Global configuration and utilities for MoroJS tests
-import { jest, beforeEach, afterEach } from '@jest/globals';
+import { jest, beforeEach, afterEach, afterAll } from '@jest/globals';
+import { logger } from '../src/core/logger';
 
 // Set up minimal test environment configuration for MoroJS
 process.env.NODE_ENV = 'development';
@@ -37,6 +38,11 @@ afterEach(() => {
   console.warn = originalConsoleWarn;
 });
 
+afterAll(() => {
+  // Cleanup logger to prevent Jest open handles
+  logger.cleanup();
+});
+
 // Global test helpers
 export const createTestPort = () => 3000 + Math.floor(Math.random() * 1000);
 
@@ -53,4 +59,4 @@ export const waitForServer = async (port: number, maxAttempts = 10): Promise<boo
     await delay(100);
   }
   return false;
-}; 
+};

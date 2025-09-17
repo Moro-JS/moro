@@ -1,6 +1,8 @@
 // Service Discovery Client for Microservices
 // Supports Consul, Kubernetes, and in-memory registry
 
+import { logger, createFrameworkLogger } from '../logger';
+
 export interface ServiceInfo {
   name: string;
   host: string;
@@ -23,6 +25,7 @@ export class ServiceRegistry {
   private services = new Map<string, ServiceInfo[]>();
   private options: ServiceDiscoveryOptions;
   private healthCheckInterval?: NodeJS.Timeout;
+  private serviceLogger = createFrameworkLogger('SERVICE_DISCOVERY');
 
   constructor(options: ServiceDiscoveryOptions) {
     this.options = options;
@@ -44,7 +47,7 @@ export class ServiceRegistry {
         break;
     }
 
-    console.log(`Service registered: ${name}@${service.host}:${service.port}`);
+    this.serviceLogger.info(`Service registered: ${name}@${service.host}:${service.port}`);
   }
 
   async discover(serviceName: string): Promise<ServiceInfo[]> {
@@ -73,7 +76,7 @@ export class ServiceRegistry {
         break;
     }
 
-    console.log(`Service deregistered: ${serviceName}`);
+    this.serviceLogger.info(`Service deregistered: ${serviceName}`);
   }
 
   // In-memory registry methods
@@ -121,7 +124,9 @@ export class ServiceRegistry {
         throw new Error(`Consul registration failed: ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Failed to register with Consul:', error);
+      this.serviceLogger.error('Failed to register with Consul:', 'ServiceRegistry', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Fallback to in-memory
       this.registerInMemory(service);
     }
@@ -150,7 +155,9 @@ export class ServiceRegistry {
         metadata: entry.Service.Meta,
       }));
     } catch (error) {
-      console.error('Failed to discover from Consul:', error);
+      this.serviceLogger.error('Failed to discover from Consul:', 'ServiceRegistry', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return this.discoverFromMemory(serviceName);
     }
   }
@@ -163,7 +170,9 @@ export class ServiceRegistry {
         method: 'PUT',
       });
     } catch (error) {
-      console.error('Failed to deregister from Consul:', error);
+      this.serviceLogger.error('Failed to deregister from Consul:', 'ServiceRegistry', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -171,7 +180,7 @@ export class ServiceRegistry {
   private async registerWithKubernetes(service: ServiceInfo): Promise<void> {
     // In Kubernetes, services are registered via Service/Endpoints resources
     // This would typically be handled by the K8s API, not application code
-    console.log(`K8s service registration: ${service.name} (handled by Kubernetes)`);
+    this.serviceLogger.info(`K8s service registration: ${service.name} (handled by Kubernetes)`);
 
     // Fallback to in-memory for local development
     this.registerInMemory(service);
@@ -196,7 +205,9 @@ export class ServiceRegistry {
         },
       ];
     } catch (error) {
-      console.error('Failed to discover from Kubernetes:', error);
+      this.serviceLogger.error('Failed to discover from Kubernetes:', 'ServiceRegistry', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return this.discoverFromMemory(serviceName);
     }
   }
@@ -224,12 +235,16 @@ export class ServiceRegistry {
             );
 
             if (!response.ok) {
-              console.warn(`Health check failed for ${serviceName}: ${response.statusText}`);
+              this.serviceLogger.warn(
+                `Health check failed for ${serviceName}: ${response.statusText}`
+              );
               // Remove unhealthy service
               this.removeUnhealthyService(serviceName, service);
             }
           } catch (error) {
-            console.warn(`Health check failed for ${serviceName}:`, error);
+            this.serviceLogger.warn(`Health check failed for ${serviceName}:`, 'ServiceRegistry', {
+              error: error instanceof Error ? error.message : String(error),
+            });
             this.removeUnhealthyService(serviceName, service);
           }
         }

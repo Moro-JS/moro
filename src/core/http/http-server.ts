@@ -281,12 +281,18 @@ export class MoroHttpServer {
       await route.handler(httpReq, httpRes);
     } catch (error) {
       // Debug: Log the actual error and where it came from
-      console.log('🚨 MoroJS Request Error Details:');
-      console.log('📍 Error type:', typeof error);
-      console.log('📍 Error message:', error instanceof Error ? error.message : String(error));
-      console.log('📍 Error stack:', error instanceof Error ? error.stack : 'No stack trace');
-      console.log('📍 Request path:', req.url);
-      console.log('📍 Request method:', req.method);
+      this.logger.debug('🚨 MoroJS Request Error Details:', 'RequestHandler');
+      this.logger.debug(`📍 Error type: ${typeof error}`, 'RequestHandler');
+      this.logger.debug(
+        `📍 Error message: ${error instanceof Error ? error.message : String(error)}`,
+        'RequestHandler'
+      );
+      this.logger.debug(
+        `📍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`,
+        'RequestHandler'
+      );
+      this.logger.debug(`📍 Request path: ${req.url}`, 'RequestHandler');
+      this.logger.debug(`📍 Request method: ${req.method}`, 'RequestHandler');
 
       this.logger.error('Request error', 'RequestHandler', {
         error: error instanceof Error ? error.message : String(error),
@@ -310,10 +316,13 @@ export class MoroHttpServer {
             httpRes.setHeader('Content-Type', 'application/json');
           } else {
             // Even setHeader doesn't exist - object is completely wrong
-            console.error(
+            this.logger.error(
               '❌ Response object is not a proper ServerResponse:',
-              typeof httpRes,
-              Object.keys(httpRes)
+              'RequestHandler',
+              {
+                responseType: typeof httpRes,
+                responseKeys: Object.keys(httpRes),
+              }
             );
           }
 
@@ -326,7 +335,10 @@ export class MoroHttpServer {
               })
             );
           } else {
-            console.error('❌ Cannot send error response - end() method missing');
+            this.logger.error(
+              '❌ Cannot send error response - end() method missing',
+              'RequestHandler'
+            );
           }
         }
       }

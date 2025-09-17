@@ -29,6 +29,7 @@ export class FileOutput implements LogOutput {
 
       // TODO: Implement log rotation if needed
     } catch (error) {
+      // Use console.error as fallback since this is the logger itself
       console.error('File logger error:', error);
     }
   }
@@ -76,6 +77,7 @@ export class WebhookOutput implements LogOutput {
         throw new Error(`Webhook failed: ${response.status}`);
       }
     } catch (error) {
+      // Use console.error as fallback since this is the logger itself
       console.error('Webhook logger error:', error);
     }
   }

@@ -9,6 +9,7 @@ import {
   WebSocketEmitter,
   WebSocketMiddleware,
 } from '../websocket-adapter';
+import { createFrameworkLogger } from '../../logger';
 
 /**
  * Native WebSocket adapter using the 'ws' library
@@ -20,6 +21,7 @@ export class WSAdapter implements WebSocketAdapter {
   private connections = new Map<string, WSConnectionWrapper>();
   private customIdGenerator?: () => string;
   private connectionCounter = 0;
+  private wsLogger = createFrameworkLogger('WEBSOCKET_ADAPTER');
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
@@ -98,7 +100,10 @@ export class WSAdapter implements WebSocketAdapter {
     // ws library handles compression at the browser level
     // This is a no-op but kept for interface compatibility
     if (enabled) {
-      console.warn('Compression is handled automatically by the ws library and browsers');
+      this.wsLogger.warn(
+        'Compression is handled automatically by the ws library and browsers',
+        'WSAdapter'
+      );
     }
   }
 

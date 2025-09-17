@@ -38,7 +38,11 @@
     "docs:serve": "http-server docs-html -p 8080",
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
-    "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown"
+    "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
+    "prerelease": "node scripts/release.js",
+    "prerelease:patch": "node scripts/release.js patch",
+    "prerelease:minor": "node scripts/release.js minor",
+    "prerelease:major": "node scripts/release.js major"
   },
   "keywords": [
     "nodejs",

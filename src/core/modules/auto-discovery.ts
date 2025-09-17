@@ -3,10 +3,12 @@ import { readdirSync, statSync } from 'fs';
 import { join, extname } from 'path';
 import { ModuleConfig } from '../../types/module';
 import { DiscoveryOptions } from '../../types/discovery';
+import { logger, createFrameworkLogger } from '../logger';
 
 export class ModuleDiscovery {
   private baseDir: string;
   private options: DiscoveryOptions;
+  private discoveryLogger = createFrameworkLogger('MODULE_DISCOVERY');
 
   constructor(baseDir: string = process.cwd(), options: DiscoveryOptions = {}) {
     this.baseDir = baseDir;
@@ -28,12 +30,14 @@ export class ModuleDiscovery {
         const module = await this.loadModule(modulePath);
         if (module) {
           modules.push(module);
-          console.log(
+          this.discoveryLogger.info(
             `Auto-discovered module: ${module.name}@${module.version} from ${modulePath}`
           );
         }
       } catch (error) {
-        console.warn(`Failed to load module from ${modulePath}:`, error);
+        this.discoveryLogger.warn(`Failed to load module from ${modulePath}:`, 'ModuleDiscovery', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -63,7 +67,9 @@ export class ModuleDiscovery {
               const module = await this.loadModule(indexPath);
               if (module) {
                 modules.push(module);
-                console.log(`Auto-discovered module directory: ${module.name} from ${item}/`);
+                this.discoveryLogger.info(
+                  `Auto-discovered module directory: ${module.name} from ${item}/`
+                );
               }
             }
           } catch {
@@ -77,7 +83,9 @@ export class ModuleDiscovery {
                   const module = await this.loadModule(altPath);
                   if (module) {
                     modules.push(module);
-                    console.log(`Auto-discovered module: ${module.name} from ${item}/${alt}`);
+                    this.discoveryLogger.info(
+                      `Auto-discovered module: ${module.name} from ${item}/${alt}`
+                    );
                     break;
                   }
                 }
@@ -177,7 +185,7 @@ export class ModuleDiscovery {
     modulePaths.forEach(path => {
       try {
         fs.watchFile(path, async () => {
-          console.log(`Module file changed: ${path}`);
+          this.discoveryLogger.info(`Module file changed: ${path}`);
           const modules = await this.discoverModules();
           callback(modules);
         });
