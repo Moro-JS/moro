@@ -8,7 +8,10 @@ Comprehensive guide for migrating to MoroJS from other frameworks.
 - [From Fastify](#from-fastify)
 - [From NestJS](#from-nestjs)
 - [From Koa](#from-koa)
+- [From Next.js API Routes](#from-nextjs-api-routes)
+- [From SvelteKit](#from-sveltekit)
 - [Common Migration Patterns](#common-migration-patterns)
+- [Advanced Features](#advanced-features)
 - [Performance Improvements](#performance-improvements)
 
 ---
@@ -43,7 +46,7 @@ app.post('/users', createUser);     // Must be last
 
 ```typescript
 // ✅ Moro - Order independent, automatic validation
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 const app = createApp();
 
 app.post('/users')
@@ -64,7 +67,7 @@ app.post('/users')
    const app = express();
 
    // After
-   import { createApp } from 'moro';
+   import { createApp } from '@morojs/moro';
    const app = createApp();
    ```
 
@@ -84,7 +87,7 @@ app.post('/users')
    // CORS and helmet are enabled by default
    ```
 
-3. **Replace custom validation with Zod:**
+3. **Replace custom validation with MoroJS validation (Zod is optional):**
    ```typescript
    // Before
    const { body, validationResult } = require('express-validator');
@@ -100,7 +103,8 @@ app.post('/users')
      // Handle valid request
    });
 
-   // After
+   // After (with Zod - install as peer dependency)
+   import { z } from '@morojs/moro'; // Zod is optional peer dependency
    app.post('/users')
      .body(z.object({
        name: z.string().min(2),
@@ -108,6 +112,13 @@ app.post('/users')
      }))
      .handler((req, res) => {
        // req.body is automatically validated and typed!
+       return { success: true, data: req.body };
+     });
+
+   // Or without any validation library
+   app.post('/users')
+     .handler((req, res) => {
+       // Manual validation or no validation
        return { success: true, data: req.body };
      });
    ```
@@ -179,11 +190,11 @@ app.post('/users')
    const fastify = require('fastify')({ logger: true });
 
    // After
-   import { createApp } from 'moro';
+   import { createApp } from '@morojs/moro';
    const app = createApp({ logging: true });
    ```
 
-2. **Convert JSON Schema to Zod:**
+2. **Convert JSON Schema to MoroJS validation (Zod is optional):**
    ```typescript
    // Before
    const userSchema = {
@@ -198,12 +209,17 @@ app.post('/users')
      }
    };
 
-   // After
+   // After (with Zod - install as peer dependency)
+   import { z } from '@morojs/moro'; // Zod is optional peer dependency
    const userSchema = z.object({
      name: z.string().min(2).max(50),
      email: z.string().email(),
      age: z.number().min(18).optional()
    });
+
+   // Or use other validation libraries (Joi, Yup, Class Validator)
+   import { joi, yup, classValidator } from '@morojs/moro';
+   // All validation libraries are optional peer dependencies
    ```
 
 3. **Convert route definitions:**
@@ -294,7 +310,7 @@ app.post('/users')
    }
 
    // After
-   import { createApp } from 'moro';
+   import { createApp } from '@morojs/moro';
 
    const app = createApp();
    app.listen(3000);
@@ -462,7 +478,7 @@ app.post('/users')
    const app = new Koa();
 
    // After
-   import { createApp } from 'moro';
+   import { createApp } from '@morojs/moro';
    const app = createApp();
    ```
 
@@ -495,6 +511,222 @@ app.post('/users')
    app.get('/users', async (req, res) => {
      return { users: await getUsers() };
    });
+   ```
+
+---
+
+## From Next.js API Routes
+
+### The Problem with Next.js API Routes
+
+Next.js API routes are tightly coupled to the Next.js framework and have limitations:
+
+```typescript
+// ❌ Next.js API Routes - Framework coupling
+// pages/api/users.ts
+import { NextApiRequest, NextApiResponse } from 'next';
+
+export default function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'POST') {
+    // Manual validation
+    if (!req.body.name || req.body.name.length < 2) {
+      return res.status(400).json({ error: 'Invalid name' });
+    }
+    // Handle request
+  }
+}
+
+// pages/api/auth/[...nextauth].ts
+import NextAuth from 'next-auth';
+import GoogleProvider from 'next-auth/providers/google';
+
+export default NextAuth({
+  providers: [
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    }),
+  ],
+});
+```
+
+**Problems:**
+- Tightly coupled to Next.js framework
+- Manual validation and error handling
+- Limited middleware options
+- No built-in authentication
+- Difficult to test in isolation
+- No multi-runtime support
+
+### MoroJS Solution
+
+```typescript
+// ✅ MoroJS - Framework agnostic, built-in features
+import { createApp, z } from '@morojs/moro';
+import { createAuthMiddleware } from '@auth/morojs';
+import Google from '@auth/core/providers/google';
+
+const app = createApp();
+
+// Built-in authentication
+app.use(createAuthMiddleware({
+  providers: [Google({
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  })],
+  secret: process.env.AUTH_SECRET,
+}));
+
+// Automatic validation and TypeScript inference
+app.post('/api/users')
+  .body(z.object({
+    name: z.string().min(2),
+    email: z.string().email()
+  }))
+  .auth({ required: true })
+  .handler(async (req, res) => {
+    return { success: true, user: req.body };
+  });
+```
+
+### Migration Steps
+
+1. **Replace Next.js API routes:**
+   ```typescript
+   // Before (Next.js)
+   // pages/api/users.ts
+   export default function handler(req, res) {
+     // API logic
+   }
+
+   // After (MoroJS)
+   // src/routes/users.ts
+   app.post('/api/users')
+     .body(userSchema)
+     .handler(createUser);
+   ```
+
+2. **Convert authentication:**
+   ```typescript
+   // Before (NextAuth.js)
+   import NextAuth from 'next-auth';
+   import GoogleProvider from 'next-auth/providers/google';
+
+   export default NextAuth({
+     providers: [GoogleProvider({ ... })],
+   });
+
+   // After (MoroJS + Auth.js)
+   import { createAuthMiddleware } from '@auth/morojs';
+   import Google from '@auth/core/providers/google';
+
+   app.use(createAuthMiddleware({
+     providers: [Google({ ... })],
+   }));
+   ```
+
+3. **Deploy to multiple runtimes:**
+   ```typescript
+   // Node.js
+   app.listen(3000);
+
+   // Vercel Edge
+   export default app.getHandler();
+
+   // AWS Lambda
+   export const handler = app.getLambdaHandler();
+
+   // Cloudflare Workers
+   export default app.getWorkerHandler();
+   ```
+
+---
+
+## From SvelteKit
+
+### The Problem with SvelteKit
+
+SvelteKit API routes are limited and tightly coupled to the SvelteKit framework:
+
+```typescript
+// ❌ SvelteKit - Limited API capabilities
+// src/routes/api/users/+server.ts
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = async ({ request }) => {
+  const body = await request.json();
+
+  // Manual validation
+  if (!body.name || body.name.length < 2) {
+    return json({ error: 'Invalid name' }, { status: 400 });
+  }
+
+  return json({ success: true, user: body });
+};
+```
+
+**Problems:**
+- Limited to SvelteKit ecosystem
+- Manual validation and error handling
+- No built-in authentication
+- No middleware system
+- Limited deployment options
+
+### MoroJS Solution
+
+```typescript
+// ✅ MoroJS - Full-featured API framework
+import { createApp, z } from '@morojs/moro';
+
+const app = createApp();
+
+app.post('/api/users')
+  .body(z.object({
+    name: z.string().min(2),
+    email: z.string().email()
+  }))
+  .handler(async (req, res) => {
+    return { success: true, user: req.body };
+  });
+```
+
+### Migration Steps
+
+1. **Extract API logic to MoroJS:**
+   ```typescript
+   // Before (SvelteKit)
+   // src/routes/api/users/+server.ts
+   export const POST: RequestHandler = async ({ request }) => {
+     // API logic
+   };
+
+   // After (MoroJS)
+   // src/api/users.ts
+   app.post('/api/users')
+     .body(userSchema)
+     .handler(createUser);
+   ```
+
+2. **Keep SvelteKit for frontend, MoroJS for API:**
+   ```typescript
+   // SvelteKit frontend
+   // src/routes/+page.svelte
+   <script>
+     async function createUser(userData) {
+       const response = await fetch('/api/users', {
+         method: 'POST',
+         body: JSON.stringify(userData)
+       });
+       return response.json();
+     }
+   </script>
+
+   // MoroJS API
+   // src/api/users.ts
+   app.post('/api/users')
+     .body(userSchema)
+     .handler(createUser);
    ```
 
 ---
@@ -601,13 +833,300 @@ app.get('/users', async (req, res) => {
 });
 
 // After
-import { MySQLAdapter } from 'moro';
+import { MySQLAdapter } from '@morojs/moro';
 const db = new MySQLAdapter(config);
 app.database(db);
 
 app.get('/users', async (req, res) => {
   const users = await req.database.query('SELECT * FROM users');
   return { users };
+});
+```
+
+---
+
+## Advanced Features
+
+MoroJS includes many advanced features that aren't available in traditional frameworks:
+
+### 1. Universal Validation System
+
+Support for multiple validation libraries with a unified interface. All validation libraries are optional peer dependencies:
+
+```typescript
+import { createApp, z, joi, yup, classValidator } from '@morojs/moro';
+
+const app = createApp();
+
+// Use any validation library (all are optional)
+app.post('/users')
+  .body(z.object({ name: z.string() }))           // Zod (optional)
+  .query(joi.object({ page: joi.number() }))      // Joi (optional)
+  .params(yup.object({ id: yup.string() }))       // Yup (optional)
+  .handler(createUser);
+
+// Or use class-validator (optional)
+class CreateUserDto {
+  @IsString()
+  @MinLength(2)
+  name: string;
+}
+
+app.post('/users')
+  .body(classValidator(CreateUserDto))
+  .handler(createUser);
+
+// Or use no validation at all - framework works without any validation libraries!
+app.post('/users')
+  .handler(createUser);
+```
+
+### 2. Enterprise Authentication
+
+Complete Auth.js integration with native MoroJS adapter:
+
+```typescript
+import { createApp } from '@morojs/moro';
+import { createAuthMiddleware } from '@auth/morojs';
+import { providers } from '@auth/core';
+
+const app = createApp();
+
+app.use(createAuthMiddleware({
+  providers: [
+    providers.GitHub({
+      clientId: process.env.GITHUB_CLIENT_ID,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    }),
+    providers.Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    }),
+  ],
+  secret: process.env.AUTH_SECRET,
+}));
+
+// Automatic authentication
+app.get('/protected')
+  .auth({ required: true })
+  .handler((req, res) => {
+    return { user: req.auth.user };
+  });
+```
+
+### 3. Multi-Runtime Support
+
+Deploy the same code to multiple environments:
+
+```typescript
+import { createApp, createAppEdge, createAppLambda, createAppWorker } from '@morojs/moro';
+
+// Node.js
+const nodeApp = createApp();
+nodeApp.listen(3000);
+
+// Vercel Edge Functions
+const edgeApp = createAppEdge();
+export default edgeApp.getHandler();
+
+// AWS Lambda
+const lambdaApp = createAppLambda();
+export const handler = lambdaApp.getLambdaHandler();
+
+// Cloudflare Workers
+const workerApp = createAppWorker();
+export default workerApp.getWorkerHandler();
+```
+
+### 4. WebSocket Support
+
+Built-in WebSocket support with multiple adapters:
+
+```typescript
+import { createApp, SocketIOAdapter, WSAdapter } from '@morojs/moro';
+
+const app = createApp();
+
+// Socket.IO adapter
+app.websocket('/socket.io', new SocketIOAdapter({
+  cors: { origin: '*' }
+}));
+
+// Native WebSocket adapter
+app.websocket('/ws', new WSAdapter());
+
+// WebSocket routes
+app.websocket('/chat')
+  .auth({ required: true })
+  .handler((socket, req) => {
+    socket.on('message', (data) => {
+      socket.broadcast.emit('message', data);
+    });
+  });
+```
+
+### 5. Database Integration
+
+Multiple database adapters with unified interface:
+
+```typescript
+import { createApp, MySQLAdapter, PostgreSQLAdapter, MongoDBAdapter } from '@morojs/moro';
+
+const app = createApp();
+
+// MySQL
+app.database(new MySQLAdapter({
+  host: 'localhost',
+  user: 'root',
+  password: 'password',
+  database: 'myapp'
+}));
+
+// PostgreSQL
+app.database(new PostgreSQLAdapter({
+  connectionString: 'postgresql://user:password@localhost:5432/myapp'
+}));
+
+// MongoDB
+app.database(new MongoDBAdapter({
+  uri: 'mongodb://localhost:27017/myapp'
+}));
+
+// Use in routes
+app.get('/users')
+  .handler(async (req, res) => {
+    const users = await req.database.query('SELECT * FROM users');
+    return { users };
+  });
+```
+
+### 6. Intelligent Routing
+
+Automatic middleware ordering and optimization:
+
+```typescript
+app.post('/users')
+  .body(userSchema)                    // Validation middleware
+  .auth({ required: true })            // Authentication middleware
+  .rateLimit({ requests: 10, window: 60000 })  // Rate limiting
+  .cache({ ttl: 300 })                 // Caching
+  .handler(createUser);                // Handler
+
+// Framework automatically orders middleware optimally
+// No need to worry about middleware order!
+```
+
+### 7. Module System
+
+Functional module architecture for better organization:
+
+```typescript
+import { defineModule } from '@morojs/moro';
+
+export default defineModule({
+  name: 'users',
+  version: '1.0.0',
+  routes: [
+    {
+      method: 'GET',
+      path: '/users',
+      handler: getUsers
+    },
+    {
+      method: 'POST',
+      path: '/users',
+      validation: { body: userSchema },
+      handler: createUser
+    }
+  ],
+  sockets: [
+    {
+      path: '/users',
+      handler: userSocketHandler
+    }
+  ]
+});
+
+// Auto-discover modules
+app.autoDiscover('./modules');
+```
+
+### 8. Event System
+
+Enterprise-grade event bus for microservices:
+
+```typescript
+import { createApp, MoroEventBus } from '@morojs/moro';
+
+const app = createApp();
+
+// Global event bus
+app.eventBus.on('user.created', (event) => {
+  console.log('User created:', event.payload);
+});
+
+// Emit events
+app.post('/users')
+  .handler(async (req, res) => {
+    const user = await createUser(req.body);
+
+    // Emit event
+    app.eventBus.emit('user.created', {
+      userId: user.id,
+      timestamp: new Date()
+    });
+
+    return { user };
+  });
+```
+
+### 9. Configuration System
+
+Flexible configuration with multiple sources:
+
+```typescript
+// moro.config.js
+module.exports = {
+  server: {
+    port: 3000,
+    host: 'localhost'
+  },
+  database: {
+    type: 'postgresql',
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT
+  },
+  auth: {
+    providers: ['github', 'google'],
+    secret: process.env.AUTH_SECRET
+  }
+};
+
+// Environment variables override config file
+// CLUSTERING_ENABLED=true
+// CLUSTER_WORKERS=4
+```
+
+### 10. Performance Optimizations
+
+Built-in performance features:
+
+```typescript
+const app = createApp({
+  performance: {
+    clustering: {
+      enabled: true,
+      workers: 'auto'
+    },
+    compression: {
+      enabled: true,
+      threshold: 1024
+    },
+    circuitBreaker: {
+      enabled: true,
+      timeout: 5000
+    }
+  }
 });
 ```
 
@@ -623,39 +1142,109 @@ app.get('/users', async (req, res) => {
 | Fastify        | **+37%** (38,120 → 52,400) | **-38%** (2.9ms → 1.8ms) | **-31%** (35MB → 24MB) |
 | NestJS         | **+137%** (22,100 → 52,400) | **-60%** (4.5ms → 1.8ms) | **-59%** (58MB → 24MB) |
 | Koa            | **+102%** (25,880 → 52,400) | **-57%** (4.2ms → 1.8ms) | **-43%** (42MB → 24MB) |
+| Next.js API    | **+156%** (20,400 → 52,400) | **-65%** (5.1ms → 1.8ms) | **-62%** (63MB → 24MB) |
+| SvelteKit      | **+128%** (23,000 → 52,400) | **-61%** (4.6ms → 1.8ms) | **-58%** (57MB → 24MB) |
 
 ### Performance Features You Get
 
 1. **Optimized Middleware Execution**
    - Intelligent ordering eliminates unnecessary middleware calls
    - Phase-based execution reduces overhead
+   - Object pooling for LogEntry objects
+   - String builder pattern for efficient concatenation
+   - Buffered output with micro-batching (1ms intervals)
 
-2. **Faster Validation**
-   - Zod is 2-3x faster than JSON Schema validation
-   - Compile-time optimizations
+2. **Universal Validation System**
+   - Support for Zod, Joi, Yup, and Class Validator (all optional)
+   - Zero-dependency core framework
+   - Dynamic validation loading - only loads libraries when available
+   - 2-3x faster than JSON Schema validation
+   - Framework works without any validation libraries installed
 
 3. **Runtime Optimizations**
    - Runtime-specific adapters for optimal performance
    - Memory-efficient request/response handling
+   - ES2022 optimizations and memory leak fixes
+   - Clustering configuration with automatic worker management
 
 4. **Built-in Performance Features**
    - Circuit breakers for external calls
    - Intelligent caching strategies
    - Connection pooling
+   - Compression with configurable thresholds
+   - Rate limiting with multiple strategies
+
+5. **Logger Performance**
+   - 55% faster simple logs, 107% faster complex logs
+   - Aggressive level checking with numeric comparisons
+   - Static pre-allocated strings for levels and ANSI codes
+   - Improved timestamp caching (100ms vs 1000ms)
+
+6. **Memory Management**
+   - Object pooling for common objects
+   - Buffer pooling system for responses
+   - String interning for HTTP methods and headers
+   - Pre-compiled response templates
 
 ### Migration Checklist
 
-- [ ] Replace framework initialization
-- [ ] Convert routes to MoroJS syntax
-- [ ] Replace validation with Zod schemas
-- [ ] Update middleware configuration
-- [ ] Convert modules/plugins
-- [ ] Update tests
-- [ ] Performance testing
-- [ ] Deploy and monitor
+#### Pre-Migration
+- [ ] **Audit current application** - Document all routes, middleware, and dependencies
+- [ ] **Choose validation library** - Select from Zod, Joi, Yup, or Class Validator
+- [ ] **Plan authentication strategy** - Decide on Auth.js providers and configuration
+- [ ] **Select deployment target** - Choose from Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers
+
+#### Core Migration
+- [ ] **Replace framework initialization** - Update app creation and configuration
+- [ ] **Convert routes to MoroJS syntax** - Use chainable API with automatic ordering
+- [ ] **Replace validation with chosen library** - Convert existing validation to MoroJS format
+- [ ] **Update middleware configuration** - Use built-in middleware or convert custom middleware
+- [ ] **Convert modules/plugins** - Use MoroJS module system or convert existing plugins
+
+#### Advanced Features
+- [ ] **Set up authentication** - Configure Auth.js with chosen providers
+- [ ] **Configure database integration** - Set up database adapters if needed
+- [ ] **Set up WebSocket support** - Configure WebSocket adapters if needed
+- [ ] **Configure event system** - Set up event bus for microservices if needed
+- [ ] **Set up configuration system** - Create moro.config.js file
+
+#### Testing and Deployment
+- [ ] **Update tests** - Convert tests to work with MoroJS patterns
+- [ ] **Performance testing** - Benchmark against previous implementation
+- [ ] **Deploy to target runtime** - Deploy using appropriate MoroJS runtime adapter
+- [ ] **Monitor and optimize** - Use built-in performance features and monitoring
+
+#### Post-Migration
+- [ ] **Verify all functionality** - Ensure all features work as expected
+- [ ] **Update documentation** - Update API documentation and team guides
+- [ ] **Train team** - Ensure team understands MoroJS patterns and best practices
+- [ ] **Plan future enhancements** - Leverage MoroJS advanced features for new functionality
+
+### Current Version: 1.5.3
+
+This migration guide is updated for MoroJS v1.5.3, which includes:
+
+- **Universal Validation System** - Support for Zod, Joi, Yup, and Class Validator (all optional peer dependencies)
+- **Enterprise Authentication** - Complete Auth.js integration with native adapter
+- **Multi-Runtime Support** - Deploy to Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
+- **Performance Optimizations** - 55% faster logging, object pooling, buffer management
+- **WebSocket Support** - Socket.IO and native WebSocket adapters
+- **Database Integration** - MySQL, PostgreSQL, MongoDB, Redis adapters
+- **Module System** - Functional module architecture with auto-discovery
+- **Event System** - Enterprise-grade event bus for microservices
+- **Configuration System** - Flexible configuration with multiple sources
+- **Intelligent Routing** - Automatic middleware ordering and optimization
+
+### Recent Improvements (v1.5.x)
+
+- **v1.5.3** - Major logger performance optimizations and Jest cleanup
+- **v1.5.2** - Fixed clustering configuration isolation issues
+- **v1.5.1** - Memory leak fixes and ES2022 optimizations
+- **v1.5.0** - Universal validation system with zero dependencies
 
 ### Need Help?
 
 - Check the [Examples Repository](https://github.com/Moro-JS/examples) for real migration examples
 - See [Performance Guide](./PERFORMANCE.md) for optimization tips
-- Join our community for migration support
+- Join our [Discord Community](https://morojs.com/discord) for migration support
+- Read the [API Reference](./API.md) for detailed technical documentation

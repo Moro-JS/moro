@@ -35,8 +35,18 @@ npm init -y
 ### Install MoroJS
 
 ```bash
-npm install moro
+npm install @morojs/moro
 npm install -D @types/node typescript tsx
+```
+
+**Note:** MoroJS has zero core dependencies! All validation libraries (Zod, Joi, Yup, Class Validator) are optional peer dependencies. Install only what you need:
+
+```bash
+# Optional: Install validation libraries as needed
+npm install zod          # For Zod validation
+npm install joi          # For Joi validation
+npm install yup          # For Yup validation
+npm install class-validator class-transformer  # For Class Validator
 ```
 
 ### Setup TypeScript
@@ -81,7 +91,7 @@ Add scripts to your `package.json`:
 Create `src/server.ts`:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
@@ -118,7 +128,7 @@ MoroJS applications can run on multiple environments with the same codebase. Her
 ### Node.js (Default)
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
@@ -136,7 +146,7 @@ app.listen(3000, () => {
 Create `api/[...slug].ts`:
 
 ```typescript
-import { createAppEdge } from 'moro';
+import { createAppEdge } from '@morojs/moro';
 
 const app = createAppEdge();
 
@@ -153,7 +163,7 @@ export default app.getHandler();
 ### AWS Lambda
 
 ```typescript
-import { createAppLambda } from 'moro';
+import { createAppLambda } from '@morojs/moro';
 
 const app = createAppLambda();
 
@@ -173,7 +183,7 @@ export const handler = app.getHandler();
 Create `worker.ts`:
 
 ```typescript
-import { createAppWorker } from 'moro';
+import { createAppWorker } from '@morojs/moro';
 
 const app = createAppWorker();
 
@@ -207,7 +217,7 @@ Visit `http://localhost:3000` to see your application running!
 MoroJS features intelligent routing that automatically orders middleware execution:
 
 ```typescript
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 
 const app = createApp();
 
@@ -324,7 +334,7 @@ CORS_ORIGIN=http://localhost:3000,http://localhost:5173
 Modify your `src/server.ts` to use the configuration:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
@@ -433,7 +443,7 @@ For TypeScript projects, you can create a `moro.config.ts` file:
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from 'moro';
+import type { AppConfig } from '@morojs/moro';
 
 const config: Partial<AppConfig> = {
   server: {
@@ -468,7 +478,7 @@ This means you can set defaults in your config file and override them with envir
 Let's build a complete REST API for managing users:
 
 ```typescript
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 
 const app = createApp({
   cors: true,
@@ -680,7 +690,7 @@ Modules provide a way to organize your application into reusable components:
 Create `src/modules/users/index.ts`:
 
 ```typescript
-import { defineModule, z } from 'moro';
+import { defineModule, z } from '@morojs/moro';
 
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
@@ -749,7 +759,7 @@ export default defineModule({
 Update `src/server.ts`:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 import UsersModule from './modules/users';
 
 const app = createApp();
@@ -770,7 +780,7 @@ MoroJS uses Zod for powerful validation:
 ### Basic Validation
 
 ```typescript
-import { z } from 'moro';
+import { z } from '@morojs/moro';
 
 // Simple validation
 const userSchema = z.object({
@@ -864,7 +874,7 @@ npm install mysql2
 ```
 
 ```typescript
-import { createApp, MySQLAdapter } from 'moro';
+import { createApp, MySQLAdapter } from '@morojs/moro';
 
 const app = createApp();
 
@@ -943,7 +953,7 @@ app.post('/transfer')
 Add real-time functionality to your application:
 
 ```typescript
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 
 const app = createApp();
 
@@ -1086,7 +1096,7 @@ Create `tests/app.test.ts`:
 
 ```typescript
 import request from 'supertest';
-import { createApp, z } from 'moro';
+import { createApp, z } from '@morojs/moro';
 
 describe('MoroJS Application', () => {
   let app: any;

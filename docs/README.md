@@ -1,6 +1,8 @@
 # MoroJS Documentation
 
-Complete documentation for the MoroJS framework.
+Complete documentation for the MoroJS framework (v1.5.3).
+
+**Note:** MoroJS has zero core dependencies! All validation libraries (Zod, Joi, Yup, Class Validator) are optional peer dependencies, making the framework lightweight and flexible.
 
 ## Documentation Structure
 
@@ -46,7 +48,7 @@ Complete documentation for the MoroJS framework.
 ### Framework Features
 - ✅ **Intelligent Routing** - Automatic middleware ordering
 - ✅ **Multi-Runtime Support** - Deploy everywhere with same code
-- ✅ **Type Safety** - Full TypeScript integration with Zod
+- ✅ **Type Safety** - Full TypeScript integration with optional validation libraries
 - ✅ **Performance** - Optimized for speed and memory efficiency
 - ✅ **Functional Architecture** - Clean, testable code patterns
 

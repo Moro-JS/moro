@@ -240,7 +240,7 @@ Best for shared data across instances:
 
 ```typescript
 // Redis caching setup
-import { RedisAdapter } from 'moro';
+import { RedisAdapter } from '@morojs/moro';
 const redis = new RedisAdapter({
   host: 'localhost',
   port: 6379
@@ -449,7 +449,7 @@ app.events.on('circuit-breaker:closed', ({ endpoint }) => {
 
 ```typescript
 // Optimized database configuration
-import { MySQLAdapter } from 'moro';
+import { MySQLAdapter } from '@morojs/moro';
 
 const db = new MySQLAdapter({
   host: 'localhost',

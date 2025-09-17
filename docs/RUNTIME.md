@@ -47,7 +47,7 @@ MoroJS provides a **write-once, deploy-everywhere** approach to backend developm
 MoroJS automatically detects the runtime environment:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 // Automatically detects runtime based on environment
 const app = createApp();
@@ -74,10 +74,10 @@ const app = createApp({
 
 ```typescript
 // Runtime-specific imports for type safety
-import { createApp } from 'moro';           // Node.js
-import { createAppEdge } from 'moro';       // Vercel Edge
-import { createAppLambda } from 'moro';     // AWS Lambda
-import { createAppWorker } from 'moro';     // Cloudflare Workers
+import { createApp } from '@morojs/moro';           // Node.js
+import { createAppEdge } from '@morojs/moro';       // Vercel Edge
+import { createAppLambda } from '@morojs/moro';     // AWS Lambda
+import { createAppWorker } from '@morojs/moro';     // Cloudflare Workers
 ```
 
 ---
@@ -89,7 +89,7 @@ The Node.js runtime provides the full feature set and is ideal for traditional s
 ### Basic Setup
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp({
   cors: true,
@@ -120,7 +120,7 @@ app.listen(3000, () => {
 ```typescript
 import cluster from 'cluster';
 import os from 'os';
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 if (cluster.isMaster) {
   const numCPUs = os.cpus().length;
@@ -186,7 +186,7 @@ Vercel Edge Functions run at the edge, close to users globally.
 
 ```typescript
 // api/hello.ts
-import { createAppEdge } from 'moro';
+import { createAppEdge } from '@morojs/moro';
 
 const app = createAppEdge();
 
@@ -281,7 +281,7 @@ AWS Lambda provides event-driven, auto-scaling serverless compute.
 
 ```typescript
 // handler.ts
-import { createAppLambda } from 'moro';
+import { createAppLambda } from '@morojs/moro';
 
 const app = createAppLambda({
   // Lambda-specific configuration
@@ -399,7 +399,7 @@ Cloudflare Workers run in V8 isolates at the edge with instant cold starts.
 
 ```typescript
 // worker.ts
-import { createAppWorker } from 'moro';
+import { createAppWorker } from '@morojs/moro';
 
 const app = createAppWorker({
   kv: {
@@ -557,7 +557,7 @@ async function createUser(userData: any) {
 
 ```typescript
 // node.ts
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
 const app = createApp();
@@ -565,7 +565,7 @@ setupRoutes(app);
 app.listen(3000);
 
 // vercel-edge.ts
-import { createAppEdge } from 'moro';
+import { createAppEdge } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
 const app = createAppEdge();
@@ -573,7 +573,7 @@ setupRoutes(app);
 export default app.getHandler();
 
 // lambda.ts
-import { createAppLambda } from 'moro';
+import { createAppLambda } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
 const app = createAppLambda();
@@ -581,7 +581,7 @@ setupRoutes(app);
 export const handler = app.getHandler();
 
 // worker.ts
-import { createAppWorker } from 'moro';
+import { createAppWorker } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
 const app = createAppWorker();
@@ -852,7 +852,7 @@ if (app.getRuntimeType() === 'aws-lambda') {
 
 ```typescript
 // test/runtime.test.ts
-import { createApp, createAppEdge, createAppLambda, createAppWorker } from 'moro';
+import { createApp, createAppEdge, createAppLambda, createAppWorker } from '@morojs/moro';
 import { setupRoutes } from '../src/shared/app.js';
 
 const runtimes = [

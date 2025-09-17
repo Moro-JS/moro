@@ -416,7 +416,7 @@ module.exports = environmentConfigs[environment];
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from 'moro';
+import type { AppConfig } from '@morojs/moro';
 
 const config: Partial<AppConfig> = {
   server: {
@@ -470,7 +470,7 @@ export default config;
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from 'moro';
+import type { AppConfig } from '@morojs/moro';
 import { z } from 'zod';
 
 // Environment validation schema
@@ -539,7 +539,7 @@ export default config;
 
 ```typescript
 // modules/email/config.ts
-import { createModuleConfig, z } from 'moro';
+import { createModuleConfig, z } from '@morojs/moro';
 
 const EmailConfigSchema = z.object({
   apiKey: z.string(),
@@ -576,7 +576,7 @@ export const emailConfig = createModuleConfig(
 
 ```typescript
 // modules/payment/config.ts
-import { createModuleConfig, z } from 'moro';
+import { createModuleConfig, z } from '@morojs/moro';
 
 const PaymentConfigSchema = z.object({
   stripePublicKey: z.string(),

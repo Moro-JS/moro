@@ -1,3 +1,12 @@
+
+# Changelog
+
+All notable changes to the MoroJS framework will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+
 ## [1.5.3] - 2025-09-17
 
 ### Added
@@ -14,7 +23,6 @@
 
 ### Changed
 - Replaced all console.log statements with proper logger usage
-- Fixed Jest open handle issues with proper cleanup
 - Performance improvements: 55% faster simple logs, 107% faster complex logs
 
 ### Fixed
@@ -22,12 +30,41 @@
 - Logger performance bottlenecks
 - Inconsistent logging across the codebase
 
-# Changelog
+## [1.5.2] - 2025-09-16
 
-All notable changes to the MoroJS framework will be documented in this file.
+### Fixed
+- **CRITICAL: Fixed clustering configuration isolation issue** - Resolved shared configuration object problem where all app instances were modifying the same global config
+- Each app instance now gets its own deep copy of the configuration
+- Clustering configuration now works correctly with both createApp options and moro.config.js
+- Environment variables (CLUSTERING_ENABLED, CLUSTER_WORKERS) work as expected
+- Configuration precedence: createApp options > moro.config.js > environment variables > defaults
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Technical Details
+- Fixed configuration isolation in `Moro` constructor and config loader
+- Enhanced configuration merging to prevent shared object mutations
+- Maintained backward compatibility with existing clustering configurations
+
+## [1.5.1] - 2025-09-16
+
+### Added
+- **Memory leak fixes and ES2022 optimizations** - Fixed memory leak in HTTP server object pooling
+- Upgraded TypeScript target to ES2022 for better performance
+- Optimized garbage collection with modern JavaScript features
+- Added Object.hasOwn() for safer property checks
+- Used optional chaining for cleaner GC calls
+- Improved buffer acquisition with findIndex()
+
+### Performance Improvements
+- Consistent performance across benchmark runs
+- Better memory management with modern JavaScript features
+- Optimized object pooling system
+
+### Quality Assurance
+- All 233 tests passing
+- ESLint clean (0 errors)
+- Prettier formatted
+- Production ready
+
 
 ## [1.5.0] - 2025-01-16
 
@@ -399,7 +436,7 @@ module.exports = {
 **TypeScript Configuration:**
 ```typescript
 // moro.config.ts
-import type { AppConfig } from 'moro';
+import type { AppConfig } from '@morojs/moro';
 
 const config: Partial<AppConfig> = {
   server: {
@@ -414,7 +451,7 @@ export default config;
 
 **Module Configuration:**
 ```typescript
-import { createModuleConfig, z } from 'moro';
+import { createModuleConfig, z } from '@morojs/moro';
 
 const emailConfig = createModuleConfig(
   z.object({

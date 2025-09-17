@@ -27,7 +27,7 @@ Complete API documentation for the MoroJS framework.
 Creates a new MoroJS application instance.
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp({
   cors: true,
@@ -59,7 +59,7 @@ MoroJS supports multiple runtime environments with the same API. Choose the appr
 Creates a Node.js application (default runtime).
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 app.listen(3000); // Traditional HTTP server
@@ -70,7 +70,7 @@ app.listen(3000); // Traditional HTTP server
 Creates a Vercel Edge Functions application.
 
 ```typescript
-import { createAppEdge } from 'moro';
+import { createAppEdge } from '@morojs/moro';
 
 const app = createAppEdge();
 
@@ -86,7 +86,7 @@ export default app.getHandler(); // Export for Vercel
 Creates an AWS Lambda application.
 
 ```typescript
-import { createAppLambda } from 'moro';
+import { createAppLambda } from '@morojs/moro';
 
 const app = createAppLambda();
 
@@ -102,7 +102,7 @@ export const handler = app.getHandler(); // Export for Lambda
 Creates a Cloudflare Workers application.
 
 ```typescript
-import { createAppWorker } from 'moro';
+import { createAppWorker } from '@morojs/moro';
 
 const app = createAppWorker();
 
@@ -125,7 +125,7 @@ export default {
 You can also specify runtime configuration explicitly:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp({
   runtime: {
@@ -310,7 +310,7 @@ await app.loadModule('./modules/users');
 Register a database adapter.
 
 ```typescript
-import { MySQLAdapter } from 'moro';
+import { MySQLAdapter } from '@morojs/moro';
 
 const db = new MySQLAdapter({
   host: 'localhost',
@@ -669,7 +669,7 @@ app.route({
 Create a module definition.
 
 ```typescript
-import { defineModule, z } from 'moro';
+import { defineModule, z } from '@morojs/moro';
 
 export default defineModule({
   name: 'users',
@@ -755,7 +755,7 @@ interface ModuleSocket {
 
 ```typescript
 // modules/orders/index.ts
-import { defineModule, z } from 'moro';
+import { defineModule, z } from '@morojs/moro';
 import {
   createOrder,
   getOrders,
@@ -1031,7 +1031,7 @@ interface ValidationConfig {
 Create a validation wrapper for handlers.
 
 ```typescript
-import { validate, z } from 'moro';
+import { validate, z } from '@morojs/moro';
 
 const validateUser = validate({
   body: z.object({
@@ -1047,7 +1047,7 @@ const validateUser = validate({
 #### Convenience Functions
 
 ```typescript
-import { body, query, params } from 'moro';
+import { body, query, params } from '@morojs/moro';
 
 // Body validation
 const bodyValidator = body(UserSchema);
@@ -1277,7 +1277,7 @@ app.use(errorHandler);
 #### MySQL Adapter
 
 ```typescript
-import { MySQLAdapter } from 'moro';
+import { MySQLAdapter } from '@morojs/moro';
 
 const db = new MySQLAdapter({
   host: 'localhost',
@@ -1294,7 +1294,7 @@ app.database(db);
 #### PostgreSQL Adapter
 
 ```typescript
-import { PostgreSQLAdapter } from 'moro';
+import { PostgreSQLAdapter } from '@morojs/moro';
 
 const db = new PostgreSQLAdapter({
   host: 'localhost',
@@ -1310,7 +1310,7 @@ app.database(db);
 #### SQLite Adapter
 
 ```typescript
-import { SQLiteAdapter } from 'moro';
+import { SQLiteAdapter } from '@morojs/moro';
 
 const db = new SQLiteAdapter({
   filename: './database.sqlite'
@@ -1322,7 +1322,7 @@ app.database(db);
 #### MongoDB Adapter
 
 ```typescript
-import { MongoDBAdapter } from 'moro';
+import { MongoDBAdapter } from '@morojs/moro';
 
 const db = new MongoDBAdapter({
   url: 'mongodb://localhost:27017/myapp'
@@ -1334,7 +1334,7 @@ app.database(db);
 #### Redis Adapter
 
 ```typescript
-import { RedisAdapter } from 'moro';
+import { RedisAdapter } from '@morojs/moro';
 
 const redis = new RedisAdapter({
   host: 'localhost',
@@ -1570,7 +1570,7 @@ For TypeScript projects, you can use a `.ts` config file:
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from 'moro';
+import type { AppConfig } from '@morojs/moro';
 
 const config: Partial<AppConfig> = {
   server: {
@@ -1788,7 +1788,7 @@ module.exports = environmentConfigs[environment];
 MoroJS also supports module-specific configuration using `createModuleConfig`:
 
 ```typescript
-import { createModuleConfig, z } from 'moro';
+import { createModuleConfig, z } from '@morojs/moro';
 
 // Define module schema
 const EmailModuleSchema = z.object({

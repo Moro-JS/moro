@@ -7,16 +7,19 @@ The MoroJS database module provides a pluggable adapter system for different dat
 ### SQL Databases
 
 #### MySQL Adapter
+
 - **Package Required**: `mysql2`
 - **Usage**: Production-ready with connection pooling
 - **Type**: `mysql`
 
-#### PostgreSQL Adapter  
+#### PostgreSQL Adapter
+
 - **Package Required**: `pg` and `@types/pg`
 - **Usage**: Full PostgreSQL feature support
 - **Type**: `postgresql`, `postgres`, or `pg`
 
 #### SQLite Adapter
+
 - **Package Required**: `better-sqlite3`
 - **Usage**: Lightweight, file-based database
 - **Type**: `sqlite` or `sqlite3`
@@ -24,11 +27,13 @@ The MoroJS database module provides a pluggable adapter system for different dat
 ### NoSQL Databases
 
 #### MongoDB Adapter
+
 - **Package Required**: `mongodb`
 - **Usage**: Document database with aggregation support
 - **Type**: `mongodb` or `mongo`
 
 #### Redis Adapter
+
 - **Package Required**: `ioredis`
 - **Usage**: In-memory key-value store with pub/sub
 - **Type**: `redis`
@@ -36,6 +41,7 @@ The MoroJS database module provides a pluggable adapter system for different dat
 ### ORM
 
 #### Drizzle Adapter
+
 - **Package Required**: `drizzle-orm` + database driver
 - **Usage**: Type-safe ORM with schema validation
 - **Type**: `drizzle` or `orm`
@@ -43,7 +49,7 @@ The MoroJS database module provides a pluggable adapter system for different dat
 ## Factory Pattern (Recommended)
 
 ```typescript
-import { createDatabaseAdapter } from 'moro';
+import { createDatabaseAdapter } from '@morojs/moro';
 
 // SQL Databases
 const mysql = createDatabaseAdapter('mysql', {
@@ -52,7 +58,7 @@ const mysql = createDatabaseAdapter('mysql', {
   user: 'root',
   password: 'password',
   database: 'my_app',
-  connectionLimit: 10
+  connectionLimit: 10,
 });
 
 const postgres = createDatabaseAdapter('postgresql', {
@@ -62,12 +68,12 @@ const postgres = createDatabaseAdapter('postgresql', {
   password: 'password',
   database: 'my_app',
   connectionLimit: 10,
-  ssl: false
+  ssl: false,
 });
 
 const sqlite = createDatabaseAdapter('sqlite', {
   filename: 'app.db',
-  memory: false
+  memory: false,
 });
 
 // NoSQL Databases
@@ -76,34 +82,34 @@ const mongodb = createDatabaseAdapter('mongodb', {
   port: 27017,
   database: 'my_app',
   username: 'user',
-  password: 'password'
+  password: 'password',
 });
 
 const redis = createDatabaseAdapter('redis', {
   host: 'localhost',
   port: 6379,
   password: 'password',
-  keyPrefix: 'myapp:'
+  keyPrefix: 'myapp:',
 });
 
 // ORM
 const drizzle = createDatabaseAdapter('drizzle', {
   database: drizzleInstance,
-  schema: schemaObject
+  schema: schemaObject,
 });
 ```
 
 ## Direct Instantiation
 
 ```typescript
-import { 
-  MySQLAdapter, 
-  PostgreSQLAdapter, 
+import {
+  MySQLAdapter,
+  PostgreSQLAdapter,
   SQLiteAdapter,
   MongoDBAdapter,
   RedisAdapter,
   DrizzleAdapter
-} from 'moro';
+} from '@morojs/moro';
 
 // SQL
 const mysql = new MySQLAdapter({ host: 'localhost', ... });
@@ -151,7 +157,7 @@ const updated = await db.update('users', { name: 'Jane' }, { id: 1 });
 const deleted = await db.delete('users', { id: 1 });
 
 // Transactions
-const result = await db.transaction(async (tx) => {
+const result = await db.transaction(async tx => {
   const user = await tx.insert('users', userData);
   await tx.insert('profiles', { user_id: user.id, ...profileData });
   return user;
@@ -161,6 +167,7 @@ const result = await db.transaction(async (tx) => {
 ## Usage Examples
 
 ### SQL Operations
+
 ```typescript
 // Standard CRUD operations work across all SQL adapters
 const users = await db.query('SELECT * FROM users WHERE age > ?', [18]);
@@ -171,6 +178,7 @@ const deleted = await db.delete('users', { id: 1 });
 ```
 
 ### MongoDB Operations
+
 ```typescript
 // MongoDB uses collections instead of tables
 const users = await mongoDb.query('users'); // Get all
@@ -179,12 +187,13 @@ const user = await mongoDb.queryOne('users', { email: 'john@example.com' });
 
 // MongoDB-specific methods
 const stats = await mongoDb.aggregate('users', [
-  { $group: { _id: null, avgAge: { $avg: '$age' } } }
+  { $group: { _id: null, avgAge: { $avg: '$age' } } },
 ]);
 await mongoDb.createIndex('users', { email: 1 }, { unique: true });
 ```
 
 ### Redis Operations
+
 ```typescript
 // Key-value operations
 await redisDb.set('user:123', userData, 3600); // with TTL
@@ -197,6 +206,7 @@ await redisDb.publish('notifications', message);
 ```
 
 ### Drizzle ORM Operations
+
 ```typescript
 // Type-safe queries (requires schema setup)
 const users = await drizzleDb.select('users').where(eq(schema.users.age, 25));
@@ -213,7 +223,7 @@ Choose and install the appropriate database package:
 ```bash
 # SQL Databases
 npm install mysql2                    # MySQL
-npm install pg @types/pg             # PostgreSQL  
+npm install pg @types/pg             # PostgreSQL
 npm install better-sqlite3           # SQLite
 
 # NoSQL Databases
@@ -225,4 +235,4 @@ npm install drizzle-orm              # Drizzle ORM
 # Plus the appropriate driver (mysql2, pg, better-sqlite3, etc.)
 ```
 
-The adapters will gracefully handle missing packages with helpful error messages. 
+The adapters will gracefully handle missing packages with helpful error messages.
