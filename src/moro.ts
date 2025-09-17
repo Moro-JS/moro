@@ -60,8 +60,8 @@ export class Moro extends EventEmitter {
       applyLoggingConfiguration({ level: envLogLevel }, undefined);
     }
 
-    // Initialize configuration system
-    this.config = initializeConfig();
+    // Initialize configuration system - create a deep copy for this instance
+    this.config = JSON.parse(JSON.stringify(initializeConfig()));
 
     // Apply logging configuration from the loaded config (this happens after config file processing)
     if (this.config.logging) {

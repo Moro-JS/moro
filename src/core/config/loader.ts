@@ -571,12 +571,11 @@ export function loadConfig(): AppConfig {
             'performance.clustering.enabled'
           ),
           workers:
-            process.env.CLUSTERING_WORKERS === 'auto' ||
-            process.env.MORO_CLUSTERING_WORKERS === 'auto'
+            process.env.CLUSTER_WORKERS === 'auto' || process.env.MORO_CLUSTER_WORKERS === 'auto'
               ? 'auto'
               : validateNumber(
                   coerceEnvValue(
-                    process.env.CLUSTERING_WORKERS || process.env.MORO_CLUSTERING_WORKERS || ''
+                    process.env.CLUSTER_WORKERS || process.env.MORO_CLUSTER_WORKERS || ''
                   ) || DEFAULT_CONFIG.performance.clustering.workers,
                   'performance.clustering.workers',
                   { min: 1 }
