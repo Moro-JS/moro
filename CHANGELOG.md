@@ -1,3 +1,9 @@
+## [1.5.5] - 2025-09-18
+
+### Fixed
+- fix: resolve logger color inconsistency and enhance cluster algorithm
+- fix: make changelog generation dynamic based on actual commits
+
 ## [1.5.4] - 2025-09-18
 
 ### Added
