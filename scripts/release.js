@@ -80,6 +80,42 @@ function updatePackageJson(newVersion) {
     fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
 }
 
+function getCommitsSinceLastRelease() {
+    try {
+        // Get the last release tag
+        const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+        // Get commits since last tag
+        const commits = execSync(`git log ${lastTag}..HEAD --oneline --no-merges`, { encoding: 'utf8' });
+        return commits.trim().split('\n').filter(line => line.trim());
+    } catch (error) {
+        // If no tags exist, get all commits
+        const commits = execSync('git log --oneline --no-merges', { encoding: 'utf8' });
+        return commits.trim().split('\n').filter(line => line.trim()).slice(0, 10); // Limit to last 10 commits
+    }
+}
+
+function categorizeCommits(commits) {
+    const added = [];
+    const changed = [];
+    const fixed = [];
+    const other = [];
+
+    commits.forEach(commit => {
+        const message = commit.toLowerCase();
+        if (message.includes('feat:') || message.includes('add')) {
+            added.push(commit);
+        } else if (message.includes('fix:') || message.includes('bug') || message.includes('error')) {
+            fixed.push(commit);
+        } else if (message.includes('chore:') || message.includes('refactor:') || message.includes('update') || message.includes('change')) {
+            changed.push(commit);
+        } else {
+            other.push(commit);
+        }
+    });
+
+    return { added, changed, fixed, other };
+}
+
 function updateChangelog(newVersion, versionType) {
     const changelogPath = 'CHANGELOG.md';
     const today = new Date().toISOString().split('T')[0];
@@ -89,31 +125,54 @@ function updateChangelog(newVersion, versionType) {
         changelog = fs.readFileSync(changelogPath, 'utf8');
     }
 
-    const newEntry = `## [${newVersion}] - ${today}
+    // Get commits since last release
+    const commits = getCommitsSinceLastRelease();
+    const { added, changed, fixed, other } = categorizeCommits(commits);
 
-### Added
-- Major logger performance optimizations
-- Object pooling for LogEntry objects
-- Aggressive level checking with numeric comparisons
-- String builder pattern for efficient concatenation
-- Buffered output with micro-batching (1ms intervals)
-- Fast path optimization for different complexity levels
-- Improved timestamp caching (100ms vs 1000ms)
-- Static pre-allocated strings for levels and ANSI codes
-- Comprehensive pre-release script for GitHub workflow
-- Named loggers for better context (MODULE_*, SERVICE_*, etc.)
+    // Build changelog entry
+    let newEntry = `## [${newVersion}] - ${today}\n\n`;
 
-### Changed
-- Replaced all console.log statements with proper logger usage
-- Fixed Jest open handle issues with proper cleanup
-- Performance improvements: 55% faster simple logs, 107% faster complex logs
+    if (added.length > 0) {
+        newEntry += '### Added\n';
+        added.forEach(commit => {
+            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+            newEntry += `- ${message}\n`;
+        });
+        newEntry += '\n';
+    }
 
-### Fixed
-- Jest open handle issues preventing clean test exits
-- Logger performance bottlenecks
-- Inconsistent logging across the codebase
+    if (changed.length > 0) {
+        newEntry += '### Changed\n';
+        changed.forEach(commit => {
+            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+            newEntry += `- ${message}\n`;
+        });
+        newEntry += '\n';
+    }
 
-`;
+    if (fixed.length > 0) {
+        newEntry += '### Fixed\n';
+        fixed.forEach(commit => {
+            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+            newEntry += `- ${message}\n`;
+        });
+        newEntry += '\n';
+    }
+
+    if (other.length > 0) {
+        newEntry += '### Other\n';
+        other.forEach(commit => {
+            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+            newEntry += `- ${message}\n`;
+        });
+        newEntry += '\n';
+    }
+
+    // If no commits found, add a generic entry
+    if (commits.length === 0) {
+        newEntry += '### Maintenance\n';
+        newEntry += `- Version bump to ${newVersion}\n\n`;
+    }
 
     const updatedChangelog = newEntry + changelog;
     fs.writeFileSync(changelogPath, updatedChangelog);
