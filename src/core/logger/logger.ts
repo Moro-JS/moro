@@ -344,24 +344,13 @@ export class MoroLogger implements Logger {
 
     // Absolute minimal path for simple logs - pure speed
     if (!metadata && !context && !this.contextPrefix && !this.contextMetadata) {
-      const logStr = level.toUpperCase() + ' ' + message + '\n';
-      if (level === 'error' || level === 'fatal') {
-        process.stderr.write(logStr);
-      } else {
-        process.stdout.write(logStr);
-      }
+      this.writeSimpleLog(level, message);
       return;
     }
 
     // Minimal path for logs with context but no metadata
     if (!metadata && !this.contextMetadata) {
-      const contextStr = context ? '[' + context + '] ' : '';
-      const logStr = level.toUpperCase() + ' ' + contextStr + message + '\n';
-      if (level === 'error' || level === 'fatal') {
-        process.stderr.write(logStr);
-      } else {
-        process.stdout.write(logStr);
-      }
+      this.writeSimpleLog(level, message, context);
       return;
     }
 
@@ -427,33 +416,78 @@ export class MoroLogger implements Logger {
     context?: string,
     metadata?: Record<string, any>
   ): void {
-    // Build string directly - no array, no try-catch, no metrics
-    let logStr = this.getFastCachedTimestamp() + ' ' + level.toUpperCase().padEnd(5);
+    // Use object pooling for LogEntry (Pino's technique)
+    const entry = MoroLogger.getPooledEntry();
+    const now = Date.now();
 
-    if (context) {
-      logStr += '[' + context + '] ';
-    } else if (this.contextPrefix) {
-      logStr += '[' + this.contextPrefix + '] ';
+    entry.timestamp = new Date(now);
+    entry.level = level;
+    entry.message = message;
+    entry.context = this.contextPrefix
+      ? context
+        ? `${this.contextPrefix}:${context}`
+        : this.contextPrefix
+      : context;
+    entry.metadata = this.createMetadata(metadata);
+    entry.performance = this.options.enablePerformance ? this.getPerformanceData(now) : undefined;
+
+    // Write to outputs with batched processing
+    this.writeToOutputs(entry, level);
+
+    // Return entry to pool
+    MoroLogger.returnPooledEntry(entry);
+  }
+
+  // Simple log writer with colors for minimal overhead cases
+  private writeSimpleLog(level: LogLevel, message: string, context?: string): void {
+    const colors = this.options.enableColors !== false;
+    const levelReset = colors ? MoroLogger.RESET : '';
+
+    MoroLogger.resetStringBuilder();
+
+    // Timestamp with caching optimization
+    if (this.options.enableTimestamp !== false) {
+      const timestamp = this.getFastCachedTimestamp();
+      if (colors) {
+        MoroLogger.appendToBuilder(MoroLogger.COLORS.timestamp);
+        MoroLogger.appendToBuilder(timestamp);
+        MoroLogger.appendToBuilder(levelReset);
+      } else {
+        MoroLogger.appendToBuilder(timestamp);
+      }
+      MoroLogger.appendToBuilder(' ');
     }
 
-    logStr += message;
-
-    if (metadata && Object.keys(metadata).length > 0) {
-      logStr += ' ' + this.safeStringify(metadata);
-    }
-
-    if (this.contextMetadata && Object.keys(this.contextMetadata).length > 0) {
-      logStr += ' ' + this.safeStringify(this.contextMetadata);
-    }
-
-    logStr += '\n';
-
-    // Direct write - no error handling, no buffering
-    if (level === 'error' || level === 'fatal') {
-      process.stderr.write(logStr);
+    // Level with pre-allocated strings
+    const levelStr = MoroLogger.LEVEL_STRINGS[level];
+    if (colors) {
+      MoroLogger.appendToBuilder(MoroLogger.COLORS[level]);
+      MoroLogger.appendToBuilder(MoroLogger.BOLD);
+      MoroLogger.appendToBuilder(levelStr);
+      MoroLogger.appendToBuilder(levelReset);
     } else {
-      process.stdout.write(logStr);
+      MoroLogger.appendToBuilder(levelStr);
     }
+
+    // Context
+    if (context && this.options.enableContext !== false) {
+      MoroLogger.appendToBuilder(' ');
+      if (colors) {
+        MoroLogger.appendToBuilder(MoroLogger.COLORS.context);
+        MoroLogger.appendToBuilder(`[${context}]`);
+        MoroLogger.appendToBuilder(levelReset);
+      } else {
+        MoroLogger.appendToBuilder(`[${context}]`);
+      }
+    }
+
+    // Message
+    MoroLogger.appendToBuilder(' ');
+    MoroLogger.appendToBuilder(message);
+
+    // Output main log line with high-performance method
+    const finalMessage = MoroLogger.buildString();
+    this.output(`${finalMessage}\n`, level);
   }
 
   private updateMetrics(entry: LogEntry): void {
