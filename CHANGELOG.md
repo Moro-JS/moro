@@ -1,3 +1,27 @@
+## [1.5.4] - 2025-09-18
+
+### Added
+- Major logger performance optimizations
+- Object pooling for LogEntry objects
+- Aggressive level checking with numeric comparisons
+- String builder pattern for efficient concatenation
+- Buffered output with micro-batching (1ms intervals)
+- Fast path optimization for different complexity levels
+- Improved timestamp caching (100ms vs 1000ms)
+- Static pre-allocated strings for levels and ANSI codes
+- Comprehensive pre-release script for GitHub workflow
+- Named loggers for better context (MODULE_*, SERVICE_*, etc.)
+
+### Changed
+- Replaced all console.log statements with proper logger usage
+- Fixed Jest open handle issues with proper cleanup
+- Performance improvements: 55% faster simple logs, 107% faster complex logs
+
+### Fixed
+- Jest open handle issues preventing clean test exits
+- Logger performance bottlenecks
+- Inconsistent logging across the codebase
+
 
 # Changelog
 
