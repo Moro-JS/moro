@@ -4,6 +4,7 @@ import path from 'path';
 import { Container } from '../utilities';
 import { ModuleConfig } from '../../types/module';
 import { ModuleDefinition, ModuleRoute, ModuleSocket } from '../../types/module';
+import { createFrameworkLogger } from '../logger';
 
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {
@@ -66,6 +67,8 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
 
 // Module Loader Class
 export class ModuleLoader {
+  private moduleLogger = createFrameworkLogger('MODULE_LOADER');
+
   constructor(private container: Container) {}
 
   async discoverModules(directory: string): Promise<ModuleConfig[]> {
@@ -91,15 +94,16 @@ export class ModuleLoader {
               }
             }
           } catch (error) {
-            console.warn(
-              `⚠️  Could not load module from ${modulePath}:`,
-              error instanceof Error ? error.message : String(error)
-            );
+            this.moduleLogger.warn(`Could not load module from ${modulePath}`, 'MODULE_LOADER', {
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
       }
     } catch (error) {
-      console.error('Failed to discover modules:', error);
+      this.moduleLogger.error('Failed to discover modules', 'MODULE_LOADER', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     return modules;

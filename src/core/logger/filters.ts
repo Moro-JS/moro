@@ -22,16 +22,24 @@ export const contextFilter = (allowedContexts: string[]): LogFilter => ({
 // Rate limiting filter
 export const rateLimitFilter = (maxPerSecond: number): LogFilter => {
   const timestamps: number[] = [];
+  let lastCleanup = 0;
 
   return {
     name: 'rate-limit',
     filter: (entry: LogEntry) => {
       const now = Date.now();
-      const oneSecondAgo = now - 1000;
 
-      // Remove old timestamps
-      while (timestamps.length > 0 && timestamps[0] < oneSecondAgo) {
-        timestamps.shift();
+      // Batch cleanup for better performance and thread safety
+      if (now - lastCleanup > 1000) {
+        const cutoff = now - 1000;
+        let keepIndex = 0;
+        for (let i = 0; i < timestamps.length; i++) {
+          if (timestamps[i] >= cutoff) {
+            timestamps[keepIndex++] = timestamps[i];
+          }
+        }
+        timestamps.length = keepIndex;
+        lastCleanup = now;
       }
 
       // Check rate limit

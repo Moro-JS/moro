@@ -8,6 +8,10 @@
  * @see https://github.com/nextauthjs/next-auth/tree/main/packages
  */
 
+import { createFrameworkLogger } from '../logger';
+
+const logger = createFrameworkLogger('AuthAdapter');
+
 // Mock Auth.js types until we have the actual package
 // These would come from @auth/core in a real implementation
 export interface AuthConfig {
@@ -247,7 +251,7 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
           basePath,
           raw: (code: any, ...message: any[]) => {
             if (config.morojs?.debug) {
-              console.log(`[MoroJS Auth] ${code}:`, ...message);
+              logger.debug(`[MoroJS Auth] ${code}:`, 'AuthAdapter', { message });
             }
           },
         });
@@ -261,7 +265,9 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
         // Convert Web API response to MoroJS response
         await fromWebResponse(finalResponse, res);
       } catch (error) {
-        console.error('[MoroJS Auth] Error:', error);
+        logger.error('[MoroJS Auth] Error', 'AuthAdapter', {
+          error: error instanceof Error ? error.message : String(error),
+        });
         // Robust error handling - check if response methods exist
         if (typeof (res as any).status === 'function' && typeof (res as any).json === 'function') {
           (res as any).status(500).json({
@@ -308,7 +314,9 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
         return null;
       } catch (error) {
         if (config.morojs?.debug) {
-          console.error('[MoroJS Auth] Session error:', error);
+          logger.error('[MoroJS Auth] Session error', 'AuthAdapter', {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
         return null;
       }
@@ -322,18 +330,21 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
  * This creates a MoroJS-compatible middleware for authentication
  */
 export function createAuthMiddleware(config: MoroJSAuthConfig) {
-  console.log('🏭 createAuthMiddleware called - creating middleware function');
+  logger.info('createAuthMiddleware called - creating middleware function', 'AuthAdapter');
   // Return a function that MoroJS can call directly
   return async (app: any) => {
-    console.log('🔧 Installing Auth.js middleware...');
-    console.log('📦 App object received:', typeof app, app.constructor.name);
+    logger.info('Installing Auth.js middleware...', 'AuthAdapter');
+    logger.debug('App object received', 'AuthAdapter', {
+      appType: typeof app,
+      appConstructor: app.constructor.name,
+    });
 
     // Get the hooks from the app's middleware system
     const hooks =
       (app as any).coreFramework?.middlewareManager?.hooks || (app as any).middlewareManager?.hooks;
 
     if (!hooks) {
-      console.error('❌ Could not access MoroJS hooks system');
+      logger.error('Could not access MoroJS hooks system', 'AuthAdapter');
       return;
     }
 
@@ -344,9 +355,9 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
 
     // Register request hook
     hooks.before('request', async (context: any) => {
-      console.log('🔒 Native adapter hook starting...');
+      logger.debug('Native adapter hook starting', 'AuthAdapter');
       const req = context.request;
-      console.log('📝 Request path:', req.path || req.url);
+      logger.debug('Request path', 'AuthAdapter', { path: req.path || req.url });
 
       try {
         // Just add auth object to request - don't touch response
@@ -383,14 +394,16 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
             return { url: signOutUrl };
           },
         };
-        console.log('✅ Native adapter hook completed successfully');
+        logger.debug('Native adapter hook completed successfully', 'AuthAdapter');
       } catch (error) {
-        console.error('❌ Error in native adapter hook:', error);
+        logger.error('Error in native adapter hook', 'AuthAdapter', {
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     });
 
-    console.log('✅ Auth.js middleware installed successfully!');
+    logger.info('Auth.js middleware installed successfully!', 'AuthAdapter');
   };
 }
 

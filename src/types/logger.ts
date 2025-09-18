@@ -30,6 +30,7 @@ export interface LoggerOptions {
   outputs?: LogOutput[];
   filters?: LogFilter[];
   maxEntries?: number;
+  maxBufferSize?: number;
 }
 
 export interface LogOutput {
@@ -78,6 +79,7 @@ export interface LogMetrics {
   averageLogRate: number;
   errorRate: number;
   memoryUsage: number;
+  outputErrors?: Record<string, number>;
 }
 
 export interface ColorScheme {
@@ -90,4 +92,5 @@ export interface ColorScheme {
   context: string;
   metadata: string;
   performance: string;
+  reset: string;
 }

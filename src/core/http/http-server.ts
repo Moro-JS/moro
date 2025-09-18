@@ -281,12 +281,13 @@ export class MoroHttpServer {
       await route.handler(httpReq, httpRes);
     } catch (error) {
       // Debug: Log the actual error and where it came from
-      console.log('🚨 MoroJS Request Error Details:');
-      console.log('📍 Error type:', typeof error);
-      console.log('📍 Error message:', error instanceof Error ? error.message : String(error));
-      console.log('📍 Error stack:', error instanceof Error ? error.stack : 'No stack trace');
-      console.log('📍 Request path:', req.url);
-      console.log('📍 Request method:', req.method);
+      this.logger.debug('Request error details', 'RequestHandler', {
+        errorType: typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : 'No stack trace',
+        requestPath: req.url,
+        requestMethod: req.method,
+      });
 
       this.logger.error('Request error', 'RequestHandler', {
         error: error instanceof Error ? error.message : String(error),
@@ -310,11 +311,10 @@ export class MoroHttpServer {
             httpRes.setHeader('Content-Type', 'application/json');
           } else {
             // Even setHeader doesn't exist - object is completely wrong
-            console.error(
-              '❌ Response object is not a proper ServerResponse:',
-              typeof httpRes,
-              Object.keys(httpRes)
-            );
+            this.logger.error('Response object is not a proper ServerResponse', 'RequestHandler', {
+              responseType: typeof httpRes,
+              responseKeys: Object.keys(httpRes),
+            });
           }
 
           if (typeof httpRes.end === 'function') {
@@ -326,7 +326,10 @@ export class MoroHttpServer {
               })
             );
           } else {
-            console.error('❌ Cannot send error response - end() method missing');
+            this.logger.error(
+              'Cannot send error response - end() method missing',
+              'RequestHandler'
+            );
           }
         }
       }
