@@ -9,6 +9,13 @@ export const DEFAULT_CONFIG: AppConfig = {
     host: 'localhost',
     maxConnections: 1000,
     timeout: 30000,
+    bodySizeLimit: '10mb',
+    requestTracking: {
+      enabled: true, // Enable by default for debugging
+    },
+    errorBoundary: {
+      enabled: true, // Always enabled for safety
+    },
   },
   serviceDiscovery: {
     enabled: false,

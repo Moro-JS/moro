@@ -99,6 +99,7 @@ export class Moro extends EventEmitter {
       ...options,
       logger: this.config.logging,
       websocket: this.config.websocket.enabled ? options.websocket || {} : false,
+      config: this.config,
     };
 
     this.coreFramework = new MoroCore(frameworkOptions);
@@ -855,20 +856,33 @@ export class Moro extends EventEmitter {
   }
 
   private setupDefaultMiddleware(options: MoroOptions) {
-    // CORS
-    if (options.cors !== false) {
-      const corsOptions = typeof options.cors === 'object' ? options.cors : {};
+    // CORS - check config enabled property OR options.security.cors.enabled === true
+    if (this.config.security.cors.enabled || options.security?.cors?.enabled === true) {
+      const corsOptions =
+        typeof options.cors === 'object'
+          ? options.cors
+          : this.config.security.cors
+            ? this.config.security.cors
+            : {};
       this.use(middleware.cors(corsOptions));
     }
 
-    // Helmet
-    if (options.helmet !== false) {
+    // Helmet - check config enabled property OR options.security.helmet.enabled === true
+    if (this.config.security.helmet.enabled || options.security?.helmet?.enabled === true) {
       this.use(middleware.helmet());
     }
 
-    // Compression
-    if (options.compression !== false) {
-      const compressionOptions = typeof options.compression === 'object' ? options.compression : {};
+    // Compression - check config enabled property OR options.performance.compression.enabled === true
+    if (
+      this.config.performance.compression.enabled ||
+      options.performance?.compression?.enabled === true
+    ) {
+      const compressionOptions =
+        typeof options.compression === 'object'
+          ? options.compression
+          : this.config.performance.compression
+            ? this.config.performance.compression
+            : {};
       this.use(middleware.compression(compressionOptions));
     }
 

@@ -5,6 +5,13 @@ export interface ServerConfig {
   host: string;
   maxConnections: number;
   timeout: number;
+  bodySizeLimit: string;
+  requestTracking: {
+    enabled: boolean;
+  };
+  errorBoundary: {
+    enabled: boolean;
+  };
 }
 
 export interface ServiceDiscoveryConfig {

@@ -35,6 +35,7 @@ export interface MoroOptions extends CoreMoroOptions {
         options?: WebSocketAdapterOptions;
       }
     | false;
+  config?: any; // Full configuration object
 }
 
 export class Moro extends EventEmitter {
@@ -51,10 +52,12 @@ export class Moro extends EventEmitter {
   // Framework logger
   private logger: any;
   private options: MoroOptions;
+  private config: any;
 
   constructor(options: MoroOptions = {}) {
     super();
     this.options = options;
+    this.config = options.config || {};
 
     // Configure global logger based on options
     if (options.logger !== undefined) {
@@ -103,8 +106,11 @@ export class Moro extends EventEmitter {
     this.container = new Container();
     this.moduleLoader = new ModuleLoader(this.container);
 
-    // Setup WebSocket adapter if enabled
-    if (options.websocket !== false) {
+    // Setup WebSocket adapter if enabled in config OR options
+    if (
+      this.config.websocket.enabled ||
+      (options.websocket && typeof options.websocket === 'object')
+    ) {
       this.setupWebSockets(options.websocket || {});
     }
 
@@ -128,29 +134,49 @@ export class Moro extends EventEmitter {
   }
 
   private setupCore() {
-    // PERFORMANCE FIX: Only apply middleware if enabled in options
+    // PERFORMANCE FIX: Only apply middleware if enabled in config OR options
 
-    // Security middleware - only if enabled (default to enabled for backward compatibility)
-    if (this.options.helmet !== false) {
+    // Security middleware - check config enabled property OR options.security.*.enabled === true
+    if (this.config.security.helmet.enabled || this.options.security?.helmet?.enabled === true) {
       this.httpServer.use(middleware.helmet());
     }
 
-    if (this.options.cors !== false) {
-      this.httpServer.use(middleware.cors());
+    if (this.config.security.cors.enabled || this.options.security?.cors?.enabled === true) {
+      const corsOptions =
+        typeof this.options.cors === 'object'
+          ? this.options.cors
+          : this.config.security.cors
+            ? this.config.security.cors
+            : {};
+      this.httpServer.use(middleware.cors(corsOptions));
     }
 
-    // Performance middleware - only if enabled (default to enabled for backward compatibility)
-    if (this.options.compression !== false) {
-      this.httpServer.use(middleware.compression());
+    // Performance middleware - check config enabled property OR options.performance.*.enabled === true
+    if (
+      this.config.performance.compression.enabled ||
+      this.options.performance?.compression?.enabled === true
+    ) {
+      const compressionOptions =
+        typeof this.options.compression === 'object'
+          ? this.options.compression
+          : this.config.performance.compression
+            ? this.config.performance.compression
+            : {};
+      this.httpServer.use(middleware.compression(compressionOptions));
     }
 
-    this.httpServer.use(middleware.bodySize({ limit: '10mb' }));
+    // Body size middleware - always enabled with configurable limit
+    this.httpServer.use(middleware.bodySize({ limit: this.config.server.bodySizeLimit }));
 
-    // Request tracking middleware
-    this.httpServer.use(this.requestTrackingMiddleware());
+    // Request tracking middleware - configurable
+    if (this.config.server.requestTracking.enabled) {
+      this.httpServer.use(this.requestTrackingMiddleware());
+    }
 
-    // Error boundary middleware
-    this.httpServer.use(this.errorBoundaryMiddleware());
+    // Error boundary middleware - configurable but recommended to keep enabled
+    if (this.config.server.errorBoundary.enabled) {
+      this.httpServer.use(this.errorBoundaryMiddleware());
+    }
   }
 
   /**

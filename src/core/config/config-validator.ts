@@ -80,6 +80,13 @@ function validateServerConfig(config: any, path: string) {
     host: validateString(config.host, `${path}.host`),
     maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 1 }),
     timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 1000 }),
+    bodySizeLimit: validateString(config.bodySizeLimit, `${path}.bodySizeLimit`),
+    requestTracking: {
+      enabled: validateBoolean(config.requestTracking?.enabled, `${path}.requestTracking.enabled`),
+    },
+    errorBoundary: {
+      enabled: validateBoolean(config.errorBoundary?.enabled, `${path}.errorBoundary.enabled`),
+    },
   };
 }
 

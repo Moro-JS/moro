@@ -11,7 +11,13 @@ const { createApp } = require('./dist/moro.js');
 const app = createApp({
     server: {
         port: 3111,        // Default benchmark port (can be overridden by PORT env var)
-        host: '127.0.0.1'  // Default benchmark host (can be overridden by HOST env var)
+        host: '127.0.0.1',  // Default benchmark host (can be overridden by HOST env var)
+        requestTracking: {
+            enabled: false, // Disable for fair comparison
+        },
+        errorBoundary: {
+            enabled: false, // Disable for fair comparison
+        },
     },
     // Minimal middleware for fair comparison
     performance: {
