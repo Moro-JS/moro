@@ -13,14 +13,9 @@ describe('MoroJS Basic Integration', () => {
   });
 
   afterEach(async () => {
-    // Close HTTP server if it exists
-    try {
-      if (app.core && app.core.httpServer) {
-        await app.core.httpServer.close();
-      }
-    } catch (error) {
-      // Ignore close errors
-    }
+    // Close app properly with logger cleanup
+    const { closeApp } = await import('../setup');
+    await closeApp(app);
 
     // Close Socket.IO if it exists
     try {

@@ -61,10 +61,16 @@ export interface Logger {
 
   // Configuration
   setLevel(level: LogLevel): void;
+  getLevel(): LogLevel;
   addOutput(output: LogOutput): void;
   removeOutput(name: string): void;
   addFilter(filter: LogFilter): void;
   removeFilter(name: string): void;
+
+  // Cleanup
+  flush(): void;
+  flushBuffer(): void;
+  destroy(): void;
 
   // Metrics and history
   getHistory(count?: number): LogEntry[];

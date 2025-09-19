@@ -1,60 +1,105 @@
-// Configuration System - Main Exports and Utilities
+/**
+ * Configuration System - Immutable Config with createApp Override Support
+ *
+ * This is the main entry point for the MoroJS configuration system.
+ * It provides a clean, immutable configuration that is locked at createApp() time.
+ *
+ * Key Features:
+ * - Immutable configuration after initialization
+ * - Clear precedence: Env Vars > createApp Options > Config File > Defaults
+ * - Type-safe validation
+ * - Single source of truth
+ */
+
+// Export types and core components
 export * from './schema';
-export * from './loader';
-export * from './utils';
+export * from './config-sources';
+export * from './config-validator';
 export * from './file-loader';
 
-// Main configuration loading function
-import { loadConfig } from './loader';
-import type { AppConfig } from './schema';
-import { setConfig } from './utils';
+// Export specific functions from config-manager to avoid conflicts
+export { initializeAndLockConfig, isConfigLocked, resetConfigForTesting } from './config-manager';
 
-// Global configuration instance
-let globalConfig: AppConfig | null = null;
+// Export utilities for backward compatibility
+export * from './utils';
+
+import { MoroOptions } from '../../types/core';
+import { AppConfig } from '../../types/config';
+import { loadConfigFromAllSources } from './config-sources';
+import {
+  initializeAndLockConfig,
+  getGlobalConfig as getConfig,
+  isConfigLocked,
+  resetConfigForTesting,
+} from './config-manager';
+import { createFrameworkLogger } from '../logger';
+
+const logger = createFrameworkLogger('ConfigSystem');
 
 /**
- * Initialize and load the global application configuration
- * This should be called once at application startup
+ * Initialize configuration system with createApp options
+ * This is the main entry point called by createApp()
+ *
+ * @param options - createApp options that can override config file and defaults
+ * @returns Immutable, validated configuration object
  */
-export function initializeConfig(): AppConfig {
-  if (globalConfig) {
-    return globalConfig;
+export function initializeConfig(options?: MoroOptions): Readonly<AppConfig> {
+  if (isConfigLocked()) {
+    logger.debug('Configuration already locked, returning existing config');
+    return getConfig();
   }
 
-  globalConfig = loadConfig();
+  logger.debug('Initializing configuration system');
 
-  // Also set the config for utils functions
-  setConfig(globalConfig);
+  // Load configuration from all sources with proper precedence
+  const config = loadConfigFromAllSources(options);
 
-  return globalConfig;
+  // Lock the configuration to prevent further changes
+  initializeAndLockConfig(config);
+
+  logger.info(
+    `Configuration system initialized and locked: ${process.env.NODE_ENV || 'development'}:${config.server.port} (sources: env + file + options + defaults)`
+  );
+
+  return config;
+}
+
+/**
+ * Load configuration without locking (for testing and utilities)
+ * This maintains backward compatibility with existing code
+ */
+export function loadConfig(): AppConfig {
+  return loadConfigFromAllSources();
+}
+
+/**
+ * Load configuration with createApp options (for testing and utilities)
+ * This maintains backward compatibility with existing code
+ */
+export function loadConfigWithOptions(options: MoroOptions): AppConfig {
+  return loadConfigFromAllSources(options);
 }
 
 /**
  * Get the current global configuration
- * Throws if configuration hasn't been initialized
+ * Alias for getGlobalConfig() for backward compatibility
  */
-export function getGlobalConfig(): AppConfig {
-  if (!globalConfig) {
-    throw new Error('Configuration not initialized. Call initializeConfig() first.');
-  }
-  return globalConfig;
+export function getGlobalConfig(): Readonly<AppConfig> {
+  return getConfig();
 }
 
 /**
- * Check if configuration has been initialized
+ * Check if configuration has been initialized and locked
+ * Alias for isConfigLocked() for backward compatibility
  */
 export function isConfigInitialized(): boolean {
-  return globalConfig !== null;
+  return isConfigLocked();
 }
 
 /**
- * Reset the global configuration state (for testing purposes)
+ * Reset configuration state (for testing only)
  * @internal
  */
 export function resetConfig(): void {
-  globalConfig = null;
-
-  // Also reset the utils config (by setting it to null via direct access)
-  const { setConfig } = require('./utils');
-  setConfig(null as any);
+  resetConfigForTesting();
 }

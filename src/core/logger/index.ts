@@ -5,6 +5,7 @@ export {
   createFrameworkLogger,
   configureGlobalLogger,
   applyLoggingConfiguration,
+  destroyGlobalLogger,
 } from './logger';
 export * from './filters';
 

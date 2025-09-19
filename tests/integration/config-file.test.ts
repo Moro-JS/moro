@@ -40,13 +40,15 @@ describe('Config File Integration', () => {
     delete process.env.NODE_ENV;
     delete process.env.LOG_LEVEL;
 
-    // Create config file
+    // Set environment for the test
+    process.env.NODE_ENV = 'staging';
+
+    // Create config file (no longer includes environment)
     const configContent = `
       module.exports = {
         server: {
           port: 3500,
-          host: '0.0.0.0',
-          environment: 'staging'
+          host: '0.0.0.0'
         },
         logging: {
           level: 'warn'
@@ -63,7 +65,8 @@ describe('Config File Integration', () => {
     // Config file values should be applied
     expect(config.server.port).toBe(3500);
     expect(config.server.host).toBe('0.0.0.0');
-    expect(config.server.environment).toBe('staging');
+    // Environment is now controlled by NODE_ENV, not config
+    expect(process.env.NODE_ENV).toBe('staging');
     expect(config.logging.level).toBe('warn');
   });
 

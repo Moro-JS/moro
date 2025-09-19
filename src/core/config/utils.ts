@@ -1,28 +1,26 @@
 // Configuration Utilities for Modules and Environment Handling
 import { AppConfig } from './schema';
 import { createFrameworkLogger } from '../logger';
+import { getGlobalConfig } from './config-manager';
 
 const logger = createFrameworkLogger('ConfigUtils');
 
-// Global configuration store
-let appConfig: AppConfig | null = null;
-
 /**
- * Set the global configuration (used by framework initialization)
+ * Set the global configuration (deprecated - for backward compatibility only)
+ * @deprecated Use the new immutable config system instead
  */
-export function setConfig(config: AppConfig): void {
-  appConfig = config;
-  logger.debug('Global configuration updated');
+export function setConfig(_config: AppConfig): void {
+  logger.warn(
+    'setConfig() is deprecated. Configuration is now immutable after createApp() initialization.'
+  );
 }
 
 /**
  * Get the global configuration
+ * This now delegates to the new config manager
  */
 export function getConfig(): AppConfig {
-  if (!appConfig) {
-    throw new Error('Configuration not initialized. Call loadConfig() first.');
-  }
-  return appConfig;
+  return getGlobalConfig();
 }
 
 /**
@@ -63,6 +61,7 @@ function coerceEnvironmentValue(value: string): any {
 
 /**
  * Create module-specific configuration with environment override support
+ * This now uses the new immutable config system
  */
 export function createModuleConfig<T>(
   schema: { parse: (data: any) => T },
@@ -72,10 +71,12 @@ export function createModuleConfig<T>(
   // Try to get global config, but don't fail if not initialized
   let globalConfig = {};
   try {
-    const { getGlobalConfig } = require('./index');
     globalConfig = getGlobalConfig();
   } catch {
     // Global config not initialized - use empty object (module config can still work independently)
+    logger.debug(
+      `Global config not available for module config with prefix ${envPrefix}, using defaults only`
+    );
     globalConfig = {};
   }
 
@@ -104,7 +105,7 @@ export function createModuleConfig<T>(
   // Priority: environment variables > global config > default config
   const mergedConfig = {
     ...defaultConfig,
-    ...globalConfig, // Now actually using global config!
+    ...globalConfig, // Now uses the new immutable config system
     ...envConfig,
   };
 
@@ -208,9 +209,10 @@ export function envVar(prefix: string, name: string): string {
 
 /**
  * Get configuration value with dot notation
+ * This now delegates to the new config manager
  */
 export function getConfigValue(path: string): any {
-  const config = getConfig();
+  const config = getGlobalConfig();
 
   return path.split('.').reduce((obj, key) => {
     return obj && obj[key] !== undefined ? obj[key] : undefined;
@@ -219,33 +221,24 @@ export function getConfigValue(path: string): any {
 
 /**
  * Check if we're in development environment
+ * Now reads NODE_ENV directly for consistency with Node.js ecosystem
  */
 export function isDevelopment(): boolean {
-  try {
-    return getConfig().server.environment === 'development';
-  } catch {
-    return process.env.NODE_ENV === 'development';
-  }
+  return process.env.NODE_ENV === 'development';
 }
 
 /**
  * Check if we're in production environment
+ * Now reads NODE_ENV directly for consistency with Node.js ecosystem
  */
 export function isProduction(): boolean {
-  try {
-    return getConfig().server.environment === 'production';
-  } catch {
-    return process.env.NODE_ENV === 'production';
-  }
+  return process.env.NODE_ENV === 'production';
 }
 
 /**
  * Check if we're in staging environment
+ * Now reads NODE_ENV directly for consistency with Node.js ecosystem
  */
 export function isStaging(): boolean {
-  try {
-    return getConfig().server.environment === 'staging';
-  } catch {
-    return process.env.NODE_ENV === 'staging';
-  }
+  return process.env.NODE_ENV === 'staging';
 }

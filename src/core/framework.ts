@@ -15,18 +15,16 @@ import { MoroEventBus } from './events';
 import { createFrameworkLogger, logger as globalLogger } from './logger';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module';
 import { LogLevel, LoggerOptions } from '../types/logger';
+import { MoroOptions as CoreMoroOptions } from '../types/core';
 import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter';
 
-export interface MoroOptions {
+// Extended MoroOptions that includes both core options and framework-specific options
+export interface MoroOptions extends CoreMoroOptions {
   http2?: boolean;
   https?: {
     key: string | Buffer;
     cert: string | Buffer;
     ca?: string | Buffer;
-  };
-  compression?: {
-    enabled?: boolean;
-    threshold?: number;
   };
   websocket?:
     | {
@@ -37,7 +35,6 @@ export interface MoroOptions {
         options?: WebSocketAdapterOptions;
       }
     | false;
-  logger?: LoggerOptions | boolean;
 }
 
 export class Moro extends EventEmitter {
@@ -131,12 +128,22 @@ export class Moro extends EventEmitter {
   }
 
   private setupCore() {
-    // Security middleware
-    this.httpServer.use(middleware.helmet());
-    this.httpServer.use(middleware.cors());
+    // PERFORMANCE FIX: Only apply middleware if enabled in options
 
-    // Performance middleware
-    this.httpServer.use(middleware.compression());
+    // Security middleware - only if enabled (default to enabled for backward compatibility)
+    if (this.options.helmet !== false) {
+      this.httpServer.use(middleware.helmet());
+    }
+
+    if (this.options.cors !== false) {
+      this.httpServer.use(middleware.cors());
+    }
+
+    // Performance middleware - only if enabled (default to enabled for backward compatibility)
+    if (this.options.compression !== false) {
+      this.httpServer.use(middleware.compression());
+    }
+
     this.httpServer.use(middleware.bodySize({ limit: '10mb' }));
 
     // Request tracking middleware

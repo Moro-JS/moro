@@ -10,5 +10,6 @@ dist
 .DS_Store
 .prettierrc
 .cursorignore
+.cursor
 coverage/
 docs-*

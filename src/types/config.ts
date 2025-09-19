@@ -3,7 +3,6 @@
 export interface ServerConfig {
   port: number;
   host: string;
-  environment: 'development' | 'staging' | 'production';
   maxConnections: number;
   timeout: number;
 }
@@ -19,7 +18,7 @@ export interface ServiceDiscoveryConfig {
 
 export interface DatabaseConfig {
   url?: string;
-  redis: {
+  redis?: {
     url: string;
     maxRetries: number;
     retryDelay: number;
@@ -34,6 +33,28 @@ export interface DatabaseConfig {
     connectionLimit: number;
     acquireTimeout: number;
     timeout: number;
+  };
+  postgresql?: {
+    host: string;
+    port: number;
+    database?: string;
+    user?: string;
+    password?: string;
+    connectionLimit: number;
+    ssl?: boolean;
+  };
+  sqlite?: {
+    filename: string;
+    memory?: boolean;
+    verbose?: boolean;
+  };
+  mongodb?: {
+    url?: string;
+    host?: string;
+    port?: number;
+    database?: string;
+    username?: string;
+    password?: string;
   };
 }
 
@@ -141,6 +162,22 @@ export interface PerformanceConfig {
   clustering: {
     enabled: boolean;
     workers: number | 'auto';
+    memoryPerWorkerGB?: number;
+  };
+}
+
+export interface WebSocketConfig {
+  enabled: boolean;
+  adapter?: string | 'socket.io' | 'ws';
+  compression?: boolean;
+  customIdGenerator?: () => string;
+  options?: {
+    cors?: {
+      origin?: string | string[];
+      credentials?: boolean;
+    };
+    path?: string;
+    maxPayloadLength?: number;
   };
 }
 
@@ -154,4 +191,5 @@ export interface AppConfig {
   security: SecurityConfig;
   external: ExternalServicesConfig;
   performance: PerformanceConfig;
+  websocket: WebSocketConfig;
 }

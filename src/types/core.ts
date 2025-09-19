@@ -1,56 +1,45 @@
 // Core Framework Types
 import { RuntimeConfig } from './runtime';
 import { LogLevel, LoggerOptions } from './logger';
+import { AppConfig } from './config';
 
 export interface MoroOptions {
   autoDiscover?: boolean;
   modulesPath?: string;
   middleware?: any[];
-  database?: any;
+
+  // Runtime configuration
+  runtime?: RuntimeConfig;
+
+  // HTTP/WebSocket options
+  http2?: boolean;
+  https?: {
+    key: string | Buffer;
+    cert: string | Buffer;
+    ca?: string | Buffer;
+  };
+  websocket?:
+    | {
+        enabled?: boolean;
+        adapter?: any;
+        compression?: boolean;
+        customIdGenerator?: () => string;
+        options?: any;
+      }
+    | false;
+
+  // Simplified config options (these map to the full config)
   cors?: boolean | object;
   compression?: boolean | object;
   helmet?: boolean | object;
-  // Runtime configuration
-  runtime?: RuntimeConfig;
-  // Logger configuration
   logger?: LoggerOptions | boolean;
-  // Module configuration
-  modules?: {
-    cache?: {
-      enabled?: boolean;
-      defaultTtl?: number;
-      maxSize?: number;
-      strategy?: 'lru' | 'lfu' | 'fifo';
-    };
-    rateLimit?: {
-      enabled?: boolean;
-      defaultRequests?: number;
-      defaultWindow?: number;
-      skipSuccessfulRequests?: boolean;
-      skipFailedRequests?: boolean;
-    };
-    validation?: {
-      enabled?: boolean;
-      stripUnknown?: boolean;
-      abortEarly?: boolean;
-    };
-  };
-  // Performance configuration
-  performance?: {
-    clustering?: {
-      enabled?: boolean;
-      workers?: number | 'auto';
-    };
-    compression?: {
-      enabled?: boolean;
-      level?: number;
-      threshold?: number;
-    };
-    circuitBreaker?: {
-      enabled?: boolean;
-      failureThreshold?: number;
-      resetTimeout?: number;
-      monitoringPeriod?: number;
-    };
-  };
+
+  // Direct config overrides (partial)
+  server?: Partial<AppConfig['server']>;
+  database?: Partial<AppConfig['database']>;
+  modules?: Partial<AppConfig['modules']>;
+  logging?: Partial<AppConfig['logging']>;
+  security?: Partial<AppConfig['security']>;
+  external?: Partial<AppConfig['external']>;
+  performance?: Partial<AppConfig['performance']>;
 }

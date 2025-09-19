@@ -256,20 +256,91 @@ export class IntelligentRouteBuilder implements RouteBuilder {
 
 // Executable route with intelligent middleware ordering
 export class ExecutableRoute implements CompiledRoute {
-  constructor(public readonly schema: RouteSchema) {}
+  // PERFORMANCE OPTIMIZATION: Pre-analyze route requirements
+  private readonly requiresAuth: boolean;
+  private readonly requiresValidation: boolean;
+  private readonly requiresRateLimit: boolean;
+  private readonly requiresCache: boolean;
+  private readonly hasBeforeMiddleware: boolean;
+  private readonly hasAfterMiddleware: boolean;
+  private readonly hasTransformMiddleware: boolean;
+  private readonly isFastPath: boolean;
+
+  constructor(public readonly schema: RouteSchema) {
+    // Pre-calculate what this route actually needs
+    this.requiresAuth = !!this.schema.auth;
+    this.requiresValidation = !!this.schema.validation;
+    this.requiresRateLimit = !!this.schema.rateLimit;
+    this.requiresCache = !!this.schema.cache;
+    this.hasBeforeMiddleware = !!this.schema.middleware?.before?.length;
+    this.hasAfterMiddleware = !!this.schema.middleware?.after?.length;
+    this.hasTransformMiddleware = !!this.schema.middleware?.transform?.length;
+
+    // Fast path: no middleware, no auth, no validation, no rate limiting
+    this.isFastPath =
+      !this.requiresAuth &&
+      !this.requiresValidation &&
+      !this.requiresRateLimit &&
+      !this.requiresCache &&
+      !this.hasBeforeMiddleware &&
+      !this.hasAfterMiddleware &&
+      !this.hasTransformMiddleware;
+
+    // Log fast path routes for monitoring
+    if (this.isFastPath) {
+      logger.debug(`Fast path route: ${this.schema.method} ${this.schema.path}`, 'FastPath');
+    }
+  }
 
   async execute(req: HttpRequest, res: HttpResponse): Promise<void> {
     const validatedReq = req as ValidatedRequest;
 
     try {
-      // Execute middleware in intelligent order
-      await this.executePhase('before', validatedReq, res);
-      await this.executePhase('rateLimit', validatedReq, res);
-      await this.executePhase('auth', validatedReq, res);
-      await this.executePhase('validation', validatedReq, res);
-      await this.executePhase('transform', validatedReq, res);
-      await this.executePhase('cache', validatedReq, res);
-      await this.executePhase('after', validatedReq, res);
+      // PERFORMANCE OPTIMIZATION: Fast path for simple routes
+      if (this.isFastPath) {
+        // Skip all middleware - execute handler directly
+        const result = await this.schema.handler(validatedReq, res);
+        if (result !== undefined && !res.headersSent) {
+          res.json(result);
+        }
+        return;
+      }
+
+      // Optimized middleware execution - only run what's needed
+      if (this.hasBeforeMiddleware) {
+        await this.executePhase('before', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.requiresRateLimit) {
+        await this.executePhase('rateLimit', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.requiresAuth) {
+        await this.executePhase('auth', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.requiresValidation) {
+        await this.executePhase('validation', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.hasTransformMiddleware) {
+        await this.executePhase('transform', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.requiresCache) {
+        await this.executePhase('cache', validatedReq, res);
+        if (res.headersSent) return;
+      }
+
+      if (this.hasAfterMiddleware) {
+        await this.executePhase('after', validatedReq, res);
+        if (res.headersSent) return;
+      }
 
       // Execute handler last
       if (!res.headersSent) {
@@ -361,15 +432,32 @@ export class ExecutableRoute implements CompiledRoute {
     req: HttpRequest,
     res: HttpResponse
   ): Promise<void> {
+    // PERFORMANCE OPTIMIZATION: Reduce Promise overhead
     return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const next = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      };
+
       try {
-        const next = () => resolve();
         const result = middleware(req, res, next);
         if (result instanceof Promise) {
-          result.then(() => resolve()).catch(reject);
+          result.then(() => !resolved && next()).catch(reject);
+        } else {
+          // Synchronous middleware - call next immediately if not called
+          if (!resolved) {
+            next();
+          }
         }
       } catch (error) {
-        reject(error);
+        if (!resolved) {
+          resolved = true;
+          reject(error);
+        }
       }
     });
   }
@@ -474,6 +562,22 @@ export class ExecutableRoute implements CompiledRoute {
     logger.debug('Cache check', 'Cache', {
       config: this.schema.cache,
     });
+  }
+
+  // Performance monitoring
+  getPerformanceInfo() {
+    return {
+      path: this.schema.path,
+      method: this.schema.method,
+      isFastPath: this.isFastPath,
+      requiresAuth: this.requiresAuth,
+      requiresValidation: this.requiresValidation,
+      requiresRateLimit: this.requiresRateLimit,
+      requiresCache: this.requiresCache,
+      hasBeforeMiddleware: this.hasBeforeMiddleware,
+      hasAfterMiddleware: this.hasAfterMiddleware,
+      hasTransformMiddleware: this.hasTransformMiddleware,
+    };
   }
 }
 

@@ -60,6 +60,7 @@ export class MoroLogger implements Logger {
   // Buffer overflow protection
   private bufferOverflowThreshold: number;
   private emergencyFlushInProgress = false;
+  private isDestroyed = false;
 
   // High-performance output methods
 
@@ -226,7 +227,9 @@ export class MoroLogger implements Logger {
   }
 
   child(context: string, metadata?: Record<string, any>): Logger {
-    const childLogger = new MoroLogger(this.options);
+    // Create child logger with current parent level (not original options level)
+    const childOptions = { ...this.options, level: this.level };
+    const childLogger = new MoroLogger(childOptions);
     childLogger.contextPrefix = this.contextPrefix ? `${this.contextPrefix}:${context}` : context;
     childLogger.contextMetadata = { ...this.contextMetadata, ...metadata };
     childLogger.outputs = this.outputs;
@@ -240,6 +243,10 @@ export class MoroLogger implements Logger {
 
   setLevel(level: LogLevel): void {
     this.level = level;
+  }
+
+  getLevel(): LogLevel {
+    return this.level;
   }
 
   addOutput(output: LogOutput): void {
@@ -725,8 +732,8 @@ export class MoroLogger implements Logger {
   }
 
   private scheduleFlush(): void {
-    if (this.flushTimeout) {
-      return; // Already scheduled
+    if (this.flushTimeout || this.isDestroyed) {
+      return; // Already scheduled or destroyed
     }
 
     this.flushTimeout = setTimeout(() => {
@@ -734,7 +741,7 @@ export class MoroLogger implements Logger {
     }, this.flushInterval);
   }
 
-  private flushBuffer(): void {
+  public flushBuffer(): void {
     if (this.outputBuffer.length === 0) {
       return;
     }
@@ -916,6 +923,30 @@ export class MoroLogger implements Logger {
       // Ignore flush errors
     }
   }
+
+  // Destroy logger and clean up all resources (for testing)
+  public destroy(): void {
+    // Mark as destroyed to prevent new timeouts
+    this.isDestroyed = true;
+
+    // Clear any remaining timeouts
+    if (this.flushTimeout) {
+      clearTimeout(this.flushTimeout);
+      this.flushTimeout = null;
+    }
+
+    // Flush any remaining buffer
+    this.flushBuffer();
+
+    // Clear outputs and filters
+    this.outputs.clear();
+    this.filters.clear();
+
+    // Clear history
+    this.history.length = 0;
+    this.historyIndex = 0;
+    this.historySize = 0;
+  }
 }
 
 // Global logger instance
@@ -940,6 +971,14 @@ export function configureGlobalLogger(options: Partial<LoggerOptions>): void {
   }
   // Additional configuration options can be added here as needed
   // For now, focusing on level which is the most critical
+}
+
+/**
+ * Destroy the global logger and clean up resources (for testing)
+ * @internal
+ */
+export function destroyGlobalLogger(): void {
+  logger.destroy();
 }
 
 /**

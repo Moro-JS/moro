@@ -2,12 +2,11 @@
 
 import { AppConfig } from '../../types/config';
 
-// Default configuration values
+// Minimal default configuration - performance-focused, most things opt-in
 export const DEFAULT_CONFIG: AppConfig = {
   server: {
     port: 3001,
     host: 'localhost',
-    environment: 'development',
     maxConnections: 1000,
     timeout: 30000,
   },
@@ -19,30 +18,23 @@ export const DEFAULT_CONFIG: AppConfig = {
     healthCheckInterval: 30000,
     retryAttempts: 3,
   },
-  database: {
-    redis: {
-      url: 'redis://localhost:6379',
-      maxRetries: 3,
-      retryDelay: 1000,
-      keyPrefix: 'moro:',
-    },
-  },
+  database: {},
   modules: {
     cache: {
-      enabled: true,
+      enabled: false, // Opt-in for better performance
       defaultTtl: 300,
       maxSize: 1000,
       strategy: 'lru',
     },
     rateLimit: {
-      enabled: true,
+      enabled: false, // Opt-in to avoid unnecessary overhead
       defaultRequests: 100,
       defaultWindow: 60000,
       skipSuccessfulRequests: false,
       skipFailedRequests: false,
     },
     validation: {
-      enabled: true,
+      enabled: false,
       stripUnknown: true,
       abortEarly: false,
     },
@@ -69,14 +61,14 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   security: {
     cors: {
-      enabled: true,
+      enabled: false, // Opt-in for better performance
       origin: '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: false,
     },
     helmet: {
-      enabled: true,
+      enabled: false, // Opt-in for better performance
       contentSecurityPolicy: true,
       hsts: true,
       noSniff: true,
@@ -90,26 +82,15 @@ export const DEFAULT_CONFIG: AppConfig = {
       },
     },
   },
-  external: {
-    stripe: {
-      apiVersion: '2023-10-16',
-    },
-    paypal: {
-      environment: 'sandbox',
-    },
-    smtp: {
-      port: 587,
-      secure: false,
-    },
-  },
+  external: {},
   performance: {
     compression: {
-      enabled: true,
+      enabled: false, // Opt-in to avoid overhead
       level: 6,
       threshold: 1024,
     },
     circuitBreaker: {
-      enabled: true,
+      enabled: false, // Opt-in to avoid overhead
       failureThreshold: 5,
       resetTimeout: 60000,
       monitoringPeriod: 10000,
@@ -117,13 +98,23 @@ export const DEFAULT_CONFIG: AppConfig = {
     clustering: {
       enabled: false,
       workers: 1,
+      memoryPerWorkerGB: undefined,
     },
+  },
+  websocket: {
+    enabled: false, // Opt-in - user must explicitly enable WebSockets
   },
 };
 
-// Simple compatibility export - just return the config as-is
+// Schema validation is now handled by config-validator.ts
+// This export is kept for backward compatibility only
+// Note: For actual validation, use validateConfig() from config-validator.ts directly
 export const ConfigSchema = {
-  parse: (data: any): AppConfig => data as AppConfig,
+  parse: (data: any): AppConfig => {
+    // Simple pass-through for backward compatibility
+    // Real validation happens in the config loading pipeline
+    return data as AppConfig;
+  },
 };
 
 // Re-export types for backward compatibility

@@ -26,6 +26,11 @@ export class MoroHttpServer {
   // Request handler pooling to avoid function creation overhead
   private middlewareExecutionCache = new Map<string, Function>();
 
+  // Response caching for ultra-fast common responses
+  private responseCache = new Map<string, Buffer>();
+  private responseCacheHits = 0;
+  private responseCacheMisses = 0;
+
   // String interning for common values (massive memory savings)
   private static readonly INTERNED_METHODS = new Map([
     ['GET', 'GET'],
@@ -492,6 +497,20 @@ export class MoroHttpServer {
     httpRes.json = async (data: any) => {
       if (httpRes.headersSent) return;
 
+      // PERFORMANCE OPTIMIZATION: Check response cache for common patterns
+      const cacheKey = this.getResponseCacheKey(data);
+      if (cacheKey) {
+        const cachedBuffer = this.responseCache.get(cacheKey);
+        if (cachedBuffer) {
+          this.responseCacheHits++;
+          httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
+          httpRes.setHeader('Content-Length', cachedBuffer.length);
+          httpRes.end(cachedBuffer);
+          return;
+        }
+        this.responseCacheMisses++;
+      }
+
       // Ultra-fast JSON serialization with zero-copy buffers
       let jsonString: string;
 
@@ -578,6 +597,12 @@ export class MoroHttpServer {
       });
 
       httpRes.end(finalBuffer);
+
+      // PERFORMANCE OPTIMIZATION: Cache small, common responses
+      if (cacheKey && finalBuffer.length < 1024 && this.responseCache.size < 100) {
+        this.responseCache.set(cacheKey, Buffer.from(finalBuffer));
+      }
+
       // Return buffer to pool after response (zero-copy achievement!)
       process.nextTick(() => MoroHttpServer.returnBuffer(buffer));
     };
@@ -952,6 +977,47 @@ export class MoroHttpServer {
 
   getServer(): Server {
     return this.server;
+  }
+
+  // PERFORMANCE OPTIMIZATION: Generate cache key for common response patterns
+  private getResponseCacheKey(data: any): string | null {
+    // Only cache simple, common responses
+    if (!data || typeof data !== 'object') {
+      // Simple primitives or strings - generate key
+      const key = JSON.stringify(data);
+      return key.length < 100 ? key : null;
+    }
+
+    // Common API response patterns
+    if ('hello' in data && Object.keys(data).length <= 2) {
+      // Hello world type responses
+      return `hello:${JSON.stringify(data)}`;
+    }
+
+    if ('status' in data && Object.keys(data).length <= 3) {
+      // Status responses like {status: "ok", version: "1.0.0"}
+      return `status:${JSON.stringify(data)}`;
+    }
+
+    if ('success' in data && 'message' in data && Object.keys(data).length <= 3) {
+      // Simple success/error responses
+      return `msg:${data.success}:${data.message}`;
+    }
+
+    // Don't cache complex objects
+    return null;
+  }
+
+  // Performance statistics
+  getPerformanceStats() {
+    return {
+      responseCacheHits: this.responseCacheHits,
+      responseCacheMisses: this.responseCacheMisses,
+      responseCacheSize: this.responseCache.size,
+      paramObjectPoolSize: this.paramObjectPool.length,
+      bufferPoolSize: this.bufferPool.length,
+      middlewareExecutionCacheSize: this.middlewareExecutionCache.size,
+    };
   }
 }
 

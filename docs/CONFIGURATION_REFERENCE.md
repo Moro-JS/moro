@@ -80,9 +80,10 @@ Configure the HTTP server settings.
 |----------|------|---------|-------------|
 | `port` | `number` | `3001` | Server port to listen on (1-65535) |
 | `host` | `string` | `'localhost'` | Server host to bind to |
-| `environment` | `'development' \| 'staging' \| 'production'` | `'development'` | Application environment |
 | `maxConnections` | `number` | `1000` | Maximum concurrent connections |
 | `timeout` | `number` | `30000` | Request timeout in milliseconds |
+
+**Note**: Environment detection now uses `NODE_ENV` directly for consistency with the Node.js ecosystem. Use `isDevelopment()`, `isProduction()`, and `isStaging()` utility functions to check the current environment.
 
 #### Example
 
@@ -91,18 +92,20 @@ Configure the HTTP server settings.
   server: {
     port: 8080,
     host: '0.0.0.0',
-    environment: 'production',
     maxConnections: 5000,
     timeout: 60000
   }
 }
+
+// Environment is now controlled by NODE_ENV
+// NODE_ENV=production node your-app.js
 ```
 
 #### Environment Variables
 
 - `PORT` or `MORO_PORT`
 - `HOST` or `MORO_HOST`
-- `NODE_ENV` or `MORO_ENV`
+- `NODE_ENV` (controls environment behavior - not part of server config)
 - `MAX_CONNECTIONS` or `MORO_MAX_CONNECTIONS`
 - `REQUEST_TIMEOUT` or `MORO_TIMEOUT`
 
@@ -934,7 +937,6 @@ module.exports = {
   server: {
     port: process.env.PORT || 3001,
     host: '0.0.0.0',
-    environment: process.env.NODE_ENV || 'development',
     maxConnections: 5000,
     timeout: 30000
   },

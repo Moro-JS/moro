@@ -11,6 +11,7 @@ import {
   logger as globalLogger,
   applyLoggingConfiguration,
 } from './core/logger';
+import { Logger } from './types/logger';
 import { MiddlewareManager } from './core/middleware';
 import { IntelligentRoutingManager } from './core/routing/app-integration';
 import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing';
@@ -19,7 +20,12 @@ import { readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { EventEmitter } from 'events';
 // Configuration System Integration
-import { initializeConfig, getGlobalConfig, type AppConfig } from './core/config';
+import {
+  initializeConfig,
+  getGlobalConfig,
+  loadConfigWithOptions,
+  type AppConfig,
+} from './core/config';
 // Runtime System Integration
 import {
   RuntimeAdapter,
@@ -37,7 +43,7 @@ export class Moro extends EventEmitter {
   // Enterprise event system integration
   private eventBus: MoroEventBus;
   // Application logger
-  private logger = createFrameworkLogger('App');
+  private logger!: Logger;
   // Intelligent routing system
   private intelligentRouting = new IntelligentRoutingManager();
   // Documentation system
@@ -53,72 +59,33 @@ export class Moro extends EventEmitter {
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
 
-    // Configure logger from environment variables BEFORE config system initialization
-    // This ensures the config loading process respects the log level
+    // Apply logging configuration BEFORE config loading to avoid DEBUG spam
+    // 1. Environment variables (base level)
     const envLogLevel = process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL;
     if (envLogLevel) {
       applyLoggingConfiguration({ level: envLogLevel }, undefined);
     }
 
-    // Initialize configuration system - create a deep copy for this instance
-    this.config = JSON.parse(JSON.stringify(initializeConfig()));
-
-    // Apply logging configuration from the loaded config (this happens after config file processing)
-    if (this.config.logging) {
-      applyLoggingConfiguration(this.config.logging, undefined);
-    }
-
-    // Apply additional logging configuration from createApp options (takes precedence)
+    // 2. createApp logger options (highest precedence)
     if (options.logger !== undefined) {
       applyLoggingConfiguration(undefined, options.logger);
     }
 
-    // Apply performance configuration from createApp options (takes precedence)
-    if (options.performance) {
-      if (options.performance.clustering) {
-        this.config.performance.clustering = {
-          ...this.config.performance.clustering,
-          ...options.performance.clustering,
-        };
-      }
-      if (options.performance.compression) {
-        this.config.performance.compression = {
-          ...this.config.performance.compression,
-          ...options.performance.compression,
-        };
-      }
-      if (options.performance.circuitBreaker) {
-        this.config.performance.circuitBreaker = {
-          ...this.config.performance.circuitBreaker,
-          ...options.performance.circuitBreaker,
-        };
-      }
-    }
+    // Create logger AFTER initial configuration
+    this.logger = createFrameworkLogger('App');
 
-    // Apply modules configuration from createApp options (takes precedence)
-    if (options.modules) {
-      if (options.modules.cache) {
-        this.config.modules.cache = {
-          ...this.config.modules.cache,
-          ...options.modules.cache,
-        };
-      }
-      if (options.modules.rateLimit) {
-        this.config.modules.rateLimit = {
-          ...this.config.modules.rateLimit,
-          ...options.modules.rateLimit,
-        };
-      }
-      if (options.modules.validation) {
-        this.config.modules.validation = {
-          ...this.config.modules.validation,
-          ...options.modules.validation,
-        };
-      }
+    // Use simplified global configuration system
+    this.config = initializeConfig(options);
+
+    // Apply config file logging if it exists (may override createApp options if needed)
+    if (this.config.logging && !options.logger) {
+      applyLoggingConfiguration(this.config.logging, undefined);
+      // Recreate logger with updated config
+      this.logger = createFrameworkLogger('App');
     }
 
     this.logger.info(
-      `Configuration system initialized: ${this.config.server.environment}:${this.config.server.port}`
+      `Configuration system initialized: ${process.env.NODE_ENV || 'development'}:${this.config.server.port}`
     );
 
     // Initialize runtime system
@@ -127,10 +94,11 @@ export class Moro extends EventEmitter {
 
     this.logger.info(`Runtime system initialized: ${this.runtimeType}`, 'Runtime');
 
-    // Pass logging configuration from config to framework
+    // Pass configuration from config to framework
     const frameworkOptions: any = {
       ...options,
       logger: this.config.logging,
+      websocket: this.config.websocket.enabled ? options.websocket || {} : false,
     };
 
     this.coreFramework = new MoroCore(frameworkOptions);
@@ -540,8 +508,9 @@ export class Moro extends EventEmitter {
       this.logger.info('Moro Server Started', 'Server');
       this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
       this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
-      this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
-      this.logger.info('Native Node.js HTTP • Zero Dependencies • Maximum Performance', 'Server');
+      if (this.config.websocket.enabled) {
+        this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
+      }
       this.logger.info('Learn more at https://morojs.com', 'Server');
 
       // Log intelligent routes info
@@ -936,14 +905,8 @@ export class Moro extends EventEmitter {
   }
 
   /**
-   * Node.js Clustering Implementation with Empirical Optimizations
-   *
-   * This clustering algorithm is based on empirical testing and Node.js best practices.
-   * Key findings from research and testing:
-   *
-   * Performance Benefits:
-   * - Clustering can improve performance by up to 66% (Source: Medium - Danish Siddiq)
-   * - Enables utilization of multiple CPU cores in Node.js applications
+   * Node.js Clustering Implementation
+   * This clustering algorithm is based on published research and Node.js best practices.
    *
    * IPC (Inter-Process Communication) Considerations:
    * - Excessive workers create IPC bottlenecks (Source: BetterStack Node.js Guide)
@@ -954,71 +917,53 @@ export class Moro extends EventEmitter {
    * - ~2GB per worker prevents memory pressure and GC overhead
    * - Conservative heap limits reduce memory fragmentation
    *
-   * Empirical Findings (MoroJS Testing):
-   * - 4-worker cap provides optimal performance regardless of core count
-   * - IPC becomes the primary bottleneck on high-core machines (16+ cores)
-   * - Memory allocation per worker more important than CPU utilization
-   *
    * References:
    * - Node.js Cluster Documentation: https://nodejs.org/api/cluster.html
    * - BetterStack Node.js Clustering: https://betterstack.com/community/guides/scaling-nodejs/node-clustering/
    */
   private clusterWorkers = new Map<number, any>();
-  private workerStats = new Map<
-    number,
-    { cpu: number; memory: number; requests: number; lastCheck: number }
-  >();
-  private adaptiveScalingEnabled = true;
-  private lastScalingCheck = 0;
-  private readonly SCALING_INTERVAL = 30000; // 30 seconds
 
   private startWithClustering(port: number, host?: string, callback?: () => void): void {
     const cluster = require('cluster');
     const os = require('os');
 
-    // Smart worker count calculation to prevent IPC bottlenecks and optimize resource usage
-    // Based on empirical testing and Node.js clustering best practices
+    // Worker count calculation - respect user choice
     let workerCount = this.config.performance?.clustering?.workers || os.cpus().length;
 
-    // Auto-optimize worker count based on system characteristics
-    // Research shows clustering can improve performance by up to 66% but excessive workers
-    // cause IPC overhead that degrades performance (Source: Medium - Clustering in Node.js)
-    if (workerCount === 'auto' || workerCount > 8) {
+    // Only auto-optimize if user hasn't specified a number or set it to 'auto'
+    if (workerCount === 'auto') {
       const cpuCount = os.cpus().length;
       const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
 
-      // Improved worker count optimization based on research findings
-      // Algorithm considers CPU, memory, and IPC overhead holistically
-      const memoryPerWorkerGB = 1.5; // Optimal based on GC performance testing
-      const maxWorkersFromMemory = Math.floor(totalMemoryGB / memoryPerWorkerGB);
-      if (cpuCount >= 16) {
-        // High-core machines: IPC saturation point reached quickly
-        // Research shows diminishing returns after 4 workers due to message passing
-        workerCount = Math.min(maxWorkersFromMemory, 4);
-      } else if (cpuCount >= 8) {
-        // Mid-range machines: optimal ratio found to be CPU/3 for IPC efficiency
-        // Avoids context switching overhead while maintaining throughput
-        workerCount = Math.min(Math.ceil(cpuCount / 3), maxWorkersFromMemory, 6);
-      } else if (cpuCount >= 4) {
-        // Standard machines: use 3/4 of cores to leave room for OS processes
-        workerCount = Math.min(Math.ceil(cpuCount * 0.75), maxWorkersFromMemory, 4);
-      } else {
-        // Low-core machines: use all cores but cap for memory safety
-        workerCount = Math.min(cpuCount, maxWorkersFromMemory, 2);
+      // Get memory per worker from config - if not set by user, calculate dynamically
+      let memoryPerWorkerGB = this.config.performance?.clustering?.memoryPerWorkerGB;
+
+      if (!memoryPerWorkerGB) {
+        // Dynamic calculation: (Total RAM - 4GB headroom) / CPU cores
+        const headroomGB = 4;
+        memoryPerWorkerGB = Math.max(0.5, Math.floor((totalMemoryGB - headroomGB) / cpuCount));
       }
 
+      // Conservative formula based on general guidelines:
+      // - Don't exceed CPU cores
+      // - Respect user's memory allocation preference
+      // - Let the system resources determine the limit
+      workerCount = Math.min(
+        cpuCount, // Don't exceed CPU cores
+        Math.floor(totalMemoryGB / memoryPerWorkerGB) // User-configurable memory per worker
+      );
+
       this.logger.info(
-        `Auto-optimized workers: ${workerCount} (CPU: ${cpuCount}, RAM: ${totalMemoryGB.toFixed(1)}GB)`,
+        `Auto-calculated worker count: ${workerCount} (CPU: ${cpuCount}, RAM: ${totalMemoryGB.toFixed(1)}GB, ${memoryPerWorkerGB}GB per worker)`,
         'Cluster'
       );
-      this.logger.debug(
-        `Worker optimization strategy: ${cpuCount >= 16 ? 'IPC-limited' : cpuCount >= 8 ? 'balanced' : 'CPU-bound'}`,
-        'Cluster'
-      );
+    } else if (typeof workerCount === 'number') {
+      // User specified a number - respect their choice
+      this.logger.info(`Using user-specified worker count: ${workerCount}`, 'Cluster');
     }
 
     if (cluster.isPrimary) {
-      this.logger.info(`🚀 Starting ${workerCount} workers for maximum performance`, 'Cluster');
+      this.logger.info(`Starting ${workerCount} workers`, 'Cluster');
 
       // Optimize cluster scheduling for high concurrency
       // Round-robin is the default on all platforms except Windows (Node.js docs)
@@ -1027,7 +972,7 @@ export class Moro extends EventEmitter {
 
       // Set cluster settings for better performance
       cluster.setupMaster({
-        exec: process.argv[1],
+        exec: process.argv[1] || process.execPath,
         args: process.argv.slice(2),
         silent: false,
       });
@@ -1057,49 +1002,33 @@ export class Moro extends EventEmitter {
       process.on('SIGINT', gracefulShutdown);
       process.on('SIGTERM', gracefulShutdown);
 
-      // Fork workers with proper tracking and CPU affinity
+      // Fork workers with basic tracking
       for (let i = 0; i < workerCount; i++) {
-        const worker = cluster.fork({
-          WORKER_ID: i,
-          WORKER_CPU_AFFINITY: i % os.cpus().length, // Distribute workers across CPUs
-        });
+        const worker = cluster.fork();
         this.clusterWorkers.set(worker.process.pid!, worker);
-        this.logger.info(
-          `Worker ${worker.process.pid} started (CPU ${i % os.cpus().length})`,
-          'Cluster'
-        );
+        this.logger.info(`Worker ${worker.process.pid} started`, 'Cluster');
 
-        // Handle individual worker messages (reuse handler)
+        // Handle individual worker messages
         worker.on('message', this.handleWorkerMessage.bind(this));
       }
 
-      // Enhanced worker exit handling with adaptive monitoring
+      // Simple worker exit handling
       cluster.on('exit', (worker: any, code: number, signal: string) => {
         const pid = worker.process.pid;
-
-        // Clean up worker tracking and stats
         this.clusterWorkers.delete(pid);
-        this.workerStats.delete(pid);
 
         if (code !== 0 && !worker.exitedAfterDisconnect) {
           this.logger.warn(
-            `Worker ${pid} died unexpectedly (${signal || code}). Analyzing performance...`,
+            `Worker ${pid} died unexpectedly (${signal || code}). Restarting...`,
             'Cluster'
           );
 
-          // Check if we should scale workers based on performance
-          this.evaluateWorkerPerformance();
+          // Simple restart
+          const newWorker = cluster.fork();
+          this.clusterWorkers.set(newWorker.process.pid!, newWorker);
+          this.logger.info(`Worker ${newWorker.process.pid} restarted`, 'Cluster');
         }
-
-        // Restart worker with enhanced tracking
-        const newWorker = this.forkWorkerWithMonitoring();
-        this.logger.info(`Worker ${newWorker.process.pid} started with monitoring`, 'Cluster');
       });
-
-      // Start adaptive scaling system
-      if (this.adaptiveScalingEnabled) {
-        this.startAdaptiveScaling();
-      }
 
       // Master process callback
       if (callback) callback();
@@ -1114,25 +1043,24 @@ export class Moro extends EventEmitter {
       // Multiple workers writing to same log files creates I/O contention
       if (this.config.logging) {
         // Workers log less frequently to reduce I/O contention
-        this.config.logging.level = 'warn'; // Only warnings and errors
+        applyLoggingConfiguration(undefined, { level: 'warn' }); // Only warnings and errors
       }
 
-      // Enhanced memory optimization for workers
-      // Dynamic heap sizing based on available system memory and worker count
+      // Research-based memory optimization for workers
       const os = require('os');
       const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
       const workerCount = Object.keys(require('cluster').workers || {}).length || 1;
 
-      // Allocate memory more intelligently based on system resources
+      // Conservative memory allocation
       const heapSizePerWorkerMB = Math.min(
-        Math.floor((totalMemoryGB * 1024) / (workerCount * 1.5)), // Leave buffer for OS
-        1536 // Cap at 1.5GB per worker to prevent excessive GC
+        Math.floor(((totalMemoryGB * 1024) / workerCount) * 0.8), // 80% of available memory
+        1536 // Cap at 1.5GB (GC efficiency threshold from research)
       );
 
       process.env.NODE_OPTIONS = `--max-old-space-size=${heapSizePerWorkerMB}`;
 
       this.logger.debug(
-        `Worker memory optimized: ${heapSizePerWorkerMB}MB heap (${workerCount} workers, ${totalMemoryGB.toFixed(1)}GB total)`,
+        `Worker memory allocated: ${heapSizePerWorkerMB}MB heap (${workerCount} workers, ${totalMemoryGB.toFixed(1)}GB total)`,
         'Worker'
       );
 
@@ -1230,20 +1158,8 @@ export class Moro extends EventEmitter {
     }
   }
 
-  // Enhanced worker message handler with performance monitoring
+  // Simple worker message handler
   private handleWorkerMessage(message: any): void {
-    // Handle performance monitoring messages
-    if (message.type === 'performance') {
-      const pid = message.pid;
-      this.workerStats.set(pid, {
-        cpu: message.cpu || 0,
-        memory: message.memory || 0,
-        requests: message.requests || 0,
-        lastCheck: Date.now(),
-      });
-      return;
-    }
-
     // Handle inter-worker communication if needed
     if (message.type === 'health-check') {
       // Worker health check response
@@ -1254,83 +1170,47 @@ export class Moro extends EventEmitter {
     this.logger.debug(`Worker message: ${JSON.stringify(message)}`, 'Cluster');
   }
 
-  private forkWorkerWithMonitoring(): any {
-    const cluster = require('cluster');
-    const os = require('os');
+  /**
+   * Gracefully close the application and clean up resources
+   * This should be called in tests and during shutdown
+   */
+  async close(): Promise<void> {
+    this.logger.debug('Closing Moro application...');
 
-    const worker = cluster.fork({
-      WORKER_ID: this.clusterWorkers.size,
-      WORKER_CPU_AFFINITY: this.clusterWorkers.size % os.cpus().length,
-    });
+    // Flush logger buffer before shutdown
+    try {
+      // Use flushBuffer for immediate synchronous flush
+      this.logger.flushBuffer();
+    } catch (error) {
+      // Ignore flush errors during shutdown
+    }
 
-    this.clusterWorkers.set(worker.process.pid!, worker);
-    worker.on('message', this.handleWorkerMessage.bind(this));
-
-    return worker;
-  }
-
-  private evaluateWorkerPerformance(): void {
-    const now = Date.now();
-    const currentWorkerCount = this.clusterWorkers.size;
-
-    // Calculate average CPU and memory usage across workers
-    let totalCpu = 0;
-    let totalMemory = 0;
-    let activeWorkers = 0;
-
-    for (const [pid, stats] of this.workerStats) {
-      if (now - stats.lastCheck < 60000) {
-        // Data less than 1 minute old
-        totalCpu += stats.cpu;
-        totalMemory += stats.memory;
-        activeWorkers++;
+    // Close the core framework with timeout
+    if (this.coreFramework && (this.coreFramework as any).httpServer) {
+      try {
+        await Promise.race([
+          new Promise<void>(resolve => {
+            (this.coreFramework as any).httpServer.close(() => {
+              resolve();
+            });
+          }),
+          new Promise<void>(resolve => setTimeout(resolve, 2000)), // 2 second timeout
+        ]);
+      } catch (error) {
+        // Force close if graceful close fails
+        this.logger.warn('Force closing HTTP server due to timeout');
       }
     }
 
-    if (activeWorkers === 0) return;
-
-    const avgCpu = totalCpu / activeWorkers;
-    const avgMemory = totalMemory / activeWorkers;
-
-    this.logger.debug(
-      `Performance analysis: ${activeWorkers} workers, avg CPU: ${avgCpu.toFixed(1)}%, avg memory: ${avgMemory.toFixed(1)}MB`,
-      'Cluster'
-    );
-
-    // Research-based adaptive scaling decisions
-    // High CPU threshold indicates IPC saturation point approaching
-    if (avgCpu > 80 && currentWorkerCount < 6) {
-      this.logger.info(
-        'High CPU load detected, system may benefit from additional worker',
-        'Cluster'
-      );
-    } else if (avgCpu < 25 && currentWorkerCount > 2) {
-      this.logger.info(
-        'Low CPU utilization detected, excessive workers may be causing IPC overhead',
-        'Cluster'
-      );
+    // Clean up event listeners
+    try {
+      this.eventBus.removeAllListeners();
+      this.removeAllListeners();
+    } catch (error) {
+      // Ignore cleanup errors
     }
 
-    // Memory pressure monitoring
-    if (avgMemory > 1200) {
-      // MB
-      this.logger.warn(
-        'High memory usage per worker detected, may need worker restart or scaling adjustment',
-        'Cluster'
-      );
-    }
-  }
-
-  private startAdaptiveScaling(): void {
-    setInterval(() => {
-      const now = Date.now();
-      if (now - this.lastScalingCheck > this.SCALING_INTERVAL) {
-        this.evaluateWorkerPerformance();
-        this.lastScalingCheck = now;
-      }
-    }, this.SCALING_INTERVAL);
-
-    this.logger.info('Adaptive performance monitoring system started', 'Cluster');
+    this.logger.debug('Moro application closed successfully');
   }
 }
 
