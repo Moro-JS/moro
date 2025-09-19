@@ -1,3 +1,8 @@
+## [1.5.7] - 2025-09-19
+
+### Added
+- feat: Add configurable middleware options for body size, request tracking, and error boundary
+
 ## [1.5.6] - 2025-09-19
 
 ### Added
