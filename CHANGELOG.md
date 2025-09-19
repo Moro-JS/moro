@@ -1,3 +1,8 @@
+## [1.5.6] - 2025-09-19
+
+### Added
+- feat: major configuration system refactor
+
 ## [1.5.5] - 2025-09-18
 
 ### Fixed
