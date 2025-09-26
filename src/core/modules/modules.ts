@@ -24,6 +24,21 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
       cache: route.cache,
       rateLimit: route.rateLimit,
       middleware: route.middleware,
+      // Copy all additional properties for extensibility
+      ...Object.fromEntries(
+        Object.entries(route).filter(
+          ([key]) =>
+            ![
+              'method',
+              'path',
+              'handler',
+              'validation',
+              'cache',
+              'rateLimit',
+              'middleware',
+            ].includes(key)
+        )
+      ),
     }));
 
     // Store the actual route handler functions

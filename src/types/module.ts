@@ -7,6 +7,11 @@ export interface ModuleRoute {
   cache?: { ttl: number; key?: string };
   rateLimit?: { requests: number; window: number };
   middleware?: string[];
+  auth?: {
+    roles?: string[];
+    permissions?: string[];
+    optional?: boolean;
+  };
 }
 
 export interface ModuleSocket {
@@ -57,6 +62,13 @@ export interface InternalRouteDefinition {
   validation?: any;
   cache?: CacheConfig;
   rateLimit?: RateLimitConfig;
+  auth?: {
+    roles?: string[];
+    permissions?: string[];
+    optional?: boolean;
+  };
+  // Allow additional properties for extensibility
+  [key: string]: any;
 }
 
 export interface WebSocketDefinition {

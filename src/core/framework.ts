@@ -444,6 +444,76 @@ export class Moro extends EventEmitter {
           throw new Error(`Handler ${route.handler} is not a function`);
         }
 
+        // Check authentication if auth configuration is provided
+        if ((route as any).auth) {
+          const auth = (req as any).auth;
+          const authConfig = (route as any).auth;
+
+          if (!auth) {
+            res.status(401);
+            res.json({
+              success: false,
+              error: 'Authentication required',
+              message: 'You must be logged in to access this resource',
+            });
+            return;
+          }
+
+          // Check authentication requirement (default is required unless optional: true)
+          if (!authConfig.optional && !auth.isAuthenticated) {
+            res.status(401);
+            res.json({
+              success: false,
+              error: 'Authentication required',
+              message: 'You must be logged in to access this resource',
+            });
+            return;
+          }
+
+          // Skip further checks if not authenticated but optional
+          if (!auth.isAuthenticated && authConfig.optional) {
+            // Continue to handler
+          } else if (auth.isAuthenticated) {
+            const user = auth.user;
+
+            // Check roles if specified
+            if (authConfig.roles && authConfig.roles.length > 0) {
+              const userRoles = user?.roles || [];
+              const hasRole = authConfig.roles.some((role: string) => userRoles.includes(role));
+
+              if (!hasRole) {
+                res.status(403);
+                res.json({
+                  success: false,
+                  error: 'Insufficient permissions',
+                  message: `Required roles: ${authConfig.roles.join(', ')}`,
+                  userRoles,
+                });
+                return;
+              }
+            }
+
+            // Check permissions if specified
+            if (authConfig.permissions && authConfig.permissions.length > 0) {
+              const userPermissions = user?.permissions || [];
+              const hasPermission = authConfig.permissions.every((permission: string) =>
+                userPermissions.includes(permission)
+              );
+
+              if (!hasPermission) {
+                res.status(403);
+                res.json({
+                  success: false,
+                  error: 'Insufficient permissions',
+                  message: `Required permissions: ${authConfig.permissions.join(', ')}`,
+                  userPermissions,
+                });
+                return;
+              }
+            }
+          }
+        }
+
         // Validate request if validation schema is provided
         if (route.validation) {
           try {

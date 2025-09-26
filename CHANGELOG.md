@@ -1,3 +1,30 @@
+## [1.5.9] - 2025-09-26
+
+### Added
+- **NEW: Enhanced Module Middleware and Extensibility System** - Complete support for custom middleware configurations in module routes
+- **NEW: Route Property Extensibility** - Module routes now support any additional properties through extensible object spreading
+- **NEW: Authentication Framework Foundation** - Built-in support for authentication configurations in module routes
+  - Role-based access control: `auth: { roles: ['admin', 'moderator'] }`
+  - Permission-based access control: `auth: { permissions: ['read:users', 'write:data'] }`
+  - Optional authentication: `auth: { optional: true }`
+- **NEW: Comprehensive Authentication Checking** - Framework automatically enforces auth configurations with proper HTTP responses
+- **NEW: TypeScript Interface Enhancement** - Full TypeScript support for authentication and custom middleware properties
+
+### Enhanced
+- **Module Route Definition System** - `defineModule` now preserves ALL route properties for maximum extensibility
+- **Framework Request Pipeline** - Added authentication middleware checking before route handler execution
+- **Error Response System** - Detailed authentication and authorization error messages with proper HTTP status codes
+- **Type Safety** - Enhanced interfaces with index signatures for future middleware expansions
+
+### Technical Improvements
+- **Extensible Architecture** - Route configurations automatically support future middleware without code changes
+- **Backward Compatibility** - 100% compatible with existing modules and route definitions
+- **Performance Optimized** - Authentication checks run early in request pipeline for maximum efficiency
+- **Developer Experience** - Clear error messages and proper TypeScript intellisense for auth configurations
+
+### Breaking Changes
+- **None** - This release maintains full backward compatibility
+
 ## [1.5.8] - 2025-09-26
 
 ### Fixed
