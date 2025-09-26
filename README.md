@@ -4,7 +4,7 @@
 
 ![Moro Logo](https://img.shields.io/badge/MoroJS-2563eb?style=for-the-badge&logo=typescript&logoColor=white)
 
-**High-performance multi-runtime framework with intelligent routing**
+**Modern TypeScript framework with intelligent routing and multi-runtime deployment**
 *Functional • Type-safe • Multi-environment • Production-ready*
 
 [![npm version](https://badge.fury.io/js/@morojs%2Fmoro.svg)](https://badge.fury.io/js/@morojs%2Fmoro)
@@ -18,20 +18,22 @@
 
 ---
 
-## Why Moro?
+## What is MoroJS?
 
-Moro eliminates the pain points of traditional Node.js frameworks with **intelligent routing** and **automatic middleware ordering**. No more debugging middleware order issues or wrestling with type safety!
+MoroJS is a modern Node.js framework designed for building high-performance APIs and web applications. It features intelligent routing with automatic middleware ordering, ensuring your application logic runs efficiently without worrying about execution sequence.
 
-- **Multi-Runtime Support** - Deploy to Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
-- **Intelligent Routing** - Chainable + schema-first APIs with automatic middleware ordering
-- **Enterprise Authentication** - Auth.js integration with RBAC, OAuth, and native adapter
-- **Universal Validation** - Support for Zod, Joi, Yup, Class Validator with full TypeScript inference
-- **WebSocket Support** - Pluggable adapters for Socket.IO, native WebSockets, or auto-detection
-- **Native Performance** - Zero framework overhead, optimized for each runtime
-- **Functional Architecture** - No decorators, pure functional patterns
-- **Zero Order Dependencies** - Framework handles optimal middleware execution
+**Core Features:**
 
-## Superior Performance
+- **Multi-Runtime Deployment** - Write once, deploy everywhere: Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
+- **Intelligent Routing** - Automatic middleware ordering with chainable and schema-first API approaches
+- **Enterprise Authentication** - Built-in Auth.js integration with RBAC, OAuth providers, and custom native adapter
+- **Universal Validation** - Use any validation library (Zod, Joi, Yup, Class Validator) with full TypeScript inference
+- **WebSocket Support** - Pluggable adapters for Socket.IO, native WebSockets, or automatic detection
+- **Zero Dependencies** - Lightweight core with optional peer dependencies for flexibility
+- **Functional Architecture** - Pure functional patterns without decorators for better performance
+- **Type Safety** - Complete TypeScript support with compile-time and runtime type validation
+
+## Performance
 
 | Framework | Req/sec | Latency | Memory |
 |-----------|---------|---------|--------|
@@ -103,35 +105,35 @@ const app = createAppWorker();
 export default { fetch: app.getHandler() };
 ```
 
-## What Makes Moro Different?
+## How MoroJS Works
 
-### **No More Middleware Order Hell**
+### **Intelligent Middleware Ordering**
 
-**Traditional frameworks:**
+MoroJS automatically organizes middleware execution into logical phases, eliminating order-dependency issues:
+
 ```typescript
-// Express - Order matters, easy to break
-app.use(cors());           // Must be first
-app.use(helmet());         // Must be early
-app.use(bodyParser());     // Must be before validation
-app.use(rateLimit());      // Must be before routes
-app.use(validation());     // Must be before handler
-app.post('/users', handler); // Must be last
-```
-
-**Moro - Order independent:**
-```typescript
-// Moro - Framework handles optimal ordering
+// Write middleware in any order - the framework optimizes execution
 app.post('/users')
-   .body(UserSchema)       // Framework places in validation phase
-   .rateLimit({ requests: 10, window: 60000 })  // Rate limit phase
-   .auth({ roles: ['user'] })  // Auth phase
-   .handler(createUser);   // Always executed last
+   .body(UserSchema)                              // Validation phase
+   .rateLimit({ requests: 10, window: 60000 })    // Rate limiting phase
+   .auth({ roles: ['user'] })                     // Authentication phase
+   .handler(createUser);                          // Handler phase (always last)
+
+// Behind the scenes, MoroJS executes in this order:
+// 1. CORS & Security (helmet)
+// 2. Rate Limiting
+// 3. Authentication & Authorization
+// 4. Body Parsing & Validation
+// 5. Custom Middleware
+// 6. Route Handler
 ```
 
-### **Universal Validation with Full Type Safety**
+### **Universal Validation System**
+
+MoroJS provides a unified validation interface that works with any validation library while maintaining full TypeScript inference:
 
 ```typescript
-// Use any validation library - Zod (default)
+// Using Zod (built-in support)
 import { z } from '@morojs/moro';
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
@@ -139,20 +141,29 @@ const UserSchema = z.object({
   age: z.number().min(18).optional()
 });
 
-// Or Joi with adapter
+// Using Joi with MoroJS adapter
 import { joi } from '@morojs/moro';
 import Joi from 'joi';
-const UserSchema = joi(Joi.object({
+const UserSchemaJoi = joi(Joi.object({
   name: Joi.string().min(2).max(50).required(),
   email: Joi.string().email().required(),
   age: Joi.number().min(18).optional()
 }));
 
+// Using Yup with MoroJS adapter
+import { yup } from '@morojs/moro';
+import * as Yup from 'yup';
+const UserSchemaYup = yup(Yup.object({
+  name: Yup.string().min(2).max(50).required(),
+  email: Yup.string().email().required(),
+  age: Yup.number().min(18).optional()
+}));
+
+// All validation libraries provide the same TypeScript experience
 app.post('/users')
-   .body(UserSchema)  // Works with any validation library!
+   .body(UserSchema)  // Full type inference regardless of validation library
    .handler((req, res) => {
-     // req.body is fully typed regardless of validation library
-     const user = req.body; // ✨ Fully typed
+     const user = req.body; // ✨ Fully typed based on schema
      return { success: true, data: user };
    });
 ```
@@ -311,17 +322,23 @@ await app.loadModule(UsersModule);
 - **Functional Architecture** - No decorators, pure functions, better performance
 - **Type Safety** - Universal validation with compile-time and runtime type safety
 
-## Why Choose Moro?
+## Key Benefits
 
-**Same API everywhere** - Write once, deploy to any runtime
-**No middleware dependencies** - Framework handles optimal ordering
-**Enterprise authentication** - Auth.js integration with native adapter
-**Validation flexibility** - Use any validation library (Zod, Joi, Yup, Class Validator)
-**WebSocket choice** - Socket.IO, native WebSockets, or auto-detection
-**Full type safety** - Universal validation provides end-to-end TypeScript inference
-**Clean APIs** - Chainable and schema-first approaches
-**Production ready** - Circuit breakers, rate limiting, events, RBAC
-**Performance optimized** - Runtime-specific adapters
+**Universal Deployment** - Write your application once and deploy it seamlessly to Node.js, Vercel Edge Functions, AWS Lambda, or Cloudflare Workers using the same codebase
+
+**Intelligent Architecture** - The framework automatically handles middleware execution order, eliminating configuration complexity and potential runtime errors
+
+**Enterprise-Grade Authentication** - Comprehensive Auth.js integration includes OAuth providers, RBAC permissions, custom session management, and a native `@auth/morojs` adapter
+
+**Flexible Validation** - Choose your preferred validation library (Zod, Joi, Yup, or Class Validator) while maintaining complete TypeScript inference and runtime safety
+
+**Real-Time Communication** - Built-in WebSocket support with pluggable adapters for Socket.IO, native WebSockets, or automatic library detection
+
+**Type Safety Throughout** - End-to-end TypeScript support ensures compile-time validation, runtime type checking, and full IDE integration
+
+**Developer Experience** - Clean chainable APIs and schema-first routing patterns make complex applications simple to build and maintain
+
+**Production Features** - Circuit breakers, rate limiting, event systems, caching, monitoring, and performance optimization built-in
 
 ## Contributing
 
