@@ -35,13 +35,15 @@ export const sse = (
       logger.debug('Setting up SSE connection', 'SSESetup');
 
       // Set SSE headers
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'Access-Control-Allow-Origin': options.cors ? '*' : undefined,
-        'Access-Control-Allow-Headers': options.cors ? 'Cache-Control' : undefined,
-      });
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Access-Control-Allow-Origin': options.cors ? '*' : undefined,
+          'Access-Control-Allow-Headers': options.cors ? 'Cache-Control' : undefined,
+        });
+      }
 
       // Add SSE methods to response
       res.sendEvent = (data: any, event?: string, id?: string) => {

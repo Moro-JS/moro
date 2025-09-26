@@ -9,6 +9,19 @@ interface MySQLConfig {
   password?: string;
   database?: string;
   connectionLimit?: number;
+  ssl?:
+    | {
+        rejectUnauthorized?: boolean;
+        ca?: string;
+        cert?: string;
+        key?: string;
+        passphrase?: string;
+        servername?: string;
+        checkServerIdentity?: boolean;
+        ciphers?: string;
+        secureProtocol?: string;
+      }
+    | boolean;
 }
 
 export class MySQLAdapter implements DatabaseAdapter {
@@ -27,6 +40,7 @@ export class MySQLAdapter implements DatabaseAdapter {
         waitForConnections: true,
         connectionLimit: config.connectionLimit || 10,
         queueLimit: 0,
+        ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
       });
     } catch (error) {
       throw new Error(

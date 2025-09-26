@@ -631,6 +631,26 @@ export class MoroHttpServer {
     };
 
     httpRes.cookie = (name: string, value: string, options: any = {}) => {
+      if (httpRes.headersSent) {
+        const isCritical =
+          options.critical ||
+          name.includes('session') ||
+          name.includes('auth') ||
+          name.includes('csrf');
+        const message = `Cookie '${name}' could not be set - headers already sent`;
+
+        if (isCritical || options.throwOnLateSet) {
+          throw new Error(`${message}. This may cause authentication or security issues.`);
+        } else {
+          this.logger.warn(message, 'CookieWarning', {
+            cookieName: name,
+            critical: isCritical,
+            stackTrace: new Error().stack,
+          });
+        }
+        return httpRes;
+      }
+
       const cookieValue = encodeURIComponent(value);
       let cookieString = `${name}=${cookieValue}`;
 
@@ -692,6 +712,62 @@ export class MoroHttpServer {
       } catch (error) {
         httpRes.status(404).json({ success: false, error: 'File not found' });
       }
+    };
+
+    // Header management utilities
+    httpRes.hasHeader = (name: string): boolean => {
+      return httpRes.getHeader(name) !== undefined;
+    };
+
+    // Note: removeHeader is inherited from ServerResponse, we don't override it
+
+    httpRes.setBulkHeaders = (headers: Record<string, string | number>) => {
+      if (httpRes.headersSent) {
+        this.logger.warn('Cannot set headers - headers already sent', 'HeaderWarning', {
+          attemptedHeaders: Object.keys(headers),
+        });
+        return httpRes;
+      }
+
+      Object.entries(headers).forEach(([key, value]) => {
+        httpRes.setHeader(key, value);
+      });
+      return httpRes;
+    };
+
+    httpRes.appendHeader = (name: string, value: string | string[]) => {
+      if (httpRes.headersSent) {
+        this.logger.warn(
+          `Cannot append to header '${name}' - headers already sent`,
+          'HeaderWarning'
+        );
+        return httpRes;
+      }
+
+      const existing = httpRes.getHeader(name);
+      if (existing) {
+        const values = Array.isArray(existing) ? existing : [existing.toString()];
+        const newValues = Array.isArray(value) ? value : [value];
+        httpRes.setHeader(name, [...values, ...newValues]);
+      } else {
+        httpRes.setHeader(name, value);
+      }
+      return httpRes;
+    };
+
+    // Response state utilities
+    httpRes.canSetHeaders = (): boolean => {
+      return !httpRes.headersSent;
+    };
+
+    httpRes.getResponseState = () => {
+      return {
+        headersSent: httpRes.headersSent,
+        statusCode: httpRes.statusCode,
+        headers: httpRes.getHeaders ? httpRes.getHeaders() : {},
+        finished: httpRes.finished || false,
+        writable: httpRes.writable,
+      };
     };
 
     return httpRes;
@@ -1075,23 +1151,25 @@ export const middleware = {
         }
 
         if (acceptEncoding.includes('gzip')) {
-          res.setHeader('Content-Encoding', 'gzip');
           zlib.gzip(buffer, { level }, (err: any, compressed: Buffer) => {
             if (err) {
               return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
             }
-            res.setHeader('Content-Length', compressed.length);
-            res.writeHead(res.statusCode || 200, res.getHeaders());
+            if (!res.headersSent) {
+              res.setHeader('Content-Encoding', 'gzip');
+              res.setHeader('Content-Length', compressed.length);
+            }
             res.end(compressed);
           });
         } else if (acceptEncoding.includes('deflate')) {
-          res.setHeader('Content-Encoding', 'deflate');
           zlib.deflate(buffer, { level }, (err: any, compressed: Buffer) => {
             if (err) {
               return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
             }
-            res.setHeader('Content-Length', compressed.length);
-            res.writeHead(res.statusCode || 200, res.getHeaders());
+            if (!res.headersSent) {
+              res.setHeader('Content-Encoding', 'deflate');
+              res.setHeader('Content-Length', compressed.length);
+            }
             res.end(compressed);
           });
         } else {
@@ -1519,13 +1597,15 @@ export const middleware = {
       // Only handle SSE requests
       if (req.headers.accept?.includes('text/event-stream')) {
         // Set SSE headers
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Access-Control-Allow-Origin': options.cors ? '*' : undefined,
-          'Access-Control-Allow-Headers': options.cors ? 'Cache-Control' : undefined,
-        });
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Access-Control-Allow-Origin': options.cors ? '*' : undefined,
+            'Access-Control-Allow-Headers': options.cors ? 'Cache-Control' : undefined,
+          });
+        }
 
         // Add SSE methods to response
         (res as any).sendEvent = (data: any, event?: string, id?: string) => {
@@ -1626,7 +1706,8 @@ export const middleware = {
             const chunkSize = end - start + 1;
 
             if (start >= fileSize || end >= fileSize) {
-              res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+              res.status(416);
+              res.setHeader('Content-Range', `bytes */${fileSize}`);
               res.json({ success: false, error: 'Range not satisfiable' });
               return;
             }

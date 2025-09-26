@@ -34,10 +34,8 @@ beforeEach(() => {
 afterEach(async () => {
   // Flush logger buffer immediately to ensure all events are processed
   try {
-    logger.flushBuffer(); // Immediate synchronous flush
-    logger.flush();       // Full flush with cleanup
-    // Give a small delay to ensure flush completes
-    await new Promise(resolve => setTimeout(resolve, 5));
+    logger.flushBuffer(); // Immediate synchronous flush only
+    // Skip full flush() to avoid creating new timeouts during test cleanup
   } catch {
     // Ignore flush errors
   }
@@ -59,9 +57,8 @@ afterEach(async () => {
 afterAll(async () => {
   // Final flush and cleanup of logger resources
   try {
-    logger.flushBuffer(); // Immediate synchronous flush
-    logger.flush();       // Full flush with cleanup
-    await new Promise(resolve => setTimeout(resolve, 10));
+    logger.flushBuffer(); // Immediate synchronous flush only
+    // Skip full flush() to avoid Jest hanging on open handles
     destroyGlobalLogger();
   } catch {
     // Ignore cleanup errors
@@ -79,7 +76,7 @@ export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, 
  */
 export const closeApp = async (app: any): Promise<void> => {
   try {
-    // Flush logger buffer immediately
+    // Flush logger buffer immediately (synchronous only)
     if (app && app.logger && typeof app.logger.flushBuffer === 'function') {
       app.logger.flushBuffer();
     }

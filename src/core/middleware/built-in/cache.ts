@@ -188,7 +188,9 @@ export const cache = (options: CacheOptions = {}): MiddlewareInterface => ({
           parts.push(`stale-while-revalidate=${directives.staleWhileRevalidate}`);
         }
 
-        res.setHeader('Cache-Control', parts.join(', '));
+        if (!res.headersSent) {
+          res.setHeader('Cache-Control', parts.join(', '));
+        }
         return res;
       };
 

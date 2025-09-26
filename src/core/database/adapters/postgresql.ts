@@ -9,7 +9,17 @@ interface PostgreSQLConfig {
   password?: string;
   database?: string;
   connectionLimit?: number;
-  ssl?: boolean;
+  ssl?:
+    | {
+        rejectUnauthorized?: boolean;
+        ca?: string;
+        cert?: string;
+        key?: string;
+        passphrase?: string;
+        servername?: string;
+        checkServerIdentity?: boolean;
+      }
+    | boolean;
 }
 
 export class PostgreSQLAdapter implements DatabaseAdapter {
@@ -26,7 +36,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
         password: config.password || '',
         database: config.database || 'moro_app',
         max: config.connectionLimit || 10,
-        ssl: config.ssl || false,
+        ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
       });
 
       this.pool.on('error', (err: Error) => {

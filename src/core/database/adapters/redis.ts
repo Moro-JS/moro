@@ -11,6 +11,15 @@ interface RedisConfig {
   maxRetriesPerRequest?: number;
   retryDelayOnFailover?: number;
   lazyConnect?: boolean;
+  tls?: {
+    rejectUnauthorized?: boolean;
+    ca?: string;
+    cert?: string;
+    key?: string;
+    passphrase?: string;
+    servername?: string;
+    checkServerIdentity?: boolean;
+  };
   cluster?: {
     enableReadyCheck?: boolean;
     redisOptions?: any;
@@ -30,13 +39,20 @@ export class RedisAdapter implements DatabaseAdapter {
 
       if (config.cluster) {
         // Redis Cluster
-        this.client = new Redis.Cluster(config.cluster.nodes, {
+        const clusterOptions: any = {
           enableReadyCheck: config.cluster.enableReadyCheck || false,
           redisOptions: config.cluster.redisOptions || {},
-        });
+        };
+
+        // Add TLS options to cluster configuration
+        if (config.tls) {
+          clusterOptions.redisOptions.tls = { ...config.tls };
+        }
+
+        this.client = new Redis.Cluster(config.cluster.nodes, clusterOptions);
       } else {
         // Single Redis instance
-        this.client = new Redis({
+        const redisOptions: any = {
           host: config.host || 'localhost',
           port: config.port || 6379,
           password: config.password,
@@ -44,7 +60,14 @@ export class RedisAdapter implements DatabaseAdapter {
           maxRetriesPerRequest: config.maxRetriesPerRequest || 3,
           retryDelayOnFailover: config.retryDelayOnFailover || 100,
           lazyConnect: config.lazyConnect || true,
-        });
+        };
+
+        // Add TLS options if provided
+        if (config.tls) {
+          redisOptions.tls = { ...config.tls };
+        }
+
+        this.client = new Redis(redisOptions);
       }
 
       this.client.on('error', (err: Error) => {

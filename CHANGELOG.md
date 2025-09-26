@@ -1,3 +1,31 @@
+## [1.5.8] - 2025-09-26
+
+### Fixed
+- **CRITICAL**: Fix compression middleware ERR_HTTP_HEADERS_SENT errors by removing redundant res.writeHead() calls
+- **SECURITY**: Add comprehensive header-sent checks across all middleware to prevent header conflicts
+- Fix SSE middleware missing res.headersSent check before calling res.writeHead()
+- Fix Node runtime adapter cookie/redirect methods lacking header-sent validation
+- Fix cache middleware setting Cache-Control headers without checking if headers were already sent
+- Fix range middleware method chaining causing potential header conflicts
+
+### Added
+- Enhanced cookie handling with security-aware error management
+  - Automatic detection of critical cookies (session, auth, csrf)
+  - Configurable `critical` and `throwOnLateSet` options for cookie security
+  - Detailed logging with stack traces for debugging late cookie setting
+- New header management utilities for public API
+  - `res.hasHeader(name)` - Check if header exists
+  - `res.setBulkHeaders(headers)` - Set multiple headers safely
+  - `res.appendHeader(name, value)` - Append to existing headers
+  - `res.canSetHeaders()` - Check if headers can still be set
+  - `res.getResponseState()` - Get complete response state for debugging
+- Enhanced TypeScript interfaces with proper intersection types to avoid conflicts
+
+### Security
+- Prevent silent cookie failures that could break authentication and CSRF protection
+- Add comprehensive header timing validation across all response methods
+- Improve error visibility for header-related issues that could cause security vulnerabilities
+
 ## [1.5.7] - 2025-09-19
 
 ### Added

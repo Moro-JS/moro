@@ -138,24 +138,30 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
 
     if (!enhanced.cookie) {
       enhanced.cookie = function (name: string, value: string, options?: any) {
-        const cookieString = `${name}=${value}`;
-        this.setHeader('Set-Cookie', cookieString);
+        if (!this.headersSent) {
+          const cookieString = `${name}=${value}`;
+          this.setHeader('Set-Cookie', cookieString);
+        }
         return this;
       };
     }
 
     if (!enhanced.clearCookie) {
       enhanced.clearCookie = function (name: string, options?: any) {
-        this.setHeader('Set-Cookie', `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`);
+        if (!this.headersSent) {
+          this.setHeader('Set-Cookie', `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`);
+        }
         return this;
       };
     }
 
     if (!enhanced.redirect) {
       enhanced.redirect = function (url: string, status?: number) {
-        this.statusCode = status || 302;
-        this.setHeader('Location', url);
-        this.end();
+        if (!this.headersSent) {
+          this.statusCode = status || 302;
+          this.setHeader('Location', url);
+          this.end();
+        }
       };
     }
 

@@ -11,6 +11,16 @@ interface MongoDBConfig {
   database?: string;
   authSource?: string;
   ssl?: boolean;
+  tls?: {
+    ca?: string;
+    cert?: string;
+    key?: string;
+    passphrase?: string;
+    insecure?: boolean;
+    allowInvalidCertificates?: boolean;
+    allowInvalidHostnames?: boolean;
+    checkServerIdentity?: boolean;
+  };
   replicaSet?: string;
   maxPoolSize?: number;
   minPoolSize?: number;
@@ -32,11 +42,29 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
       const url = config.url || this.buildConnectionString(config);
 
-      this.client = new MongoClient(url, {
+      const clientOptions: any = {
         maxPoolSize: config.maxPoolSize || 10,
         minPoolSize: config.minPoolSize || 0,
         ssl: config.ssl || false,
-      });
+      };
+
+      // Add TLS options if provided
+      if (config.tls) {
+        clientOptions.tls = true;
+        if (config.tls.ca) clientOptions.tlsCAFile = config.tls.ca;
+        if (config.tls.cert) clientOptions.tlsCertificateFile = config.tls.cert;
+        if (config.tls.key) clientOptions.tlsCertificateKeyFile = config.tls.key;
+        if (config.tls.passphrase)
+          clientOptions.tlsCertificateKeyFilePassword = config.tls.passphrase;
+        if (config.tls.insecure) clientOptions.tlsInsecure = config.tls.insecure;
+        if (config.tls.allowInvalidCertificates)
+          clientOptions.tlsAllowInvalidCertificates = config.tls.allowInvalidCertificates;
+        if (config.tls.allowInvalidHostnames)
+          clientOptions.tlsAllowInvalidHostnames = config.tls.allowInvalidHostnames;
+        if (config.tls.checkServerIdentity === false) clientOptions.checkServerIdentity = false;
+      }
+
+      this.client = new MongoClient(url, clientOptions);
 
       this.db = this.client.db(config.database || 'moro_app');
 

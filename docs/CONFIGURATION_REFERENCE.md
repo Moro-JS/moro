@@ -553,6 +553,9 @@ Configure performance optimizations.
 |----------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Enable clustering |
 | `workers` | `number` | `1` | Number of worker processes |
+| `memoryPerWorkerGB` | `number` | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified) |
+
+**Note:** When `memoryPerWorkerGB` is not specified, MoroJS automatically calculates the optimal memory allocation per worker based on available system memory and CPU count, leaving headroom for the main process.
 
 #### Example
 
@@ -572,7 +575,8 @@ Configure performance optimizations.
     },
     clustering: {
       enabled: true,
-      workers: 4
+      workers: 4,
+      memoryPerWorkerGB: 2
     }
   }
 }
@@ -587,6 +591,7 @@ Configure performance optimizations.
 - `CIRCUIT_BREAKER_THRESHOLD` or `MORO_CB_THRESHOLD`
 - `CLUSTERING_ENABLED`
 - `CLUSTER_WORKERS` or `MORO_WORKERS`
+- `MEMORY_PER_WORKER_GB` or `MORO_MEMORY_PER_WORKER_GB`
 
 ## Authentication Configuration
 
@@ -985,7 +990,8 @@ module.exports = {
     },
     clustering: {
       enabled: process.env.NODE_ENV === 'production',
-      workers: require('os').cpus().length
+      workers: require('os').cpus().length,
+      memoryPerWorkerGB: 1.5
     }
   }
 }
