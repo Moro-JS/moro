@@ -83,29 +83,31 @@ describe('Enhanced Module Auto-Discovery System', () => {
           maxDepth: 5
         };
 
-        const modules = await discovery.discoverModulesAdvanced(config);
-
-        // If no modules found, provide detailed debugging info
-        if (modules.length === 0) {
-          const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
-          const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
-
-          console.error('DEBUG: No modules discovered');
-          console.error('Temp directory:', tempDir);
-          console.error('Modules directory exists:', modulesExists);
-          console.error('Directory contents:', dirContents);
-          console.error('Discovery base dir:', discovery['baseDir']);
-          console.error('Config paths:', config.paths);
-          console.error('Config patterns:', config.patterns);
-
-          // Try manual file discovery
-          try {
-            const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
-            console.error('Manual modules directory scan:', manualFiles);
-          } catch (e) {
-            console.error('Manual scan failed:', e instanceof Error ? e.message : String(e));
-          }
+        // Always show debug info to understand what's happening in CI
+        const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
+        const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
+        
+        console.error('=== DEBUG INFO ===');
+        console.error('Temp directory:', tempDir);
+        console.error('Modules directory exists:', modulesExists);
+        console.error('Directory contents:', dirContents);
+        console.error('Discovery base dir:', discovery['baseDir']);
+        console.error('Config paths:', config.paths);
+        console.error('Config patterns:', config.patterns);
+        
+        // Try manual file discovery
+        try {
+          const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
+          console.error('Manual modules directory scan:', manualFiles);
+        } catch (e) {
+          console.error('Manual scan failed:', e instanceof Error ? e.message : String(e));
         }
+
+        const modules = await discovery.discoverModulesAdvanced(config);
+        
+        console.error('Discovered modules count:', modules.length);
+        console.error('Discovered modules:', modules.map(m => ({ name: m.name, version: m.version })));
+        console.error('=== END DEBUG ===');
 
         expect(modules).toHaveLength(2);
         expect(modules[0].name).toBe('orders'); // Alphabetical order

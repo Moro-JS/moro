@@ -369,6 +369,8 @@ export class ModuleDiscovery {
     ignorePatterns: string[],
     maxDepth: number = 5
   ): Promise<string[]> {
+    console.error(`FALLBACK: searchPath=${searchPath}, baseDir=${this.baseDir}`);
+
     const config = {
       patterns,
       ignorePatterns,
@@ -378,10 +380,26 @@ export class ModuleDiscovery {
 
     // Resolve the full search path
     const fullSearchPath = join(this.baseDir, searchPath);
+    console.error(`FALLBACK: Full search path: ${fullSearchPath}`);
+
+    // Check if search path exists
+    try {
+      const { access } = await import('fs/promises');
+      await access(fullSearchPath);
+      console.error(`FALLBACK: Search path exists: ${fullSearchPath}`);
+    } catch (e) {
+      console.error(`FALLBACK: Search path does not exist: ${fullSearchPath}`);
+      return [];
+    }
 
     // Get files and convert to relative paths
     const files = this.findMatchingFiles(fullSearchPath, config);
-    return files.map(file => relative(this.baseDir, file));
+    const relativeFiles = files.map(file => relative(this.baseDir, file));
+
+    console.error(`FALLBACK: Found ${files.length} files: ${files.join(', ')}`);
+    console.error(`FALLBACK: Relative paths: ${relativeFiles.join(', ')}`);
+
+    return relativeFiles;
   }
 
   // Simple pattern matching for fallback (basic glob support)
