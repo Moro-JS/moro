@@ -1,5 +1,10 @@
 ## [1.5.13] - 2025-09-28
 
+### Added
+- fix: Add JWT error handling to HTTP server middleware execution
+
+## [1.5.13] - 2025-09-28
+
 ### Fixed
 - **CRITICAL: HTTP Server JWT Error Handling** - Fixed unhandled JWT errors in HTTP server middleware execution
   - **Issue**: `TokenExpiredError` and other JWT errors were crashing the server instead of returning proper HTTP responses
