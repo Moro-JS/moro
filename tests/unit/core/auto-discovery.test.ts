@@ -106,27 +106,53 @@ describe('Enhanced Module Auto-Discovery System', () => {
         // DIRECT TEST: Try to call the discovery method with explicit error handling
         let modules: any[] = [];
         let discoveryError: any = null;
-
+        let debugInfo: string[] = [];
+        
         try {
-          console.error('=== CALLING DISCOVERY ===');
+          debugInfo.push('=== CALLING DISCOVERY ===');
+          
+          // Test the individual methods to see where it fails
+          const testSearchPath = join(tempDir, 'modules');
+          debugInfo.push(`Testing search path: ${testSearchPath}`);
+          
+          // Check if the ModuleDiscovery instance can access the path
+          const { access } = await import('fs/promises');
+          try {
+            await access(testSearchPath);
+            debugInfo.push(`Search path accessible: YES`);
+          } catch (e) {
+            debugInfo.push(`Search path accessible: NO - ${e}`);
+          }
+          
+          // Test the glob detection logic directly
+          const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+          const nodeVersion = process.version;
+          debugInfo.push(`CI detected: ${isCI}, Node: ${nodeVersion}`);
+          
+          // Call the discovery method
           modules = await discovery.discoverModulesAdvanced(config);
-          console.error('=== DISCOVERY COMPLETED ===');
+          debugInfo.push('=== DISCOVERY COMPLETED ===');
         } catch (error) {
-          console.error('=== DISCOVERY ERROR ===', error);
+          debugInfo.push(`=== DISCOVERY ERROR === ${error}`);
           discoveryError = error;
         }
-
-        console.error('Discovered modules count:', modules.length);
-        console.error('Discovered modules:', modules.map(m => ({ name: m.name, version: m.version })));
-        console.error('Discovery error:', discoveryError);
-        console.error('=== END DEBUG ===');
+        
+        debugInfo.push(`Discovered modules count: ${modules.length}`);
+        debugInfo.push(`Discovered modules: ${JSON.stringify(modules.map(m => ({ name: m.name, version: m.version })))}`);
+        debugInfo.push(`Discovery error: ${discoveryError}`);
+        debugInfo.push('=== END DEBUG ===');
 
         // If discovery threw an error, re-throw it with context
         if (discoveryError) {
-          throw new Error(`Discovery failed: ${discoveryError.message || discoveryError}`);
+          const errorMsg = [
+            'Discovery method threw an error!',
+            ...debugInfo,
+            `Error: ${discoveryError.message || discoveryError}`
+          ].join('\n');
+          throw new Error(errorMsg);
         }
 
-        // If no modules found, fail with detailed info
+        // If no modules found, fail with detailed info including debug trace
         if (modules.length === 0) {
           const errorMsg = [
             'No modules discovered in CI!',
@@ -135,9 +161,12 @@ describe('Enhanced Module Auto-Discovery System', () => {
             `Dir contents: ${JSON.stringify(dirContents)}`,
             `Discovery base: ${discovery['baseDir']}`,
             `Config paths: ${JSON.stringify(config.paths)}`,
-            `Config patterns: ${JSON.stringify(config.patterns)}`
+            `Config patterns: ${JSON.stringify(config.patterns)}`,
+            '',
+            'Debug trace:',
+            ...debugInfo
           ].join('\n');
-
+          
           throw new Error(errorMsg);
         }
 
