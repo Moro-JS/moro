@@ -321,6 +321,11 @@ export class ModuleDiscovery {
       // Try to use native fs.glob if available (Node.js 20+)
       const { glob } = await import('fs/promises');
 
+      // Check if glob is actually a function
+      if (typeof glob !== 'function') {
+        throw new Error('glob is not a function');
+      }
+
       for (const pattern of patterns) {
         const fullPattern = join(searchPath, pattern);
         try {
@@ -343,8 +348,9 @@ export class ModuleDiscovery {
 
           allFiles.push(...files);
         } catch (error) {
-          // Pattern might be invalid, skip it
-          this.discoveryLogger.warn(`Invalid glob pattern: ${pattern}`, String(error));
+          // If any glob call fails, fall back to manual discovery
+          this.discoveryLogger.warn(`Glob pattern failed: ${pattern}`, String(error));
+          return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
         }
       }
     } catch (error) {

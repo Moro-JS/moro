@@ -66,7 +66,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         const modulesDir = join(tempDir, 'modules');
         const usersFile = join(modulesDir, 'users', 'index.ts');
         const ordersFile = join(modulesDir, 'orders', 'index.ts');
-        
+
         expect(await fs.access(usersFile).then(() => true).catch(() => false)).toBe(true);
         expect(await fs.access(ordersFile).then(() => true).catch(() => false)).toBe(true);
 
@@ -89,7 +89,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         if (modules.length === 0) {
           const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
           const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
-          
+
           console.error('DEBUG: No modules discovered');
           console.error('Temp directory:', tempDir);
           console.error('Modules directory exists:', modulesExists);
@@ -97,13 +97,13 @@ describe('Enhanced Module Auto-Discovery System', () => {
           console.error('Discovery base dir:', discovery['baseDir']);
           console.error('Config paths:', config.paths);
           console.error('Config patterns:', config.patterns);
-          
+
           // Try manual file discovery
           try {
             const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
             console.error('Manual modules directory scan:', manualFiles);
           } catch (e) {
-            console.error('Manual scan failed:', e.message);
+            console.error('Manual scan failed:', e instanceof Error ? e.message : String(e));
           }
         }
 
