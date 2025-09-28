@@ -15,6 +15,7 @@
 - **File Watcher Cleanup**: Fixed npm test hanging by properly cleaning up file system watchers
 - **TypeScript Errors**: Resolved all TypeScript compilation issues in auto-discovery system
 - **Test Directory Pollution**: Fixed tests creating temporary files in main project directory
+- **Package Lock Sync**: Updated package-lock.json for minimatch dependency to fix CI/CD compatibility
 
 ## [1.5.14] - 2025-09-28
 
