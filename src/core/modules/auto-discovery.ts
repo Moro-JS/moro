@@ -183,27 +183,17 @@ export class ModuleDiscovery {
   async discoverModulesAdvanced(
     config: ModuleDefaultsConfig['autoDiscovery']
   ): Promise<ModuleConfig[]> {
-    console.error(
-      `ADVANCED_DISCOVERY: enabled=${config.enabled}, paths=${JSON.stringify(config.paths)}`
-    );
-
     if (!config.enabled) {
-      console.error(`ADVANCED_DISCOVERY: Disabled, returning empty array`);
       return [];
     }
 
     const allModules: ModuleConfig[] = [];
 
     // Discover from all configured paths
-    console.error(`ADVANCED_DISCOVERY: Processing ${config.paths.length} paths`);
     for (const searchPath of config.paths) {
-      console.error(`ADVANCED_DISCOVERY: Processing path: ${searchPath}`);
       const modules = await this.discoverFromPath(searchPath, config);
-      console.error(`ADVANCED_DISCOVERY: Found ${modules.length} modules from path ${searchPath}`);
       allModules.push(...modules);
     }
-
-    console.error(`ADVANCED_DISCOVERY: Total modules before processing: ${allModules.length}`);
 
     // Remove duplicates based on name@version
     const uniqueModules = this.deduplicateModules(allModules);
@@ -227,20 +217,13 @@ export class ModuleDiscovery {
     const modules: ModuleConfig[] = [];
     const fullPath = join(this.baseDir, searchPath);
 
-    console.error(
-      `DISCOVER_PATH: searchPath=${searchPath}, fullPath=${fullPath}, baseDir=${this.baseDir}`
-    );
-
     try {
       const stat = statSync(fullPath);
-      console.error(`DISCOVER_PATH: Path exists, isDirectory=${stat.isDirectory()}`);
 
       if (!stat.isDirectory()) {
-        console.error(`DISCOVER_PATH: Not a directory, returning empty`);
         return modules;
       }
     } catch (error) {
-      console.error(`DISCOVER_PATH: Path does not exist or error accessing: ${error}`);
       return modules;
     }
 
@@ -251,8 +234,6 @@ export class ModuleDiscovery {
         config.ignorePatterns,
         config.maxDepth
       );
-
-      console.error(`DISCOVER_PATH: Found ${files.length} files: ${files.join(', ')}`);
 
       for (const filePath of files) {
         try {
@@ -342,12 +323,8 @@ export class ModuleDiscovery {
   ): Promise<string[]> {
     // Force fallback in CI environments or if Node.js version is uncertain
     const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
-    const nodeVersion = process.version;
-
-    console.error(`GLOB_CHECK: CI=${isCI}, Node=${nodeVersion}, forcing fallback=${isCI}`);
 
     if (isCI) {
-      console.error('GLOB_CHECK: CI environment detected, using fallback');
       return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
     }
 
@@ -359,7 +336,6 @@ export class ModuleDiscovery {
 
       // Check if glob is actually a function and test it
       if (typeof glob !== 'function') {
-        console.error('GLOB_CHECK: glob is not a function, using fallback');
         return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
       }
 
@@ -371,9 +347,7 @@ export class ModuleDiscovery {
           testCount++;
           if (testCount > 0) break; // Just test that it works
         }
-        console.error(`GLOB_CHECK: glob test successful, found ${testCount} items`);
       } catch (testError) {
-        console.error(`GLOB_CHECK: glob test failed: ${testError}, using fallback`);
         return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
       }
 
@@ -400,15 +374,13 @@ export class ModuleDiscovery {
           allFiles.push(...files);
         } catch (error) {
           // If any glob call fails, fall back to manual discovery
-          console.error(
-            `GLOB_CHECK: Glob pattern failed: ${pattern}, error: ${error}, using fallback`
-          );
+          this.discoveryLogger.warn(`Glob pattern failed: ${pattern}`, String(error));
           return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
         }
       }
     } catch (error) {
       // fs.glob not available, fall back to manual file discovery
-      console.error(`GLOB_CHECK: fs.glob not available: ${error}, using fallback`);
+      this.discoveryLogger.debug('Native fs.glob not available, using fallback');
       return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
     }
 
@@ -422,8 +394,6 @@ export class ModuleDiscovery {
     ignorePatterns: string[],
     maxDepth: number = 5
   ): Promise<string[]> {
-    console.error(`FALLBACK: searchPath=${searchPath}, baseDir=${this.baseDir}`);
-
     const config = {
       patterns,
       ignorePatterns,
@@ -433,24 +403,18 @@ export class ModuleDiscovery {
 
     // Handle both absolute and relative paths
     const fullSearchPath = isAbsolute(searchPath) ? searchPath : join(this.baseDir, searchPath);
-    console.error(`FALLBACK: Full search path: ${fullSearchPath}`);
 
     // Check if search path exists
     try {
       const { access } = await import('fs/promises');
       await access(fullSearchPath);
-      console.error(`FALLBACK: Search path exists: ${fullSearchPath}`);
     } catch (e) {
-      console.error(`FALLBACK: Search path does not exist: ${fullSearchPath}`);
       return [];
     }
 
     // Get files and convert to relative paths
     const files = this.findMatchingFiles(fullSearchPath, config);
     const relativeFiles = files.map(file => relative(this.baseDir, file));
-
-    console.error(`FALLBACK: Found ${files.length} files: ${files.join(', ')}`);
-    console.error(`FALLBACK: Relative paths: ${relativeFiles.join(', ')}`);
 
     return relativeFiles;
   }
@@ -475,14 +439,8 @@ export class ModuleDiscovery {
       const regex = new RegExp(`^${regexPattern}$`, 'i');
       const result = regex.test(normalizedPath);
 
-      // Debug output for CI
-      console.error(
-        `PATTERN_MATCH: path="${normalizedPath}", pattern="${pattern}", regex="${regexPattern}", result=${result}`
-      );
-
       return result;
     } catch (error) {
-      console.error(`PATTERN_MATCH_ERROR: pattern="${pattern}", error=${String(error)}`);
       this.discoveryLogger.warn(`Pattern matching error for "${pattern}": ${String(error)}`);
       return false;
     }
