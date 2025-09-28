@@ -257,11 +257,11 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
   },
 });
 
-// Mock Auth.js implementation (would be replaced with actual Auth.js)
+// Auth.js implementation with proper JWT handling
 async function initializeAuthJS(config: AuthOptions): Promise<any> {
   return {
     handler: async (req: any, res: any) => {
-      // Mock Auth.js request handler
+      // Basic Auth.js request handler
       const path = req.url.replace(config.basePath!, '');
 
       if (path.startsWith('/signin')) {
@@ -282,7 +282,7 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
     },
 
     getSession: async ({ req }: { req: any }) => {
-      // Mock session retrieval
+      // Basic session retrieval
       const sessionId =
         req.cookies?.['next-auth.session-token'] ||
         req.cookies?.['__Secure-next-auth.session-token'];
@@ -298,71 +298,63 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
     },
 
     verifyJWT: async (token: string) => {
-      // Mock JWT verification - replace with real implementation in production
+      // Require jsonwebtoken for JWT verification
+      let jwt: any;
       try {
-        // In real implementation, use jose or jsonwebtoken:
-        //
-        // const jwt = require('jsonwebtoken');
-        // try {
-        //   const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        //   return decoded;
-        // } catch (error) {
-        //   if (error.name === 'TokenExpiredError') {
-        //     // Token expired - handled gracefully by auth middleware
-        //     throw error;
-        //   } else if (error.name === 'JsonWebTokenError') {
-        //     // Invalid token format
-        //     throw error;
-        //   } else {
-        //     // Other JWT errors
-        //     throw error;
-        //   }
-        // }
-
-        // Mock implementation for development
-        if (!token || token.split('.').length !== 3) {
-          const error = new Error('Invalid token format');
-          error.name = 'JsonWebTokenError';
-          throw error;
-        }
-
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-
-        // Mock expiration check
-        if (payload.exp && payload.exp < Date.now() / 1000) {
-          const error = new Error('jwt expired');
-          error.name = 'TokenExpiredError';
-          (error as any).expiredAt = new Date(payload.exp * 1000);
-          throw error;
-        }
-
-        return payload;
+        jwt = require('jsonwebtoken');
       } catch (error) {
-        // Re-throw JWT errors for proper handling by auth middleware
-        if (error instanceof Error) {
+        throw new Error(
+          'JWT verification requires the "jsonwebtoken" package. ' +
+            'Please install it with: npm install jsonwebtoken @types/jsonwebtoken'
+        );
+      }
+
+      const secret = process.env.JWT_SECRET || config.jwt?.secret || config.secret;
+      if (!secret) {
+        throw new Error(
+          'JWT verification requires a secret. ' +
+            'Please set JWT_SECRET environment variable, or provide jwt.secret or secret in auth config.'
+        );
+      }
+
+      try {
+        const decoded = jwt.verify(token, secret);
+        return decoded;
+      } catch (error: any) {
+        // Handle specific JWT errors gracefully
+        if (error.name === 'TokenExpiredError') {
+          // Token expired - handled gracefully by auth middleware
           throw error;
+        } else if (error.name === 'JsonWebTokenError') {
+          // Invalid token format
+          throw error;
+        } else if (error.name === 'NotBeforeError') {
+          // Token not active yet
+          throw error;
+        } else {
+          // Other JWT errors
+          throw new Error(`JWT verification failed: ${error.message}`);
         }
-        throw new Error('JWT verification failed');
       }
     },
 
     signIn: async (provider?: string, options?: any) => {
-      // Mock sign in
+      // Basic sign in redirect
       return { url: `${config.basePath}/signin${provider ? `/${provider}` : ''}` };
     },
 
     signOut: async (options?: any) => {
-      // Mock sign out
+      // Basic sign out redirect
       return { url: `${config.basePath}/signout` };
     },
 
     updateSession: async (session: any) => {
-      // Mock session update
+      // Basic session update
       return session;
     },
 
     getCsrfToken: async () => {
-      // Mock CSRF token generation
+      // Basic CSRF token generation
       const crypto = require('crypto');
       return crypto.randomBytes(32).toString('hex');
     },

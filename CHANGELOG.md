@@ -1,3 +1,12 @@
+## [1.5.11] - 2025-09-28
+
+### Fixed
+- **REMOVED: Mock JWT Implementation** - Replaced mock JWT with proper dependency checking
+  - **Issue**: JWT verification was using mock implementation instead of real jsonwebtoken library
+  - **Impact**: JWT tokens were not properly verified in production
+  - **Fix**: Now requires `jsonwebtoken` package with graceful error handling
+  - **Enhancement**: Proper secret hierarchy (JWT_SECRET env var → jwt.secret config → secret config)
+
 ## [1.5.10] - 2025-09-28
 
 ### Security Fixes
