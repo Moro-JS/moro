@@ -350,7 +350,7 @@ export class ModuleDiscovery {
     } catch (error) {
       // fs.glob not available, fall back to manual file discovery
       this.discoveryLogger.debug('Native fs.glob not available, using fallback');
-      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns);
+      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
     }
 
     return [...new Set(allFiles)]; // Remove duplicates
@@ -360,12 +360,13 @@ export class ModuleDiscovery {
   private async findMatchingFilesFallback(
     searchPath: string,
     patterns: string[],
-    ignorePatterns: string[]
+    ignorePatterns: string[],
+    maxDepth: number = 5
   ): Promise<string[]> {
     const config = {
       patterns,
       ignorePatterns,
-      maxDepth: 5,
+      maxDepth,
       recursive: true,
     } as ModuleDefaultsConfig['autoDiscovery'];
 
