@@ -285,6 +285,64 @@ export class MoroHttpServer {
       // Execute handler
       await route.handler(httpReq, httpRes);
     } catch (error) {
+      // Handle JWT-specific errors gracefully
+      if (
+        error instanceof Error &&
+        (error.name === 'TokenExpiredError' ||
+          error.name === 'JsonWebTokenError' ||
+          error.name === 'NotBeforeError')
+      ) {
+        this.logger.debug('JWT authentication error', 'RequestHandler', {
+          errorType: error.name,
+          errorMessage: error.message,
+          requestPath: req.url,
+          requestMethod: req.method,
+          requestId: httpReq.requestId,
+        });
+
+        if (!httpRes.headersSent) {
+          if (typeof httpRes.status === 'function' && typeof httpRes.json === 'function') {
+            if (error.name === 'TokenExpiredError') {
+              httpRes.status(401).json({
+                success: false,
+                error: 'Token expired',
+                message: 'Your session has expired. Please sign in again.',
+                requestId: httpReq.requestId,
+                expiredAt: (error as any).expiredAt,
+              });
+            } else if (error.name === 'JsonWebTokenError') {
+              httpRes.status(401).json({
+                success: false,
+                error: 'Invalid token',
+                message: 'The provided authentication token is invalid.',
+                requestId: httpReq.requestId,
+              });
+            } else if (error.name === 'NotBeforeError') {
+              httpRes.status(401).json({
+                success: false,
+                error: 'Token not ready',
+                message: 'The authentication token is not yet valid.',
+                requestId: httpReq.requestId,
+                availableAt: (error as any).date,
+              });
+            }
+          } else {
+            // Fallback for non-enhanced response objects
+            httpRes.statusCode = 401;
+            httpRes.setHeader('Content-Type', 'application/json');
+            httpRes.end(
+              JSON.stringify({
+                success: false,
+                error: 'Authentication failed',
+                message: 'JWT authentication error occurred.',
+                requestId: httpReq.requestId,
+              })
+            );
+          }
+        }
+        return;
+      }
+
       // Debug: Log the actual error and where it came from
       this.logger.debug('Request error details', 'RequestHandler', {
         errorType: typeof error,

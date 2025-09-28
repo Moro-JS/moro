@@ -1,7 +1,12 @@
-## [1.5.12] - 2025-09-28
+## [1.5.13] - 2025-09-28
 
-### Added
-- feat: Add JWT error handling utilities for custom middleware
+### Fixed
+- **CRITICAL: HTTP Server JWT Error Handling** - Fixed unhandled JWT errors in HTTP server middleware execution
+  - **Issue**: `TokenExpiredError` and other JWT errors were crashing the server instead of returning proper HTTP responses
+  - **Root Cause**: HTTP server's `executeMiddleware` method wasn't catching JWT-specific errors from user middleware
+  - **Solution**: Added specific JWT error handling in `MoroHttpServer.handleRequest()` method
+  - **Impact**: JWT errors now return proper 401 responses instead of crashing the server
+  - **Error Types**: Handles `TokenExpiredError`, `JsonWebTokenError`, and `NotBeforeError` gracefully
 
 ## [1.5.12] - 2025-09-28
 
