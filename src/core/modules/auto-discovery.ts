@@ -183,17 +183,27 @@ export class ModuleDiscovery {
   async discoverModulesAdvanced(
     config: ModuleDefaultsConfig['autoDiscovery']
   ): Promise<ModuleConfig[]> {
+    console.error(
+      `ADVANCED_DISCOVERY: enabled=${config.enabled}, paths=${JSON.stringify(config.paths)}`
+    );
+
     if (!config.enabled) {
+      console.error(`ADVANCED_DISCOVERY: Disabled, returning empty array`);
       return [];
     }
 
     const allModules: ModuleConfig[] = [];
 
     // Discover from all configured paths
+    console.error(`ADVANCED_DISCOVERY: Processing ${config.paths.length} paths`);
     for (const searchPath of config.paths) {
+      console.error(`ADVANCED_DISCOVERY: Processing path: ${searchPath}`);
       const modules = await this.discoverFromPath(searchPath, config);
+      console.error(`ADVANCED_DISCOVERY: Found ${modules.length} modules from path ${searchPath}`);
       allModules.push(...modules);
     }
+
+    console.error(`ADVANCED_DISCOVERY: Total modules before processing: ${allModules.length}`);
 
     // Remove duplicates based on name@version
     const uniqueModules = this.deduplicateModules(allModules);

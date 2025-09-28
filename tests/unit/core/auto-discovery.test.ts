@@ -120,7 +120,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
             `Config paths: ${JSON.stringify(config.paths)}`,
             `Config patterns: ${JSON.stringify(config.patterns)}`
           ].join('\n');
-          
+
           throw new Error(errorMsg);
         }
 
