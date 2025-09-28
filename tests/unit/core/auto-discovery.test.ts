@@ -107,14 +107,14 @@ describe('Enhanced Module Auto-Discovery System', () => {
         let modules: any[] = [];
         let discoveryError: any = null;
         let debugInfo: string[] = [];
-        
+
         try {
           debugInfo.push('=== TESTING CORE LOGIC DIRECTLY ===');
-          
+
           // Test the individual methods to see where it fails
           const testSearchPath = join(tempDir, 'modules');
           debugInfo.push(`Testing search path: ${testSearchPath}`);
-          
+
           // Check if the ModuleDiscovery instance can access the path
           const { access } = await import('fs/promises');
           try {
@@ -123,32 +123,32 @@ describe('Enhanced Module Auto-Discovery System', () => {
           } catch (e) {
             debugInfo.push(`Search path accessible: NO - ${e}`);
           }
-          
+
           // Test the glob detection logic directly
           const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
           const nodeVersion = process.version;
           debugInfo.push(`CI detected: ${isCI}, Node: ${nodeVersion}`);
-          
-          // DIRECTLY TEST THE FALLBACK METHOD
+
+          // DIRECTLY TEST THE FALLBACK METHOD (use relative path like the real code)
           const fallbackFiles = await (discovery as any).findMatchingFilesFallback(
-            testSearchPath,
+            'modules', // Use relative path, not absolute
             config.patterns,
             config.ignorePatterns,
             config.maxDepth
           );
           debugInfo.push(`Fallback found ${fallbackFiles.length} files: ${JSON.stringify(fallbackFiles)}`);
-          
+
           // DIRECTLY TEST PATTERN MATCHING
           const testPaths = ['modules/users/index.ts', 'modules/orders/index.ts'];
           const testPatterns = ['**/index.{ts,js}', '**/*.module.{ts,js}'];
-          
+
           for (const testPath of testPaths) {
             for (const testPattern of testPatterns) {
               const matches = (discovery as any).matchesSimplePattern(testPath, testPattern);
               debugInfo.push(`Pattern test: "${testPath}" vs "${testPattern}" = ${matches}`);
             }
           }
-          
+
           // Now call the discovery method
           modules = await discovery.discoverModulesAdvanced(config);
           debugInfo.push('=== DISCOVERY COMPLETED ===');
@@ -156,7 +156,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           debugInfo.push(`=== ERROR === ${error}`);
           discoveryError = error;
         }
-        
+
         debugInfo.push(`Final modules count: ${modules.length}`);
         debugInfo.push(`Final modules: ${JSON.stringify(modules.map(m => ({ name: m.name, version: m.version })))}`);
         debugInfo.push(`Discovery error: ${discoveryError}`);

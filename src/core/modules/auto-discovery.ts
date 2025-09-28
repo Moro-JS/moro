@@ -1,6 +1,6 @@
 // Auto-discovery system for Moro modules
 import { readdirSync, statSync } from 'fs';
-import { join, extname, relative } from 'path';
+import { join, extname, relative, isAbsolute } from 'path';
 import { ModuleConfig } from '../../types/module';
 import { DiscoveryOptions } from '../../types/discovery';
 import { ModuleDefaultsConfig } from '../../types/config';
@@ -431,8 +431,8 @@ export class ModuleDiscovery {
       recursive: true,
     } as ModuleDefaultsConfig['autoDiscovery'];
 
-    // Resolve the full search path
-    const fullSearchPath = join(this.baseDir, searchPath);
+    // Handle both absolute and relative paths
+    const fullSearchPath = isAbsolute(searchPath) ? searchPath : join(this.baseDir, searchPath);
     console.error(`FALLBACK: Full search path: ${fullSearchPath}`);
 
     // Check if search path exists
