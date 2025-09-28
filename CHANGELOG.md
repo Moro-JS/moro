@@ -1,9 +1,25 @@
+## [1.5.15] - 2025-09-28
+
+### Added
+- **MAJOR: Enhanced Module Auto-Discovery System** - Comprehensive overhaul of module auto-discovery with advanced configuration options
+  - **Advanced Configuration**: Rich configuration options including paths, patterns, loading strategies, dependency resolution
+  - **Loading Strategies**: Support for eager, lazy, and conditional loading with environment-based rules
+  - **Dependency Resolution**: Automatic topological sorting for proper module load order
+  - **File Watching**: Hot reloading support for development environments (opt-in)
+  - **Error Handling**: Graceful degradation with configurable `failOnError` option
+  - **Comprehensive Testing**: 45+ test cases covering unit, integration, and performance scenarios
+  - **Backward Compatibility**: Maintains support for legacy `autoDiscover` and `modulesPath` options
+  - **Resource Management**: Proper cleanup of file watchers to prevent hanging processes
+
+### Fixed
+- **File Watcher Cleanup**: Fixed npm test hanging by properly cleaning up file system watchers
+- **TypeScript Errors**: Resolved all TypeScript compilation issues in auto-discovery system
+- **Test Directory Pollution**: Fixed tests creating temporary files in main project directory
+
 ## [1.5.14] - 2025-09-28
 
 ### Added
 - fix: Add direct JWT error handling in middleware execution
-
-## [1.5.14] - 2025-09-28
 
 ### Fixed
 - **ENHANCED: Direct JWT Error Handling in Middleware Execution** - Added JWT error handling directly in executeMiddleware method
