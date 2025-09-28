@@ -369,8 +369,12 @@ export class ModuleDiscovery {
       recursive: true,
     } as ModuleDefaultsConfig['autoDiscovery'];
 
-    const files = this.findMatchingFiles(searchPath, config);
-    return files;
+    // Resolve the full search path
+    const fullSearchPath = join(this.baseDir, searchPath);
+
+    // Get files and convert to relative paths
+    const files = this.findMatchingFiles(fullSearchPath, config);
+    return files.map(file => relative(this.baseDir, file));
   }
 
   // Simple pattern matching for fallback (basic glob support)
