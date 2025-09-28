@@ -62,6 +62,14 @@ describe('Enhanced Module Auto-Discovery System', () => {
         await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
         await createTestModule(tempDir, 'orders', { name: 'orders', version: '1.0.0' });
 
+        // Debug: Check if files were actually created
+        const modulesDir = join(tempDir, 'modules');
+        const usersFile = join(modulesDir, 'users', 'index.ts');
+        const ordersFile = join(modulesDir, 'orders', 'index.ts');
+        
+        expect(await fs.access(usersFile).then(() => true).catch(() => false)).toBe(true);
+        expect(await fs.access(ordersFile).then(() => true).catch(() => false)).toBe(true);
+
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
           paths: ['modules'],
@@ -76,6 +84,28 @@ describe('Enhanced Module Auto-Discovery System', () => {
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
+
+        // If no modules found, provide detailed debugging info
+        if (modules.length === 0) {
+          const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
+          const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
+          
+          console.error('DEBUG: No modules discovered');
+          console.error('Temp directory:', tempDir);
+          console.error('Modules directory exists:', modulesExists);
+          console.error('Directory contents:', dirContents);
+          console.error('Discovery base dir:', discovery['baseDir']);
+          console.error('Config paths:', config.paths);
+          console.error('Config patterns:', config.patterns);
+          
+          // Try manual file discovery
+          try {
+            const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
+            console.error('Manual modules directory scan:', manualFiles);
+          } catch (e) {
+            console.error('Manual scan failed:', e.message);
+          }
+        }
 
         expect(modules).toHaveLength(2);
         expect(modules[0].name).toBe('orders'); // Alphabetical order
