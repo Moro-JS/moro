@@ -86,7 +86,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         // Always show debug info to understand what's happening in CI
         const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
         const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
-        
+
         console.error('=== DEBUG INFO ===');
         console.error('Temp directory:', tempDir);
         console.error('Modules directory exists:', modulesExists);
@@ -94,7 +94,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         console.error('Discovery base dir:', discovery['baseDir']);
         console.error('Config paths:', config.paths);
         console.error('Config patterns:', config.patterns);
-        
+
         // Try manual file discovery
         try {
           const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
@@ -104,10 +104,25 @@ describe('Enhanced Module Auto-Discovery System', () => {
         }
 
         const modules = await discovery.discoverModulesAdvanced(config);
-        
+
         console.error('Discovered modules count:', modules.length);
         console.error('Discovered modules:', modules.map(m => ({ name: m.name, version: m.version })));
         console.error('=== END DEBUG ===');
+
+        // If no modules found, fail with detailed info
+        if (modules.length === 0) {
+          const errorMsg = [
+            'No modules discovered in CI!',
+            `Temp dir: ${tempDir}`,
+            `Modules dir exists: ${modulesExists}`,
+            `Dir contents: ${JSON.stringify(dirContents)}`,
+            `Discovery base: ${discovery['baseDir']}`,
+            `Config paths: ${JSON.stringify(config.paths)}`,
+            `Config patterns: ${JSON.stringify(config.patterns)}`
+          ].join('\n');
+          
+          throw new Error(errorMsg);
+        }
 
         expect(modules).toHaveLength(2);
         expect(modules[0].name).toBe('orders'); // Alphabetical order

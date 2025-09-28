@@ -217,17 +217,32 @@ export class ModuleDiscovery {
     const modules: ModuleConfig[] = [];
     const fullPath = join(this.baseDir, searchPath);
 
+    console.error(
+      `DISCOVER_PATH: searchPath=${searchPath}, fullPath=${fullPath}, baseDir=${this.baseDir}`
+    );
+
     try {
-      if (!statSync(fullPath).isDirectory()) {
+      const stat = statSync(fullPath);
+      console.error(`DISCOVER_PATH: Path exists, isDirectory=${stat.isDirectory()}`);
+
+      if (!stat.isDirectory()) {
+        console.error(`DISCOVER_PATH: Not a directory, returning empty`);
         return modules;
       }
+    } catch (error) {
+      console.error(`DISCOVER_PATH: Path does not exist or error accessing: ${error}`);
+      return modules;
+    }
 
+    try {
       const files = await this.findMatchingFilesWithGlob(
         fullPath,
         config.patterns,
         config.ignorePatterns,
         config.maxDepth
       );
+
+      console.error(`DISCOVER_PATH: Found ${files.length} files: ${files.join(', ')}`);
 
       for (const filePath of files) {
         try {
