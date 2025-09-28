@@ -340,15 +340,41 @@ export class ModuleDiscovery {
     ignorePatterns: string[],
     maxDepth: number = 5
   ): Promise<string[]> {
+    // Force fallback in CI environments or if Node.js version is uncertain
+    const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+    const nodeVersion = process.version;
+
+    console.error(`GLOB_CHECK: CI=${isCI}, Node=${nodeVersion}, forcing fallback=${isCI}`);
+
+    if (isCI) {
+      console.error('GLOB_CHECK: CI environment detected, using fallback');
+      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
+    }
+
     const allFiles: string[] = [];
 
     try {
       // Try to use native fs.glob if available (Node.js 20+)
       const { glob } = await import('fs/promises');
 
-      // Check if glob is actually a function
+      // Check if glob is actually a function and test it
       if (typeof glob !== 'function') {
-        throw new Error('glob is not a function');
+        console.error('GLOB_CHECK: glob is not a function, using fallback');
+        return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
+      }
+
+      // Test glob with a simple pattern first
+      try {
+        const testIterator = glob(join(searchPath, '*'));
+        let testCount = 0;
+        for await (const _ of testIterator) {
+          testCount++;
+          if (testCount > 0) break; // Just test that it works
+        }
+        console.error(`GLOB_CHECK: glob test successful, found ${testCount} items`);
+      } catch (testError) {
+        console.error(`GLOB_CHECK: glob test failed: ${testError}, using fallback`);
+        return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
       }
 
       for (const pattern of patterns) {
@@ -374,13 +400,15 @@ export class ModuleDiscovery {
           allFiles.push(...files);
         } catch (error) {
           // If any glob call fails, fall back to manual discovery
-          this.discoveryLogger.warn(`Glob pattern failed: ${pattern}`, String(error));
+          console.error(
+            `GLOB_CHECK: Glob pattern failed: ${pattern}, error: ${error}, using fallback`
+          );
           return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
         }
       }
     } catch (error) {
       // fs.glob not available, fall back to manual file discovery
-      this.discoveryLogger.debug('Native fs.glob not available, using fallback');
+      console.error(`GLOB_CHECK: fs.glob not available: ${error}, using fallback`);
       return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
     }
 

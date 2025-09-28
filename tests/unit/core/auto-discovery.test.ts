@@ -66,7 +66,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         const modulesDir = join(tempDir, 'modules');
         const usersFile = join(modulesDir, 'users', 'index.ts');
         const ordersFile = join(modulesDir, 'orders', 'index.ts');
-        
+
         expect(await fs.access(usersFile).then(() => true).catch(() => false)).toBe(true);
         expect(await fs.access(ordersFile).then(() => true).catch(() => false)).toBe(true);
 
@@ -86,7 +86,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         // Always show debug info to understand what's happening in CI
         const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
         const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
-        
+
         console.error('=== DEBUG INFO ===');
         console.error('Temp directory:', tempDir);
         console.error('Modules directory exists:', modulesExists);
@@ -94,7 +94,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         console.error('Discovery base dir:', discovery['baseDir']);
         console.error('Config paths:', config.paths);
         console.error('Config patterns:', config.patterns);
-        
+
         // Try manual file discovery
         try {
           const manualFiles = await fs.readdir(join(tempDir, 'modules'), { recursive: true });
@@ -106,7 +106,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         // DIRECT TEST: Try to call the discovery method with explicit error handling
         let modules: any[] = [];
         let discoveryError: any = null;
-        
+
         try {
           console.error('=== CALLING DISCOVERY ===');
           modules = await discovery.discoverModulesAdvanced(config);
@@ -115,7 +115,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           console.error('=== DISCOVERY ERROR ===', error);
           discoveryError = error;
         }
-        
+
         console.error('Discovered modules count:', modules.length);
         console.error('Discovered modules:', modules.map(m => ({ name: m.name, version: m.version })));
         console.error('Discovery error:', discoveryError);
@@ -137,7 +137,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
             `Config paths: ${JSON.stringify(config.paths)}`,
             `Config patterns: ${JSON.stringify(config.patterns)}`
           ].join('\n');
-          
+
           throw new Error(errorMsg);
         }
 
