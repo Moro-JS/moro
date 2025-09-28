@@ -1,3 +1,26 @@
+## [1.5.16] - 2025-09-28
+
+### Added
+- **Native Node.js Glob Support**: Replaced `minimatch` dependency with native `fs.glob` functionality for better performance and reduced dependencies
+- **Enhanced Configuration System**: Comprehensive environment variable support for all module configurations including auto-discovery
+- **Improved Config Merging**: Enhanced `MoroOptions` to `AppConfig` merging with proper `autoDiscover` option handling
+
+### Enhanced
+- **Auto-Discovery Configuration**: Added support for configuring auto-discovery through `modules.autoDiscovery` as the primary method
+- **Environment Variables**: Added complete environment variable support for cache, rate limiting, validation, and auto-discovery configurations
+- **Legacy Compatibility**: Enhanced support for legacy `modulesPath` option with proper mapping to `autoDiscovery.paths`
+
+### Fixed
+- **Pattern Matching**: Fixed glob pattern matching with proper regex conversion and fallback support for older Node.js versions
+- **MaxDepth Handling**: Fixed `maxDepth` configuration handling in native glob implementation
+- **Configuration Documentation**: Updated documentation to clearly show nested `modules.autoDiscovery` as the primary configuration method
+
+### Technical
+- Removed `minimatch` from dependencies (zero external dependencies for pattern matching)
+- Added fallback pattern matching for Node.js versions without native `fs.glob`
+- Enhanced configuration validation and merging logic
+- Improved cross-platform compatibility for file path handling
+
 ## [1.5.15] - 2025-09-28
 
 ### Added
