@@ -5,7 +5,6 @@ import { ModuleConfig } from '../../types/module';
 import { DiscoveryOptions } from '../../types/discovery';
 import { ModuleDefaultsConfig } from '../../types/config';
 import { createFrameworkLogger } from '../logger';
-import { minimatch } from 'minimatch';
 
 export class ModuleDiscovery {
   private baseDir: string;
@@ -223,15 +222,22 @@ export class ModuleDiscovery {
         return modules;
       }
 
-      const files = this.findMatchingFiles(fullPath, config);
+      const files = await this.findMatchingFilesWithGlob(
+        fullPath,
+        config.patterns,
+        config.ignorePatterns,
+        config.maxDepth
+      );
 
       for (const filePath of files) {
         try {
-          const module = await this.loadModule(filePath);
+          // Convert relative path to absolute path for import
+          const absolutePath = join(this.baseDir, filePath);
+          const module = await this.loadModule(absolutePath);
           if (module && this.validateAdvancedModule(module, config)) {
             modules.push(module);
             this.discoveryLogger.info(
-              `Auto-discovered module: ${module.name}@${module.version} from ${relative(this.baseDir, filePath)}`
+              `Auto-discovered module: ${module.name}@${module.version} from ${filePath}`
             );
           }
         } catch (error) {
@@ -302,14 +308,112 @@ export class ModuleDiscovery {
     return files;
   }
 
+  // Use native Node.js glob to find matching files
+  private async findMatchingFilesWithGlob(
+    searchPath: string,
+    patterns: string[],
+    ignorePatterns: string[],
+    maxDepth: number = 5
+  ): Promise<string[]> {
+    const allFiles: string[] = [];
+
+    try {
+      // Try to use native fs.glob if available (Node.js 20+)
+      const { glob } = await import('fs/promises');
+
+      for (const pattern of patterns) {
+        const fullPattern = join(searchPath, pattern);
+        try {
+          // fs.glob returns an AsyncIterator, need to collect results
+          const globIterator = glob(fullPattern);
+          const files: string[] = [];
+
+          for await (const file of globIterator) {
+            const filePath = typeof file === 'string' ? file : (file as any).name || String(file);
+            const relativePath = relative(this.baseDir, filePath);
+
+            // Check if file should be ignored and within max depth
+            if (
+              !this.shouldIgnore(relativePath, ignorePatterns) &&
+              this.isWithinMaxDepth(relativePath, searchPath, maxDepth)
+            ) {
+              files.push(relativePath);
+            }
+          }
+
+          allFiles.push(...files);
+        } catch (error) {
+          // Pattern might be invalid, skip it
+          this.discoveryLogger.warn(`Invalid glob pattern: ${pattern}`, String(error));
+        }
+      }
+    } catch (error) {
+      // fs.glob not available, fall back to manual file discovery
+      this.discoveryLogger.debug('Native fs.glob not available, using fallback');
+      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns);
+    }
+
+    return [...new Set(allFiles)]; // Remove duplicates
+  }
+
+  // Fallback for Node.js versions without fs.glob
+  private async findMatchingFilesFallback(
+    searchPath: string,
+    patterns: string[],
+    ignorePatterns: string[]
+  ): Promise<string[]> {
+    const config = {
+      patterns,
+      ignorePatterns,
+      maxDepth: 5,
+      recursive: true,
+    } as ModuleDefaultsConfig['autoDiscovery'];
+
+    const files = this.findMatchingFiles(searchPath, config);
+    return files;
+  }
+
+  // Simple pattern matching for fallback (basic glob support)
+  private matchesSimplePattern(path: string, pattern: string): boolean {
+    try {
+      // Normalize path separators
+      const normalizedPath = path.replace(/\\/g, '/');
+      const normalizedPattern = pattern.replace(/\\/g, '/');
+
+      // Convert simple glob patterns to regex
+      const regexPattern = normalizedPattern
+        .replace(/\*\*/g, '___DOUBLESTAR___') // Temporarily replace ** BEFORE escaping
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex chars
+        .replace(/\\\*/g, '[^/]*') // * matches anything except /
+        .replace(/___DOUBLESTAR___/g, '.*') // ** matches anything including /
+        .replace(/\\\?/g, '[^/]') // ? matches single character except /
+        .replace(/\\\{([^}]+)\\\}/g, '($1)') // {ts,js} -> (ts|js)
+        .replace(/,/g, '|'); // Convert comma to OR
+
+      const regex = new RegExp(`^${regexPattern}$`, 'i');
+      return regex.test(normalizedPath);
+    } catch (error) {
+      this.discoveryLogger.warn(`Pattern matching error for "${pattern}": ${String(error)}`);
+      return false;
+    }
+  }
+
   // Check if path should be ignored
   private shouldIgnore(path: string, ignorePatterns: string[]): boolean {
-    return ignorePatterns.some(pattern => minimatch(path, pattern));
+    return ignorePatterns.some(pattern => this.matchesSimplePattern(path, pattern));
   }
 
   // Check if path matches any of the patterns
   private matchesPatterns(path: string, patterns: string[]): boolean {
-    return patterns.some(pattern => minimatch(path, pattern));
+    return patterns.some(pattern => this.matchesSimplePattern(path, pattern));
+  }
+
+  // Check if file is within max depth (for glob results)
+  private isWithinMaxDepth(relativePath: string, searchPath: string, maxDepth: number): boolean {
+    // Count directory separators to determine depth
+    const pathFromSearch = relative(searchPath, join(this.baseDir, relativePath));
+    const depth = pathFromSearch.split('/').length - 1; // -1 because file itself doesn't count as depth
+    return depth <= maxDepth;
   }
 
   // Remove duplicate modules

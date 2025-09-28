@@ -166,8 +166,7 @@
     "typedoc-theme-hierarchy": "^6.0.0",
     "typescript": "^5.9.2",
     "ws": "^8.18.3",
-    "zod": "^4.1.8",
-    "minimatch": "^10.0.1"
+    "zod": "^4.1.8"
   },
   "files": [
     "dist/**/*",

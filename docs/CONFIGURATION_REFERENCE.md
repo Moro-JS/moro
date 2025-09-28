@@ -341,18 +341,29 @@ MoroJS includes a powerful auto-discovery system that automatically finds and lo
 ### Basic Usage
 
 ```javascript
-// Simple auto-discovery
+// Primary method - nested under modules
+const app = createApp({
+  modules: {
+    autoDiscovery: {
+      enabled: true,
+      paths: ['./modules', './src/modules'],
+      loadingStrategy: 'lazy',
+      watchForChanges: true  // Development only
+    }
+  }
+});
+
+// Shorthand convenience method
 const app = createApp({
   autoDiscover: true  // Use defaults
 });
 
-// Advanced configuration
+// Shorthand with options
 const app = createApp({
   autoDiscover: {
     enabled: true,
     paths: ['./modules', './src/modules'],
-    loadingStrategy: 'lazy',
-    watchForChanges: true  // Development only
+    loadingStrategy: 'lazy'
   }
 });
 ```
@@ -407,33 +418,37 @@ Modules are loaded based on environment or feature flags.
 Enable file watching for automatic module reloading during development:
 
 ```javascript
-{
-  autoDiscover: {
-    watchForChanges: process.env.NODE_ENV === 'development',
-    loadingStrategy: 'eager'
+const app = createApp({
+  modules: {
+    autoDiscovery: {
+      watchForChanges: process.env.NODE_ENV === 'development',
+      loadingStrategy: 'eager'
+    }
   }
-}
+});
 ```
 
 #### Custom Patterns
 Configure custom file patterns for different project structures:
 
 ```javascript
-{
-  autoDiscover: {
-    patterns: [
-      '**/*.module.{ts,js}',
-      '**/modules/*.{ts,js}',
-      '**/*-module.{ts,js}'
-    ],
-    ignorePatterns: [
-      '**/*.test.{ts,js}',
-      '**/*.spec.{ts,js}',
-      '**/node_modules/**',
-      '**/dist/**'
-    ]
+const app = createApp({
+  modules: {
+    autoDiscovery: {
+      patterns: [
+        '**/*.module.{ts,js}',
+        '**/modules/*.{ts,js}',
+        '**/*-module.{ts,js}'
+      ],
+      ignorePatterns: [
+        '**/*.test.{ts,js}',
+        '**/*.spec.{ts,js}',
+        '**/node_modules/**',
+        '**/dist/**'
+      ]
+    }
   }
-}
+});
 ```
 
 ### Dependency Resolution
@@ -441,12 +456,14 @@ Configure custom file patterns for different project structures:
 The auto-discovery system can automatically resolve and order module dependencies:
 
 ```javascript
-{
-  autoDiscover: {
-    loadOrder: 'dependency',  // Automatic topological sort
-    failOnError: false        // Graceful degradation
+const app = createApp({
+  modules: {
+    autoDiscovery: {
+      loadOrder: 'dependency',  // Automatic topological sort
+      failOnError: false        // Graceful degradation
+    }
   }
-}
+});
 ```
 
 ### Production Configuration
@@ -454,18 +471,20 @@ The auto-discovery system can automatically resolve and order module dependencie
 Optimized settings for production environments:
 
 ```javascript
-{
-  autoDiscover: {
-    enabled: true,
-    paths: ['./dist/modules'],
-    patterns: ['**/*.module.js'],
-    loadingStrategy: 'eager',
-    watchForChanges: false,
-    loadOrder: 'dependency',
-    failOnError: true,
-    maxDepth: 3
+const app = createApp({
+  modules: {
+    autoDiscovery: {
+      enabled: true,
+      paths: ['./dist/modules'],
+      patterns: ['**/*.module.js'],
+      loadingStrategy: 'eager',
+      watchForChanges: false,
+      loadOrder: 'dependency',
+      failOnError: true,
+      maxDepth: 3
+    }
   }
-}
+});
 ```
 
 ## Logging Configuration

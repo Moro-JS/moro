@@ -206,6 +206,189 @@ function loadEnvironmentConfig(): Partial<AppConfig> {
     config.external = externalConfig;
   }
 
+  // Module configuration
+  const moduleEnvVars = [
+    // Cache
+    'CACHE_ENABLED',
+    'MORO_CACHE_ENABLED',
+    'DEFAULT_CACHE_TTL',
+    'MORO_CACHE_TTL',
+    'CACHE_MAX_SIZE',
+    'MORO_CACHE_SIZE',
+    'CACHE_STRATEGY',
+    'MORO_CACHE_STRATEGY',
+    // Rate Limit
+    'RATE_LIMIT_ENABLED',
+    'MORO_RATE_LIMIT_ENABLED',
+    'DEFAULT_RATE_LIMIT_REQUESTS',
+    'MORO_RATE_LIMIT_REQUESTS',
+    'DEFAULT_RATE_LIMIT_WINDOW',
+    'MORO_RATE_LIMIT_WINDOW',
+    // Validation
+    'VALIDATION_ENABLED',
+    'MORO_VALIDATION_ENABLED',
+    // Auto-Discovery
+    'AUTO_DISCOVERY_ENABLED',
+    'MORO_AUTO_DISCOVERY_ENABLED',
+    'AUTO_DISCOVERY_PATHS',
+    'MORO_AUTO_DISCOVERY_PATHS',
+    'AUTO_DISCOVERY_PATTERNS',
+    'MORO_AUTO_DISCOVERY_PATTERNS',
+    'AUTO_DISCOVERY_LOADING_STRATEGY',
+    'MORO_AUTO_DISCOVERY_LOADING_STRATEGY',
+    'AUTO_DISCOVERY_WATCH_FOR_CHANGES',
+    'MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES',
+    'AUTO_DISCOVERY_LOAD_ORDER',
+    'MORO_AUTO_DISCOVERY_LOAD_ORDER',
+    'AUTO_DISCOVERY_FAIL_ON_ERROR',
+    'MORO_AUTO_DISCOVERY_FAIL_ON_ERROR',
+    'AUTO_DISCOVERY_MAX_DEPTH',
+    'MORO_AUTO_DISCOVERY_MAX_DEPTH',
+  ];
+
+  if (moduleEnvVars.some(envVar => process.env[envVar])) {
+    if (!config.modules) config.modules = {} as any;
+
+    // Cache configuration
+    if (process.env.CACHE_ENABLED || process.env.MORO_CACHE_ENABLED) {
+      if (!config.modules!.cache) config.modules!.cache = {} as any;
+      config.modules!.cache!.enabled =
+        (process.env.CACHE_ENABLED || process.env.MORO_CACHE_ENABLED) === 'true';
+    }
+    if (process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL) {
+      if (!config.modules!.cache) config.modules!.cache = {} as any;
+      config.modules!.cache!.defaultTtl = parseInt(
+        process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL || '300',
+        10
+      );
+    }
+    if (process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE) {
+      if (!config.modules!.cache) config.modules!.cache = {} as any;
+      config.modules!.cache!.maxSize = parseInt(
+        process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE || '1000',
+        10
+      );
+    }
+    if (process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY) {
+      if (!config.modules!.cache) config.modules!.cache = {} as any;
+      const strategy = process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY;
+      if (['lru', 'lfu', 'fifo'].includes(strategy || '')) {
+        config.modules!.cache!.strategy = strategy as 'lru' | 'lfu' | 'fifo';
+      }
+    }
+
+    // Rate limit configuration
+    if (process.env.RATE_LIMIT_ENABLED || process.env.MORO_RATE_LIMIT_ENABLED) {
+      if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
+      config.modules!.rateLimit!.enabled =
+        (process.env.RATE_LIMIT_ENABLED || process.env.MORO_RATE_LIMIT_ENABLED) === 'true';
+    }
+    if (process.env.DEFAULT_RATE_LIMIT_REQUESTS || process.env.MORO_RATE_LIMIT_REQUESTS) {
+      if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
+      config.modules!.rateLimit!.defaultRequests = parseInt(
+        process.env.DEFAULT_RATE_LIMIT_REQUESTS || process.env.MORO_RATE_LIMIT_REQUESTS || '100',
+        10
+      );
+    }
+    if (process.env.DEFAULT_RATE_LIMIT_WINDOW || process.env.MORO_RATE_LIMIT_WINDOW) {
+      if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
+      config.modules!.rateLimit!.defaultWindow = parseInt(
+        process.env.DEFAULT_RATE_LIMIT_WINDOW || process.env.MORO_RATE_LIMIT_WINDOW || '60000',
+        10
+      );
+    }
+
+    // Validation configuration
+    if (process.env.VALIDATION_ENABLED || process.env.MORO_VALIDATION_ENABLED) {
+      if (!config.modules!.validation) config.modules!.validation = {} as any;
+      config.modules!.validation!.enabled =
+        (process.env.VALIDATION_ENABLED || process.env.MORO_VALIDATION_ENABLED) === 'true';
+    }
+
+    // Auto-Discovery configuration
+    if (process.env.AUTO_DISCOVERY_ENABLED || process.env.MORO_AUTO_DISCOVERY_ENABLED) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      config.modules!.autoDiscovery!.enabled =
+        (process.env.AUTO_DISCOVERY_ENABLED || process.env.MORO_AUTO_DISCOVERY_ENABLED) === 'true';
+    }
+    if (process.env.AUTO_DISCOVERY_PATHS || process.env.MORO_AUTO_DISCOVERY_PATHS) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      const paths = (
+        process.env.AUTO_DISCOVERY_PATHS ||
+        process.env.MORO_AUTO_DISCOVERY_PATHS ||
+        ''
+      )
+        .split(',')
+        .map(p => p.trim())
+        .filter(Boolean);
+      if (paths.length > 0) {
+        config.modules!.autoDiscovery!.paths = paths;
+      }
+    }
+    if (process.env.AUTO_DISCOVERY_PATTERNS || process.env.MORO_AUTO_DISCOVERY_PATTERNS) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      const patterns = (
+        process.env.AUTO_DISCOVERY_PATTERNS ||
+        process.env.MORO_AUTO_DISCOVERY_PATTERNS ||
+        ''
+      )
+        .split(',')
+        .map(p => p.trim())
+        .filter(Boolean);
+      if (patterns.length > 0) {
+        config.modules!.autoDiscovery!.patterns = patterns;
+      }
+    }
+    if (
+      process.env.AUTO_DISCOVERY_LOADING_STRATEGY ||
+      process.env.MORO_AUTO_DISCOVERY_LOADING_STRATEGY
+    ) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      const strategy =
+        process.env.AUTO_DISCOVERY_LOADING_STRATEGY ||
+        process.env.MORO_AUTO_DISCOVERY_LOADING_STRATEGY;
+      if (['eager', 'lazy', 'conditional'].includes(strategy || '')) {
+        config.modules!.autoDiscovery!.loadingStrategy = strategy as
+          | 'eager'
+          | 'lazy'
+          | 'conditional';
+      }
+    }
+    if (
+      process.env.AUTO_DISCOVERY_WATCH_FOR_CHANGES ||
+      process.env.MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES
+    ) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      config.modules!.autoDiscovery!.watchForChanges =
+        (process.env.AUTO_DISCOVERY_WATCH_FOR_CHANGES ||
+          process.env.MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES) === 'true';
+    }
+    if (process.env.AUTO_DISCOVERY_LOAD_ORDER || process.env.MORO_AUTO_DISCOVERY_LOAD_ORDER) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      const loadOrder =
+        process.env.AUTO_DISCOVERY_LOAD_ORDER || process.env.MORO_AUTO_DISCOVERY_LOAD_ORDER;
+      if (['alphabetical', 'dependency', 'custom'].includes(loadOrder || '')) {
+        config.modules!.autoDiscovery!.loadOrder = loadOrder as
+          | 'alphabetical'
+          | 'dependency'
+          | 'custom';
+      }
+    }
+    if (process.env.AUTO_DISCOVERY_FAIL_ON_ERROR || process.env.MORO_AUTO_DISCOVERY_FAIL_ON_ERROR) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      config.modules!.autoDiscovery!.failOnError =
+        (process.env.AUTO_DISCOVERY_FAIL_ON_ERROR ||
+          process.env.MORO_AUTO_DISCOVERY_FAIL_ON_ERROR) === 'true';
+    }
+    if (process.env.AUTO_DISCOVERY_MAX_DEPTH || process.env.MORO_AUTO_DISCOVERY_MAX_DEPTH) {
+      if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
+      config.modules!.autoDiscovery!.maxDepth = parseInt(
+        process.env.AUTO_DISCOVERY_MAX_DEPTH || process.env.MORO_AUTO_DISCOVERY_MAX_DEPTH || '5',
+        10
+      );
+    }
+  }
+
   return config;
 }
 
@@ -225,6 +408,35 @@ function normalizeCreateAppOptions(options: MoroOptions): Partial<AppConfig> {
   }
   if (options.modules) {
     config.modules = { ...config.modules, ...options.modules } as any;
+  }
+
+  // Handle autoDiscover option (maps to modules.autoDiscovery)
+  if (options.autoDiscover !== undefined) {
+    const autoDiscoveryConfig =
+      typeof options.autoDiscover === 'boolean'
+        ? { enabled: options.autoDiscover }
+        : options.autoDiscover;
+
+    config.modules = {
+      ...config.modules,
+      autoDiscovery: {
+        ...DEFAULT_CONFIG.modules.autoDiscovery,
+        ...autoDiscoveryConfig,
+      },
+    } as any;
+  }
+
+  // Handle legacy modulesPath option (maps to modules.autoDiscovery.paths)
+  if (options.modulesPath) {
+    config.modules = {
+      ...config.modules,
+      autoDiscovery: {
+        ...DEFAULT_CONFIG.modules.autoDiscovery,
+        ...(config.modules as any)?.autoDiscovery,
+        enabled: true,
+        paths: [options.modulesPath],
+      },
+    } as any;
   }
   if (options.logging) {
     config.logging = { ...config.logging, ...options.logging } as any;
