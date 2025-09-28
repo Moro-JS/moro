@@ -9,6 +9,7 @@ This document provides a comprehensive reference for all configuration options a
 - [Service Discovery](#service-discovery)
 - [Database Configuration](#database-configuration)
 - [Module Defaults](#module-defaults)
+- [Auto-Discovery Configuration](#auto-discovery-configuration)
 - [Logging Configuration](#logging-configuration)
 - [Security Configuration](#security-configuration)
 - [External Services](#external-services)
@@ -252,6 +253,31 @@ Configure default behaviors for modules.
 | `stripUnknown` | `boolean` | `true` | Strip unknown properties from validated data |
 | `abortEarly` | `boolean` | `false` | Stop validation on first error |
 
+#### Auto-Discovery Defaults
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable automatic module discovery |
+| `paths` | `string[]` | `['./modules', './src/modules']` | Directories to search for modules |
+| `patterns` | `string[]` | `['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}']` | File patterns to match |
+| `recursive` | `boolean` | `true` | Search directories recursively |
+| `loadingStrategy` | `'eager' \| 'lazy' \| 'conditional'` | `'eager'` | Module loading strategy |
+| `watchForChanges` | `boolean` | `false` | Enable file watching for hot reloading (development) |
+| `ignorePatterns` | `string[]` | `['**/*.test.{ts,js}', '**/*.spec.{ts,js}', '**/node_modules/**']` | Patterns to ignore during discovery |
+| `loadOrder` | `'alphabetical' \| 'dependency' \| 'custom'` | `'dependency'` | Module loading order strategy |
+| `failOnError` | `boolean` | `false` | Throw error if module discovery fails |
+| `maxDepth` | `number` | `5` | Maximum directory depth to search |
+
+**Loading Strategies:**
+- **`eager`**: Load all modules immediately during app startup
+- **`lazy`**: Load modules on first request to their routes
+- **`conditional`**: Load modules based on environment or feature flags
+
+**Load Order Strategies:**
+- **`alphabetical`**: Load modules in alphabetical order by name
+- **`dependency`**: Analyze and resolve module dependencies using topological sort
+- **`custom`**: Use custom order specified in module configurations
+
 #### Example
 
 ```javascript
@@ -273,6 +299,17 @@ Configure default behaviors for modules.
       enabled: true,
       stripUnknown: false,
       abortEarly: true
+    },
+    autoDiscovery: {
+      enabled: true,
+      paths: ['./modules', './src/modules', './app/modules'],
+      patterns: ['**/*.module.{ts,js}', '**/index.{ts,js}'],
+      loadingStrategy: 'eager',
+      watchForChanges: false, // Set to true in development
+      ignorePatterns: ['**/*.test.{ts,js}', '**/node_modules/**'],
+      loadOrder: 'dependency',
+      failOnError: false,
+      maxDepth: 5
     }
   }
 }
@@ -288,6 +325,148 @@ Configure default behaviors for modules.
 - `DEFAULT_RATE_LIMIT_REQUESTS` or `MORO_RATE_LIMIT_REQUESTS`
 - `DEFAULT_RATE_LIMIT_WINDOW` or `MORO_RATE_LIMIT_WINDOW`
 - `VALIDATION_ENABLED` or `MORO_VALIDATION_ENABLED`
+- `AUTO_DISCOVERY_ENABLED` or `MORO_AUTO_DISCOVERY_ENABLED`
+- `AUTO_DISCOVERY_PATHS` or `MORO_AUTO_DISCOVERY_PATHS` (comma-separated)
+- `AUTO_DISCOVERY_PATTERNS` or `MORO_AUTO_DISCOVERY_PATTERNS` (comma-separated)
+- `AUTO_DISCOVERY_LOADING_STRATEGY` or `MORO_AUTO_DISCOVERY_LOADING_STRATEGY`
+- `AUTO_DISCOVERY_WATCH_FOR_CHANGES` or `MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES`
+- `AUTO_DISCOVERY_LOAD_ORDER` or `MORO_AUTO_DISCOVERY_LOAD_ORDER`
+- `AUTO_DISCOVERY_FAIL_ON_ERROR` or `MORO_AUTO_DISCOVERY_FAIL_ON_ERROR`
+- `AUTO_DISCOVERY_MAX_DEPTH` or `MORO_AUTO_DISCOVERY_MAX_DEPTH`
+
+## Auto-Discovery Configuration
+
+MoroJS includes a powerful auto-discovery system that automatically finds and loads modules from your filesystem. This system supports multiple loading strategies, dependency resolution, and hot reloading for development.
+
+### Basic Usage
+
+```javascript
+// Simple auto-discovery
+const app = createApp({
+  autoDiscover: true  // Use defaults
+});
+
+// Advanced configuration
+const app = createApp({
+  autoDiscover: {
+    enabled: true,
+    paths: ['./modules', './src/modules'],
+    loadingStrategy: 'lazy',
+    watchForChanges: true  // Development only
+  }
+});
+```
+
+### Legacy Compatibility
+
+```javascript
+// Legacy modulesPath (still supported)
+const app = createApp({
+  modulesPath: './modules'  // Equivalent to autoDiscover.paths: ['./modules']
+});
+```
+
+### Loading Strategies
+
+#### Eager Loading (Default)
+All modules are loaded immediately during application startup.
+
+```javascript
+{
+  autoDiscover: {
+    loadingStrategy: 'eager'
+  }
+}
+```
+
+#### Lazy Loading
+Modules are loaded on first request to their routes.
+
+```javascript
+{
+  autoDiscover: {
+    loadingStrategy: 'lazy'
+  }
+}
+```
+
+#### Conditional Loading
+Modules are loaded based on environment or feature flags.
+
+```javascript
+{
+  autoDiscover: {
+    loadingStrategy: 'conditional'
+  }
+}
+```
+
+### Development Features
+
+#### Hot Reloading
+Enable file watching for automatic module reloading during development:
+
+```javascript
+{
+  autoDiscover: {
+    watchForChanges: process.env.NODE_ENV === 'development',
+    loadingStrategy: 'eager'
+  }
+}
+```
+
+#### Custom Patterns
+Configure custom file patterns for different project structures:
+
+```javascript
+{
+  autoDiscover: {
+    patterns: [
+      '**/*.module.{ts,js}',
+      '**/modules/*.{ts,js}',
+      '**/*-module.{ts,js}'
+    ],
+    ignorePatterns: [
+      '**/*.test.{ts,js}',
+      '**/*.spec.{ts,js}',
+      '**/node_modules/**',
+      '**/dist/**'
+    ]
+  }
+}
+```
+
+### Dependency Resolution
+
+The auto-discovery system can automatically resolve and order module dependencies:
+
+```javascript
+{
+  autoDiscover: {
+    loadOrder: 'dependency',  // Automatic topological sort
+    failOnError: false        // Graceful degradation
+  }
+}
+```
+
+### Production Configuration
+
+Optimized settings for production environments:
+
+```javascript
+{
+  autoDiscover: {
+    enabled: true,
+    paths: ['./dist/modules'],
+    patterns: ['**/*.module.js'],
+    loadingStrategy: 'eager',
+    watchForChanges: false,
+    loadOrder: 'dependency',
+    failOnError: true,
+    maxDepth: 3
+  }
+}
+```
 
 ## Logging Configuration
 
