@@ -1,6 +1,11 @@
 ## [1.5.12] - 2025-09-28
 
 ### Added
+- feat: Add JWT error handling utilities for custom middleware
+
+## [1.5.12] - 2025-09-28
+
+### Added
 - **NEW: JWT Error Handling Utilities** - Added utilities to help users handle JWT errors gracefully in custom middleware
   - **safeVerifyJWT()**: Safely verify JWT tokens with proper error categorization
   - **extractJWTFromHeader()**: Extract JWT tokens from Authorization headers
