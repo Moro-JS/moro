@@ -103,18 +103,18 @@ describe('Enhanced Module Auto-Discovery System', () => {
           console.error('Manual scan failed:', e instanceof Error ? e.message : String(e));
         }
 
-        // DIRECT TEST: Try to call the discovery method with explicit error handling
+        // DIRECT TEST: Bypass the discovery method and test the core logic directly
         let modules: any[] = [];
         let discoveryError: any = null;
         let debugInfo: string[] = [];
-
+        
         try {
-          debugInfo.push('=== CALLING DISCOVERY ===');
-
+          debugInfo.push('=== TESTING CORE LOGIC DIRECTLY ===');
+          
           // Test the individual methods to see where it fails
           const testSearchPath = join(tempDir, 'modules');
           debugInfo.push(`Testing search path: ${testSearchPath}`);
-
+          
           // Check if the ModuleDiscovery instance can access the path
           const { access } = await import('fs/promises');
           try {
@@ -123,22 +123,42 @@ describe('Enhanced Module Auto-Discovery System', () => {
           } catch (e) {
             debugInfo.push(`Search path accessible: NO - ${e}`);
           }
-
+          
           // Test the glob detection logic directly
           const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
           const nodeVersion = process.version;
           debugInfo.push(`CI detected: ${isCI}, Node: ${nodeVersion}`);
-
-          // Call the discovery method
+          
+          // DIRECTLY TEST THE FALLBACK METHOD
+          const fallbackFiles = await (discovery as any).findMatchingFilesFallback(
+            testSearchPath,
+            config.patterns,
+            config.ignorePatterns,
+            config.maxDepth
+          );
+          debugInfo.push(`Fallback found ${fallbackFiles.length} files: ${JSON.stringify(fallbackFiles)}`);
+          
+          // DIRECTLY TEST PATTERN MATCHING
+          const testPaths = ['modules/users/index.ts', 'modules/orders/index.ts'];
+          const testPatterns = ['**/index.{ts,js}', '**/*.module.{ts,js}'];
+          
+          for (const testPath of testPaths) {
+            for (const testPattern of testPatterns) {
+              const matches = (discovery as any).matchesSimplePattern(testPath, testPattern);
+              debugInfo.push(`Pattern test: "${testPath}" vs "${testPattern}" = ${matches}`);
+            }
+          }
+          
+          // Now call the discovery method
           modules = await discovery.discoverModulesAdvanced(config);
           debugInfo.push('=== DISCOVERY COMPLETED ===');
         } catch (error) {
-          debugInfo.push(`=== DISCOVERY ERROR === ${error}`);
+          debugInfo.push(`=== ERROR === ${error}`);
           discoveryError = error;
         }
-
-        debugInfo.push(`Discovered modules count: ${modules.length}`);
-        debugInfo.push(`Discovered modules: ${JSON.stringify(modules.map(m => ({ name: m.name, version: m.version })))}`);
+        
+        debugInfo.push(`Final modules count: ${modules.length}`);
+        debugInfo.push(`Final modules: ${JSON.stringify(modules.map(m => ({ name: m.name, version: m.version })))}`);
         debugInfo.push(`Discovery error: ${discoveryError}`);
         debugInfo.push('=== END DEBUG ===');
 
