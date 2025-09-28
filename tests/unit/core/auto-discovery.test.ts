@@ -107,14 +107,14 @@ describe('Enhanced Module Auto-Discovery System', () => {
         let modules: any[] = [];
         let discoveryError: any = null;
         let debugInfo: string[] = [];
-        
+
         try {
           debugInfo.push('=== CALLING DISCOVERY ===');
-          
+
           // Test the individual methods to see where it fails
           const testSearchPath = join(tempDir, 'modules');
           debugInfo.push(`Testing search path: ${testSearchPath}`);
-          
+
           // Check if the ModuleDiscovery instance can access the path
           const { access } = await import('fs/promises');
           try {
@@ -123,12 +123,12 @@ describe('Enhanced Module Auto-Discovery System', () => {
           } catch (e) {
             debugInfo.push(`Search path accessible: NO - ${e}`);
           }
-          
+
           // Test the glob detection logic directly
           const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
           const nodeVersion = process.version;
           debugInfo.push(`CI detected: ${isCI}, Node: ${nodeVersion}`);
-          
+
           // Call the discovery method
           modules = await discovery.discoverModulesAdvanced(config);
           debugInfo.push('=== DISCOVERY COMPLETED ===');
@@ -136,7 +136,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           debugInfo.push(`=== DISCOVERY ERROR === ${error}`);
           discoveryError = error;
         }
-        
+
         debugInfo.push(`Discovered modules count: ${modules.length}`);
         debugInfo.push(`Discovered modules: ${JSON.stringify(modules.map(m => ({ name: m.name, version: m.version })))}`);
         debugInfo.push(`Discovery error: ${discoveryError}`);
@@ -166,7 +166,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
             'Debug trace:',
             ...debugInfo
           ].join('\n');
-          
+
           throw new Error(errorMsg);
         }
 

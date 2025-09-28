@@ -473,8 +473,16 @@ export class ModuleDiscovery {
         .replace(/,/g, '|'); // Convert comma to OR
 
       const regex = new RegExp(`^${regexPattern}$`, 'i');
-      return regex.test(normalizedPath);
+      const result = regex.test(normalizedPath);
+
+      // Debug output for CI
+      console.error(
+        `PATTERN_MATCH: path="${normalizedPath}", pattern="${pattern}", regex="${regexPattern}", result=${result}`
+      );
+
+      return result;
     } catch (error) {
+      console.error(`PATTERN_MATCH_ERROR: pattern="${pattern}", error=${String(error)}`);
       this.discoveryLogger.warn(`Pattern matching error for "${pattern}": ${String(error)}`);
       return false;
     }
