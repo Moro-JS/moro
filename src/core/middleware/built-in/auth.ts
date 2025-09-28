@@ -151,7 +151,15 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
           return authInstance.getSession({ req });
         },
         getToken: async () => {
-          return authInstance.verifyJWT(authRequest.token || '');
+          try {
+            return authInstance.verifyJWT(authRequest.token || '');
+          } catch (error: any) {
+            // Handle JWT errors gracefully in getToken method
+            logger.debug('Failed to verify token in getToken', 'TokenValidation', {
+              error: error.message,
+            });
+            return null;
+          }
         },
         getCsrfToken: async () => {
           return authInstance.getCsrfToken();
@@ -177,8 +185,28 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
           if (decoded) {
             session = await authInstance.getSession({ req: { ...req, token } });
           }
-        } catch (error) {
-          logger.debug('Invalid JWT token', 'TokenValidation', { error });
+        } catch (error: any) {
+          // Handle specific JWT errors gracefully
+          if (error.name === 'TokenExpiredError') {
+            logger.debug('JWT token expired', 'TokenValidation', {
+              message: error.message,
+              expiredAt: error.expiredAt,
+            });
+          } else if (error.name === 'JsonWebTokenError') {
+            logger.debug('Invalid JWT token format', 'TokenValidation', {
+              message: error.message,
+            });
+          } else if (error.name === 'NotBeforeError') {
+            logger.debug('JWT token not active yet', 'TokenValidation', {
+              message: error.message,
+              date: error.date,
+            });
+          } else {
+            logger.debug('JWT token validation failed', 'TokenValidation', {
+              error: error.message || error,
+            });
+          }
+          // Continue with unauthenticated state - don't throw
         }
       }
 
@@ -270,13 +298,51 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
     },
 
     verifyJWT: async (token: string) => {
-      // Mock JWT verification
+      // Mock JWT verification - replace with real implementation in production
       try {
-        // In real implementation, use jose or jsonwebtoken
+        // In real implementation, use jose or jsonwebtoken:
+        //
+        // const jwt = require('jsonwebtoken');
+        // try {
+        //   const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        //   return decoded;
+        // } catch (error) {
+        //   if (error.name === 'TokenExpiredError') {
+        //     // Token expired - handled gracefully by auth middleware
+        //     throw error;
+        //   } else if (error.name === 'JsonWebTokenError') {
+        //     // Invalid token format
+        //     throw error;
+        //   } else {
+        //     // Other JWT errors
+        //     throw error;
+        //   }
+        // }
+
+        // Mock implementation for development
+        if (!token || token.split('.').length !== 3) {
+          const error = new Error('Invalid token format');
+          error.name = 'JsonWebTokenError';
+          throw error;
+        }
+
         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+
+        // Mock expiration check
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+          const error = new Error('jwt expired');
+          error.name = 'TokenExpiredError';
+          (error as any).expiredAt = new Date(payload.exp * 1000);
+          throw error;
+        }
+
         return payload;
-      } catch {
-        return null;
+      } catch (error) {
+        // Re-throw JWT errors for proper handling by auth middleware
+        if (error instanceof Error) {
+          throw error;
+        }
+        throw new Error('JWT verification failed');
       }
     },
 

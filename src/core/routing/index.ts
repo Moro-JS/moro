@@ -471,10 +471,90 @@ export class ExecutableRoute implements CompiledRoute {
   }
 
   private async executeAuth(req: ValidatedRequest, res: HttpResponse): Promise<void> {
-    // Authentication implementation will be added
+    const authConfig = this.schema.auth;
+    const auth = req.auth;
+
+    // This should never happen since executeAuth is only called when auth config exists
+    if (!authConfig) {
+      logger.error('executeAuth called without auth config', 'Auth');
+      return;
+    }
+
     logger.debug('Auth check', 'Auth', {
-      config: this.schema.auth,
+      config: authConfig,
+      isAuthenticated: auth?.isAuthenticated,
+      userRoles: auth?.user?.roles,
     });
+
+    // Check if auth middleware ran
+    if (!auth) {
+      res.status(500);
+      res.json({
+        success: false,
+        error: 'Authentication middleware not configured',
+        message: 'Auth middleware must be installed before using route-level auth',
+      });
+      return;
+    }
+
+    // Check authentication requirement (default is required unless optional: true)
+    if (!authConfig.optional && !auth.isAuthenticated) {
+      res.status(401);
+      res.json({
+        success: false,
+        error: 'Authentication required',
+        message: 'You must be logged in to access this resource',
+      });
+      return;
+    }
+
+    // Skip further checks if not authenticated but optional
+    if (!auth.isAuthenticated && authConfig.optional) {
+      return; // Continue to handler
+    }
+
+    // Only check roles/permissions if user is authenticated
+    if (auth.isAuthenticated) {
+      const user = auth.user;
+
+      // Check roles if specified
+      if (authConfig.roles && authConfig.roles.length > 0) {
+        const userRoles = user?.roles || [];
+        const hasRole = authConfig.roles.some((role: string) => userRoles.includes(role));
+
+        if (!hasRole) {
+          res.status(403);
+          res.json({
+            success: false,
+            error: 'Insufficient permissions',
+            message: `Required roles: ${authConfig.roles.join(', ')}`,
+            userRoles,
+          });
+          return;
+        }
+      }
+
+      // Check permissions if specified
+      if (authConfig.permissions && authConfig.permissions.length > 0) {
+        const userPermissions = user?.permissions || [];
+        const hasPermission = authConfig.permissions.every((permission: string) =>
+          userPermissions.includes(permission)
+        );
+
+        if (!hasPermission) {
+          res.status(403);
+          res.json({
+            success: false,
+            error: 'Insufficient permissions',
+            message: `Required permissions: ${authConfig.permissions.join(', ')}`,
+            userPermissions,
+          });
+          return;
+        }
+      }
+    }
+
+    // All auth checks passed
   }
 
   private async executeValidation(req: ValidatedRequest, res: HttpResponse): Promise<void> {

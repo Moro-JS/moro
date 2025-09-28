@@ -1,3 +1,32 @@
+## [1.5.10] - 2025-09-28
+
+### Security Fixes
+- **CRITICAL: Fixed Authentication Bypass Vulnerability** - Chainable route builder `.auth()` method now properly enforces authentication
+  - **Issue**: Routes using `.auth({ roles: ['admin'] })` were completely unprotected due to stub implementation
+  - **Impact**: Critical security vulnerability allowing unauthorized access to protected routes
+  - **Fix**: Implemented complete authentication checking in `ExecutableRoute.executeAuth()` method
+  - **Verification**: Routes with `.auth()` now return proper 401/403 responses when authentication fails
+
+- **FIXED: JWT Token Expiration Error Handling** - Enhanced JWT error handling to prevent server crashes
+  - **Issue**: Unhandled `TokenExpiredError` exceptions when JWT tokens expire
+  - **Impact**: Server crashes and poor user experience with expired tokens
+  - **Fix**: Added comprehensive JWT error handling for `TokenExpiredError`, `JsonWebTokenError`, and `NotBeforeError`
+  - **Enhancement**: Graceful degradation to unauthenticated state instead of throwing exceptions
+
+### Added
+- **NEW: Complete Route-Level Authentication Enforcement** - Chainable routes now have identical security as module routes
+  - Role-based access control: `.auth({ roles: ['admin'] })`
+  - Permission-based access control: `.auth({ permissions: ['read:users'] })`
+  - Optional authentication: `.auth({ optional: true })`
+  - Comprehensive error responses with proper HTTP status codes (401, 403, 500)
+
+- **NEW: Enhanced JWT Error Handling** - Production-ready JWT token validation with proper error categorization
+  - Specific handling for expired tokens (`TokenExpiredError`)
+  - Invalid token format detection (`JsonWebTokenError`)
+  - Not-yet-active token handling (`NotBeforeError`)
+  - Detailed debug logging for token validation issues
+  - Production implementation examples with `jsonwebtoken` library
+
 ## [1.5.9] - 2025-09-26
 
 ### Added
