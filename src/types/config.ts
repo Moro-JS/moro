@@ -84,6 +84,18 @@ export interface ModuleDefaultsConfig {
     stripUnknown: boolean;
     abortEarly: boolean;
   };
+  autoDiscovery: {
+    enabled: boolean;
+    paths: string[];
+    patterns: string[];
+    recursive: boolean;
+    loadingStrategy: 'eager' | 'lazy' | 'conditional';
+    watchForChanges: boolean;
+    ignorePatterns: string[];
+    loadOrder: 'alphabetical' | 'dependency' | 'custom';
+    failOnError: boolean;
+    maxDepth: number;
+  };
 }
 
 export interface LoggingConfig {

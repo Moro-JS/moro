@@ -5,41 +5,28 @@ import { Moro as MoroCore } from './core/framework';
 import { HttpRequest, HttpResponse, middleware } from './core/http';
 import { ModuleConfig, InternalRouteDefinition } from './types/module';
 import { MoroOptions } from './types/core';
+import { ModuleDefaultsConfig } from './types/config';
 import { MoroEventBus } from './core/events';
-import {
-  createFrameworkLogger,
-  logger as globalLogger,
-  applyLoggingConfiguration,
-} from './core/logger';
+import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger';
 import { Logger } from './types/logger';
 import { MiddlewareManager } from './core/middleware';
 import { IntelligentRoutingManager } from './core/routing/app-integration';
 import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing';
 import { AppDocumentationManager, DocsConfig } from './core/docs';
-import { readdirSync, statSync } from 'fs';
-import { join } from 'path';
 import { EventEmitter } from 'events';
 // Configuration System Integration
-import {
-  initializeConfig,
-  getGlobalConfig,
-  loadConfigWithOptions,
-  type AppConfig,
-} from './core/config';
+import { initializeConfig, type AppConfig } from './core/config';
 // Runtime System Integration
-import {
-  RuntimeAdapter,
-  RuntimeType,
-  createRuntimeAdapter,
-  NodeRuntimeAdapter,
-} from './core/runtime';
+import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime';
 
 export class Moro extends EventEmitter {
   private coreFramework: MoroCore;
   private routes: InternalRouteDefinition[] = [];
   private moduleCounter = 0;
   private loadedModules = new Set<string>();
+  private lazyModules = new Map<string, ModuleConfig>();
   private routeHandlers: Record<string, Function> = {};
+  private moduleDiscovery?: any; // Store for cleanup
   // Enterprise event system integration
   private eventBus: MoroEventBus;
   // Application logger
@@ -133,7 +120,12 @@ export class Moro extends EventEmitter {
 
     // Auto-discover modules if enabled
     if (options.autoDiscover !== false) {
-      this.autoDiscoverModules(options.modulesPath || './modules');
+      // Initialize auto-discovery asynchronously
+      this.initializeAutoDiscovery(options).catch(error => {
+        this.logger.error('Auto-discovery initialization failed', 'Framework', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
 
     // Emit initialization event through enterprise event bus
@@ -890,27 +882,213 @@ export class Moro extends EventEmitter {
     this.use(middleware.bodySize({ limit: '10mb' }));
   }
 
-  private autoDiscoverModules(modulesPath: string) {
-    try {
-      if (!statSync(modulesPath).isDirectory()) return;
+  // Enhanced auto-discovery initialization
+  private async initializeAutoDiscovery(options: MoroOptions): Promise<void> {
+    const { ModuleDiscovery } = await import('./core/modules/auto-discovery');
 
-      const items = readdirSync(modulesPath);
-      items.forEach(item => {
-        const fullPath = join(modulesPath, item);
-        if (statSync(fullPath).isDirectory()) {
-          const indexPath = join(fullPath, 'index.ts');
-          try {
-            statSync(indexPath);
-            // Module directory found, will be loaded later
-            this.logger.debug(`Discovered module: ${item}`, 'ModuleDiscovery');
-          } catch {
-            // No index.ts, skip
-          }
-        }
-      });
-    } catch {
-      // Modules directory doesn't exist, that's fine
+    // Merge auto-discovery configuration
+    const autoDiscoveryConfig = this.mergeAutoDiscoveryConfig(options);
+
+    if (!autoDiscoveryConfig.enabled) {
+      return;
     }
+
+    this.moduleDiscovery = new ModuleDiscovery(process.cwd());
+
+    try {
+      // Discover modules based on configuration
+      const modules = await this.moduleDiscovery.discoverModulesAdvanced(autoDiscoveryConfig);
+
+      // Load modules based on strategy
+      await this.loadDiscoveredModules(modules, autoDiscoveryConfig);
+
+      // Setup file watching if enabled
+      if (autoDiscoveryConfig.watchForChanges) {
+        this.moduleDiscovery.watchModulesAdvanced(
+          autoDiscoveryConfig,
+          async (updatedModules: ModuleConfig[]) => {
+            await this.handleModuleChanges(updatedModules);
+          }
+        );
+      }
+
+      this.logger.info(
+        `Auto-discovery completed: ${modules.length} modules loaded`,
+        'ModuleDiscovery'
+      );
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      if (autoDiscoveryConfig.failOnError) {
+        throw new Error(`Module auto-discovery failed: ${errorMsg}`);
+      } else {
+        this.logger.warn(`Module auto-discovery failed: ${errorMsg}`, 'ModuleDiscovery');
+      }
+    }
+  }
+
+  // Merge auto-discovery configuration from multiple sources
+  private mergeAutoDiscoveryConfig(options: MoroOptions) {
+    const defaultConfig = this.config.modules.autoDiscovery;
+
+    // Handle legacy modulesPath option
+    if (options.modulesPath && !options.autoDiscover) {
+      return {
+        ...defaultConfig,
+        paths: [options.modulesPath],
+      };
+    }
+
+    // Handle boolean autoDiscover option
+    if (typeof options.autoDiscover === 'boolean') {
+      return {
+        ...defaultConfig,
+        enabled: options.autoDiscover,
+      };
+    }
+
+    // Handle object autoDiscover option
+    if (typeof options.autoDiscover === 'object') {
+      return {
+        ...defaultConfig,
+        ...options.autoDiscover,
+      };
+    }
+
+    return defaultConfig;
+  }
+
+  // Load discovered modules based on strategy
+  private async loadDiscoveredModules(
+    modules: ModuleConfig[],
+    config: ModuleDefaultsConfig['autoDiscovery']
+  ): Promise<void> {
+    switch (config.loadingStrategy) {
+      case 'eager':
+        // Load all modules immediately
+        for (const module of modules) {
+          await this.loadModule(module);
+        }
+        break;
+
+      case 'lazy':
+        // Register modules for lazy loading
+        this.registerLazyModules(modules);
+        break;
+
+      case 'conditional':
+        // Load modules based on conditions
+        await this.loadConditionalModules(modules);
+        break;
+
+      default:
+        // Default to eager loading
+        for (const module of modules) {
+          await this.loadModule(module);
+        }
+    }
+  }
+
+  // Register modules for lazy loading
+  private registerLazyModules(modules: ModuleConfig[]): void {
+    modules.forEach(module => {
+      // Store module for lazy loading when first route is accessed
+      this.lazyModules.set(module.name, module);
+
+      // Register placeholder routes that trigger lazy loading
+      if (module.routes) {
+        module.routes.forEach(route => {
+          const basePath = `/api/v${module.version}/${module.name}`;
+          const fullPath = `${basePath}${route.path}`;
+
+          // Note: Lazy loading will be implemented when route is accessed
+          // For now, we'll store the module for later loading
+          this.logger.debug(
+            `Registered lazy route: ${route.method} ${fullPath}`,
+            'ModuleDiscovery'
+          );
+        });
+      }
+    });
+
+    this.logger.info(`Registered ${modules.length} modules for lazy loading`, 'ModuleDiscovery');
+  }
+
+  // Load modules conditionally based on environment or configuration
+  private async loadConditionalModules(modules: ModuleConfig[]): Promise<void> {
+    for (const module of modules) {
+      const shouldLoad = this.shouldLoadModule(module);
+
+      if (shouldLoad) {
+        await this.loadModule(module);
+      } else {
+        this.logger.debug(`Skipping module ${module.name} due to conditions`, 'ModuleDiscovery');
+      }
+    }
+  }
+
+  // Determine if a module should be loaded based on conditions
+  private shouldLoadModule(module: ModuleConfig): boolean {
+    const moduleConfig = module.config as any;
+
+    // Check environment conditions
+    if (moduleConfig?.conditions?.environment) {
+      const requiredEnv = moduleConfig.conditions.environment;
+      const currentEnv = process.env.NODE_ENV || 'development';
+
+      if (Array.isArray(requiredEnv)) {
+        if (!requiredEnv.includes(currentEnv)) {
+          return false;
+        }
+      } else if (requiredEnv !== currentEnv) {
+        return false;
+      }
+    }
+
+    // Check feature flags
+    if (moduleConfig?.conditions?.features) {
+      const requiredFeatures = moduleConfig.conditions.features;
+
+      for (const feature of requiredFeatures) {
+        if (!process.env[`FEATURE_${feature.toUpperCase()}`]) {
+          return false;
+        }
+      }
+    }
+
+    // Check custom conditions
+    if (moduleConfig?.conditions?.custom) {
+      const customCondition = moduleConfig.conditions.custom;
+
+      if (typeof customCondition === 'function') {
+        return customCondition();
+      }
+    }
+
+    return true;
+  }
+
+  // Handle module changes during development
+  private async handleModuleChanges(modules: ModuleConfig[]): Promise<void> {
+    this.logger.info('Module changes detected, reloading...', 'ModuleDiscovery');
+
+    // Unload existing modules (if supported)
+    // For now, just log the change
+    this.eventBus.emit('modules:changed', {
+      modules: modules.map(m => ({ name: m.name, version: m.version })),
+      timestamp: new Date(),
+    });
+  }
+
+  // Legacy method for backward compatibility
+  private autoDiscoverModules(modulesPath: string) {
+    // Redirect to new system
+    this.initializeAutoDiscovery({
+      autoDiscover: {
+        enabled: true,
+        paths: [modulesPath],
+      },
+    });
   }
 
   private async importModule(modulePath: string): Promise<ModuleConfig> {
@@ -1213,6 +1391,15 @@ export class Moro extends EventEmitter {
       } catch (error) {
         // Force close if graceful close fails
         this.logger.warn('Force closing HTTP server due to timeout');
+      }
+    }
+
+    // Clean up module discovery watchers
+    if (this.moduleDiscovery && typeof this.moduleDiscovery.cleanup === 'function') {
+      try {
+        this.moduleDiscovery.cleanup();
+      } catch (error) {
+        // Ignore cleanup errors
       }
     }
 

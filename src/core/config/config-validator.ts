@@ -338,6 +338,42 @@ function validateModuleDefaultsConfig(config: any, path: string) {
     cache: validateCacheConfig(config.cache, `${path}.cache`),
     rateLimit: validateRateLimitConfig(config.rateLimit, `${path}.rateLimit`),
     validation: validateValidationConfig(config.validation, `${path}.validation`),
+    autoDiscovery: validateAutoDiscoveryConfig(config.autoDiscovery, `${path}.autoDiscovery`),
+  };
+}
+
+/**
+ * Validate auto-discovery configuration
+ */
+function validateAutoDiscoveryConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Auto-discovery configuration must be an object'
+    );
+  }
+
+  return {
+    enabled: validateBoolean(config.enabled, `${path}.enabled`),
+    paths: validateStringArray(config.paths, `${path}.paths`),
+    patterns: validateStringArray(config.patterns, `${path}.patterns`),
+    recursive: validateBoolean(config.recursive, `${path}.recursive`),
+    loadingStrategy: validateEnum(
+      config.loadingStrategy,
+      ['eager', 'lazy', 'conditional'],
+      `${path}.loadingStrategy`
+    ),
+    watchForChanges: validateBoolean(config.watchForChanges, `${path}.watchForChanges`),
+    ignorePatterns: validateStringArray(config.ignorePatterns, `${path}.ignorePatterns`),
+    loadOrder: validateEnum(
+      config.loadOrder,
+      ['alphabetical', 'dependency', 'custom'],
+      `${path}.loadOrder`
+    ),
+    failOnError: validateBoolean(config.failOnError, `${path}.failOnError`),
+    maxDepth: validateNumber(config.maxDepth, `${path}.maxDepth`),
   };
 }
 

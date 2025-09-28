@@ -4,8 +4,21 @@ import { LogLevel, LoggerOptions } from './logger';
 import { AppConfig } from './config';
 
 export interface MoroOptions {
-  autoDiscover?: boolean;
-  modulesPath?: string;
+  autoDiscover?:
+    | boolean
+    | {
+        enabled?: boolean;
+        paths?: string[];
+        patterns?: string[];
+        recursive?: boolean;
+        loadingStrategy?: 'eager' | 'lazy' | 'conditional';
+        watchForChanges?: boolean;
+        ignorePatterns?: string[];
+        loadOrder?: 'alphabetical' | 'dependency' | 'custom';
+        failOnError?: boolean;
+        maxDepth?: number;
+      };
+  modulesPath?: string; // Deprecated: use autoDiscover.paths instead
   middleware?: any[];
 
   // Runtime configuration

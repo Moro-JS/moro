@@ -45,6 +45,18 @@ export const DEFAULT_CONFIG: AppConfig = {
       stripUnknown: true,
       abortEarly: false,
     },
+    autoDiscovery: {
+      enabled: true, // Enable by default for better DX
+      paths: ['./modules', './src/modules'],
+      patterns: ['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}'],
+      recursive: true,
+      loadingStrategy: 'eager',
+      watchForChanges: false, // Opt-in for development
+      ignorePatterns: ['**/*.test.{ts,js}', '**/*.spec.{ts,js}', '**/node_modules/**'],
+      loadOrder: 'dependency',
+      failOnError: false, // Graceful degradation
+      maxDepth: 5,
+    },
   },
   logging: {
     level: 'info',

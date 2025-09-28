@@ -1,14 +1,17 @@
 // Auto-discovery system for Moro modules
 import { readdirSync, statSync } from 'fs';
-import { join, extname } from 'path';
+import { join, extname, relative } from 'path';
 import { ModuleConfig } from '../../types/module';
 import { DiscoveryOptions } from '../../types/discovery';
+import { ModuleDefaultsConfig } from '../../types/config';
 import { createFrameworkLogger } from '../logger';
+import { minimatch } from 'minimatch';
 
 export class ModuleDiscovery {
   private baseDir: string;
   private options: DiscoveryOptions;
   private discoveryLogger = createFrameworkLogger('MODULE_DISCOVERY');
+  private watchers: any[] = []; // Store file watchers for cleanup
 
   constructor(baseDir: string = process.cwd(), options: DiscoveryOptions = {}) {
     this.baseDir = baseDir;
@@ -177,22 +180,330 @@ export class ModuleDiscovery {
     );
   }
 
-  // Watch for module changes (for development)
-  watchModules(callback: (modules: ModuleConfig[]) => void): void {
-    const fs = require('fs');
-    const modulePaths = this.findModuleFiles();
+  // Enhanced auto-discovery with advanced configuration
+  async discoverModulesAdvanced(
+    config: ModuleDefaultsConfig['autoDiscovery']
+  ): Promise<ModuleConfig[]> {
+    if (!config.enabled) {
+      return [];
+    }
 
-    modulePaths.forEach(path => {
-      try {
-        fs.watchFile(path, async () => {
-          this.discoveryLogger.info(`Module file changed: ${path}`);
-          const modules = await this.discoverModules();
-          callback(modules);
+    const allModules: ModuleConfig[] = [];
+
+    // Discover from all configured paths
+    for (const searchPath of config.paths) {
+      const modules = await this.discoverFromPath(searchPath, config);
+      allModules.push(...modules);
+    }
+
+    // Remove duplicates based on name@version
+    const uniqueModules = this.deduplicateModules(allModules);
+
+    // Sort modules based on load order strategy
+    const sortedModules = this.sortModules(uniqueModules, config.loadOrder);
+
+    // Validate dependencies if using dependency order
+    if (config.loadOrder === 'dependency') {
+      return this.resolveDependencyOrder(sortedModules);
+    }
+
+    return sortedModules;
+  }
+
+  // Discover modules from a specific path with advanced filtering
+  private async discoverFromPath(
+    searchPath: string,
+    config: ModuleDefaultsConfig['autoDiscovery']
+  ): Promise<ModuleConfig[]> {
+    const modules: ModuleConfig[] = [];
+    const fullPath = join(this.baseDir, searchPath);
+
+    try {
+      if (!statSync(fullPath).isDirectory()) {
+        return modules;
+      }
+
+      const files = this.findMatchingFiles(fullPath, config);
+
+      for (const filePath of files) {
+        try {
+          const module = await this.loadModule(filePath);
+          if (module && this.validateAdvancedModule(module, config)) {
+            modules.push(module);
+            this.discoveryLogger.info(
+              `Auto-discovered module: ${module.name}@${module.version} from ${relative(this.baseDir, filePath)}`
+            );
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+
+          if (config.failOnError) {
+            throw new Error(`Failed to load module from ${filePath}: ${errorMsg}`);
+          } else {
+            this.discoveryLogger.warn(
+              `Failed to load module from ${filePath}`,
+              'MODULE_DISCOVERY',
+              {
+                error: errorMsg,
+              }
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (config.failOnError) {
+        throw error;
+      }
+      // Directory doesn't exist or other error, continue silently
+    }
+
+    return modules;
+  }
+
+  // Find files matching patterns with ignore support
+  private findMatchingFiles(
+    basePath: string,
+    config: ModuleDefaultsConfig['autoDiscovery'],
+    currentDepth: number = 0
+  ): string[] {
+    const files: string[] = [];
+
+    if (currentDepth >= config.maxDepth) {
+      return files;
+    }
+
+    try {
+      const items = readdirSync(basePath);
+
+      for (const item of items) {
+        const fullPath = join(basePath, item);
+        const relativePath = relative(this.baseDir, fullPath);
+
+        // Check ignore patterns
+        if (this.shouldIgnore(relativePath, config.ignorePatterns)) {
+          continue;
+        }
+
+        const stat = statSync(fullPath);
+
+        if (stat.isDirectory() && config.recursive) {
+          files.push(...this.findMatchingFiles(fullPath, config, currentDepth + 1));
+        } else if (stat.isFile()) {
+          // Check if file matches any pattern
+          if (this.matchesPatterns(relativePath, config.patterns)) {
+            files.push(fullPath);
+          }
+        }
+      }
+    } catch {
+      // Directory not accessible, skip
+    }
+
+    return files;
+  }
+
+  // Check if path should be ignored
+  private shouldIgnore(path: string, ignorePatterns: string[]): boolean {
+    return ignorePatterns.some(pattern => minimatch(path, pattern));
+  }
+
+  // Check if path matches any of the patterns
+  private matchesPatterns(path: string, patterns: string[]): boolean {
+    return patterns.some(pattern => minimatch(path, pattern));
+  }
+
+  // Remove duplicate modules
+  private deduplicateModules(modules: ModuleConfig[]): ModuleConfig[] {
+    const seen = new Set<string>();
+    return modules.filter(module => {
+      const key = `${module.name}@${module.version}`;
+      if (seen.has(key)) {
+        this.discoveryLogger.warn(`Duplicate module found: ${key}`, 'MODULE_DISCOVERY');
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // Sort modules based on strategy
+  private sortModules(
+    modules: ModuleConfig[],
+    strategy: ModuleDefaultsConfig['autoDiscovery']['loadOrder']
+  ): ModuleConfig[] {
+    switch (strategy) {
+      case 'alphabetical':
+        return modules.sort((a, b) => a.name.localeCompare(b.name));
+
+      case 'dependency':
+        // Will be handled by resolveDependencyOrder
+        return modules;
+
+      case 'custom':
+        // Allow custom sorting via module priority (if defined)
+        return modules.sort((a, b) => {
+          const aPriority = (a.config as any)?.priority || 0;
+          const bPriority = (b.config as any)?.priority || 0;
+          return bPriority - aPriority; // Higher priority first
         });
-      } catch {
-        // File watching not supported or failed
+
+      default:
+        return modules;
+    }
+  }
+
+  // Resolve dependency order using topological sort
+  private resolveDependencyOrder(modules: ModuleConfig[]): ModuleConfig[] {
+    const moduleMap = new Map<string, ModuleConfig>();
+    const dependencyGraph = new Map<string, string[]>();
+
+    // Build module map and dependency graph
+    modules.forEach(module => {
+      const key = `${module.name}@${module.version}`;
+      moduleMap.set(key, module);
+      dependencyGraph.set(key, module.dependencies || []);
+    });
+
+    // Topological sort
+    const visited = new Set<string>();
+    const visiting = new Set<string>();
+    const sorted: ModuleConfig[] = [];
+
+    const visit = (moduleKey: string): void => {
+      if (visiting.has(moduleKey)) {
+        throw new Error(`Circular dependency detected involving ${moduleKey}`);
+      }
+
+      if (visited.has(moduleKey)) {
+        return;
+      }
+
+      visiting.add(moduleKey);
+
+      const dependencies = dependencyGraph.get(moduleKey) || [];
+      dependencies.forEach(dep => {
+        // Find the dependency in our modules
+        const depModule = Array.from(moduleMap.keys()).find(key =>
+          key.startsWith(`${dep.split('@')[0]}@`)
+        );
+        if (depModule) {
+          visit(depModule);
+        }
+      });
+
+      visiting.delete(moduleKey);
+      visited.add(moduleKey);
+
+      const module = moduleMap.get(moduleKey);
+      if (module) {
+        sorted.push(module);
+      }
+    };
+
+    // Visit all modules
+    Array.from(moduleMap.keys()).forEach(key => {
+      if (!visited.has(key)) {
+        visit(key);
       }
     });
+
+    return sorted;
+  }
+
+  // Enhanced module validation
+  private validateAdvancedModule(
+    module: ModuleConfig,
+    _config: ModuleDefaultsConfig['autoDiscovery']
+  ): boolean {
+    // Basic validation
+    if (!this.isValidModule(module)) {
+      return false;
+    }
+
+    // Additional validation can be added here
+    // For example, checking module compatibility, version constraints, etc.
+
+    return true;
+  }
+
+  // Watch for module changes (for development)
+  watchModules(callback: (modules: ModuleConfig[]) => void): void {
+    // Use dynamic import for fs to avoid require()
+    import('fs')
+      .then(fs => {
+        const modulePaths = this.findModuleFiles();
+
+        modulePaths.forEach(path => {
+          try {
+            fs.watchFile(path, async () => {
+              this.discoveryLogger.info(`Module file changed: ${path}`);
+              const modules = await this.discoverModules();
+              callback(modules);
+            });
+          } catch {
+            // File watching not supported or failed
+          }
+        });
+      })
+      .catch(() => {
+        // fs module not available
+      });
+  }
+
+  // Watch modules with advanced configuration
+  watchModulesAdvanced(
+    config: ModuleDefaultsConfig['autoDiscovery'],
+    callback: (modules: ModuleConfig[]) => void
+  ): void {
+    if (!config.watchForChanges) {
+      return;
+    }
+
+    import('fs')
+      .then(fs => {
+        const watchedPaths = new Set<string>();
+
+        // Watch all configured paths
+        config.paths.forEach(searchPath => {
+          const fullPath = join(this.baseDir, searchPath);
+
+          try {
+            if (statSync(fullPath).isDirectory() && !watchedPaths.has(fullPath)) {
+              watchedPaths.add(fullPath);
+
+              const watcher = fs.watch(
+                fullPath,
+                { recursive: config.recursive },
+                async (eventType: string, filename: string | null) => {
+                  if (filename && this.matchesPatterns(filename, config.patterns)) {
+                    this.discoveryLogger.info(`Module file changed: ${filename}`);
+                    const modules = await this.discoverModulesAdvanced(config);
+                    callback(modules);
+                  }
+                }
+              );
+
+              // Store watcher for cleanup
+              this.watchers.push(watcher);
+            }
+          } catch {
+            // Path doesn't exist or not accessible
+          }
+        });
+      })
+      .catch(() => {
+        // fs module not available
+      });
+  }
+
+  // Clean up file watchers
+  cleanup(): void {
+    this.watchers.forEach(watcher => {
+      if (watcher && typeof watcher.close === 'function') {
+        watcher.close();
+      }
+    });
+    this.watchers = [];
   }
 }
 
