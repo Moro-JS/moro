@@ -1,3 +1,18 @@
+## [1.5.12] - 2025-09-28
+
+### Added
+- **NEW: JWT Error Handling Utilities** - Added utilities to help users handle JWT errors gracefully in custom middleware
+  - **safeVerifyJWT()**: Safely verify JWT tokens with proper error categorization
+  - **extractJWTFromHeader()**: Extract JWT tokens from Authorization headers
+  - **createAuthErrorResponse()**: Create standardized error responses for JWT failures
+  - **Documentation**: Complete guide for migrating from raw jwt.verify() to safe error handling
+
+### Fixed
+- **RESOLVED: Custom Middleware JWT Crashes** - Users with custom auth middleware can now handle TokenExpiredError gracefully
+  - **Issue**: Custom middleware using raw jwt.verify() caused server crashes on expired tokens
+  - **Solution**: Provided utilities and documentation for proper JWT error handling
+  - **Migration Guide**: Clear examples showing before/after patterns for safe JWT verification
+
 ## [1.5.11] - 2025-09-28
 
 ### Fixed

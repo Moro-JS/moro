@@ -33,6 +33,14 @@ export {
   sessionHelpers,
 } from './auth-helpers';
 
+// JWT Utilities for Custom Middleware
+export {
+  safeVerifyJWT,
+  extractJWTFromHeader,
+  createAuthErrorResponse,
+  type JWTVerificationResult,
+} from './jwt-helpers';
+
 export {
   extendedProviders,
   enterpriseProviders,

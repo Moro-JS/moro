@@ -605,4 +605,120 @@ app.use(auth({
 }));
 ```
 
+## Custom JWT Middleware
+
+If you're implementing custom JWT authentication middleware, MoroJS provides utilities to handle JWT errors gracefully and prevent server crashes from expired tokens.
+
+### JWT Error Handling Utilities
+
+```typescript
+import { 
+  safeVerifyJWT, 
+  extractJWTFromHeader, 
+  createAuthErrorResponse 
+} from '@morojs/moro';
+
+const customAuthMiddleware = async (req: any, res: any, next: any) => {
+  // Extract token from Authorization header
+  const token = extractJWTFromHeader(req.headers.authorization);
+  
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      error: 'Missing token',
+      message: 'Authorization header with Bearer token is required'
+    });
+  }
+
+  // Safely verify JWT with proper error handling
+  const result = safeVerifyJWT(token, process.env.JWT_SECRET!);
+  
+  if (!result.success) {
+    // Create standardized error response
+    const errorResponse = createAuthErrorResponse(result.error);
+    return res.status(401).json(errorResponse);
+  }
+
+  // Token is valid - attach user info to request
+  req.user = result.payload;
+  req.auth = {
+    user: result.payload,
+    isAuthenticated: true,
+    token
+  };
+
+  next();
+};
+
+app.use(customAuthMiddleware);
+```
+
+### Error Types Handled
+
+The `safeVerifyJWT` utility handles all JWT error types gracefully:
+
+- **TokenExpiredError**: Returns structured error with expiration date
+- **JsonWebTokenError**: Returns error for invalid token format/signature  
+- **NotBeforeError**: Returns error for tokens not yet active
+- **Missing Dependencies**: Returns helpful installation instructions
+- **Missing Secret**: Returns configuration error message
+
+### Migration from Raw JWT Verification
+
+If you're currently using raw `jwt.verify()` and experiencing crashes from expired tokens:
+
+```typescript
+// ❌ BEFORE: Causes server crashes on expired tokens
+const jwt = require('jsonwebtoken');
+try {
+  const decoded = jwt.verify(token, secret); // Throws TokenExpiredError
+  req.user = decoded;
+} catch (error) {
+  // Unhandled TokenExpiredError crashes the server
+  throw error;
+}
+
+// ✅ AFTER: Graceful error handling
+import { safeVerifyJWT, createAuthErrorResponse } from '@morojs/moro';
+
+const result = safeVerifyJWT(token, secret);
+if (!result.success) {
+  const errorResponse = createAuthErrorResponse(result.error);
+  return res.status(401).json(errorResponse);
+}
+req.user = result.payload;
+```
+
+### Custom Error Responses
+
+You can customize error responses based on the error type:
+
+```typescript
+const result = safeVerifyJWT(token, secret);
+
+if (!result.success) {
+  switch (result.error?.type) {
+    case 'expired':
+      return res.status(401).json({
+        error: 'session_expired',
+        message: 'Please sign in again',
+        expiredAt: result.error.expiredAt,
+        refreshUrl: '/auth/refresh'
+      });
+      
+    case 'invalid':
+      return res.status(401).json({
+        error: 'invalid_token',
+        message: 'Authentication failed'
+      });
+      
+    default:
+      return res.status(401).json({
+        error: 'auth_failed',
+        message: result.error?.message || 'Authentication required'
+      });
+  }
+}
+```
+
 This guide covers the complete authentication system implemented in MoroJS. For more advanced use cases, see the API documentation and example applications.
