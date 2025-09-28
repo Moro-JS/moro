@@ -1,7 +1,12 @@
-## [1.5.13] - 2025-09-28
+## [1.5.14] - 2025-09-28
 
-### Added
-- fix: Add JWT error handling to HTTP server middleware execution
+### Fixed
+- **ENHANCED: Direct JWT Error Handling in Middleware Execution** - Added JWT error handling directly in executeMiddleware method
+  - **Issue**: JWT errors were still being thrown from middleware execution even with main handler error catching
+  - **Root Cause**: Middleware execution was rejecting JWT errors before they could be caught by main error handler
+  - **Solution**: Added JWT error handling directly in both sync and async middleware execution paths
+  - **Impact**: JWT errors are now caught and handled immediately at the middleware level
+  - **Coverage**: Handles both synchronous and asynchronous middleware JWT errors
 
 ## [1.5.13] - 2025-09-28
 

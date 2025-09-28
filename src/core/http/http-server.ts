@@ -1073,10 +1073,102 @@ export class MoroHttpServer {
               .then(() => {
                 if (!nextCalled) next();
               })
-              .catch(reject);
+              .catch(error => {
+                // Handle JWT errors in async middleware
+                if (
+                  error instanceof Error &&
+                  (error.name === 'TokenExpiredError' ||
+                    error.name === 'JsonWebTokenError' ||
+                    error.name === 'NotBeforeError')
+                ) {
+                  if (!res.headersSent) {
+                    if (typeof res.status === 'function' && typeof res.json === 'function') {
+                      if (error.name === 'TokenExpiredError') {
+                        res.status(401).json({
+                          success: false,
+                          error: 'Token expired',
+                          message: 'Your session has expired. Please sign in again.',
+                          expiredAt: (error as any).expiredAt,
+                        });
+                      } else if (error.name === 'JsonWebTokenError') {
+                        res.status(401).json({
+                          success: false,
+                          error: 'Invalid token',
+                          message: 'The provided authentication token is invalid.',
+                        });
+                      } else if (error.name === 'NotBeforeError') {
+                        res.status(401).json({
+                          success: false,
+                          error: 'Token not ready',
+                          message: 'The authentication token is not yet valid.',
+                          availableAt: (error as any).date,
+                        });
+                      }
+                    } else {
+                      res.statusCode = 401;
+                      res.setHeader('Content-Type', 'application/json');
+                      res.end(
+                        JSON.stringify({
+                          success: false,
+                          error: 'Authentication failed',
+                          message: 'JWT authentication error occurred.',
+                        })
+                      );
+                    }
+                  }
+                  resolve(); // Continue middleware chain
+                } else {
+                  reject(error);
+                }
+              });
           }
         } catch (error) {
-          reject(error);
+          // Handle JWT errors in sync middleware
+          if (
+            error instanceof Error &&
+            (error.name === 'TokenExpiredError' ||
+              error.name === 'JsonWebTokenError' ||
+              error.name === 'NotBeforeError')
+          ) {
+            if (!res.headersSent) {
+              if (typeof res.status === 'function' && typeof res.json === 'function') {
+                if (error.name === 'TokenExpiredError') {
+                  res.status(401).json({
+                    success: false,
+                    error: 'Token expired',
+                    message: 'Your session has expired. Please sign in again.',
+                    expiredAt: (error as any).expiredAt,
+                  });
+                } else if (error.name === 'JsonWebTokenError') {
+                  res.status(401).json({
+                    success: false,
+                    error: 'Invalid token',
+                    message: 'The provided authentication token is invalid.',
+                  });
+                } else if (error.name === 'NotBeforeError') {
+                  res.status(401).json({
+                    success: false,
+                    error: 'Token not ready',
+                    message: 'The authentication token is not yet valid.',
+                    availableAt: (error as any).date,
+                  });
+                }
+              } else {
+                res.statusCode = 401;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(
+                  JSON.stringify({
+                    success: false,
+                    error: 'Authentication failed',
+                    message: 'JWT authentication error occurred.',
+                  })
+                );
+              }
+            }
+            resolve(); // Continue middleware chain
+          } else {
+            reject(error);
+          }
         }
       });
     }
