@@ -10,6 +10,11 @@
 ### Enhanced
 - **Error Response Consistency**: Ensured all JWT error handling paths provide clean, user-friendly error responses
 - **Security**: Better separation of technical error details from user-facing error messages
+- **HTTP Server Architecture**: Removed JWT-specific error handling from HTTP server layer - now properly handled in auth middleware
+
+### Architectural Improvements
+- **Separation of Concerns**: HTTP server now focuses purely on HTTP protocol concerns, not application-specific authentication
+- **Cleaner Error Handling**: JWT errors are handled elegantly at the middleware level where they belong
 
 ## [1.5.16] - 2025-09-28
 
