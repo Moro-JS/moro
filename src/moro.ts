@@ -27,6 +27,9 @@ export class Moro extends EventEmitter {
   private lazyModules = new Map<string, ModuleConfig>();
   private routeHandlers: Record<string, Function> = {};
   private moduleDiscovery?: any; // Store for cleanup
+  private autoDiscoveryOptions: MoroOptions | null = null;
+  private autoDiscoveryInitialized = false;
+  private autoDiscoveryPromise: Promise<void> | null = null;
   // Enterprise event system integration
   private eventBus: MoroEventBus;
   // Application logger
@@ -118,15 +121,10 @@ export class Moro extends EventEmitter {
       ...options,
     });
 
-    // Auto-discover modules if enabled
-    if (options.autoDiscover !== false) {
-      // Initialize auto-discovery asynchronously
-      this.initializeAutoDiscovery(options).catch(error => {
-        this.logger.error('Auto-discovery initialization failed', 'Framework', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
+    // Store auto-discovery options for later initialization
+    // IMPORTANT: Auto-discovery is deferred to ensure user middleware (like auth)
+    // is registered before module middleware that might bypass it
+    this.autoDiscoveryOptions = options.autoDiscover !== false ? options : null;
 
     // Emit initialization event through enterprise event bus
     this.eventBus.emit('framework:initialized', {
@@ -355,6 +353,13 @@ export class Moro extends EventEmitter {
         version: moduleOrPath.version || '1.0.0',
       });
     }
+
+    // IMPORTANT: If modules are loaded manually after auto-discovery,
+    // ensure the final module handler is set up to maintain middleware order
+    if (this.autoDiscoveryInitialized) {
+      this.coreFramework.setupFinalModuleHandler();
+    }
+
     return this;
   }
 
@@ -496,35 +501,162 @@ export class Moro extends EventEmitter {
       this.registerDirectRoutes();
     }
 
-    const actualCallback = () => {
-      const displayHost = host || 'localhost';
-      this.logger.info('Moro Server Started', 'Server');
-      this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
-      this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
-      if (this.config.websocket.enabled) {
-        this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
-      }
-      this.logger.info('Learn more at https://morojs.com', 'Server');
+    const startServer = () => {
+      const actualCallback = () => {
+        const displayHost = host || 'localhost';
+        this.logger.info('Moro Server Started', 'Server');
+        this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
+        this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
+        if (this.config.websocket.enabled) {
+          this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
+        }
+        this.logger.info('Learn more at https://morojs.com', 'Server');
 
-      // Log intelligent routes info
-      const intelligentRoutes = this.intelligentRouting.getIntelligentRoutes();
-      if (intelligentRoutes.length > 0) {
-        this.logger.info(`Intelligent Routes: ${intelligentRoutes.length} registered`, 'Server');
-      }
+        // Log intelligent routes info
+        const intelligentRoutes = this.intelligentRouting.getIntelligentRoutes();
+        if (intelligentRoutes.length > 0) {
+          this.logger.info(`Intelligent Routes: ${intelligentRoutes.length} registered`, 'Server');
+        }
 
-      this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
-      if (callback) callback();
+        this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
+        if (callback) callback();
+      };
+
+      if (host && typeof host === 'string') {
+        this.coreFramework.listen(port, host, actualCallback);
+      } else {
+        this.coreFramework.listen(port, actualCallback);
+      }
     };
 
-    if (host && typeof host === 'string') {
-      this.coreFramework.listen(port, host, actualCallback);
-    } else {
-      this.coreFramework.listen(port, actualCallback);
+    // Ensure auto-discovery is complete before starting server
+    this.ensureAutoDiscoveryComplete()
+      .then(() => {
+        startServer();
+      })
+      .catch(error => {
+        this.logger.error('Auto-discovery initialization failed during server start', 'Framework', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Start server anyway - auto-discovery failure shouldn't prevent startup
+        startServer();
+      });
+  }
+
+  // Public method to manually initialize auto-discovery
+  // Useful for ensuring auth middleware is registered before auto-discovery
+  async initializeAutoDiscoveryNow(): Promise<void> {
+    return this.ensureAutoDiscoveryComplete();
+  }
+
+  // Public API: Initialize modules explicitly after middleware setup
+  // This provides users with explicit control over module loading timing
+  // IMPORTANT: This forces module loading even if autoDiscovery.enabled is false
+  // Usage: app.initModules() or app.initModules({ paths: ['./my-modules'] })
+  initModules(options?: {
+    paths?: string[];
+    patterns?: string[];
+    recursive?: boolean;
+    loadingStrategy?: 'eager' | 'lazy' | 'conditional';
+    watchForChanges?: boolean;
+    ignorePatterns?: string[];
+    loadOrder?: 'alphabetical' | 'dependency' | 'custom';
+    failOnError?: boolean;
+    maxDepth?: number;
+  }): void {
+    this.logger.info('User-requested module initialization', 'ModuleSystem');
+
+    // If already initialized, do nothing
+    if (this.autoDiscoveryInitialized) {
+      this.logger.debug('Auto-discovery already completed, skipping', 'ModuleSystem');
+      return;
     }
+
+    // Store the options and mark that we want to force initialization
+    this.autoDiscoveryOptions = {
+      autoDiscover: {
+        enabled: true, // Force enabled regardless of original config
+        paths: options?.paths || ['./modules', './src/modules'],
+        patterns: options?.patterns || [
+          '**/*.module.{ts,js}',
+          '**/index.{ts,js}',
+          '**/*.config.{ts,js}',
+        ],
+        recursive: options?.recursive ?? true,
+        loadingStrategy: options?.loadingStrategy || ('eager' as const),
+        watchForChanges: options?.watchForChanges ?? false,
+        ignorePatterns: options?.ignorePatterns || [
+          '**/*.test.{ts,js}',
+          '**/*.spec.{ts,js}',
+          '**/node_modules/**',
+        ],
+        loadOrder: options?.loadOrder || ('dependency' as const),
+        failOnError: options?.failOnError ?? false,
+        maxDepth: options?.maxDepth ?? 5,
+      },
+    };
+
+    this.logger.debug(
+      'Module initialization options stored, will execute on next listen/getHandler call',
+      'ModuleSystem'
+    );
+  }
+
+  // Robust method to ensure auto-discovery is complete, handling race conditions
+  private async ensureAutoDiscoveryComplete(): Promise<void> {
+    // If already initialized, nothing to do
+    if (this.autoDiscoveryInitialized) {
+      return;
+    }
+
+    // If auto-discovery is disabled, mark as initialized
+    if (!this.autoDiscoveryOptions) {
+      this.autoDiscoveryInitialized = true;
+      return;
+    }
+
+    // If already in progress, wait for it to complete
+    if (this.autoDiscoveryPromise) {
+      return this.autoDiscoveryPromise;
+    }
+
+    // Start auto-discovery
+    this.autoDiscoveryPromise = this.performAutoDiscovery();
+
+    try {
+      await this.autoDiscoveryPromise;
+      this.autoDiscoveryInitialized = true;
+    } catch (error) {
+      // Reset promise on error so it can be retried
+      this.autoDiscoveryPromise = null;
+      throw error;
+    } finally {
+      this.autoDiscoveryOptions = null; // Clear after attempt
+    }
+  }
+
+  // Perform the actual auto-discovery work
+  private async performAutoDiscovery(optionsOverride?: MoroOptions): Promise<void> {
+    const optionsToUse = optionsOverride || this.autoDiscoveryOptions;
+    if (!optionsToUse) return;
+
+    this.logger.debug('Starting auto-discovery initialization', 'AutoDiscovery');
+
+    await this.initializeAutoDiscovery(optionsToUse);
+
+    this.logger.debug('Auto-discovery initialization completed', 'AutoDiscovery');
   }
 
   // Get handler for non-Node.js runtimes
   getHandler() {
+    // Ensure auto-discovery is complete for non-Node.js runtimes
+    // This handles the case where users call getHandler() immediately after createApp()
+    this.ensureAutoDiscoveryComplete().catch(error => {
+      this.logger.error('Auto-discovery initialization failed for runtime handler', 'Framework', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     // Create a unified request handler that works with the runtime adapter
     const handler = async (req: HttpRequest, res: HttpResponse) => {
       // Add documentation middleware first (if enabled)
@@ -901,6 +1033,9 @@ export class Moro extends EventEmitter {
 
       // Load modules based on strategy
       await this.loadDiscoveredModules(modules, autoDiscoveryConfig);
+
+      // Setup final module handler to run after user middleware (like auth)
+      this.coreFramework.setupFinalModuleHandler();
 
       // Setup file watching if enabled
       if (autoDiscoveryConfig.watchForChanges) {

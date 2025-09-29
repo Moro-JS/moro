@@ -619,22 +619,61 @@ export class Moro extends EventEmitter {
     this.logger.debug(`Mounting router for basePath: ${basePath}`, 'Router');
 
     // Enterprise-grade middleware integration with performance optimization
+    // IMPORTANT: Module middleware runs AFTER user middleware (like auth) to ensure proper order
     this.httpServer.use(async (req: HttpRequest, res: HttpResponse, next: () => void) => {
       if (req.path.startsWith(basePath)) {
         this.logger.debug(`Module middleware handling: ${req.method} ${req.path}`, 'Middleware', {
           basePath,
         });
 
+        // Mark this request as being handled by a module
+        (req as any).__moduleBasePath = basePath;
+        (req as any).__moduleRouter = router;
+
+        // Continue to next middleware (including auth) first
+        next();
+      } else {
+        next();
+      }
+    });
+
+    this.logger.info(`Router mounted for ${basePath}`, 'Router');
+  }
+
+  private finalModuleHandlerSetup = false;
+
+  // Setup final module handler that runs after all user middleware
+  setupFinalModuleHandler(): void {
+    // Prevent duplicate setup
+    if (this.finalModuleHandlerSetup) {
+      this.logger.debug('Final module handler already set up, skipping', 'ModuleSystem');
+      return;
+    }
+    this.finalModuleHandlerSetup = true;
+
+    this.logger.info(
+      'Setting up final module handler to run after user middleware',
+      'ModuleSystem'
+    );
+
+    this.httpServer.use(async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+      // Check if this request was marked for module handling
+      const moduleBasePath = (req as any).__moduleBasePath;
+      const moduleRouter = (req as any).__moduleRouter;
+
+      if (moduleBasePath && moduleRouter && !res.headersSent) {
+        this.logger.debug(`Final module handler processing: ${req.method} ${req.path}`, 'Router');
+
         try {
-          const handled = await router.handle(req, res, basePath);
-          this.logger.debug(`Route handled: ${handled}`, 'Router');
+          const handled = await moduleRouter.handle(req, res, moduleBasePath);
+          this.logger.debug(`Route handled by module: ${handled}`, 'Router');
 
           if (!handled) {
             next(); // Let other middleware handle it
           }
           // If handled, the router already sent the response, so don't call next()
         } catch (error) {
-          this.logger.error('Router error', 'Router', {
+          this.logger.error('Module router error', 'Router', {
             error: error instanceof Error ? error.message : String(error),
           });
           if (!res.headersSent) {
@@ -645,8 +684,6 @@ export class Moro extends EventEmitter {
         next();
       }
     });
-
-    this.logger.info(`Router mounted for ${basePath}`, 'Router');
   }
 
   private async setupWebSocketHandlers(config: ModuleConfig): Promise<void> {

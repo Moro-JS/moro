@@ -1,4 +1,18 @@
-## [1.5.17] - 2025-09-28
+## [1.5.17] - 2025-09-29
+
+### Critical Fix
+- **Auto-Discovery + Auth Middleware Compatibility**: Fixed critical issue where auto-discovery could bypass user middleware (like auth)
+  - Module routes now properly respect the middleware chain order
+  - Auth middleware is guaranteed to run before module route handlers
+  - Comprehensive race condition protection and edge case handling
+
+### Major Enhancement
+- **Enhanced `initModules()` API**: Added powerful public API for explicit module loading control
+  - **Synchronous interface**: `app.initModules()` - no `await` required
+  - **Works with disabled auto-discovery**: Forces module loading even when `autoDiscover: false`
+  - **Custom configuration support**: `app.initModules({ paths: ['./my-modules'] })`
+  - **Identical behavior**: Uses same discovery and loading mechanisms as enabled auto-discovery
+  - **Perfect timing**: Ensures modules load before server starts, maintaining middleware order
 
 ### Fixed
 - **JWT Error Handling**: Enhanced JWT error detection and handling to provide elegant user-friendly messages
@@ -15,6 +29,9 @@
 ### Architectural Improvements
 - **Separation of Concerns**: HTTP server now focuses purely on HTTP protocol concerns, not application-specific authentication
 - **Cleaner Error Handling**: JWT errors are handled elegantly at the middleware level where they belong
+- **Robust Module Loading**: Two-phase module mounting ensures middleware order is preserved
+- **Race Condition Protection**: Auto-discovery initialization is idempotent and handles concurrent calls safely
+- **Unified Module Loading**: All module loading paths now use identical discovery and loading mechanisms
 
 ## [1.5.16] - 2025-09-28
 

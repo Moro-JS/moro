@@ -113,8 +113,8 @@ describe('Moro Auto-Discovery Integration', () => {
         }
       });
 
-      // Wait for auto-discovery to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Trigger auto-discovery manually (using the async method for tests)
+      await app.initializeAutoDiscoveryNow();
 
       // Check that modules are loaded
       expect((app as any).loadedModules.has('users')).toBe(true);
@@ -130,8 +130,8 @@ describe('Moro Auto-Discovery Integration', () => {
         }
       });
 
-      // Wait for auto-discovery to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Trigger auto-discovery manually (using the async method for tests)
+      await app.initializeAutoDiscoveryNow();
 
       // Check that modules are registered for lazy loading
       expect((app as any).lazyModules.has('users')).toBe(true);
@@ -173,8 +173,8 @@ describe('Moro Auto-Discovery Integration', () => {
         }
       });
 
-      // Wait for auto-discovery to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Trigger auto-discovery manually (using the async method for tests)
+      await app.initializeAutoDiscoveryNow();
 
       // Admin module should not be loaded in development
       expect((app as any).loadedModules.has('admin')).toBe(false);
@@ -346,7 +346,8 @@ describe('Moro Auto-Discovery Integration', () => {
 
       const app = createApp({ autoDiscover: true });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Trigger auto-discovery manually (using the async method for tests)
+      await app.initializeAutoDiscoveryNow();
 
       expect((app as any).loadedModules.has('legacy')).toBe(true);
     });
@@ -360,7 +361,8 @@ describe('Moro Auto-Discovery Integration', () => {
 
       const app = createApp({ modulesPath: './modules' });
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Trigger auto-discovery manually (using the async method for tests)
+      await app.initializeAutoDiscoveryNow();
 
       expect((app as any).loadedModules.has('custom-path')).toBe(true);
     });
