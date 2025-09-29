@@ -12,6 +12,7 @@ import {
   CredentialsProvider,
   EmailProvider,
 } from '../../../types/auth';
+import { safeVerifyJWT, createAuthErrorResponse } from './jwt-helpers';
 
 const logger = createFrameworkLogger('AuthMiddleware');
 
@@ -186,27 +187,59 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
             session = await authInstance.getSession({ req: { ...req, token } });
           }
         } catch (error: any) {
-          // Handle specific JWT errors gracefully
+          // Handle specific JWT errors gracefully and return proper HTTP responses
           if (error.name === 'TokenExpiredError') {
             logger.debug('JWT token expired', 'TokenValidation', {
               message: error.message,
               expiredAt: error.expiredAt,
             });
+
+            // If this is a protected route request, return a proper 401 response
+            if (req.headers.accept?.includes('application/json')) {
+              return res.status(401).json(
+                createAuthErrorResponse({
+                  type: 'expired',
+                  message: error.message,
+                  expiredAt: error.expiredAt,
+                })
+              );
+            }
           } else if (error.name === 'JsonWebTokenError') {
             logger.debug('Invalid JWT token format', 'TokenValidation', {
               message: error.message,
             });
+
+            // If this is a protected route request, return a proper 401 response
+            if (req.headers.accept?.includes('application/json')) {
+              return res.status(401).json(
+                createAuthErrorResponse({
+                  type: 'invalid',
+                  message: error.message,
+                })
+              );
+            }
           } else if (error.name === 'NotBeforeError') {
             logger.debug('JWT token not active yet', 'TokenValidation', {
               message: error.message,
               date: error.date,
             });
+
+            // If this is a protected route request, return a proper 401 response
+            if (req.headers.accept?.includes('application/json')) {
+              return res.status(401).json(
+                createAuthErrorResponse({
+                  type: 'malformed',
+                  message: error.message,
+                  date: error.date,
+                })
+              );
+            }
           } else {
             logger.debug('JWT token validation failed', 'TokenValidation', {
               error: error.message || error,
             });
           }
-          // Continue with unauthenticated state - don't throw
+          // Continue with unauthenticated state for non-API requests
         }
       }
 
@@ -298,44 +331,34 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
     },
 
     verifyJWT: async (token: string) => {
-      // Require jsonwebtoken for JWT verification
-      let jwt: any;
-      try {
-        jwt = require('jsonwebtoken');
-      } catch (error) {
-        throw new Error(
-          'JWT verification requires the "jsonwebtoken" package. ' +
-            'Please install it with: npm install jsonwebtoken @types/jsonwebtoken'
-        );
-      }
+      const secret = process.env.JWT_SECRET || config.jwt?.secret || config.secret || '';
 
-      const secret = process.env.JWT_SECRET || config.jwt?.secret || config.secret;
-      if (!secret) {
-        throw new Error(
-          'JWT verification requires a secret. ' +
-            'Please set JWT_SECRET environment variable, or provide jwt.secret or secret in auth config.'
-        );
-      }
+      // Use the safe JWT verification function
+      const result = safeVerifyJWT(token, secret);
 
-      try {
-        const decoded = jwt.verify(token, secret);
-        return decoded;
-      } catch (error: any) {
-        // Handle specific JWT errors gracefully
-        if (error.name === 'TokenExpiredError') {
-          // Token expired - handled gracefully by auth middleware
-          throw error;
-        } else if (error.name === 'JsonWebTokenError') {
-          // Invalid token format
-          throw error;
-        } else if (error.name === 'NotBeforeError') {
-          // Token not active yet
-          throw error;
-        } else {
-          // Other JWT errors
-          throw new Error(`JWT verification failed: ${error.message}`);
+      if (!result.success) {
+        // Create a custom error that includes the structured error information
+        const customError = new Error(result.error?.message || 'JWT verification failed');
+
+        // Add the error type information for upstream handling
+        (customError as any).jwtErrorType = result.error?.type;
+        (customError as any).jwtErrorDetails = result.error;
+
+        // Map the safe error types back to standard JWT error names for compatibility
+        if (result.error?.type === 'expired') {
+          customError.name = 'TokenExpiredError';
+          (customError as any).expiredAt = result.error.expiredAt;
+        } else if (result.error?.type === 'invalid') {
+          customError.name = 'JsonWebTokenError';
+        } else if (result.error?.type === 'malformed') {
+          customError.name = 'NotBeforeError';
+          (customError as any).date = result.error.date;
         }
+
+        throw customError;
       }
+
+      return result.payload;
     },
 
     signIn: async (provider?: string, options?: any) => {

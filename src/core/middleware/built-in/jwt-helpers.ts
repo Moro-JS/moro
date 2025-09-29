@@ -178,7 +178,7 @@ export function createAuthErrorResponse(error: JWTVerificationResult['error']) {
 }
 
 /**
- * Example usage for custom middleware:
+ * Example usage for custom middleware with elegant error handling:
  *
  * ```typescript
  * import { safeVerifyJWT, extractJWTFromHeader, createAuthErrorResponse } from '@morojs/moro';
@@ -197,6 +197,7 @@ export function createAuthErrorResponse(error: JWTVerificationResult['error']) {
  *   const result = safeVerifyJWT(token, process.env.JWT_SECRET!);
  *
  *   if (!result.success) {
+ *     // This provides elegant, user-friendly error messages instead of stack traces
  *     const errorResponse = createAuthErrorResponse(result.error);
  *     return res.status(401).json(errorResponse);
  *   }
@@ -211,5 +212,29 @@ export function createAuthErrorResponse(error: JWTVerificationResult['error']) {
  *
  *   next();
  * };
+ * ```
+ *
+ * Benefits of using safeVerifyJWT vs raw jsonwebtoken.verify():
+ *
+ * ❌ Raw approach (shows ugly error messages to users):
+ * ```typescript
+ * try {
+ *   const decoded = jwt.verify(token, secret);
+ *   req.user = decoded;
+ * } catch (error) {
+ *   // This exposes technical details and stack traces to users:
+ *   // "Invalid token: TokenExpiredError: jwt expired at /node_modules/jsonwebtoken/verify.js:190:21..."
+ *   throw error; // BAD - exposes internal details
+ * }
+ * ```
+ *
+ * ✅ Safe approach (shows clean, user-friendly messages):
+ * ```typescript
+ * const result = safeVerifyJWT(token, secret);
+ * if (!result.success) {
+ *   // This returns clean messages like:
+ *   // { "error": "Token expired", "message": "Your session has expired. Please sign in again." }
+ *   return res.status(401).json(createAuthErrorResponse(result.error));
+ * }
  * ```
  */

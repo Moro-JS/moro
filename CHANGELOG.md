@@ -1,3 +1,16 @@
+## [1.5.17] - 2025-09-28
+
+### Fixed
+- **JWT Error Handling**: Enhanced JWT error detection and handling to provide elegant user-friendly messages
+  - Improved error detection to catch JWT errors by message content in addition to error name
+  - Added support for detecting "jwt expired", "invalid token", and "jwt malformed" error messages
+  - Consistent error handling across main request handler and middleware execution paths
+  - Prevents stack traces from being exposed to users for JWT-related authentication errors
+
+### Enhanced
+- **Error Response Consistency**: Ensured all JWT error handling paths provide clean, user-friendly error responses
+- **Security**: Better separation of technical error details from user-facing error messages
+
 ## [1.5.16] - 2025-09-28
 
 ### Added
