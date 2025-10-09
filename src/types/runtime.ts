@@ -1,5 +1,5 @@
 // Runtime abstraction types for multi-environment support
-import { HttpRequest, HttpResponse } from './http';
+import { HttpRequest, HttpResponse } from '../core/http/index.js';
 
 export type RuntimeType = 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers';
 

@@ -1,8 +1,9 @@
 // Built-in Cache Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { CacheAdapter, CacheOptions, CachedResponse } from '../../../types/cache';
-import { createFrameworkLogger } from '../../logger';
-import { createCacheAdapter } from './adapters/cache';
+import crypto from 'crypto';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { CacheAdapter, CacheOptions, CachedResponse } from '../../../types/cache.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { createCacheAdapter } from './adapters/cache/index.js';
 
 const logger = createFrameworkLogger('CacheMiddleware');
 
@@ -197,7 +198,6 @@ export const cache = (options: CacheOptions = {}): MiddlewareInterface => ({
       // Add ETag generation
       if (options.etag !== false) {
         res.generateETag = (content: string | Buffer) => {
-          const crypto = require('crypto');
           const hash = crypto.createHash('md5').update(content).digest('hex');
           const prefix = options.etag === 'weak' ? 'W/' : '';
           return `${prefix}"${hash}"`;

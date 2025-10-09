@@ -12,9 +12,9 @@
  * 6. Pushes to GitHub
  */
 
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { execSync } from 'child_process';
+import fs from 'fs';
+
 
 // Colors for console output
 const colors = {
@@ -87,7 +87,7 @@ function getCommitsSinceLastRelease() {
         // Get commits since last tag
         const commits = execSync(`git log ${lastTag}..HEAD --oneline --no-merges`, { encoding: 'utf8' });
         return commits.trim().split('\n').filter(line => line.trim());
-    } catch (error) {
+    } catch {
         // If no tags exist, get all commits
         const commits = execSync('git log --oneline --no-merges', { encoding: 'utf8' });
         return commits.trim().split('\n').filter(line => line.trim()).slice(0, 10); // Limit to last 10 commits
@@ -119,6 +119,8 @@ function categorizeCommits(commits) {
 function updateChangelog(newVersion, versionType) {
     const changelogPath = 'CHANGELOG.md';
     const today = new Date().toISOString().split('T')[0];
+
+    log(`Updating CHANGELOG.md for ${newVersion} (${versionType})`, 'cyan');
 
     let changelog = '';
     if (fs.existsSync(changelogPath)) {

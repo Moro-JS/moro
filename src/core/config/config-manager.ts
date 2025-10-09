@@ -7,8 +7,8 @@
  * Precedence: Environment Variables > createApp Options > Config File > Defaults
  */
 
-import { AppConfig } from '../../types/config';
-import { createFrameworkLogger } from '../logger';
+import { AppConfig } from '../../types/config.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigManager');
 

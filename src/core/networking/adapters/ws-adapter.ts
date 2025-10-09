@@ -1,6 +1,7 @@
 // Native WebSocket Adapter for Moro Framework
 // Implements the WebSocket adapter interface using the 'ws' library
 
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
@@ -8,8 +9,8 @@ import {
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
-} from '../websocket-adapter';
-import { createFrameworkLogger } from '../../logger';
+} from '../websocket-adapter.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 /**
  * Native WebSocket adapter using the 'ws' library
@@ -25,8 +26,9 @@ export class WSAdapter implements WebSocketAdapter {
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
-      // Dynamic import to avoid requiring ws as a hard dependency
-      const { WebSocketServer } = await import('ws');
+      // Dynamic import from user's context to find their installed ws library
+      const wsPath = resolveUserPackage('ws');
+      const { WebSocketServer } = await import(wsPath);
 
       this.wss = new WebSocketServer({
         server: httpServer,

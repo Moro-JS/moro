@@ -2,13 +2,13 @@
   "name": "@morojs/moro",
   "version": "1.5.17",
   "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, enterprise authentication (Auth.js), type-safe validation, and functional architecture",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
     }
   },
@@ -29,20 +29,22 @@
     "test:ci": "jest --coverage --watchAll=false --ci --forceExit",
     "test:force": "jest --forceExit",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:dist": "npm run build && node scripts/validate-dist.mjs",
+    "test:package": "npm run build && node scripts/validate-package.mjs",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "lint-staged": "lint-staged",
     "docs:build": "typedoc --out docs-html src/index.ts",
     "docs:serve": "http-server docs-html -p 8080",
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
-    "prerelease": "node scripts/release.js",
-    "prerelease:patch": "node scripts/release.js patch",
-    "prerelease:minor": "node scripts/release.js minor",
-    "prerelease:major": "node scripts/release.js major"
+    "prerelease": "npm run build && npm test && npm run test:package && node scripts/release.js",
+    "prerelease:patch": "npm run build && npm test && npm run test:package && node scripts/release.js patch",
+    "prerelease:minor": "npm run build && npm test && npm run test:package && node scripts/release.js minor",
+    "prerelease:major": "npm run build && npm test && npm run test:package && node scripts/release.js major"
   },
   "keywords": [
     "nodejs",
@@ -89,8 +91,9 @@
     "pg": "^8.16.3",
     "socket.io": "^4.8.1",
     "swagger-ui-dist": "^5.28.1",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
     "ws": "^8.18.0",
-    "yup": "^1.0.0"
+    "yup": "^1.7.1"
   },
   "peerDependenciesMeta": {
     "@auth/core": {
@@ -118,6 +121,9 @@
       "optional": true
     },
     "socket.io": {
+      "optional": true
+    },
+    "uWebSockets.js": {
       "optional": true
     },
     "ws": {
@@ -165,6 +171,7 @@
     "typedoc-plugin-markdown": "^4.8.1",
     "typedoc-theme-hierarchy": "^6.0.0",
     "typescript": "^5.9.2",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
     "ws": "^8.18.3",
     "zod": "^4.1.8"
   },
@@ -174,49 +181,9 @@
     "README.md",
     "LICENSE",
     "API.md",
-    "tsconfig.json"
+    "tsconfig.json",
+    "jest.config.mjs"
   ],
-  "jest": {
-    "preset": "ts-jest",
-    "testEnvironment": "node",
-    "roots": [
-      "<rootDir>/src",
-      "<rootDir>/tests"
-    ],
-    "testMatch": [
-      "**/tests/**/*.test.ts",
-      "**/src/**/*.test.ts"
-    ],
-    "transform": {
-      "^.+\\.ts$": [
-        "ts-jest",
-        {}
-      ]
-    },
-    "collectCoverageFrom": [
-      "src/**/*.ts",
-      "!src/**/*.d.ts",
-      "!src/**/*.test.ts",
-      "!src/**/index.ts"
-    ],
-    "coverageDirectory": "coverage",
-    "coverageReporters": [
-      "text",
-      "lcov",
-      "html"
-    ],
-    "setupFilesAfterEnv": [
-      "<rootDir>/tests/setup.ts"
-    ],
-    "testTimeout": 15000,
-    "maxWorkers": 1,
-    "forceExit": false,
-    "detectOpenHandles": true,
-    "openHandlesTimeout": 1000,
-    "extensionsToTreatAsEsm": [
-      ".ts"
-    ]
-  },
   "lint-staged": {
     "src/**/*.ts": [
       "prettier --write",

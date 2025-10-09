@@ -8,7 +8,7 @@
  * @see https://github.com/nextauthjs/next-auth/tree/main/packages
  */
 
-import { createFrameworkLogger } from '../logger';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('AuthAdapter');
 

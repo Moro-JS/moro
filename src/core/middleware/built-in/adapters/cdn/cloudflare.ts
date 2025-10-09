@@ -1,6 +1,6 @@
 // Cloudflare CDN Adapter
-import { CDNAdapter } from '../../../../../types/cdn';
-import { createFrameworkLogger } from '../../../../logger';
+import { CDNAdapter } from '../../../../../types/cdn.js';
+import { createFrameworkLogger } from '../../../../logger/index.js';
 
 const logger = createFrameworkLogger('CloudflareCDNAdapter');
 

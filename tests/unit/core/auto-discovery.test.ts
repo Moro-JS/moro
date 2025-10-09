@@ -1,7 +1,12 @@
 // Unit Tests - Enhanced Module Auto-Discovery System
-import { ModuleDiscovery, autoDiscoverModules, autoDiscoverModuleDirectories } from '../../../src/core/modules/auto-discovery';
-import { ModuleConfig } from '../../../src/types/module';
-import { ModuleDefaultsConfig } from '../../../src/types/config';
+import {
+  ModuleDiscovery,
+  autoDiscoverModules,
+  autoDiscoverModuleDirectories,
+} from '../../../src/core/modules/auto-discovery.js';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { ModuleConfig } from '../../../src/types/module.js';
+import { ModuleDefaultsConfig } from '../../../src/types/config.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -28,7 +33,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
         // Create test module structure
         await createTestModule(tempDir, 'users', {
           name: 'users',
-          version: '1.0.0'
+          version: '1.0.0',
         });
 
         const modules = await discovery.discoverModuleDirectories('modules');
@@ -40,9 +45,24 @@ describe('Enhanced Module Auto-Discovery System', () => {
 
       it('should discover modules with different file patterns', async () => {
         // Create modules with different patterns
-        await createTestModule(tempDir, 'auth', { name: 'auth', version: '1.0.0' }, 'auth.module.ts');
-        await createTestModule(tempDir, 'orders', { name: 'orders', version: '1.0.0' }, 'module.ts');
-        await createTestModule(tempDir, 'payments', { name: 'payments', version: '1.0.0' }, 'config.ts');
+        await createTestModule(
+          tempDir,
+          'auth',
+          { name: 'auth', version: '1.0.0' },
+          'auth.module.ts'
+        );
+        await createTestModule(
+          tempDir,
+          'orders',
+          { name: 'orders', version: '1.0.0' },
+          'module.ts'
+        );
+        await createTestModule(
+          tempDir,
+          'payments',
+          { name: 'payments', version: '1.0.0' },
+          'config.ts'
+        );
 
         const modules = await discovery.discoverModuleDirectories('modules');
 
@@ -67,8 +87,18 @@ describe('Enhanced Module Auto-Discovery System', () => {
         const usersFile = join(modulesDir, 'users', 'index.ts');
         const ordersFile = join(modulesDir, 'orders', 'index.ts');
 
-        expect(await fs.access(usersFile).then(() => true).catch(() => false)).toBe(true);
-        expect(await fs.access(ordersFile).then(() => true).catch(() => false)).toBe(true);
+        expect(
+          await fs
+            .access(usersFile)
+            .then(() => true)
+            .catch(() => false)
+        ).toBe(true);
+        expect(
+          await fs
+            .access(ordersFile)
+            .then(() => true)
+            .catch(() => false)
+        ).toBe(true);
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -80,12 +110,15 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: ['**/*.test.{ts,js}'],
           loadOrder: 'alphabetical',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         // Always show debug info to understand what's happening in CI
         const dirContents = await fs.readdir(tempDir, { recursive: true }).catch(() => []);
-        const modulesExists = await fs.access(modulesDir).then(() => true).catch(() => false);
+        const modulesExists = await fs
+          .access(modulesDir)
+          .then(() => true)
+          .catch(() => false);
 
         console.error('=== DEBUG INFO ===');
         console.error('Temp directory:', tempDir);
@@ -113,7 +146,11 @@ describe('Enhanced Module Auto-Discovery System', () => {
       it('should respect ignore patterns', async () => {
         // Create modules and test files
         await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
-        await createTestFile(tempDir, 'users/users.test.ts', 'export const testModule = { name: "test", version: "1.0.0" };');
+        await createTestFile(
+          tempDir,
+          'users/users.test.ts',
+          'export const testModule = { name: "test", version: "1.0.0" };'
+        );
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -125,7 +162,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: ['**/*.test.{ts,js}'],
           loadOrder: 'alphabetical',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -136,7 +173,10 @@ describe('Enhanced Module Auto-Discovery System', () => {
 
       it('should respect maxDepth configuration', async () => {
         // Create nested module structure
-        await createTestModule(tempDir, 'level1/level2/level3/deep', { name: 'deep', version: '1.0.0' });
+        await createTestModule(tempDir, 'level1/level2/level3/deep', {
+          name: 'deep',
+          version: '1.0.0',
+        });
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -148,7 +188,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'alphabetical',
           failOnError: false,
-          maxDepth: 2 // Should not find the deep module
+          maxDepth: 2, // Should not find the deep module
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -162,19 +202,19 @@ describe('Enhanced Module Auto-Discovery System', () => {
         await createTestModule(tempDir, 'auth', {
           name: 'auth',
           version: '1.0.0',
-          dependencies: []
+          dependencies: [],
         });
 
         await createTestModule(tempDir, 'users', {
           name: 'users',
           version: '1.0.0',
-          dependencies: ['auth@1.0.0']
+          dependencies: ['auth@1.0.0'],
         });
 
         await createTestModule(tempDir, 'orders', {
           name: 'orders',
           version: '1.0.0',
-          dependencies: ['users@1.0.0', 'auth@1.0.0']
+          dependencies: ['users@1.0.0', 'auth@1.0.0'],
         });
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
@@ -187,7 +227,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'dependency',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -203,13 +243,13 @@ describe('Enhanced Module Auto-Discovery System', () => {
         await createTestModule(tempDir, 'moduleA', {
           name: 'moduleA',
           version: '1.0.0',
-          dependencies: ['moduleB@1.0.0']
+          dependencies: ['moduleB@1.0.0'],
         });
 
         await createTestModule(tempDir, 'moduleB', {
           name: 'moduleB',
           version: '1.0.0',
-          dependencies: ['moduleA@1.0.0']
+          dependencies: ['moduleA@1.0.0'],
         });
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
@@ -222,12 +262,12 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'dependency',
           failOnError: true,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
-        await expect(discovery.discoverModulesAdvanced(config))
-          .rejects
-          .toThrow('Circular dependency detected');
+        await expect(discovery.discoverModulesAdvanced(config)).rejects.toThrow(
+          'Circular dependency detected'
+        );
       });
     });
 
@@ -237,19 +277,19 @@ describe('Enhanced Module Auto-Discovery System', () => {
         await createTestModule(tempDir, 'low-priority', {
           name: 'low-priority',
           version: '1.0.0',
-          config: { priority: 1 }
+          config: { priority: 1 },
         });
 
         await createTestModule(tempDir, 'high-priority', {
           name: 'high-priority',
           version: '1.0.0',
-          config: { priority: 10 }
+          config: { priority: 10 },
         });
 
         await createTestModule(tempDir, 'medium-priority', {
           name: 'medium-priority',
           version: '1.0.0',
-          config: { priority: 5 }
+          config: { priority: 5 },
         });
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
@@ -262,7 +302,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'custom',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -280,7 +320,11 @@ describe('Enhanced Module Auto-Discovery System', () => {
         await createTestModule(tempDir, 'valid', { name: 'valid', version: '1.0.0' });
 
         // Create invalid module file
-        await createTestFile(tempDir, 'modules/invalid/index.ts', 'export const invalid = "not a module";');
+        await createTestFile(
+          tempDir,
+          'modules/invalid/index.ts',
+          'export const invalid = "not a module";'
+        );
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -292,7 +336,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'alphabetical',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -303,7 +347,11 @@ describe('Enhanced Module Auto-Discovery System', () => {
 
       it('should throw error when failOnError is true and module loading fails', async () => {
         // Create invalid module file
-        await createTestFile(tempDir, 'modules/invalid/index.ts', 'throw new Error("Module loading failed");');
+        await createTestFile(
+          tempDir,
+          'modules/invalid/index.ts',
+          'throw new Error("Module loading failed");'
+        );
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -315,12 +363,12 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'alphabetical',
           failOnError: true,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
-        await expect(discovery.discoverModulesAdvanced(config))
-          .rejects
-          .toThrow('Failed to load module');
+        await expect(discovery.discoverModulesAdvanced(config)).rejects.toThrow(
+          'Failed to load module'
+        );
       });
     });
 
@@ -328,8 +376,11 @@ describe('Enhanced Module Auto-Discovery System', () => {
       it('should remove duplicate modules', async () => {
         // Create same module in different locations
         await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
-        await createTestFile(tempDir, 'modules/duplicate/users.module.ts',
-          'export default { name: "users", version: "1.0.0" };');
+        await createTestFile(
+          tempDir,
+          'modules/duplicate/users.module.ts',
+          'export default { name: "users", version: "1.0.0" };'
+        );
 
         const config: ModuleDefaultsConfig['autoDiscovery'] = {
           enabled: true,
@@ -341,7 +392,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
           ignorePatterns: [],
           loadOrder: 'alphabetical',
           failOnError: false,
-          maxDepth: 5
+          maxDepth: 5,
         };
 
         const modules = await discovery.discoverModulesAdvanced(config);
@@ -359,7 +410,7 @@ describe('Enhanced Module Auto-Discovery System', () => {
       const modules = await autoDiscoverModules(tempDir, {
         pattern: /index\.(ts|js)$/,
         recursive: true,
-        extensions: ['.ts', '.js']
+        extensions: ['.ts', '.js'],
       });
 
       expect(modules).toHaveLength(1);

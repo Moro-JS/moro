@@ -1,7 +1,8 @@
 // Simple Integration Tests - Basic MoroJS HTTP functionality
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';
-import { createApp } from '../../src';
-import { createTestPort, delay } from '../setup';
+import { createApp } from '../../src/index.js';
+import { createTestPort, delay } from '../setup.js';
 
 describe('MoroJS Basic Integration', () => {
   let app: any;
@@ -20,7 +21,7 @@ describe('MoroJS Basic Integration', () => {
     // Close Socket.IO if it exists
     try {
       if (app.core && app.core.io) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>(resolve => {
           app.core.io.close(() => resolve());
         });
       }
@@ -47,7 +48,7 @@ describe('MoroJS Basic Integration', () => {
     });
 
     // Start server
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       app.listen(port, () => {
         resolve();
       });
@@ -55,13 +56,11 @@ describe('MoroJS Basic Integration', () => {
 
     await delay(100);
 
-    const response = await request(`http://localhost:${port}`)
-      .get('/test')
-      .expect(200);
+    const response = await request(`http://localhost:${port}`).get('/test').expect(200);
 
     expect(response.body).toEqual({
       message: 'Hello World',
-      path: '/test'
+      path: '/test',
     });
   });
 
@@ -71,12 +70,12 @@ describe('MoroJS Basic Integration', () => {
       return {
         success: true,
         method: 'POST',
-        receivedData: req.body
+        receivedData: req.body,
       };
     });
 
     // Start server
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       app.listen(port, () => {
         resolve();
       });
@@ -93,7 +92,7 @@ describe('MoroJS Basic Integration', () => {
     expect(response.body).toEqual({
       success: true,
       method: 'POST',
-      receivedData: testData
+      receivedData: testData,
     });
   });
 
@@ -102,29 +101,29 @@ describe('MoroJS Basic Integration', () => {
     app.get('/test', (req: any) => ({
       method: 'GET',
       url: req.path,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     }));
 
     app.post('/test', (req: any) => ({
       method: 'POST',
       url: req.path,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     }));
 
     app.put('/test', (req: any) => ({
       method: 'PUT',
       url: req.path,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     }));
 
     app.delete('/test', (req: any) => ({
       method: 'DELETE',
       url: req.path,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     }));
 
     // Start server
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       app.listen(port, () => {
         resolve();
       });
@@ -138,7 +137,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .get('/test')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.method).toBe('GET');
         expect(res.body.url).toBe('/test');
       });
@@ -147,7 +146,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .post('/test')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.method).toBe('POST');
       });
 
@@ -155,7 +154,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .put('/test')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.method).toBe('PUT');
       });
 
@@ -163,7 +162,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .delete('/test')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.method).toBe('DELETE');
       });
   });
@@ -177,11 +176,11 @@ describe('MoroJS Basic Integration', () => {
     // Add a working route for comparison
     app.get('/working', () => ({
       success: true,
-      message: 'This route works'
+      message: 'This route works',
     }));
 
     // Start server
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       app.listen(port, () => {
         resolve();
       });
@@ -195,22 +194,19 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .get('/working')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.message).toBe('This route works');
       });
 
     // Test error route - may return 500 or 404 depending on error handling
-    const errorResponse = await request(baseUrl)
-      .get('/error');
+    const errorResponse = await request(baseUrl).get('/error');
 
     // Accept either 404 or 500, since error handling may vary
     expect([404, 500]).toContain(errorResponse.status);
 
     // Test 404 for non-existent route
-    await request(baseUrl)
-      .get('/nonexistent')
-      .expect(404);
+    await request(baseUrl).get('/nonexistent').expect(404);
   });
 
   it('should test MoroJS specific features', async () => {
@@ -223,18 +219,18 @@ describe('MoroJS Basic Integration', () => {
     app.get('/middleware-test', (req: any) => ({
       success: true,
       customProperty: req.customProperty,
-      framework: 'MoroJS'
+      framework: 'MoroJS',
     }));
 
     // Test route with parameters
     app.get('/users/:id', (req: any) => ({
       success: true,
       userId: req.params.id,
-      message: `User ${req.params.id} found`
+      message: `User ${req.params.id} found`,
     }));
 
     // Start server
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       app.listen(port, () => {
         resolve();
       });
@@ -248,7 +244,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .get('/middleware-test')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.customProperty).toBe('middleware-added');
         expect(res.body.framework).toBe('MoroJS');
@@ -258,7 +254,7 @@ describe('MoroJS Basic Integration', () => {
     await request(baseUrl)
       .get('/users/123')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.userId).toBe('123');
         expect(res.body.message).toBe('User 123 found');

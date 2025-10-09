@@ -5,8 +5,8 @@ import {
   HttpHandler,
   Middleware,
   RouteDefinition,
-} from '../../types/http';
-import { createFrameworkLogger } from '../logger';
+} from '../../types/http.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 export class Router {
   private routes: RouteDefinition[] = [];

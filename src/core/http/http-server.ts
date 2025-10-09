@@ -1,9 +1,17 @@
 // src/core/http-server.ts
 import { IncomingMessage, ServerResponse, createServer, Server } from 'http';
 import * as zlib from 'zlib';
+import { createReadStream } from 'fs';
+import * as crypto from 'crypto';
 import { promisify } from 'util';
-import { createFrameworkLogger } from '../logger';
-import { HttpRequest, HttpResponse, HttpHandler, Middleware, RouteEntry } from '../../types/http';
+import { createFrameworkLogger } from '../logger/index.js';
+import {
+  HttpRequest,
+  HttpResponse,
+  HttpHandler,
+  Middleware,
+  RouteEntry,
+} from '../../types/http.js';
 
 const gzip = promisify(zlib.gzip);
 const deflate = promisify(zlib.deflate);
@@ -1133,7 +1141,6 @@ export const middleware = {
   },
 
   compression: (options: { threshold?: number; level?: number } = {}): Middleware => {
-    const zlib = require('zlib');
     const threshold = options.threshold || 1024;
     const level = options.level || 6;
 
@@ -1719,7 +1726,7 @@ export const middleware = {
             res.setHeader('Content-Length', chunkSize);
 
             // Stream the range
-            const stream = require('fs').createReadStream(filePath, {
+            const stream = createReadStream(filePath, {
               start,
               end,
             });
@@ -1737,12 +1744,12 @@ export const middleware = {
               res.write(`\r\n--${boundary}\r\n`);
               res.write(`Content-Range: bytes ${start}-${end}/${fileSize}\r\n\r\n`);
 
-              const stream = require('fs').createReadStream(filePath, {
+              const stream = createReadStream(filePath, {
                 start,
                 end,
               });
-              await new Promise(resolve => {
-                stream.on('end', resolve);
+              await new Promise<void>(resolve => {
+                stream.on('end', () => resolve());
                 stream.pipe(res, { end: false });
               });
             }
@@ -1776,7 +1783,6 @@ export const middleware = {
     const ignoreMethods = options.ignoreMethods || ['GET', 'HEAD', 'OPTIONS'];
 
     const generateToken = () => {
-      const crypto = require('crypto');
       return crypto.randomBytes(tokenLength).toString('hex');
     };
 
@@ -1865,7 +1871,6 @@ export const middleware = {
       // Generate nonce if requested
       let nonce: string | undefined;
       if (options.nonce) {
-        const crypto = require('crypto');
         nonce = crypto.randomBytes(16).toString('base64');
         (req as any).cspNonce = nonce;
       }

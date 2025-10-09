@@ -18,7 +18,7 @@ describe('Config File Integration', () => {
     process.env = originalEnv;
   });
 
-    it('should work without config file (existing behavior)', () => {
+  it('should work without config file (existing behavior)', () => {
     // Clean environment first
     delete process.env.PORT;
     delete process.env.HOST;

@@ -1,7 +1,7 @@
 // Configuration Utilities for Modules and Environment Handling
-import { AppConfig } from './schema';
-import { createFrameworkLogger } from '../logger';
-import { getGlobalConfig } from './config-manager';
+import { AppConfig } from './schema.js';
+import { createFrameworkLogger } from '../logger/index.js';
+import { getGlobalConfig } from './config-manager.js';
 
 const logger = createFrameworkLogger('ConfigUtils');
 

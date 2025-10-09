@@ -1,6 +1,7 @@
 // Database Redis Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 
 interface RedisConfig {
   host?: string;
@@ -31,11 +32,18 @@ export class RedisAdapter implements DatabaseAdapter {
   private client: any;
   private logger = createFrameworkLogger('Redis');
   private keyPrefix: string;
+  private initPromise: Promise<void>;
 
   constructor(config: RedisConfig = {}) {
+    this.keyPrefix = config.keyPrefix || 'moro:';
+    this.initPromise = this.initialize(config);
+  }
+
+  private async initialize(config: RedisConfig): Promise<void> {
     try {
-      const Redis = require('ioredis');
-      this.keyPrefix = config.keyPrefix || 'moro:';
+      const ioredisPath = resolveUserPackage('ioredis');
+      const ioredis = await import(ioredisPath);
+      const Redis = ioredis.default;
 
       if (config.cluster) {
         // Redis Cluster
@@ -97,6 +105,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async connect(): Promise<void> {
+    await this.initPromise;
     try {
       await this.client.ping();
       this.logger.info('Redis connection established', 'Connection');
@@ -109,11 +118,13 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async disconnect(): Promise<void> {
+    await this.initPromise;
     await this.client.quit();
   }
 
   // For Redis, we adapt the SQL-like interface to key-value operations
   async query<T = any>(pattern: string, _params?: any[]): Promise<T[]> {
+    await this.initPromise;
     try {
       const keys = await this.client.keys(this.prefixKey(pattern));
       if (keys.length === 0) return [];
@@ -133,6 +144,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async queryOne<T = any>(key: string, _params?: any[]): Promise<T | null> {
+    await this.initPromise;
     try {
       const value = await this.client.get(this.prefixKey(key));
       return value ? JSON.parse(value) : null;
@@ -146,6 +158,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async insert<T = any>(key: string, data: Record<string, any>): Promise<T> {
+    await this.initPromise;
     try {
       const value = JSON.stringify(data);
       await this.client.set(this.prefixKey(key), value);
@@ -164,6 +177,7 @@ export class RedisAdapter implements DatabaseAdapter {
     data: Record<string, any>,
     _where?: Record<string, any>
   ): Promise<T> {
+    await this.initPromise;
     try {
       // For Redis, we'll merge with existing data if it exists
       const existing = await this.queryOne(key);
@@ -181,6 +195,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async delete(pattern: string, _where?: Record<string, any>): Promise<number> {
+    await this.initPromise;
     try {
       const keys = await this.client.keys(this.prefixKey(pattern));
       if (keys.length === 0) return 0;
@@ -197,6 +212,7 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+    await this.initPromise;
     const multi = this.client.multi();
     const transaction = new RedisTransaction(multi, this.keyPrefix);
 
@@ -213,6 +229,7 @@ export class RedisAdapter implements DatabaseAdapter {
 
   // Redis-specific methods
   async set(key: string, value: any, ttl?: number): Promise<void> {
+    await this.initPromise;
     const prefixedKey = this.prefixKey(key);
     if (ttl) {
       await this.client.setex(prefixedKey, ttl, JSON.stringify(value));
@@ -222,38 +239,46 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async get(key: string): Promise<any> {
+    await this.initPromise;
     const value = await this.client.get(this.prefixKey(key));
     return value ? JSON.parse(value) : null;
   }
 
   async exists(key: string): Promise<boolean> {
+    await this.initPromise;
     const result = await this.client.exists(this.prefixKey(key));
     return result === 1;
   }
 
   async expire(key: string, ttl: number): Promise<boolean> {
+    await this.initPromise;
     const result = await this.client.expire(this.prefixKey(key), ttl);
     return result === 1;
   }
 
   async incr(key: string): Promise<number> {
+    await this.initPromise;
     return await this.client.incr(this.prefixKey(key));
   }
 
   async decr(key: string): Promise<number> {
+    await this.initPromise;
     return await this.client.decr(this.prefixKey(key));
   }
 
   async hset(hash: string, field: string, value: any): Promise<void> {
+    await this.initPromise;
     await this.client.hset(this.prefixKey(hash), field, JSON.stringify(value));
   }
 
   async hget(hash: string, field: string): Promise<any> {
+    await this.initPromise;
     const value = await this.client.hget(this.prefixKey(hash), field);
     return value ? JSON.parse(value) : null;
   }
 
   async hgetall(hash: string): Promise<Record<string, any>> {
+    await this.initPromise;
     const result = await this.client.hgetall(this.prefixKey(hash));
     const parsed: Record<string, any> = {};
     for (const [key, value] of Object.entries(result)) {
@@ -263,25 +288,30 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   async lpush(list: string, ...values: any[]): Promise<number> {
+    await this.initPromise;
     const serialized = values.map(v => JSON.stringify(v));
     return await this.client.lpush(this.prefixKey(list), ...serialized);
   }
 
   async rpop(list: string): Promise<any> {
+    await this.initPromise;
     const value = await this.client.rpop(this.prefixKey(list));
     return value ? JSON.parse(value) : null;
   }
 
   async lrange(list: string, start: number, stop: number): Promise<any[]> {
+    await this.initPromise;
     const values = await this.client.lrange(this.prefixKey(list), start, stop);
     return values.map((v: string) => JSON.parse(v));
   }
 
   async publish(channel: string, message: any): Promise<number> {
+    await this.initPromise;
     return await this.client.publish(channel, JSON.stringify(message));
   }
 
   async subscribe(channel: string, callback: (message: any) => void): Promise<void> {
+    await this.initPromise;
     const subscriber = this.client.duplicate();
     subscriber.subscribe(channel);
     subscriber.on('message', (_channel: string, message: string) => {

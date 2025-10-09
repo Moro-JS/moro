@@ -5,18 +5,20 @@ import {
   createServer as createHttp2Server,
 } from 'http2';
 import { EventEmitter } from 'events';
-import { MoroHttpServer, HttpRequest, HttpResponse, middleware } from './http';
-import { Router } from './http';
-import { Container } from './utilities';
-import { ModuleLoader } from './modules';
-import { WebSocketManager } from './networking';
-import { CircuitBreaker } from './utilities';
-import { MoroEventBus } from './events';
-import { createFrameworkLogger, logger as globalLogger } from './logger';
-import { ModuleConfig, InternalRouteDefinition } from '../types/module';
-import { LogLevel, LoggerOptions } from '../types/logger';
-import { MoroOptions as CoreMoroOptions } from '../types/core';
-import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter';
+import { MoroHttpServer, HttpRequest, HttpResponse, middleware } from './http/index.js';
+import { UWebSocketsHttpServer } from './http/uws-http-server.js';
+import { Router } from './http/router.js';
+import { Container } from './utilities/container.js';
+import { ModuleLoader } from './modules/index.js';
+import { WebSocketManager } from './networking/websocket-manager.js';
+import { CircuitBreaker } from './utilities/circuit-breaker.js';
+import { isPackageAvailable } from './utilities/package-utils.js';
+import { MoroEventBus } from './events/index.js';
+import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
+import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
+import { LogLevel, LoggerOptions } from '../types/logger.js';
+import { MoroOptions as CoreMoroOptions } from '../types/core.js';
+import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter.js';
 
 // Extended MoroOptions that includes both core options and framework-specific options
 export interface MoroOptions extends CoreMoroOptions {
@@ -39,8 +41,8 @@ export interface MoroOptions extends CoreMoroOptions {
 }
 
 export class Moro extends EventEmitter {
-  private httpServer: MoroHttpServer;
-  private server: Server | any; // HTTP/2 server type
+  private httpServer: MoroHttpServer | UWebSocketsHttpServer;
+  private server: Server | any; // HTTP/2 server type or uWebSockets app
   private websocketAdapter?: WebSocketAdapter;
   private container: Container;
   private moduleLoader: ModuleLoader;
@@ -53,6 +55,9 @@ export class Moro extends EventEmitter {
   private logger: any;
   private options: MoroOptions;
   private config: any;
+  private usingUWebSockets = false;
+  // WebSocket initialization promise to handle async adapter detection
+  private websocketSetupPromise: Promise<void> | null = null;
 
   constructor(options: MoroOptions = {}) {
     super();
@@ -77,10 +82,33 @@ export class Moro extends EventEmitter {
     // Initialize framework logger after global configuration
     this.logger = createFrameworkLogger('Core');
 
-    this.httpServer = new MoroHttpServer();
+    // Check if uWebSockets should be used for HTTP and WebSocket
+    const useUWebSockets = this.config.server?.useUWebSockets || false;
 
-    // Create HTTP/2 or HTTP/1.1 server based on options
-    if (options.http2) {
+    if (useUWebSockets) {
+      try {
+        // Try to use uWebSockets for ultra-high performance HTTP and WebSocket
+        const sslOptions = this.config.server?.ssl || options.https;
+        this.httpServer = new UWebSocketsHttpServer({ ssl: sslOptions });
+        this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
+        this.usingUWebSockets = true;
+        this.logger.info('uWebSockets HTTP+WebSocket server created', 'ServerInit');
+      } catch (error) {
+        // Fallback to standard HTTP/1.1 if uWebSockets fails to load
+        this.logger.warn(
+          'uWebSockets failed to initialize, falling back to Node.js http.Server. ' +
+            'Error: ' +
+            (error instanceof Error ? error.message : String(error)),
+          'ServerInit'
+        );
+        this.usingUWebSockets = false;
+        this.httpServer = new MoroHttpServer();
+        this.server = (this.httpServer as MoroHttpServer).getServer();
+      }
+    } else if (options.http2) {
+      // Use HTTP/2
+      this.httpServer = new MoroHttpServer();
+
       if (options.https) {
         this.server = createHttp2SecureServer(options.https);
       } else {
@@ -95,12 +123,14 @@ export class Moro extends EventEmitter {
         req.url = headers[':path'];
         req.method = headers[':method'];
         req.headers = headers;
-        this.httpServer['handleRequest'](req, res);
+        (this.httpServer as MoroHttpServer)['handleRequest'](req, res);
       });
 
       this.logger.info('HTTP/2 server created', 'ServerInit');
     } else {
-      this.server = this.httpServer.getServer();
+      // Use standard HTTP/1.1
+      this.httpServer = new MoroHttpServer();
+      this.server = (this.httpServer as MoroHttpServer).getServer();
     }
 
     this.container = new Container();
@@ -111,7 +141,8 @@ export class Moro extends EventEmitter {
       this.config.websocket.enabled ||
       (options.websocket && typeof options.websocket === 'object')
     ) {
-      this.setupWebSockets(options.websocket || {});
+      // Store the promise so we can await it before using websockets
+      this.websocketSetupPromise = this.setupWebSockets(options.websocket || {});
     }
 
     // Initialize enterprise event bus
@@ -184,29 +215,47 @@ export class Moro extends EventEmitter {
    */
   private async setupWebSockets(wsConfig: any): Promise<void> {
     try {
-      // Use provided adapter or try to auto-detect
-      if (wsConfig.adapter) {
-        this.websocketAdapter = wsConfig.adapter;
+      // If using uWebSockets HTTP server, automatically use uWebSockets for WebSocket too
+      if (this.usingUWebSockets) {
+        const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
+        this.websocketAdapter = new UWebSocketsAdapter();
+
+        // For uWebSockets, we need to integrate with the existing app
+        const uwsHttpServer = this.httpServer as UWebSocketsHttpServer;
+        await this.websocketAdapter.initialize(uwsHttpServer.getApp(), wsConfig.options);
+
+        this.logger.info(
+          'uWebSockets adapter initialized (integrated with HTTP server)',
+          'WebSocketSetup'
+        );
       } else {
-        this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
+        // Use provided adapter or try to auto-detect
+        if (wsConfig.adapter) {
+          this.websocketAdapter = wsConfig.adapter;
+        } else {
+          this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
+        }
+
+        if (this.websocketAdapter) {
+          await this.websocketAdapter.initialize(this.server, wsConfig.options);
+
+          this.logger.info(
+            `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
+            'WebSocketSetup'
+          );
+        }
       }
 
+      // Configure adapter features (if adapter was created)
       if (this.websocketAdapter) {
-        await this.websocketAdapter.initialize(this.server, wsConfig.options);
         this.websocketManager = new WebSocketManager(this.websocketAdapter, this.container);
 
-        // Configure adapter features
         if (wsConfig.compression) {
           this.websocketAdapter.setCompression(true);
         }
         if (wsConfig.customIdGenerator) {
           this.websocketAdapter.setCustomIdGenerator(wsConfig.customIdGenerator);
         }
-
-        this.logger.info(
-          `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
-          'WebSocketSetup'
-        );
       }
     } catch (error) {
       this.logger.warn(
@@ -219,26 +268,72 @@ export class Moro extends EventEmitter {
 
   /**
    * Auto-detect available WebSocket adapter
+   * Tests if the library is actually installed by checking require.resolve
    */
   private async detectWebSocketAdapter(): Promise<WebSocketAdapter | null> {
-    // Try socket.io first
-    try {
-      const { SocketIOAdapter } = await import('./networking/adapters');
-      return new SocketIOAdapter();
-    } catch {
-      // socket.io not available
+    // Check if adapter is specified in config
+    if (this.config.websocket?.adapter) {
+      const adapterType = this.config.websocket.adapter;
+
+      if (adapterType === 'uws' && isPackageAvailable('uWebSockets.js')) {
+        try {
+          const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
+          return new UWebSocketsAdapter();
+        } catch {
+          this.logger.warn('uWebSockets.js specified but failed to load', 'AdapterDetection');
+        }
+      } else if (adapterType === 'socket.io' && isPackageAvailable('socket.io')) {
+        try {
+          const { SocketIOAdapter } = await import('./networking/adapters/index.js');
+          return new SocketIOAdapter();
+        } catch {
+          this.logger.warn('socket.io specified but failed to load', 'AdapterDetection');
+        }
+      } else if (adapterType === 'ws' && isPackageAvailable('ws')) {
+        try {
+          const { WSAdapter } = await import('./networking/adapters/index.js');
+          return new WSAdapter();
+        } catch {
+          this.logger.warn('ws specified but failed to load', 'AdapterDetection');
+        }
+      }
     }
 
-    // Try native ws library
-    try {
-      const { WSAdapter } = await import('./networking/adapters');
-      return new WSAdapter();
-    } catch {
-      // ws not available
+    // Auto-detect: Try uWebSockets.js first (highest performance)
+    if (isPackageAvailable('uWebSockets.js')) {
+      try {
+        const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
+        this.logger.debug('uWebSockets.js detected and loaded', 'AdapterDetection');
+        return new UWebSocketsAdapter();
+      } catch {
+        // Failed to load adapter
+      }
+    }
+
+    // Try socket.io second
+    if (isPackageAvailable('socket.io')) {
+      try {
+        const { SocketIOAdapter } = await import('./networking/adapters/index.js');
+        this.logger.debug('socket.io detected and loaded', 'AdapterDetection');
+        return new SocketIOAdapter();
+      } catch {
+        // Failed to load adapter
+      }
+    }
+
+    // Try native ws library last
+    if (isPackageAvailable('ws')) {
+      try {
+        const { WSAdapter } = await import('./networking/adapters/index.js');
+        this.logger.debug('ws detected and loaded', 'AdapterDetection');
+        return new WSAdapter();
+      } catch {
+        // Failed to load adapter
+      }
     }
 
     this.logger.warn(
-      'No WebSocket adapter found. Install socket.io or ws for WebSocket support',
+      'No WebSocket adapter found. Install uWebSockets.js, socket.io, or ws for WebSocket support',
       'AdapterDetection'
     );
     return null;
@@ -315,6 +410,15 @@ export class Moro extends EventEmitter {
    */
   getWebSocketAdapter(): WebSocketAdapter | undefined {
     return this.websocketAdapter;
+  }
+
+  /**
+   * Ensure WebSocket setup is complete (for async adapter detection)
+   */
+  async ensureWebSocketReady(): Promise<void> {
+    if (this.websocketSetupPromise) {
+      await this.websocketSetupPromise;
+    }
   }
 
   /**

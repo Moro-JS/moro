@@ -6,7 +6,8 @@
 // Or override port/host: PORT=8080 HOST=0.0.0.0 node benchmark-server.js
 
 process.env.NODE_ENV = 'production';
-const { createApp } = require('./dist/moro.js');
+import { createApp } from './dist/index.js';
+
 
 const app = createApp({
     server: {
@@ -53,5 +54,3 @@ app.listen(() => {
         console.log(`No JSON Header Run: autocannon -c 100 -d 40 -p 10 http://${config.server.host}:${config.server.port}/string`);
     }, 1000);
 });
-
-module.exports = app;

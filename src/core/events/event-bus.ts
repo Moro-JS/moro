@@ -8,8 +8,8 @@ import {
   GlobalEventBus,
   EventMetrics,
   EventHandler,
-} from '../../types/events';
-import { createFrameworkLogger } from '../logger';
+} from '../../types/events.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 export class MoroEventBus implements GlobalEventBus {
   private emitter = new EventEmitter();

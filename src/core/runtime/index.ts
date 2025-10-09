@@ -1,9 +1,9 @@
 // Runtime adapters export
-export { BaseRuntimeAdapter } from './base-adapter';
-export { NodeRuntimeAdapter } from './node-adapter';
-export { VercelEdgeAdapter } from './vercel-edge-adapter';
-export { AWSLambdaAdapter } from './aws-lambda-adapter';
-export { CloudflareWorkersAdapter } from './cloudflare-workers-adapter';
+export { BaseRuntimeAdapter } from './base-adapter.js';
+export { NodeRuntimeAdapter } from './node-adapter.js';
+export { VercelEdgeAdapter } from './vercel-edge-adapter.js';
+export { AWSLambdaAdapter } from './aws-lambda-adapter.js';
+export { CloudflareWorkersAdapter } from './cloudflare-workers-adapter.js';
 
 // Re-export types
 export type {
@@ -12,18 +12,18 @@ export type {
   RuntimeConfig,
   RuntimeMoroOptions,
   RuntimeHttpResponse,
-} from '../../types/runtime';
+} from '../../types/runtime.js';
 
 // Re-export specific runtime types
-export type { LambdaEvent, LambdaContext, LambdaResponse } from './aws-lambda-adapter';
-export type { WorkersEnv, WorkersContext } from './cloudflare-workers-adapter';
+export type { LambdaEvent, LambdaContext, LambdaResponse } from './aws-lambda-adapter.js';
+export type { WorkersEnv, WorkersContext } from './cloudflare-workers-adapter.js';
 
 // Runtime factory functions
-import { NodeRuntimeAdapter } from './node-adapter';
-import { VercelEdgeAdapter } from './vercel-edge-adapter';
-import { AWSLambdaAdapter } from './aws-lambda-adapter';
-import { CloudflareWorkersAdapter } from './cloudflare-workers-adapter';
-import { RuntimeType, RuntimeAdapter } from '../../types/runtime';
+import { NodeRuntimeAdapter } from './node-adapter.js';
+import { VercelEdgeAdapter } from './vercel-edge-adapter.js';
+import { AWSLambdaAdapter } from './aws-lambda-adapter.js';
+import { CloudflareWorkersAdapter } from './cloudflare-workers-adapter.js';
+import { RuntimeType, RuntimeAdapter } from '../../types/runtime.js';
 
 export function createRuntimeAdapter(type: RuntimeType): RuntimeAdapter {
   switch (type) {

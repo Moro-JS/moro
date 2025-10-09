@@ -1,6 +1,7 @@
 // AWS CloudFront CDN Adapter
-import { CDNAdapter } from '../../../../../types/cdn';
-import { createFrameworkLogger } from '../../../../logger';
+import { CDNAdapter } from '../../../../../types/cdn.js';
+import { createFrameworkLogger } from '../../../../logger/index.js';
+import { resolveUserPackage } from '../../../../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('CloudFrontCDNAdapter');
 
@@ -15,16 +16,26 @@ export class CloudFrontCDNAdapter implements CDNAdapter {
     distributionId: string;
   }) {
     this.distributionId = options.distributionId;
+    this.initPromise = this.initialize(options);
+  }
 
+  private initPromise: Promise<void>;
+
+  private async initialize(options: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+  }): Promise<void> {
     try {
-      const AWS = require('aws-sdk');
-      AWS.config.update({
+      const awsPath = resolveUserPackage('aws-sdk');
+      const AWS = await import(awsPath);
+      AWS.default.config.update({
         accessKeyId: options.accessKeyId,
         secretAccessKey: options.secretAccessKey,
         region: options.region,
       });
 
-      this.cloudfront = new AWS.CloudFront();
+      this.cloudfront = new AWS.default.CloudFront();
       logger.info('CloudFront CDN adapter initialized', 'CloudFront');
     } catch (error) {
       logger.error('AWS SDK not available', 'CloudFront');

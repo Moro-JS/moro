@@ -1,7 +1,7 @@
 // Core Framework Types
-import { RuntimeConfig } from './runtime';
-import { LogLevel, LoggerOptions } from './logger';
-import { AppConfig } from './config';
+import { RuntimeConfig } from './runtime.js';
+import { LogLevel, LoggerOptions } from './logger.js';
+import { AppConfig } from './config.js';
 
 export interface MoroOptions {
   autoDiscover?:

@@ -1,6 +1,7 @@
 // Socket.IO WebSocket Adapter for Moro Framework
 // Implements the WebSocket adapter interface using Socket.IO
 
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
@@ -8,7 +9,7 @@ import {
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
-} from '../websocket-adapter';
+} from '../websocket-adapter.js';
 
 /**
  * Socket.IO adapter implementation
@@ -19,8 +20,9 @@ export class SocketIOAdapter implements WebSocketAdapter {
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
-      // Dynamic import to avoid requiring socket.io as a hard dependency
-      const { Server } = await import('socket.io');
+      // Dynamic import from user's context to find their installed socket.io
+      const socketIOPath = resolveUserPackage('socket.io');
+      const { Server } = await import(socketIOPath);
 
       this.io = new Server(httpServer, {
         cors: options.cors || { origin: '*' },

@@ -1,6 +1,7 @@
 // File System Cache Adapter
-import { CacheAdapter } from '../../../../../types/cache';
-import { createFrameworkLogger } from '../../../../logger';
+import { CacheAdapter } from '../../../../../types/cache.js';
+import { createFrameworkLogger } from '../../../../logger/index.js';
+import crypto from 'crypto';
 
 const logger = createFrameworkLogger('FileCacheAdapter');
 
@@ -22,7 +23,6 @@ export class FileCacheAdapter implements CacheAdapter {
   }
 
   private getFilePath(key: string): string {
-    const crypto = require('crypto');
     const hash = crypto.createHash('md5').update(key).digest('hex');
     return `${this.cacheDir}/${hash}.json`;
   }

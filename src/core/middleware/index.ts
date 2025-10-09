@@ -1,17 +1,17 @@
 // Middleware System for Moro
 import { EventEmitter } from 'events';
-import { HookManager } from '../utilities';
+import { HookManager } from '../utilities/index.js';
 import {
   MiddlewareMetadata,
   MiddlewareContext,
   MiddlewareInterface,
   SimpleMiddlewareFunction,
   MoroMiddleware,
-} from '../../types/hooks';
-import { createFrameworkLogger } from '../logger';
+} from '../../types/hooks.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 // Export types needed by built-in middleware
-export type { MiddlewareInterface, MoroMiddleware } from '../../types/hooks';
+export type { MiddlewareInterface, MoroMiddleware } from '../../types/hooks.js';
 
 export class MiddlewareManager extends EventEmitter {
   private middleware = new Map<string, MiddlewareInterface>();
@@ -173,5 +173,5 @@ export class MiddlewareManager extends EventEmitter {
 }
 
 // Built-in middleware exports
-export { builtInMiddleware, simpleMiddleware } from './built-in';
-export * from './built-in';
+export { builtInMiddleware, simpleMiddleware } from './built-in/index.js';
+export * from './built-in/index.js';

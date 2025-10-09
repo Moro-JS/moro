@@ -12,6 +12,12 @@ export interface ServerConfig {
   errorBoundary: {
     enabled: boolean;
   };
+  useUWebSockets?: boolean; // Enable uWebSockets for both HTTP and WebSocket
+  ssl?: {
+    key_file_name?: string;
+    cert_file_name?: string;
+    passphrase?: string;
+  };
 }
 
 export interface ServiceDiscoveryConfig {
@@ -187,7 +193,7 @@ export interface PerformanceConfig {
 
 export interface WebSocketConfig {
   enabled: boolean;
-  adapter?: string | 'socket.io' | 'ws';
+  adapter?: string | 'socket.io' | 'ws' | 'uws';
   compression?: boolean;
   customIdGenerator?: () => string;
   options?: {
@@ -197,6 +203,12 @@ export interface WebSocketConfig {
     };
     path?: string;
     maxPayloadLength?: number;
+    idleTimeout?: number;
+    ssl?: {
+      key_file_name?: string;
+      cert_file_name?: string;
+      passphrase?: string;
+    };
   };
 }
 

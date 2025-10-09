@@ -1,41 +1,39 @@
 // Zod to OpenAPI Schema Converter
 // Transforms Zod schemas into OpenAPI 3.0 schema definitions
 
-import { createFrameworkLogger } from '../logger';
-
-// Dynamic Zod imports (optional dependency)
-let ZodSchema: any,
-  ZodType: any,
-  ZodObject: any,
-  ZodArray: any,
-  ZodString: any,
-  ZodNumber: any,
-  ZodBoolean: any,
-  ZodEnum: any,
-  ZodOptional: any,
-  ZodDefault: any,
-  ZodUnion: any,
-  ZodLiteral: any;
-
-try {
-  const zod = require('zod');
-  ZodSchema = zod.ZodSchema;
-  ZodType = zod.ZodType;
-  ZodObject = zod.ZodObject;
-  ZodArray = zod.ZodArray;
-  ZodString = zod.ZodString;
-  ZodNumber = zod.ZodNumber;
-  ZodBoolean = zod.ZodBoolean;
-  ZodEnum = zod.ZodEnum;
-  ZodOptional = zod.ZodOptional;
-  ZodDefault = zod.ZodDefault;
-  ZodUnion = zod.ZodUnion;
-  ZodLiteral = zod.ZodLiteral;
-} catch {
-  // Zod not available - that's fine!
-}
+import { createFrameworkLogger } from '../logger/index.js';
+import { createUserRequire, isPackageAvailable } from '../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('ZodToOpenAPI');
+
+// Dynamic Zod imports (optional dependency)
+let zodModule: any = null;
+let zodLoadAttempted = false;
+
+// Lazy synchronous initialization for Zod
+function loadZodSync() {
+  if (zodLoadAttempted) {
+    return zodModule;
+  }
+
+  zodLoadAttempted = true;
+
+  try {
+    if (!isPackageAvailable('zod')) {
+      zodModule = null;
+      return zodModule;
+    }
+
+    // Use synchronous require for immediate availability
+    const userRequire = createUserRequire();
+    zodModule = userRequire('zod');
+  } catch {
+    // Zod not available - that's fine!
+    zodModule = null;
+  }
+
+  return zodModule;
+}
 
 // OpenAPI schema types
 export interface OpenAPISchema {
@@ -72,7 +70,8 @@ export interface ConversionOptions {
 // Main conversion function
 export function zodToOpenAPI(schema: any, options: ConversionOptions = {}): OpenAPISchema {
   // Check if Zod is available
-  if (!ZodSchema) {
+  const zod = loadZodSync();
+  if (!zod) {
     throw new Error('Zod is not installed. Please install zod to use zodToOpenAPI function.');
   }
 
@@ -420,7 +419,8 @@ function hasDefault(type: any): boolean {
 // Generate example data from Zod schema
 export function generateExampleFromSchema(schema: any): any {
   // Check if Zod is available
-  if (!ZodSchema) {
+  const zod = loadZodSync();
+  if (!zod) {
     throw new Error(
       'Zod is not installed. Please install zod to use generateExampleFromSchema function.'
     );

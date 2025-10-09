@@ -1,19 +1,77 @@
 // Universal Validation System for Moro Framework
 // Works with Zod, Joi, Yup, and any validation library via adapters
 
-import { HttpRequest, HttpResponse } from '../http';
-import { createFrameworkLogger } from '../logger';
+import { HttpRequest, HttpResponse } from '../http/index.js';
+import { createFrameworkLogger } from '../logger/index.js';
+import { createUserRequire, isPackageAvailable } from '../utilities/package-utils.js';
 import {
   ValidationSchema,
-  ValidationError,
   normalizeValidationError,
   InferSchemaType,
-} from './schema-interface';
-
-// Re-export zod if available (for backward compatibility)
-// The dynamic import is handled in the main index.ts
+  ValidationError,
+} from './schema-interface.js';
 
 const logger = createFrameworkLogger('Validation');
+
+// Convenience re-export of Zod (optional - only works if zod is installed)
+// Lazy-loads Zod synchronously on first access
+// If zod is not installed, z will throw a helpful error
+let zodModule: any = null;
+let zodLoadAttempted = false;
+
+function loadZodSync() {
+  if (zodLoadAttempted) {
+    return zodModule;
+  }
+
+  zodLoadAttempted = true;
+
+  try {
+    if (!isPackageAvailable('zod')) {
+      zodModule = null;
+      return zodModule;
+    }
+
+    // Use synchronous require for immediate availability
+    const userRequire = createUserRequire();
+    zodModule = userRequire('zod');
+  } catch {
+    // Zod not installed or failed to load
+    zodModule = null;
+  }
+
+  return zodModule;
+}
+
+export const z = new Proxy({} as any, {
+  get(_target, prop) {
+    const zod = loadZodSync();
+
+    if (!zod) {
+      throw new Error(
+        'Zod is not installed. Please install it with: npm install zod\n' +
+          'Or use an alternative validation library (joi, yup, class-validator) via adapters.'
+      );
+    }
+
+    if (!zod.z) {
+      throw new Error(
+        'Zod module loaded but z export not found. This may be a version compatibility issue.'
+      );
+    }
+
+    return zod.z[prop];
+  },
+  apply(_target, thisArg, args) {
+    const zod = loadZodSync();
+
+    if (!zod?.z) {
+      throw new Error('Zod is not installed. Please install it with: npm install zod');
+    }
+
+    return zod.z.apply(thisArg, args);
+  },
+});
 
 // Universal validation configuration interface
 export interface ValidationConfig {
@@ -195,12 +253,6 @@ export function combineSchemas(schemas: ValidationConfig): ValidationConfig {
 }
 
 // Re-export common validation tools
-export {
-  ValidationSchema,
-  ValidationError,
-  normalizeValidationError,
-  InferSchemaType,
-} from './schema-interface';
-export { joi, yup, fn as customValidator, classValidator } from './adapters';
-
-// Note: z is re-exported from main index.ts with dynamic import
+export { ValidationError, normalizeValidationError } from './schema-interface.js';
+export type { ValidationSchema, InferSchemaType } from './schema-interface.js';
+export { joi, yup, fn as customValidator, classValidator } from './adapters.js';

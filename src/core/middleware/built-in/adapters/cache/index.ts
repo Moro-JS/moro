@@ -1,12 +1,12 @@
 // Cache Adapters
-export { MemoryCacheAdapter } from './memory';
-export { RedisCacheAdapter } from './redis';
-export { FileCacheAdapter } from './file';
+export { MemoryCacheAdapter } from './memory.js';
+export { RedisCacheAdapter } from './redis.js';
+export { FileCacheAdapter } from './file.js';
 
-import { MemoryCacheAdapter } from './memory';
-import { RedisCacheAdapter } from './redis';
-import { FileCacheAdapter } from './file';
-import { CacheAdapter } from '../../../../../types/cache';
+import { MemoryCacheAdapter } from './memory.js';
+import { RedisCacheAdapter } from './redis.js';
+import { FileCacheAdapter } from './file.js';
+import { CacheAdapter } from '../../../../../types/cache.js';
 
 // Adapter factory function for auto-loading
 export function createCacheAdapter(type: string, options: any = {}): CacheAdapter {

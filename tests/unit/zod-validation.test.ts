@@ -1,11 +1,12 @@
 // Unit Tests - Zod Validation Functionality
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { z } from 'zod';
 
 describe('Zod Validation', () => {
   describe('Basic Schema Validation', () => {
     it('should validate string schemas', () => {
       const schema = z.string();
-      
+
       expect(schema.safeParse('hello').success).toBe(true);
       expect(schema.safeParse(123).success).toBe(false);
       expect(schema.safeParse(null).success).toBe(false);
@@ -13,7 +14,7 @@ describe('Zod Validation', () => {
 
     it('should validate number schemas', () => {
       const schema = z.number();
-      
+
       expect(schema.safeParse(42).success).toBe(true);
       expect(schema.safeParse('42').success).toBe(false);
       expect(schema.safeParse(null).success).toBe(false);
@@ -21,7 +22,7 @@ describe('Zod Validation', () => {
 
     it('should validate boolean schemas', () => {
       const schema = z.boolean();
-      
+
       expect(schema.safeParse(true).success).toBe(true);
       expect(schema.safeParse(false).success).toBe(true);
       expect(schema.safeParse('true').success).toBe(false);
@@ -34,19 +35,19 @@ describe('Zod Validation', () => {
       const userSchema = z.object({
         name: z.string(),
         age: z.number(),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const validUser = {
         name: 'John Doe',
         age: 30,
-        email: 'john@example.com'
+        email: 'john@example.com',
       };
 
       const invalidUser = {
         name: 'John Doe',
         age: 'thirty', // Should be number
-        email: 'invalid-email' // Should be valid email
+        email: 'invalid-email', // Should be valid email
       };
 
       expect(userSchema.safeParse(validUser).success).toBe(true);
@@ -57,7 +58,7 @@ describe('Zod Validation', () => {
       const schema = z.object({
         name: z.string(),
         age: z.number().optional(),
-        bio: z.string().optional()
+        bio: z.string().optional(),
       });
 
       const validWithOptional = { name: 'John', age: 30 };
@@ -73,7 +74,7 @@ describe('Zod Validation', () => {
       const schema = z.object({
         name: z.string(),
         role: z.string().default('user'),
-        active: z.boolean().default(true)
+        active: z.boolean().default(true),
       });
 
       const input = { name: 'John' };
@@ -82,7 +83,7 @@ describe('Zod Validation', () => {
       expect(result).toEqual({
         name: 'John',
         role: 'user',
-        active: true
+        active: true,
       });
     });
   });
@@ -191,18 +192,18 @@ describe('Zod Validation', () => {
     it('should validate arrays of objects', () => {
       const itemSchema = z.object({
         id: z.number(),
-        name: z.string()
+        name: z.string(),
       });
       const schema = z.array(itemSchema);
 
       const validArray = [
         { id: 1, name: 'Item 1' },
-        { id: 2, name: 'Item 2' }
+        { id: 2, name: 'Item 2' },
       ];
 
       const invalidArray = [
         { id: 1, name: 'Item 1' },
-        { id: 'two', name: 'Item 2' } // Invalid id type
+        { id: 'two', name: 'Item 2' }, // Invalid id type
       ];
 
       expect(schema.safeParse(validArray).success).toBe(true);
@@ -225,7 +226,7 @@ describe('Zod Validation', () => {
       enum Color {
         RED = 'red',
         GREEN = 'green',
-        BLUE = 'blue'
+        BLUE = 'blue',
       }
 
       const schema = z.nativeEnum(Color);
@@ -264,7 +265,7 @@ describe('Zod Validation', () => {
 
       const dateString = '2023-12-01T10:00:00Z';
       const result = schema.parse(dateString);
-      
+
       expect(result).toBeInstanceOf(Date);
       expect(result.toISOString()).toBe('2023-12-01T10:00:00.000Z');
     });
@@ -272,16 +273,14 @@ describe('Zod Validation', () => {
 
   describe('Custom Validation', () => {
     it('should support custom refinements', () => {
-      const passwordSchema = z.string()
+      const passwordSchema = z
+        .string()
         .min(8, 'Password must be at least 8 characters')
         .refine(
-          (password) => /[A-Z]/.test(password),
+          password => /[A-Z]/.test(password),
           'Password must contain at least one uppercase letter'
         )
-        .refine(
-          (password) => /[0-9]/.test(password),
-          'Password must contain at least one number'
-        );
+        .refine(password => /[0-9]/.test(password), 'Password must contain at least one number');
 
       expect(passwordSchema.safeParse('Password123').success).toBe(true);
       expect(passwordSchema.safeParse('password123').success).toBe(false); // No uppercase
@@ -290,29 +289,28 @@ describe('Zod Validation', () => {
     });
 
     it('should support cross-field validation', () => {
-      const schema = z.object({
-        password: z.string(),
-        confirmPassword: z.string()
-      }).refine(
-        (data) => data.password === data.confirmPassword,
-        {
+      const schema = z
+        .object({
+          password: z.string(),
+          confirmPassword: z.string(),
+        })
+        .refine(data => data.password === data.confirmPassword, {
           message: "Passwords don't match",
-          path: ['confirmPassword']
-        }
-      );
+          path: ['confirmPassword'],
+        });
 
       const validData = {
         password: 'secret123',
-        confirmPassword: 'secret123'
+        confirmPassword: 'secret123',
       };
 
       const invalidData = {
         password: 'secret123',
-        confirmPassword: 'different'
+        confirmPassword: 'different',
       };
 
       expect(schema.safeParse(validData).success).toBe(true);
-      
+
       const invalidResult = schema.safeParse(invalidData);
       expect(invalidResult.success).toBe(false);
       if (!invalidResult.success) {
@@ -348,13 +346,13 @@ describe('Zod Validation', () => {
       const schema = z.object({
         name: z.string().min(2, 'Name must be at least 2 characters'),
         age: z.number().min(18, 'Must be 18 or older'),
-        email: z.string().email('Invalid email format')
+        email: z.string().email('Invalid email format'),
       });
 
       const result = schema.safeParse({
         name: 'J',
         age: 16,
-        email: 'invalid'
+        email: 'invalid',
       });
 
       expect(result.success).toBe(false);
@@ -371,18 +369,18 @@ describe('Zod Validation', () => {
         user: z.object({
           profile: z.object({
             name: z.string(),
-            age: z.number()
-          })
-        })
+            age: z.number(),
+          }),
+        }),
       });
 
       const result = schema.safeParse({
         user: {
           profile: {
             name: 'John',
-            age: 'not-a-number'
-          }
-        }
+            age: 'not-a-number',
+          },
+        },
       });
 
       expect(result.success).toBe(false);
@@ -391,4 +389,4 @@ describe('Zod Validation', () => {
       }
     });
   });
-}); 
+});

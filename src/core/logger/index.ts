@@ -6,8 +6,8 @@ export {
   configureGlobalLogger,
   applyLoggingConfiguration,
   destroyGlobalLogger,
-} from './logger';
-export * from './filters';
+} from './logger.js';
+export * from './filters.js';
 
 export type {
   LogLevel,
@@ -18,4 +18,4 @@ export type {
   LogFilter,
   LogMetrics,
   ColorScheme,
-} from '../../types/logger';
+} from '../../types/logger.js';

@@ -1,8 +1,8 @@
 // Built-in CDN Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { CDNAdapter, CDNOptions } from '../../../types/cdn';
-import { createFrameworkLogger } from '../../logger';
-import { createCDNAdapter } from './adapters/cdn';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { CDNAdapter, CDNOptions } from '../../../types/cdn.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { createCDNAdapter } from './adapters/cdn/index.js';
 
 const logger = createFrameworkLogger('CDNMiddleware');
 

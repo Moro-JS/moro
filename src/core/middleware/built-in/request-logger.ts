@@ -1,5 +1,5 @@
 // Simple request logging middleware
-import { createFrameworkLogger } from '../../logger';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 const logger = createFrameworkLogger('RequestLogger');
 

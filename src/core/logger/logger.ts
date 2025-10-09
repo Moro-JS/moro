@@ -10,7 +10,7 @@ import {
   LogFilter,
   LogMetrics,
   ColorScheme,
-} from '../../types/logger';
+} from '../../types/logger.js';
 
 export class MoroLogger implements Logger {
   private level: LogLevel = 'info';
@@ -343,6 +343,11 @@ export class MoroLogger implements Logger {
     context?: string,
     metadata?: Record<string, any>
   ): void {
+    // Prevent logging after destroy() is called (important for test cleanup)
+    if (this.isDestroyed) {
+      return;
+    }
+
     // Quick level check - use parent level if available (for child loggers)
     const effectiveLevel = this.parent ? this.parent.level : this.level;
     if (MoroLogger.LEVELS[level] < MoroLogger.LEVELS[effectiveLevel as LogLevel]) {
@@ -739,6 +744,9 @@ export class MoroLogger implements Logger {
     this.flushTimeout = setTimeout(() => {
       this.flushBuffer();
     }, this.flushInterval);
+
+    // Unref the timeout so it doesn't prevent process exit (important for tests)
+    this.flushTimeout.unref();
   }
 
   public flushBuffer(): void {

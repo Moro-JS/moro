@@ -1,4 +1,5 @@
-import { getEnvVar } from '../../../src/core/config/utils';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { getEnvVar } from '../../../src/core/config/utils.js';
 
 describe('Config Utils - getEnvVar', () => {
   const originalEnv = process.env;
@@ -40,7 +41,7 @@ describe('Config Utils - getEnvVar', () => {
     it('should apply converter function when provided', () => {
       process.env.TEST_NUMBER = '42';
 
-      const result = getEnvVar('TEST_NUMBER', 0, (val) => parseInt(val, 10));
+      const result = getEnvVar('TEST_NUMBER', 0, val => parseInt(val, 10));
 
       expect(result).toBe(42);
       expect(typeof result).toBe('number');
@@ -49,7 +50,7 @@ describe('Config Utils - getEnvVar', () => {
     it('should apply converter to default value if env var not set', () => {
       delete process.env.TEST_NUMBER;
 
-      const result = getEnvVar('TEST_NUMBER', 100, (val) => parseInt(val, 10));
+      const result = getEnvVar('TEST_NUMBER', 100, val => parseInt(val, 10));
 
       expect(result).toBe(100);
       expect(typeof result).toBe('number');
@@ -162,7 +163,9 @@ describe('Config Utils - getEnvVar', () => {
     it('should handle converter that returns different type', () => {
       process.env.TEST_CONVERT_TYPE = '42';
 
-      const result = getEnvVar('TEST_CONVERT_TYPE', { number: 0 }, (val) => ({ number: parseInt(val) }));
+      const result = getEnvVar('TEST_CONVERT_TYPE', { number: 0 }, val => ({
+        number: parseInt(val),
+      }));
 
       expect(result).toEqual({ number: 42 });
       expect(typeof result).toBe('object');

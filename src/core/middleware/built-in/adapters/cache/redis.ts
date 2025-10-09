@@ -1,6 +1,7 @@
 // Redis Cache Adapter
-import { CacheAdapter } from '../../../../../types/cache';
-import { createFrameworkLogger } from '../../../../logger';
+import { CacheAdapter } from '../../../../../types/cache.js';
+import { createFrameworkLogger } from '../../../../logger/index.js';
+import { resolveUserPackage } from '../../../../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('RedisCacheAdapter');
 
@@ -16,9 +17,22 @@ export class RedisCacheAdapter implements CacheAdapter {
       keyPrefix?: string;
     } = {}
   ) {
+    this.initPromise = this.initialize(options);
+  }
+
+  private initPromise: Promise<void>;
+
+  private async initialize(options: {
+    host?: string;
+    port?: number;
+    password?: string;
+    db?: number;
+    keyPrefix?: string;
+  }): Promise<void> {
     try {
-      const redis = require('redis');
-      this.client = redis.createClient({
+      const redisPath = resolveUserPackage('redis');
+      const redis = await import(redisPath);
+      this.client = redis.default.createClient({
         host: options.host || 'localhost',
         port: options.port || 6379,
         password: options.password,

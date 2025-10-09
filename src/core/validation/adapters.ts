@@ -1,7 +1,7 @@
 // Validation Library Adapters for Moro Framework
 // Makes Joi, Yup, and other libraries compatible with ValidationSchema interface
 
-import { ValidationSchema, ValidationError, normalizeValidationError } from './schema-interface';
+import { ValidationSchema, ValidationError, normalizeValidationError } from './schema-interface.js';
 
 /**
  * Zod Compatibility Check

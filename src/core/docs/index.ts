@@ -1,17 +1,17 @@
 // Moro Framework Documentation System
 // Automatic API documentation generation from intelligent routes and Validation schemas
 
-import { CompiledRoute } from '../routing';
-import { IntelligentRoutingManager } from '../routing/app-integration';
+import { CompiledRoute } from '../routing/index.js';
+import { IntelligentRoutingManager } from '../routing/app-integration.js';
 import {
   OpenAPIGenerator,
   generateOpenAPIFromRoutes,
   GenerationOptions,
   OpenAPISpec,
   defaultSecuritySchemes,
-} from './openapi-generator';
-import { SwaggerUIMiddleware, SwaggerUIOptions, createDocsMiddleware } from './swagger-ui';
-import { createFrameworkLogger } from '../logger';
+} from './openapi-generator.js';
+import { SwaggerUIMiddleware, SwaggerUIOptions, createDocsMiddleware } from './swagger-ui.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('DocumentationSystem');
 
@@ -226,6 +226,6 @@ export function generateDocsFromIntelligentRoutes(
 }
 
 // Export all types and functions
-export * from './openapi-generator';
-export * from './swagger-ui';
-export * from './zod-to-openapi';
+export * from './openapi-generator.js';
+export * from './swagger-ui.js';
+export * from './zod-to-openapi.js';

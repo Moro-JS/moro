@@ -1,5 +1,7 @@
+// @ts-nocheck
 // Unit Tests - MoroJS Validation Integration
-import { validate, body, query, params, z, ValidationConfig } from '../../../src';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { validate, body, query, params, z, ValidationConfig } from '../../../src/index.js';
 
 describe('MoroJS Validation Integration', () => {
   // Mock HTTP objects for testing
@@ -10,14 +12,14 @@ describe('MoroJS Validation Integration', () => {
     params: {},
     body: {},
     headers: {},
-    ...data
+    ...data,
   });
 
   const createMockResponse = (): any => {
     const res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
-      headersSent: false
+      headersSent: false,
     };
     return res;
   };
@@ -26,14 +28,14 @@ describe('MoroJS Validation Integration', () => {
     it('should validate body successfully', async () => {
       const schema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const config: ValidationConfig = { body: schema };
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
+
       const req = createMockRequest({
-        body: { name: 'John Doe', email: 'john@example.com' }
+        body: { name: 'John Doe', email: 'john@example.com' },
       });
       const res = createMockResponse();
 
@@ -42,7 +44,7 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: { name: 'John Doe', email: 'john@example.com' }
+          body: { name: 'John Doe', email: 'john@example.com' },
         }),
         res
       );
@@ -51,14 +53,14 @@ describe('MoroJS Validation Integration', () => {
     it('should return validation error for invalid body', async () => {
       const schema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const config: ValidationConfig = { body: schema };
       const handler = jest.fn();
-      
+
       const req = createMockRequest({
-        body: { name: 'J', email: 'invalid-email' }
+        body: { name: 'J', email: 'invalid-email' },
       });
       const res = createMockResponse();
 
@@ -69,7 +71,7 @@ describe('MoroJS Validation Integration', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           success: false,
-          error: 'Validation failed for body'
+          error: 'Validation failed for body',
         })
       );
       expect(handler).not.toHaveBeenCalled();
@@ -78,14 +80,14 @@ describe('MoroJS Validation Integration', () => {
     it('should validate query parameters with coercion', async () => {
       const schema = z.object({
         limit: z.coerce.number().min(1).max(100).default(10),
-        search: z.string().optional()
+        search: z.string().optional(),
       });
 
       const config: ValidationConfig = { query: schema };
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
+
       const req = createMockRequest({
-        query: { limit: '25', search: 'test' }
+        query: { limit: '25', search: 'test' },
       });
       const res = createMockResponse();
 
@@ -94,7 +96,7 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          query: { limit: 25, search: 'test' }
+          query: { limit: 25, search: 'test' },
         }),
         res
       );
@@ -103,17 +105,17 @@ describe('MoroJS Validation Integration', () => {
     it('should validate path parameters', async () => {
       const schema = z.object({
         id: z.string().uuid(),
-        category: z.enum(['user', 'admin'])
+        category: z.enum(['user', 'admin']),
       });
 
       const config: ValidationConfig = { params: schema };
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
+
       const req = createMockRequest({
-        params: { 
+        params: {
           id: '123e4567-e89b-12d3-a456-426614174000',
-          category: 'user'
-        }
+          category: 'user',
+        },
       });
       const res = createMockResponse();
 
@@ -122,10 +124,10 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          params: { 
+          params: {
             id: '123e4567-e89b-12d3-a456-426614174000',
-            category: 'user'
-          }
+            category: 'user',
+          },
         }),
         res
       );
@@ -136,7 +138,7 @@ describe('MoroJS Validation Integration', () => {
     it('body() should create body validation wrapper', async () => {
       const schema = z.object({ name: z.string() });
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
+
       const req = createMockRequest({ body: { name: 'John' } });
       const res = createMockResponse();
 
@@ -145,7 +147,7 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: { name: 'John' }
+          body: { name: 'John' },
         }),
         res
       );
@@ -154,7 +156,7 @@ describe('MoroJS Validation Integration', () => {
     it('query() should create query validation wrapper', async () => {
       const schema = z.object({ limit: z.coerce.number() });
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
+
       const req = createMockRequest({ query: { limit: '10' } });
       const res = createMockResponse();
 
@@ -163,7 +165,7 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          query: { limit: 10 }
+          query: { limit: 10 },
         }),
         res
       );
@@ -172,9 +174,9 @@ describe('MoroJS Validation Integration', () => {
     it('params() should create params validation wrapper', async () => {
       const schema = z.object({ id: z.string().uuid() });
       const handler = jest.fn().mockResolvedValue({ success: true });
-      
-      const req = createMockRequest({ 
-        params: { id: '123e4567-e89b-12d3-a456-426614174000' }
+
+      const req = createMockRequest({
+        params: { id: '123e4567-e89b-12d3-a456-426614174000' },
       });
       const res = createMockResponse();
 
@@ -183,10 +185,10 @@ describe('MoroJS Validation Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          params: { id: '123e4567-e89b-12d3-a456-426614174000' }
+          params: { id: '123e4567-e89b-12d3-a456-426614174000' },
         }),
         res
       );
     });
   });
-}); 
+});

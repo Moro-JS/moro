@@ -1,6 +1,6 @@
 // CORS Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { createFrameworkLogger } from '../../logger';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 const logger = createFrameworkLogger('CorsMiddleware');
 

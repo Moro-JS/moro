@@ -1,5 +1,5 @@
 // Advanced Logger Filters
-import { LogEntry, LogFilter } from '../../types/logger';
+import { LogEntry, LogFilter } from '../../types/logger.js';
 
 // Level-based filter
 export const levelFilter = (minLevel: string): LogFilter => ({

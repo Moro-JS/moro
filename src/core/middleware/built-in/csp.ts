@@ -1,6 +1,7 @@
 // Content Security Policy Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { createFrameworkLogger } from '../../logger';
+import crypto from 'crypto';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 const logger = createFrameworkLogger('CSPMiddleware');
 
@@ -58,7 +59,6 @@ export const csp = (
       // Generate nonce if requested
       let nonce: string | undefined;
       if (options.nonce) {
-        const crypto = require('crypto');
         nonce = crypto.randomBytes(16).toString('base64');
         req.cspNonce = nonce;
       }

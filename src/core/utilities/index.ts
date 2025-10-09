@@ -8,9 +8,10 @@ export {
   withCaching,
   withRetry,
   withTimeout,
-} from './container';
-export { CircuitBreaker } from './circuit-breaker';
-export { HookManager, HOOK_EVENTS } from './hooks';
+} from './container.js';
+export { CircuitBreaker } from './circuit-breaker.js';
+export { HookManager, HOOK_EVENTS } from './hooks.js';
+export { isPackageAvailable, resolveUserPackage, createUserRequire } from './package-utils.js';
 
 // Re-export middleware from hooks
-export { middleware } from './hooks';
+export { middleware } from './hooks.js';

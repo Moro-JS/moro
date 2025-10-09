@@ -8,9 +8,9 @@ import {
   createRoute,
   defineRoute,
   HttpMethod,
-} from './index';
-import { HttpRequest, HttpResponse } from '../http';
-import { createFrameworkLogger } from '../logger';
+} from './index.js';
+import { HttpRequest, HttpResponse } from '../http/index.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('AppIntegration');
 

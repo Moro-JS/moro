@@ -1,10 +1,11 @@
 // Session Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { createFrameworkLogger } from '../../logger';
-import { CacheAdapter } from '../../../types/cache';
-import { MemoryCacheAdapter } from './adapters/cache/memory';
-import { RedisCacheAdapter } from './adapters/cache/redis';
-import { FileCacheAdapter } from './adapters/cache/file';
+import crypto from 'crypto';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { CacheAdapter } from '../../../types/cache.js';
+import { MemoryCacheAdapter } from './adapters/cache/memory.js';
+import { RedisCacheAdapter } from './adapters/cache/redis.js';
+import { FileCacheAdapter } from './adapters/cache/file.js';
 
 const logger = createFrameworkLogger('SessionMiddleware');
 
@@ -157,7 +158,6 @@ class Session {
       return this.options.genid();
     }
 
-    const crypto = require('crypto');
     return crypto.randomBytes(24).toString('hex');
   }
 
@@ -229,7 +229,6 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
       if (config.genid) {
         return config.genid();
       }
-      const crypto = require('crypto');
       return crypto.randomBytes(24).toString('hex');
     };
 

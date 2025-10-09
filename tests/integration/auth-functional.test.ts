@@ -1,7 +1,7 @@
 // Auth Functional Tests - Testing the core functionality
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { auth, providers } from '../../src/core/middleware/built-in/auth';
-import { AuthProvider, AuthOptions } from '../../src/types/auth';
+import { auth, providers } from '../../src/core/middleware/built-in/auth.js';
+import { AuthProvider, AuthOptions } from '../../src/types/auth.js';
 
 describe('Auth Middleware Functional Tests', () => {
   // Mock the logger to avoid console output during tests
@@ -283,33 +283,33 @@ describe('Auth Middleware Functional Tests', () => {
       requestHandler = requestCall?.[1];
     });
 
-         it('should add auth object to request', async () => {
-       const mockRequest: any = {
-         url: '/test',
-         headers: {},
-         cookies: {},
-       };
+    it('should add auth object to request', async () => {
+      const mockRequest: any = {
+        url: '/test',
+        headers: {},
+        cookies: {},
+      };
 
-       const mockResponse = {
-         cookie: jest.fn(),
-       };
+      const mockResponse = {
+        cookie: jest.fn(),
+      };
 
-       const context = {
-         request: mockRequest,
-         response: mockResponse,
-       };
+      const context = {
+        request: mockRequest,
+        response: mockResponse,
+      };
 
-       await requestHandler(context);
+      await requestHandler(context);
 
-       expect(mockRequest.auth).toBeDefined();
-       expect(mockRequest.auth.isAuthenticated).toBe(false);
-       expect(typeof mockRequest.auth.signIn).toBe('function');
-       expect(typeof mockRequest.auth.signOut).toBe('function');
-       expect(typeof mockRequest.auth.getSession).toBe('function');
-       expect(typeof mockRequest.auth.getToken).toBe('function');
-       expect(typeof mockRequest.auth.getCsrfToken).toBe('function');
-       expect(typeof mockRequest.auth.getProviders).toBe('function');
-     });
+      expect(mockRequest.auth).toBeDefined();
+      expect(mockRequest.auth.isAuthenticated).toBe(false);
+      expect(typeof mockRequest.auth.signIn).toBe('function');
+      expect(typeof mockRequest.auth.signOut).toBe('function');
+      expect(typeof mockRequest.auth.getSession).toBe('function');
+      expect(typeof mockRequest.auth.getToken).toBe('function');
+      expect(typeof mockRequest.auth.getCsrfToken).toBe('function');
+      expect(typeof mockRequest.auth.getProviders).toBe('function');
+    });
 
     it('should handle auth API routes', async () => {
       const mockRequest = {
@@ -327,44 +327,45 @@ describe('Auth Middleware Functional Tests', () => {
         response: mockResponse,
       };
 
-                    const result = await requestHandler(context);
+      const result = await requestHandler(context);
 
-       // Mock implementation may return null or undefined for auth routes
-       expect(result).toBeFalsy();
+      // Mock implementation may return null or undefined for auth routes
+      expect(result).toBeFalsy();
     });
 
-         it('should handle JWT token in Authorization header', async () => {
-       const mockJwtToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    it('should handle JWT token in Authorization header', async () => {
+      const mockJwtToken =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
 
-       const mockRequest: any = {
-         url: '/test',
-         headers: {
-           authorization: `Bearer ${mockJwtToken}`,
-         },
-         cookies: {},
-       };
+      const mockRequest: any = {
+        url: '/test',
+        headers: {
+          authorization: `Bearer ${mockJwtToken}`,
+        },
+        cookies: {},
+      };
 
-       const mockResponse = {
-         cookie: jest.fn(),
-       };
+      const mockResponse = {
+        cookie: jest.fn(),
+      };
 
-       const context = {
-         request: mockRequest,
-         response: mockResponse,
-       };
+      const context = {
+        request: mockRequest,
+        response: mockResponse,
+      };
 
-       await requestHandler(context);
+      await requestHandler(context);
 
-       expect(mockRequest.auth).toBeDefined();
-       expect(mockRequest.auth.isAuthenticated).toBe(false); // Mock doesn't validate JWT
-     });
+      expect(mockRequest.auth).toBeDefined();
+      expect(mockRequest.auth.isAuthenticated).toBe(false); // Mock doesn't validate JWT
+    });
 
-         it('should provide working auth methods', async () => {
-       const mockRequest: any = {
-         url: '/test',
-         headers: {},
-         cookies: {},
-       };
+    it('should provide working auth methods', async () => {
+      const mockRequest: any = {
+        url: '/test',
+        headers: {},
+        cookies: {},
+      };
 
       const mockResponse = {
         cookie: jest.fn(),

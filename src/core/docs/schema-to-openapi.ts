@@ -1,9 +1,9 @@
 // Universal Schema to OpenAPI Converter
 // Converts ValidationSchema (Zod, Joi, etc.) to OpenAPI 3.0 schema definitions
 
-import { ValidationSchema } from '../validation/schema-interface';
-import { OpenAPISchema } from './zod-to-openapi';
-import { createFrameworkLogger } from '../logger';
+import { ValidationSchema } from '../validation/schema-interface.js';
+import { OpenAPISchema, zodToOpenAPI, generateExampleFromSchema } from './zod-to-openapi.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('SchemaToOpenAPI');
 
@@ -32,8 +32,6 @@ export function schemaToOpenAPI(
   // If it's a Zod schema, use the existing zod converter
   if (isZodSchema(schema)) {
     try {
-      // Import zod converter dynamically
-      const { zodToOpenAPI } = require('./zod-to-openapi');
       return zodToOpenAPI(schema, options);
     } catch (error) {
       logger.warn('Zod converter not available, using fallback', String(error));
@@ -59,7 +57,6 @@ export function generateExampleFromValidationSchema(schema: ValidationSchema): a
   // If it's a Zod schema, use existing example generator
   if (isZodSchema(schema)) {
     try {
-      const { generateExampleFromSchema } = require('./zod-to-openapi');
       return generateExampleFromSchema(schema);
     } catch (error) {
       logger.warn('Zod example generator not available', String(error));

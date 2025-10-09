@@ -1,13 +1,14 @@
 // Unit Tests - Module System
-import { defineModule, z } from '../../../src';
-import type { ModuleDefinition } from '../../../src';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { defineModule, z } from '../../../src/index.js';
+import type { ModuleDefinition } from '../../../src/index.js';
 
 describe('Module System', () => {
   describe('defineModule', () => {
     it('should create a basic module', () => {
       const module = defineModule({
         name: 'test-module',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       expect(module.name).toBe('test-module');
@@ -22,14 +23,14 @@ describe('Module System', () => {
           {
             method: 'GET',
             path: '/users',
-            handler: async () => ({ success: true })
+            handler: async () => ({ success: true }),
           },
           {
-            method: 'POST', 
+            method: 'POST',
             path: '/users',
-            handler: async (req: any) => ({ success: true, data: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ success: true, data: req.body }),
+          },
+        ],
       });
 
       expect(module.name).toBe('users');
@@ -42,7 +43,7 @@ describe('Module System', () => {
     it('should create a module with validation', () => {
       const userSchema = z.object({
         name: z.string(),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const module = defineModule({
@@ -53,9 +54,9 @@ describe('Module System', () => {
             method: 'POST',
             path: '/users',
             validation: { body: userSchema },
-            handler: async (req: any) => ({ user: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ user: req.body }),
+          },
+        ],
       });
 
       expect(module.routes![0]).toHaveProperty('validation');
@@ -71,9 +72,9 @@ describe('Module System', () => {
             method: 'POST',
             path: '/api',
             rateLimit: { requests: 10, window: 60000 },
-            handler: async () => ({ success: true })
-          }
-        ]
+            handler: async () => ({ success: true }),
+          },
+        ],
       });
 
       expect(module.routes![0]).toHaveProperty('rateLimit');
@@ -89,9 +90,9 @@ describe('Module System', () => {
             method: 'GET',
             path: '/data',
             cache: { ttl: 300 },
-            handler: async () => ({ data: 'cached' })
-          }
-        ]
+            handler: async () => ({ data: 'cached' }),
+          },
+        ],
       });
 
       expect(module.routes![0]).toHaveProperty('cache');
@@ -105,7 +106,7 @@ describe('Module System', () => {
         sockets: [
           {
             event: 'message',
-            handler: async () => ({ success: true })
+            handler: async () => ({ success: true }),
           },
           {
             event: 'join',
@@ -113,9 +114,9 @@ describe('Module System', () => {
             handler: async (socket: any, data: any) => {
               socket.join(data.room);
               return { joined: data.room };
-            }
-          }
-        ]
+            },
+          },
+        ],
       });
 
       expect(module.sockets).toHaveLength(2);
@@ -128,7 +129,7 @@ describe('Module System', () => {
       const module = defineModule({
         name: 'dependent-module',
         version: '1.0.0',
-        dependencies: ['auth@1.0.0', 'users@2.0.0']
+        dependencies: ['auth@1.0.0', 'users@2.0.0'],
       });
 
       expect(module.dependencies).toEqual(['auth@1.0.0', 'users@2.0.0']);
@@ -141,21 +142,21 @@ describe('Module System', () => {
         config: {
           apiKey: 'secret-key',
           timeout: 5000,
-          retries: 3
-        }
+          retries: 3,
+        },
       });
 
       expect(module.config).toEqual({
         apiKey: 'secret-key',
         timeout: 5000,
-        retries: 3
+        retries: 3,
       });
     });
 
     it('should create a complex enterprise module', () => {
       const userSchema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const module = defineModule({
@@ -163,7 +164,7 @@ describe('Module System', () => {
         version: '2.1.0',
         dependencies: ['auth@1.0.0'],
         config: {
-          features: { pagination: true, search: true }
+          features: { pagination: true, search: true },
         },
         routes: [
           {
@@ -172,16 +173,16 @@ describe('Module System', () => {
             validation: {
               query: z.object({
                 limit: z.coerce.number().default(10),
-                search: z.string().optional()
-              })
+                search: z.string().optional(),
+              }),
             },
             cache: { ttl: 60 },
             rateLimit: { requests: 100, window: 60000 },
             handler: async (req: any) => ({
               success: true,
               data: [],
-              query: req.query
-            })
+              query: req.query,
+            }),
           },
           {
             method: 'POST',
@@ -190,23 +191,23 @@ describe('Module System', () => {
             rateLimit: { requests: 5, window: 60000 },
             handler: async (req: any) => ({
               success: true,
-              user: req.body
-            })
-          }
+              user: req.body,
+            }),
+          },
         ],
         sockets: [
           {
             event: 'user-status',
             validation: z.object({
               userId: z.string().uuid(),
-              status: z.enum(['online', 'offline'])
+              status: z.enum(['online', 'offline']),
             }),
             handler: async (socket: any, data: any) => {
               socket.broadcast.emit('status-changed', data);
               return { success: true };
-            }
-          }
-        ]
+            },
+          },
+        ],
       });
 
       expect(module.name).toBe('enterprise-users');
@@ -215,8 +216,8 @@ describe('Module System', () => {
       expect(module.routes).toHaveLength(2);
       expect(module.sockets).toHaveLength(1);
       expect(module.config).toEqual({
-        features: { pagination: true, search: true }
+        features: { pagination: true, search: true },
       });
     });
   });
-}); 
+});

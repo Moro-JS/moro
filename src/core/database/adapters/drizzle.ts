@@ -1,6 +1,18 @@
 // Database Drizzle ORM Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
+
+// Cache the drizzle-orm module
+let drizzleOrm: any = null;
+async function getDrizzleOrm() {
+  if (!drizzleOrm) {
+    const drizzlePath = resolveUserPackage('drizzle-orm');
+    const module = await import(drizzlePath);
+    drizzleOrm = module;
+  }
+  return drizzleOrm;
+}
 
 interface DrizzleConfig {
   database: any; // Drizzle database instance
@@ -108,7 +120,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
       if (this.schema && this.schema[table]) {
         // Use schema-based update
         try {
-          const { eq, and } = require('drizzle-orm');
+          const { eq, and } = await getDrizzleOrm();
 
           // Build where conditions
           const conditions = Object.entries(where).map(([key, value]) =>
@@ -165,7 +177,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
       if (this.schema && this.schema[table]) {
         // Use schema-based delete
         try {
-          const { eq, and } = require('drizzle-orm');
+          const { eq, and } = await getDrizzleOrm();
 
           const conditions = Object.entries(where).map(([key, value]) =>
             eq(this.schema[table][key], value)
@@ -314,7 +326,7 @@ class DrizzleTransaction implements DatabaseTransaction {
   ): Promise<T> {
     if (this.schema && this.schema[table]) {
       try {
-        const { eq, and } = require('drizzle-orm');
+        const { eq, and } = await getDrizzleOrm();
 
         const conditions = Object.entries(where).map(([key, value]) =>
           eq(this.schema[table][key], value)
@@ -360,7 +372,7 @@ class DrizzleTransaction implements DatabaseTransaction {
   async delete(table: string, where: Record<string, any>): Promise<number> {
     if (this.schema && this.schema[table]) {
       try {
-        const { eq, and } = require('drizzle-orm');
+        const { eq, and } = await getDrizzleOrm();
 
         const conditions = Object.entries(where).map(([key, value]) =>
           eq(this.schema[table][key], value)

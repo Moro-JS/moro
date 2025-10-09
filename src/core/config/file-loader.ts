@@ -1,10 +1,15 @@
 // Configuration File Loader - Load moro.config.js/ts files
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { AppConfig } from './schema';
-import { createFrameworkLogger } from '../logger';
+import { createRequire } from 'module';
+import { AppConfig } from './schema.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigFile');
+
+// Create require function for ESM to enable synchronous config loading
+// Use process.cwd() as base since we're loading with absolute paths anyway
+const moduleRequire = createRequire(join(process.cwd(), 'index.js'));
 
 /**
  * Supported configuration file names in order of preference
@@ -23,55 +28,23 @@ export function loadConfigFileSync(cwd: string = process.cwd()): Partial<AppConf
     logger.debug('No configuration file found');
     return null;
   }
-  // Handle TypeScript files by trying dynamic import (works with tsx/ts-node runtimes)
-  if (configFile.endsWith('.ts')) {
-    logger.debug('Found TypeScript config file, attempting to load with dynamic import');
-    try {
-      // When running under tsx/ts-node, dynamic imports work synchronously for TypeScript
-      // We can use require() with the current environment that already has TypeScript support
-      const config = require(configFile);
-      const configData = config.default || config;
-
-      if (!configData || typeof configData !== 'object') {
-        logger.warn(`Configuration file ${configFile} did not export a valid configuration object`);
-        return null;
-      }
-
-      logger.info(`TypeScript configuration loaded from: ${configFile}`);
-      return configData;
-    } catch (error) {
-      logger.debug(
-        'TypeScript config loading failed in sync mode, this is expected if not running with tsx/ts-node'
-      );
-      logger.debug('Error details:', String(error));
-      return null;
-    }
-  }
-
-  // Only .js files use the standard synchronous loading
-  if (!configFile.endsWith('.js')) {
-    logger.debug(
-      'Found config file with unsupported extension. Only .js and .ts files are supported.'
-    );
-    return null;
-  }
 
   logger.debug(`Loading configuration from: ${configFile}`);
 
   try {
-    // Clear module cache to ensure fresh load
-    delete require.cache[require.resolve(configFile)];
+    // Use createRequire to enable synchronous loading in ESM
+    // Clear the require cache to ensure fresh config on each load
+    delete moduleRequire.cache[moduleRequire.resolve(configFile)];
 
-    const config = require(configFile);
-    const configData = config.default || config;
+    const config = moduleRequire(configFile);
 
-    if (!configData || typeof configData !== 'object') {
+    if (!config || typeof config !== 'object') {
       logger.warn(`Configuration file ${configFile} did not export a valid configuration object`);
       return null;
     }
 
     logger.info(`Configuration loaded from: ${configFile}`);
-    return configData;
+    return config;
   } catch (error) {
     logger.error(`Failed to load configuration file ${configFile}:`, String(error));
     logger.warn('Falling back to environment variable configuration');

@@ -1,5 +1,5 @@
 // Extended Auth.js Provider Configurations
-import { AuthProvider } from '../../../types/auth';
+import { AuthProvider } from '../../../types/auth.js';
 
 /**
  * Popular OAuth Providers for Auth.js

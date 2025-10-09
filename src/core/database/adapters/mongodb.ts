@@ -1,6 +1,7 @@
 // Database MongoDB Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 
 interface MongoDBConfig {
   url?: string;
@@ -35,10 +36,17 @@ export class MongoDBAdapter implements DatabaseAdapter {
   private client: any;
   private db: any;
   private logger = createFrameworkLogger('MongoDB');
+  private initPromise: Promise<void>;
 
   constructor(config: MongoDBConfig) {
+    this.initPromise = this.initialize(config);
+  }
+
+  private async initialize(config: MongoDBConfig): Promise<void> {
     try {
-      const { MongoClient } = require('mongodb');
+      const mongodbPath = resolveUserPackage('mongodb');
+      const mongodb = await import(mongodbPath);
+      const { MongoClient } = mongodb;
 
       const url = config.url || this.buildConnectionString(config);
 
@@ -86,6 +94,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async connect(): Promise<void> {
+    await this.initPromise;
     try {
       await this.client.connect();
       await this.client.db('admin').command({ ping: 1 });
@@ -99,11 +108,13 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async disconnect(): Promise<void> {
+    await this.initPromise;
     await this.client.close();
   }
 
   // For MongoDB, we'll treat "sql" as collection name and "params" as query/pipeline
   async query<T = any>(collection: string, pipeline?: any[]): Promise<T[]> {
+    await this.initPromise;
     try {
       const coll = this.db.collection(collection);
 
@@ -130,6 +141,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async queryOne<T = any>(collection: string, query?: any): Promise<T | null> {
+    await this.initPromise;
     try {
       const coll = this.db.collection(collection);
       return await coll.findOne(query || {});
@@ -143,6 +155,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async insert<T = any>(collection: string, data: Record<string, any>): Promise<T> {
+    await this.initPromise;
     try {
       const coll = this.db.collection(collection);
       const result = await coll.insertOne(data);
@@ -163,6 +176,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     data: Record<string, any>,
     where: Record<string, any>
   ): Promise<T> {
+    await this.initPromise;
     try {
       const coll = this.db.collection(collection);
       const result = await coll.findOneAndUpdate(
@@ -182,6 +196,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async delete(collection: string, where: Record<string, any>): Promise<number> {
+    await this.initPromise;
     try {
       const coll = this.db.collection(collection);
       const result = await coll.deleteMany(where);
@@ -196,6 +211,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+    await this.initPromise;
     const session = this.client.startSession();
 
     try {
@@ -210,22 +226,26 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   // MongoDB-specific methods
   async aggregate<T = any>(collection: string, pipeline: any[]): Promise<T[]> {
+    await this.initPromise;
     const coll = this.db.collection(collection);
     const cursor = coll.aggregate(pipeline);
     return await cursor.toArray();
   }
 
   async createIndex(collection: string, index: any, options?: any): Promise<string> {
+    await this.initPromise;
     const coll = this.db.collection(collection);
     return await coll.createIndex(index, options);
   }
 
   async dropIndex(collection: string, indexName: string): Promise<any> {
+    await this.initPromise;
     const coll = this.db.collection(collection);
     return await coll.dropIndex(indexName);
   }
 
   async count(collection: string, query?: any): Promise<number> {
+    await this.initPromise;
     const coll = this.db.collection(collection);
     return await coll.countDocuments(query || {});
   }

@@ -1,6 +1,6 @@
 // Core Configuration Schema for Moro Framework
 
-import { AppConfig } from '../../types/config';
+import { AppConfig } from '../../types/config.js';
 
 // Minimal default configuration - performance-focused, most things opt-in
 export const DEFAULT_CONFIG: AppConfig = {
@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxConnections: 1000,
     timeout: 30000,
     bodySizeLimit: '10mb',
+    useUWebSockets: false, // Opt-in for ultra-high performance
     requestTracking: {
       enabled: true, // Enable by default for debugging
     },
@@ -147,7 +148,7 @@ export type {
   SecurityConfig,
   ExternalServicesConfig,
   PerformanceConfig,
-} from '../../types/config';
+} from '../../types/config.js';
 
 // For backward compatibility with modules that expect schema objects
 export const ServerConfigSchema = { parse: (data: any) => data };

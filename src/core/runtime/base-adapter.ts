@@ -1,6 +1,6 @@
 // Base runtime adapter with common functionality
-import { RuntimeAdapter, RuntimeType, RuntimeHttpResponse } from '../../types/runtime';
-import { HttpRequest, HttpResponse } from '../../types/http';
+import { RuntimeAdapter, RuntimeType, RuntimeHttpResponse } from '../../types/runtime.js';
+import { HttpRequest, HttpResponse } from '../../types/http.js';
 import { randomBytes } from 'crypto';
 
 export abstract class BaseRuntimeAdapter implements RuntimeAdapter {

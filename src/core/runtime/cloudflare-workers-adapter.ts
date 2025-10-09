@@ -1,7 +1,7 @@
 // Cloudflare Workers runtime adapter
-import { BaseRuntimeAdapter } from './base-adapter';
-import { HttpRequest, HttpResponse } from '../../types/http';
-import { RuntimeHttpResponse } from '../../types/runtime';
+import { BaseRuntimeAdapter } from './base-adapter.js';
+import { HttpRequest, HttpResponse } from '../../types/http.js';
+import { RuntimeHttpResponse } from '../../types/runtime.js';
 
 export interface WorkersEnv {
   [key: string]: any;

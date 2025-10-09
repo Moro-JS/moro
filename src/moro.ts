@@ -1,26 +1,29 @@
 // Moro Framework - Modern TypeScript API Framework
 // Built for developers who demand performance, elegance, and zero compromises
 // Event-driven • Modular • Enterprise-ready • Developer-first
-import { Moro as MoroCore } from './core/framework';
-import { HttpRequest, HttpResponse, middleware } from './core/http';
-import { ModuleConfig, InternalRouteDefinition } from './types/module';
-import { MoroOptions } from './types/core';
-import { ModuleDefaultsConfig } from './types/config';
-import { MoroEventBus } from './core/events';
-import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger';
-import { Logger } from './types/logger';
-import { MiddlewareManager } from './core/middleware';
-import { IntelligentRoutingManager } from './core/routing/app-integration';
-import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing';
-import { AppDocumentationManager, DocsConfig } from './core/docs';
+import { Moro as MoroCore } from './core/framework.js';
+import { HttpRequest, HttpResponse, middleware } from './core/http/index.js';
+import { ModuleConfig, InternalRouteDefinition } from './types/module.js';
+import { MoroOptions } from './types/core.js';
+import { ModuleDefaultsConfig } from './types/config.js';
+import { MoroEventBus } from './core/events/index.js';
+import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger/index.js';
+import { Logger } from './types/logger.js';
+import { MiddlewareManager } from './core/middleware/index.js';
+import { IntelligentRoutingManager } from './core/routing/app-integration.js';
+import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing/index.js';
+import { AppDocumentationManager, DocsConfig } from './core/docs/index.js';
 import { EventEmitter } from 'events';
+import cluster from 'cluster';
+import os from 'os';
+import { normalizeValidationError } from './core/validation/schema-interface.js';
 // Configuration System Integration
-import { initializeConfig, type AppConfig } from './core/config';
+import { initializeConfig, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
-import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime';
+import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime/index.js';
 
 export class Moro extends EventEmitter {
-  private coreFramework: MoroCore;
+  private coreFramework!: MoroCore;
   private routes: InternalRouteDefinition[] = [];
   private moduleCounter = 0;
   private loadedModules = new Set<string>();
@@ -31,7 +34,7 @@ export class Moro extends EventEmitter {
   private autoDiscoveryInitialized = false;
   private autoDiscoveryPromise: Promise<void> | null = null;
   // Enterprise event system integration
-  private eventBus: MoroEventBus;
+  private eventBus!: MoroEventBus;
   // Application logger
   private logger!: Logger;
   // Intelligent routing system
@@ -39,12 +42,18 @@ export class Moro extends EventEmitter {
   // Documentation system
   private documentation = new AppDocumentationManager();
   // Configuration system
-  private config: AppConfig;
+  private config!: AppConfig;
   // Runtime system
-  private runtimeAdapter: RuntimeAdapter;
-  private runtimeType: RuntimeType;
+  private runtimeAdapter!: RuntimeAdapter;
+  private runtimeType!: RuntimeType;
   // Middleware system
-  private middlewareManager: MiddlewareManager;
+  private middlewareManager!: MiddlewareManager;
+  // Queued WebSocket registrations (for async adapter detection)
+  private queuedWebSocketRegistrations: Array<{
+    namespace: string;
+    handlers: Record<string, Function>;
+    processed: boolean;
+  }> = [];
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
@@ -88,7 +97,11 @@ export class Moro extends EventEmitter {
     const frameworkOptions: any = {
       ...options,
       logger: this.config.logging,
-      websocket: this.config.websocket.enabled ? options.websocket || {} : false,
+      // Enable websockets if either config has it enabled OR user passed websocket options
+      websocket:
+        this.config.websocket.enabled || options.websocket
+          ? options.websocket || this.config.websocket || {}
+          : false,
       config: this.config,
     };
 
@@ -375,34 +388,45 @@ export class Moro extends EventEmitter {
 
   // WebSocket helper with events
   websocket(namespace: string, handlers: Record<string, Function>) {
-    const adapter = this.coreFramework.getWebSocketAdapter();
-    if (!adapter) {
-      throw new Error(
-        'WebSocket features require a WebSocket adapter. Install socket.io or configure an adapter:\n' +
-          'npm install socket.io\n' +
-          'or\n' +
-          'new Moro({ websocket: { adapter: new SocketIOAdapter() } })'
-      );
-    }
+    // Queue the registration to be processed after adapter initialization
+    const registration = { namespace, handlers, processed: false };
+    this.queuedWebSocketRegistrations.push(registration);
 
+    // Try to process immediately if adapter is already ready
+    const adapter = this.coreFramework.getWebSocketAdapter();
+    if (adapter && !registration.processed) {
+      // Adapter is ready, process immediately
+      this.processWebSocketRegistration(namespace, handlers, adapter);
+      registration.processed = true;
+    }
+    // Otherwise, it will be processed when the server starts
+
+    return this;
+  }
+
+  private processWebSocketRegistration(
+    namespace: string,
+    handlers: Record<string, Function>,
+    adapter: any
+  ) {
     this.emit('websocket:registering', { namespace, handlers });
 
     const ns = adapter.createNamespace(namespace);
 
     Object.entries(handlers).forEach(([event, handler]) => {
-      ns.on('connection', socket => {
+      ns.on('connection', (socket: any) => {
         this.emit('websocket:connection', { namespace, event, socket });
 
-        socket.on(event, (data, callback) => {
+        socket.on(event, (data: any, callback: any) => {
           this.emit('websocket:event', { namespace, event, data });
 
           Promise.resolve(handler(socket, data))
-            .then(result => {
+            .then((result: any) => {
               this.emit('websocket:response', { namespace, event, result });
               if (callback) callback(result);
               else if (result) socket.emit(`${event}:response`, result);
             })
-            .catch(error => {
+            .catch((error: any) => {
               this.emit('websocket:error', { namespace, event, error });
               const errorResponse = { success: false, error: error.message };
               if (callback) callback(errorResponse);
@@ -413,7 +437,40 @@ export class Moro extends EventEmitter {
     });
 
     this.emit('websocket:registered', { namespace, handlers });
-    return this;
+  }
+
+  private async processQueuedWebSocketRegistrations() {
+    // Wait for WebSocket adapter to be ready
+    await this.coreFramework.ensureWebSocketReady();
+
+    const adapter = this.coreFramework.getWebSocketAdapter();
+
+    // Check if any unprocessed registrations exist
+    const unprocessedRegistrations = this.queuedWebSocketRegistrations.filter(r => !r.processed);
+
+    if (!adapter && unprocessedRegistrations.length > 0) {
+      throw new Error(
+        'WebSocket features require a WebSocket adapter.\n\n' +
+          'Option 1: Install socket.io (auto-detected):\n' +
+          '  npm install socket.io\n' +
+          '  const app = new Moro({ websocket: {} });\n\n' +
+          'Option 2: Configure a specific adapter:\n' +
+          "  import { SocketIOAdapter } from '@morojs/moro';\n" +
+          '  const app = new Moro({ websocket: { adapter: new SocketIOAdapter() } });\n\n' +
+          'Option 3: Enable in config file (moro.config.js):\n' +
+          '  export default { websocket: { enabled: true } };'
+      );
+    }
+
+    if (adapter) {
+      // Process all unprocessed registrations
+      for (const registration of this.queuedWebSocketRegistrations) {
+        if (!registration.processed) {
+          this.processWebSocketRegistration(registration.namespace, registration.handlers, adapter);
+          registration.processed = true;
+        }
+      }
+    }
   }
 
   // Start server with events (Node.js only)
@@ -469,9 +526,21 @@ export class Moro extends EventEmitter {
     }
 
     // Check if clustering is enabled for massive performance gains
+    // NOTE: uWebSockets.js does NOT support Node.js clustering - it's single-threaded only
+    const usingUWebSockets = this.config.server?.useUWebSockets || false;
+
     if (this.config.performance?.clustering?.enabled) {
-      this.startWithClustering(port, host as string, callback);
-      return;
+      if (usingUWebSockets) {
+        this.logger.warn(
+          'Clustering is not supported with uWebSockets.js - running in single-threaded mode. ' +
+            'uWebSockets is so fast that single-threaded performance often exceeds multi-threaded Node.js!',
+          'Cluster'
+        );
+        // Continue without clustering
+      } else {
+        this.startWithClustering(port, host as string, callback);
+        return;
+      }
     }
     this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
 
@@ -529,16 +598,23 @@ export class Moro extends EventEmitter {
       }
     };
 
-    // Ensure auto-discovery is complete before starting server
-    this.ensureAutoDiscoveryComplete()
+    // Ensure auto-discovery and WebSocket setup is complete before starting server
+    Promise.all([this.ensureAutoDiscoveryComplete(), this.processQueuedWebSocketRegistrations()])
       .then(() => {
         startServer();
       })
       .catch(error => {
-        this.logger.error('Auto-discovery initialization failed during server start', 'Framework', {
+        this.logger.error('Initialization failed during server start', 'Framework', {
           error: error instanceof Error ? error.message : String(error),
         });
-        // Start server anyway - auto-discovery failure shouldn't prevent startup
+        // For auto-discovery failures, start server anyway
+        // For WebSocket failures with queued registrations, error will propagate
+        if (
+          error instanceof Error &&
+          error.message.includes('WebSocket features require a WebSocket adapter')
+        ) {
+          throw error;
+        }
         startServer();
       });
   }
@@ -901,7 +977,6 @@ export class Moro extends EventEmitter {
               req.body = validated;
             } catch (error: any) {
               // Handle universal validation errors
-              const { normalizeValidationError } = require('./core/validation/schema-interface');
               const normalizedError = normalizeValidationError(error);
               res.status(400).json({
                 success: false,
@@ -1016,7 +1091,7 @@ export class Moro extends EventEmitter {
 
   // Enhanced auto-discovery initialization
   private async initializeAutoDiscovery(options: MoroOptions): Promise<void> {
-    const { ModuleDiscovery } = await import('./core/modules/auto-discovery');
+    const { ModuleDiscovery } = await import('./core/modules/auto-discovery.js');
 
     // Merge auto-discovery configuration
     const autoDiscoveryConfig = this.mergeAutoDiscoveryConfig(options);
@@ -1251,9 +1326,6 @@ export class Moro extends EventEmitter {
   private clusterWorkers = new Map<number, any>();
 
   private startWithClustering(port: number, host?: string, callback?: () => void): void {
-    const cluster = require('cluster');
-    const os = require('os');
-
     // Worker count calculation - respect user choice
     let workerCount = this.config.performance?.clustering?.workers || os.cpus().length;
 
@@ -1374,9 +1446,8 @@ export class Moro extends EventEmitter {
       }
 
       // Research-based memory optimization for workers
-      const os = require('os');
       const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
-      const workerCount = Object.keys(require('cluster').workers || {}).length || 1;
+      const workerCount = Object.keys(cluster.workers || {}).length || 1;
 
       // Conservative memory allocation
       const heapSizePerWorkerMB = Math.min(
@@ -1477,11 +1548,33 @@ export class Moro extends EventEmitter {
         });
       };
 
-      if (host) {
-        this.coreFramework.listen(port, host, workerCallback);
-      } else {
-        this.coreFramework.listen(port, workerCallback);
-      }
+      // Ensure WebSocket setup is complete before starting worker
+      this.processQueuedWebSocketRegistrations()
+        .then(() => {
+          if (host) {
+            this.coreFramework.listen(port, host, workerCallback);
+          } else {
+            this.coreFramework.listen(port, workerCallback);
+          }
+        })
+        .catch(error => {
+          this.logger.error('WebSocket initialization failed in worker', 'Worker', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // For WebSocket failures with queued registrations, error will propagate
+          if (
+            error instanceof Error &&
+            error.message.includes('WebSocket features require a WebSocket adapter')
+          ) {
+            throw error;
+          }
+          // Start anyway for other errors
+          if (host) {
+            this.coreFramework.listen(port, host, workerCallback);
+          } else {
+            this.coreFramework.listen(port, workerCallback);
+          }
+        });
     }
   }
 

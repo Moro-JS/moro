@@ -3,9 +3,10 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { HttpRequest, HttpResponse } from '../http';
-import { OpenAPISpec } from './openapi-generator';
-import { createFrameworkLogger } from '../logger';
+import { createUserRequire } from '../utilities/package-utils.js';
+import { HttpRequest, HttpResponse } from '../http/index.js';
+import { OpenAPISpec } from './openapi-generator.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('SwaggerUI');
 
@@ -44,7 +45,9 @@ export class SwaggerUIMiddleware {
     };
 
     try {
-      // Find swagger-ui-dist assets
+      // Find swagger-ui-dist assets using ESM-compatible resolution
+      // Create a require function from the user's working directory to find their installed packages
+      const require = createUserRequire();
       this.swaggerUIAssetPath = require
         .resolve('swagger-ui-dist/package.json')
         .replace('/package.json', '');
@@ -119,37 +122,37 @@ export class SwaggerUIMiddleware {
     <h3>Failed to Load Swagger UI</h3>
     <div id="error-details"></div>
   </div>
-  
+
   <script src="${basePath}/swagger-ui-bundle.js" charset="UTF-8"></script>
   <script src="${basePath}/swagger-ui-standalone-preset.js" charset="UTF-8"></script>
   <script>
     console.log('Starting Swagger UI initialization...');
-    
+
     function showError(message, details) {
       console.error('Swagger UI Error:', message, details);
       document.getElementById('loading-message').style.display = 'none';
       document.getElementById('error-display').style.display = 'block';
-      document.getElementById('error-details').innerHTML = 
+      document.getElementById('error-details').innerHTML =
         '<p><strong>Error:</strong> ' + message + '</p>' +
         (details ? '<pre>' + JSON.stringify(details, null, 2) + '</pre>' : '');
     }
-    
+
     function initializeSwaggerUI() {
       console.log('Initializing Swagger UI...');
-      
+
       if (typeof SwaggerUIBundle === 'undefined') {
         showError('SwaggerUIBundle not loaded', { SwaggerUIBundle: typeof SwaggerUIBundle });
         return;
       }
-      
+
       if (typeof SwaggerUIStandalonePreset === 'undefined') {
         showError('SwaggerUIStandalonePreset not loaded', { SwaggerUIStandalonePreset: typeof SwaggerUIStandalonePreset });
         return;
       }
-      
+
       try {
         console.log('Creating SwaggerUIBundle...');
-        
+
         const ui = SwaggerUIBundle({
           url: '${basePath}/openapi.json',
           dom_id: '#swagger-ui',
@@ -173,10 +176,10 @@ export class SwaggerUIMiddleware {
             showError('Swagger UI initialization failed', error);
           }
         });
-        
+
         window.ui = ui;
         console.log('SwaggerUIBundle created successfully');
-        
+
         // Hide loading message after timeout if onComplete doesn't fire
         setTimeout(function() {
           var loadingEl = document.getElementById('loading-message');
@@ -185,7 +188,7 @@ export class SwaggerUIMiddleware {
             loadingEl.style.display = 'none';
           }
         }, 5000);
-        
+
       } catch (error) {
         console.error('Error creating SwaggerUIBundle:', error);
         showError('Failed to create SwaggerUIBundle', {
@@ -194,7 +197,7 @@ export class SwaggerUIMiddleware {
         });
       }
     }
-    
+
     // Initialize when DOM is ready and scripts are loaded
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', function() {

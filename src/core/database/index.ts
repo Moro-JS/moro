@@ -1,3 +1,3 @@
 // Database Module
-export * from './adapters';
-export * from '../../types/database';
+export * from './adapters/index.js';
+export * from '../../types/database.js';

@@ -1,6 +1,6 @@
 // Service Discovery Client for Microservices
 // Supports Consul, Kubernetes, and in-memory registry
-import { createFrameworkLogger } from '../logger';
+import { createFrameworkLogger } from '../logger/index.js';
 
 export interface ServiceInfo {
   name: string;

@@ -1,7 +1,7 @@
 // Hook System for Moro
 import { EventEmitter } from 'events';
-import { HookFunction, HookContext, MoroMiddleware } from '../../types/hooks';
-import { createFrameworkLogger } from '../logger';
+import { HookFunction, HookContext, MoroMiddleware } from '../../types/hooks.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 export const HOOK_EVENTS = {
   BEFORE_REQUEST: 'before:request',
@@ -139,4 +139,4 @@ export class HookManager extends EventEmitter {
 }
 
 // Built-in middleware - now organized in individual files
-export { simpleMiddleware as middleware } from '../middleware/index';
+export { simpleMiddleware as middleware } from '../middleware/index.js';

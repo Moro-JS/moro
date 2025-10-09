@@ -1,5 +1,5 @@
 // Auth Helper Middleware and Utilities
-import { AuthRequest } from '../../../types/auth';
+import { AuthRequest } from '../../../types/auth.js';
 
 export interface AuthGuardOptions {
   redirectTo?: string;

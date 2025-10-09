@@ -1,6 +1,7 @@
 // Database SQLite Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 
 interface SQLiteConfig {
   filename?: string;
@@ -14,10 +15,17 @@ interface SQLiteConfig {
 export class SQLiteAdapter implements DatabaseAdapter {
   private db: any;
   private logger = createFrameworkLogger('SQLite');
+  private initPromise: Promise<void>;
 
   constructor(config: SQLiteConfig = {}) {
+    this.initPromise = this.initialize(config);
+  }
+
+  private async initialize(config: SQLiteConfig): Promise<void> {
     try {
-      const Database = require('better-sqlite3');
+      const sqlite3Path = resolveUserPackage('better-sqlite3');
+      const betterSqlite3 = await import(sqlite3Path);
+      const Database = betterSqlite3.default;
       const filename = config.memory ? ':memory:' : config.filename || 'moro_app.db';
       this.db = new Database(filename, {
         readonly: config.readonly || false,
@@ -40,15 +48,18 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async connect(): Promise<void> {
+    await this.initPromise;
     // SQLite doesn't require explicit connection - it's handled in constructor
     this.logger.info('SQLite adapter ready', 'Connection');
   }
 
   async disconnect(): Promise<void> {
+    await this.initPromise;
     this.db.close();
   }
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    await this.initPromise;
     try {
       const stmt = this.db.prepare(sql);
       const results = stmt.all(params || []);
@@ -63,6 +74,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
+    await this.initPromise;
     try {
       const stmt = this.db.prepare(sql);
       const result = stmt.get(params || []);
@@ -77,6 +89,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
+    await this.initPromise;
     const keys = Object.keys(data);
     const values = Object.values(data);
     const placeholders = keys.map(() => '?').join(', ');
@@ -107,6 +120,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
     data: Record<string, any>,
     where: Record<string, any>
   ): Promise<T> {
+    await this.initPromise;
     const setClause = Object.keys(data)
       .map(key => `${key} = ?`)
       .join(', ');
@@ -138,6 +152,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
+    await this.initPromise;
     const whereClause = Object.keys(where)
       .map(key => `${key} = ?`)
       .join(' AND ');
@@ -157,6 +172,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+    await this.initPromise;
     const transaction = this.db.transaction(async () => {
       const tx = new SQLiteTransaction(this.db);
       return await callback(tx);

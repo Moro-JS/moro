@@ -1,7 +1,8 @@
 // E2E Tests - Full Application Flow
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';
-import { createApp, defineModule, z } from '../../src';
-import { createTestPort, delay } from '../setup';
+import { createApp, defineModule, z } from '../../src/index.js';
+import { createTestPort, delay } from '../setup.js';
 
 describe('End-to-End Application Tests', () => {
   let app: any;
@@ -25,7 +26,7 @@ describe('End-to-End Application Tests', () => {
     // Close Socket.IO if it exists
     try {
       if (app.core && app.core.io) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>(resolve => {
           app.core.io.close(() => resolve());
         });
       }
@@ -58,21 +59,21 @@ describe('End-to-End Application Tests', () => {
             validation: {
               query: z.object({
                 limit: z.coerce.number().min(1).max(100).default(10),
-                search: z.string().optional()
-              })
+                search: z.string().optional(),
+              }),
             },
             handler: async (req: any) => {
               const users = [
                 { id: 1, name: 'John Doe', email: 'john@example.com' },
-                { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+                { id: 2, name: 'Jane Smith', email: 'jane@example.com' },
               ];
 
               return {
                 success: true,
                 data: users.slice(0, req.query.limit),
-                total: users.length
+                total: users.length,
               };
-            }
+            },
           },
           {
             method: 'POST',
@@ -80,24 +81,24 @@ describe('End-to-End Application Tests', () => {
             validation: {
               body: z.object({
                 name: z.string().min(2).max(50),
-                email: z.string().email()
-              })
+                email: z.string().email(),
+              }),
             },
             handler: async (req: any) => {
               const newUser = {
                 id: Date.now(),
                 ...req.body,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
               };
 
               return {
                 success: true,
                 data: newUser,
-                message: 'User created successfully'
+                message: 'User created successfully',
               };
-            }
-          }
-        ]
+            },
+          },
+        ],
       });
 
       // Load the module
@@ -109,11 +110,11 @@ describe('End-to-End Application Tests', () => {
       app.get('/api/info', () => ({
         name: 'Test API',
         version: '1.0.0',
-        modules: ['users']
+        modules: ['users'],
       }));
 
       // Start server
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => {
           resolve();
         });
@@ -127,7 +128,7 @@ describe('End-to-End Application Tests', () => {
       await request(baseUrl)
         .get('/health')
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toHaveProperty('status', 'healthy');
           expect(res.body).toHaveProperty('timestamp');
         });
@@ -136,11 +137,11 @@ describe('End-to-End Application Tests', () => {
       await request(baseUrl)
         .get('/api/info')
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toEqual({
             name: 'Test API',
             version: '1.0.0',
-            modules: ['users']
+            modules: ['users'],
           });
         });
 
@@ -149,7 +150,7 @@ describe('End-to-End Application Tests', () => {
       await request(baseUrl)
         .get('/api/v1.0.0/users/users')
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toHaveProperty('success', true);
           expect(res.body).toHaveProperty('data');
           expect(res.body).toHaveProperty('total');
@@ -160,7 +161,7 @@ describe('End-to-End Application Tests', () => {
       await request(baseUrl)
         .get('/api/v1.0.0/users/users?limit=1')
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body.data).toHaveLength(1);
         });
 
@@ -170,7 +171,7 @@ describe('End-to-End Application Tests', () => {
         .post('/api/v1.0.0/users/users')
         .send(newUser)
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toHaveProperty('success', true);
           expect(res.body).toHaveProperty('data');
           expect(res.body.data).toMatchObject(newUser);
@@ -192,17 +193,17 @@ describe('End-to-End Application Tests', () => {
                 name: z.string().min(2).max(20),
                 email: z.string().email(),
                 age: z.number().min(18).max(100),
-                tags: z.array(z.string()).min(1).max(5)
-              })
+                tags: z.array(z.string()).min(1).max(5),
+              }),
             },
-            handler: async (req: any) => ({ success: true, data: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ success: true, data: req.body }),
+          },
+        ],
       });
 
       await app.loadModule(ValidationModule);
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => {
           resolve();
         });
@@ -217,14 +218,14 @@ describe('End-to-End Application Tests', () => {
         name: 'John Doe',
         email: 'john@example.com',
         age: 25,
-        tags: ['developer', 'nodejs']
+        tags: ['developer', 'nodejs'],
       };
 
       await request(baseUrl)
         .post('/api/v1.0.0/validation-test/strict-validation')
         .send(validData)
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toEqual({ success: true, data: validData });
         });
 
@@ -233,7 +234,7 @@ describe('End-to-End Application Tests', () => {
         name: 'J', // Too short
         email: 'invalid-email', // Invalid format
         age: 17, // Too young
-        tags: [] // Empty array
+        tags: [], // Empty array
       };
 
       const response = await request(baseUrl)
@@ -259,29 +260,29 @@ describe('End-to-End Application Tests', () => {
                   profile: z.object({
                     firstName: z.string().min(2),
                     lastName: z.string().min(2),
-                    age: z.number().min(18)
+                    age: z.number().min(18),
                   }),
                   preferences: z.object({
                     theme: z.enum(['light', 'dark']),
                     notifications: z.boolean(),
-                    languages: z.array(z.string()).min(1)
-                  })
+                    languages: z.array(z.string()).min(1),
+                  }),
                 }),
                 metadata: z.object({
                   source: z.string(),
                   timestamp: z.string().datetime(),
-                  tags: z.record(z.string(), z.any()).optional()
-                })
-              })
+                  tags: z.record(z.string(), z.any()).optional(),
+                }),
+              }),
             },
-            handler: async (req: any) => ({ success: true, received: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ success: true, received: req.body }),
+          },
+        ],
       });
 
       await app.loadModule(ComplexModule);
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => {
           resolve();
         });
@@ -296,29 +297,29 @@ describe('End-to-End Application Tests', () => {
           profile: {
             firstName: 'John',
             lastName: 'Doe',
-            age: 30
+            age: 30,
           },
           preferences: {
             theme: 'dark',
             notifications: true,
-            languages: ['en', 'es']
-          }
+            languages: ['en', 'es'],
+          },
         },
         metadata: {
           source: 'api',
           timestamp: new Date().toISOString(),
           tags: {
             priority: 'high',
-            category: 'user-data'
-          }
-        }
+            category: 'user-data',
+          },
+        },
       };
 
       await request(baseUrl)
         .post('/api/v1.0.0/complex-validation/complex-data')
         .send(complexData)
         .expect(200)
-        .expect((res) => {
+        .expect(res => {
           expect(res.body).toEqual({ success: true, received: complexData });
         });
     });
@@ -330,7 +331,7 @@ describe('End-to-End Application Tests', () => {
         throw new Error('Intentional server error');
       });
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => {
           resolve();
         });
@@ -338,15 +339,14 @@ describe('End-to-End Application Tests', () => {
 
       await delay(100);
 
-      const response = await request(`http://localhost:${port}`)
-        .get('/server-error');
+      const response = await request(`http://localhost:${port}`).get('/server-error');
 
       // Accept either 404 or 500, since error handling might not be fully implemented
       expect([404, 500]).toContain(response.status);
     });
 
     it('should handle 404 for non-existent routes', async () => {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => {
           resolve();
         });
@@ -354,9 +354,7 @@ describe('End-to-End Application Tests', () => {
 
       await delay(100);
 
-      await request(`http://localhost:${port}`)
-        .get('/non-existent-route')
-        .expect(404);
+      await request(`http://localhost:${port}`).get('/non-existent-route').expect(404);
     });
   });
 });

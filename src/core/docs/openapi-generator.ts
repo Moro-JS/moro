@@ -1,10 +1,10 @@
 // OpenAPI Specification Generator for Moro Framework
 // Extracts route information from intelligent routing and generates OpenAPI 3.0 specs
 
-import { CompiledRoute, RouteSchema } from '../routing';
-import { OpenAPISchema } from './zod-to-openapi';
-import { schemaToOpenAPI, generateExampleFromValidationSchema } from './schema-to-openapi';
-import { createFrameworkLogger } from '../logger';
+import { CompiledRoute, RouteSchema } from '../routing/index.js';
+import { OpenAPISchema } from './zod-to-openapi.js';
+import { schemaToOpenAPI, generateExampleFromValidationSchema } from './schema-to-openapi.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('OpenAPIGenerator');
 

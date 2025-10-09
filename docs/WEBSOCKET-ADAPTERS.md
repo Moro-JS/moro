@@ -10,7 +10,7 @@ MoroJS now supports pluggable WebSocket adapters, allowing you to choose the bes
 import { Moro } from '@morojs/moro';
 
 // Automatically detects and uses available WebSocket adapter
-// Tries socket.io first, then native ws library
+// Priority: uWebSockets.js > socket.io > native ws library
 const app = new Moro();
 
 app.websocket('/chat', {
@@ -38,7 +38,44 @@ const app = new Moro({
 });
 ```
 
-### 3. Use Native WebSocket (ws) for Lightweight Implementation
+### 3. Use uWebSockets.js for Maximum Performance
+
+```typescript
+import { Moro, UWebSocketsAdapter } from '@morojs/moro';
+
+const app = new Moro({
+  websocket: {
+    adapter: new UWebSocketsAdapter(),
+    compression: true,
+    options: {
+      path: '/*',
+      maxPayloadLength: 100 * 1024 * 1024, // 100MB
+      idleTimeout: 120, // 2 minutes
+      cors: { origin: '*' }
+    }
+  }
+});
+```
+
+Or via config file:
+
+```javascript
+// moro.config.js
+export default {
+  websocket: {
+    enabled: true,
+    adapter: 'uws', // String-based adapter selection
+    compression: true,
+    options: {
+      path: '/*',
+      maxPayloadLength: 100 * 1024 * 1024,
+      idleTimeout: 120
+    }
+  }
+};
+```
+
+### 4. Use Native WebSocket (ws) for Lightweight Implementation
 
 ```typescript
 import { Moro, WSAdapter } from '@morojs/moro';
@@ -54,7 +91,7 @@ const app = new Moro({
 });
 ```
 
-### 4. Disable WebSockets Entirely
+### 5. Disable WebSockets Entirely
 
 ```typescript
 import { Moro } from '@morojs/moro';
@@ -68,7 +105,7 @@ const app = new Moro({
 // app.websocket('/chat', {}); // Error: WebSocket adapter not available
 ```
 
-### 5. Custom Adapter Implementation
+### 6. Custom Adapter Implementation
 
 ```typescript
 import {
@@ -102,6 +139,14 @@ const app = new Moro({
 ```
 
 ## Installation
+
+### For uWebSockets.js Users (Highest Performance)
+
+```bash
+npm install github:uNetworking/uWebSockets.js#v20.52.0
+```
+
+**Note**: uWebSockets.js is not in the npm registry - it must be installed from GitHub.
 
 ### For Socket.IO Users
 
@@ -158,14 +203,18 @@ const app = new Moro({ websocket: false });
 ## Benefits
 
 1. **Bundle Size**: Only include WebSocket dependencies if needed
-2. **Performance**: Choose uWebSockets.js for maximum performance
+2. **Performance**: Choose uWebSockets.js for maximum performance (up to 8x faster than socket.io)
 3. **Flexibility**: Easy to switch between different implementations
 4. **Future-Proof**: Easy to add new WebSocket libraries as they emerge
+5. **Zero Changes**: Drop-in replacement - your code remains the same
 
 ## Adapter Comparison
 
 | Adapter | Bundle Size | Performance | Features | Use Case |
 |---------|-------------|-------------|----------|----------|
-| Socket.IO | ~244KB | Good | Rich features, rooms, namespaces | General purpose, feature-rich apps |
-| Native WS | ~8KB | Very Good | Standards-compliant, lightweight | Performance-conscious, minimal footprint |
+| **uWebSockets.js** | ~1MB (native) | **Excellent** (500k+ msg/s) | High performance, backpressure, compression | **Production apps, gaming, real-time, high traffic** |
+| Socket.IO | ~244KB | Good (60-80k msg/s) | Rich features, rooms, namespaces, fallbacks | General purpose, feature-rich apps, broad compatibility |
+| Native WS | ~8KB | Very Good (100-150k msg/s) | Standards-compliant, lightweight | Performance-conscious, minimal footprint |
 | None | 0KB | N/A | HTTP only | REST APIs, static sites |
+
+**Performance numbers are approximate and based on 1000 concurrent connections*

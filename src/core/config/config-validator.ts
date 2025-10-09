@@ -5,8 +5,8 @@
  * simple TypeScript functions that match the type definitions exactly.
  */
 
-import { AppConfig } from '../../types/config';
-import { createFrameworkLogger } from '../logger';
+import { AppConfig } from '../../types/config.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigValidator');
 
@@ -75,7 +75,7 @@ function validateServerConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const result: any = {
     port: validatePort(config.port, `${path}.port`),
     host: validateString(config.host, `${path}.host`),
     maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 1 }),
@@ -88,6 +88,41 @@ function validateServerConfig(config: any, path: string) {
       enabled: validateBoolean(config.errorBoundary?.enabled, `${path}.errorBoundary.enabled`),
     },
   };
+
+  // Optional uWebSockets configuration
+  if (config.useUWebSockets !== undefined) {
+    result.useUWebSockets = validateBoolean(config.useUWebSockets, `${path}.useUWebSockets`);
+  }
+
+  // Optional SSL configuration
+  if (config.ssl !== undefined) {
+    result.ssl = validateSSLConfig(config.ssl, `${path}.ssl`);
+  }
+
+  return result;
+}
+
+/**
+ * Validate SSL configuration
+ */
+function validateSSLConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(path, config, 'object', 'SSL configuration must be an object');
+  }
+
+  const result: any = {};
+
+  if (config.key_file_name !== undefined) {
+    result.key_file_name = validateString(config.key_file_name, `${path}.key_file_name`);
+  }
+  if (config.cert_file_name !== undefined) {
+    result.cert_file_name = validateString(config.cert_file_name, `${path}.cert_file_name`);
+  }
+  if (config.passphrase !== undefined) {
+    result.passphrase = validateString(config.passphrase, `${path}.passphrase`);
+  }
+
+  return result;
 }
 
 /**

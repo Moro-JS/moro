@@ -1,5 +1,6 @@
 // Unit Tests - Moro Auto-Discovery Integration
-import { createApp } from '../../../src';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { createApp } from '../../../src/index.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -48,7 +49,7 @@ describe('Moro Auto-Discovery Integration', () => {
       const app = createApp({ modulesPath: './custom-modules' });
 
       const config = (app as any).mergeAutoDiscoveryConfig({
-        modulesPath: './custom-modules'
+        modulesPath: './custom-modules',
       });
 
       expect(config.paths).toEqual(['./custom-modules']);
@@ -59,13 +60,13 @@ describe('Moro Auto-Discovery Integration', () => {
         enabled: true,
         paths: ['./plugins', './extensions'],
         loadingStrategy: 'lazy' as const,
-        watchForChanges: true
+        watchForChanges: true,
       };
 
       const app = createApp({ autoDiscover: customConfig });
 
       const config = (app as any).mergeAutoDiscoveryConfig({
-        autoDiscover: customConfig
+        autoDiscover: customConfig,
       });
 
       expect(config.enabled).toBe(true);
@@ -85,9 +86,9 @@ describe('Moro Auto-Discovery Integration', () => {
           {
             method: 'GET',
             path: '/users',
-            handler: async () => ({ users: [] })
-          }
-        ]
+            handler: async () => ({ users: [] }),
+          },
+        ],
       });
 
       await createTestModule('orders', {
@@ -98,9 +99,9 @@ describe('Moro Auto-Discovery Integration', () => {
           {
             method: 'GET',
             path: '/orders',
-            handler: async () => ({ orders: [] })
-          }
-        ]
+            handler: async () => ({ orders: [] }),
+          },
+        ],
       });
     });
 
@@ -109,8 +110,8 @@ describe('Moro Auto-Discovery Integration', () => {
         autoDiscover: {
           enabled: true,
           paths: ['./modules'],
-          loadingStrategy: 'eager'
-        }
+          loadingStrategy: 'eager',
+        },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -126,8 +127,8 @@ describe('Moro Auto-Discovery Integration', () => {
         autoDiscover: {
           enabled: true,
           paths: ['./modules'],
-          loadingStrategy: 'lazy'
-        }
+          loadingStrategy: 'lazy',
+        },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -149,16 +150,16 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            environment: ['production']
-          }
+            environment: ['production'],
+          },
         },
         routes: [
           {
             method: 'GET',
             path: '/admin',
-            handler: async () => ({ admin: true })
-          }
-        ]
+            handler: async () => ({ admin: true }),
+          },
+        ],
       });
 
       // Set environment to development
@@ -169,8 +170,8 @@ describe('Moro Auto-Discovery Integration', () => {
         autoDiscover: {
           enabled: true,
           paths: ['./modules'],
-          loadingStrategy: 'conditional'
-        }
+          loadingStrategy: 'conditional',
+        },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -195,9 +196,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            environment: 'production'
-          }
-        }
+            environment: 'production',
+          },
+        },
       });
 
       const app = createApp();
@@ -211,9 +212,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            environment: 'production'
-          }
-        }
+            environment: 'production',
+          },
+        },
       });
 
       expect(shouldLoad).toBe(false);
@@ -226,9 +227,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            environment: 'production'
-          }
-        }
+            environment: 'production',
+          },
+        },
       });
 
       expect(shouldLoadProd).toBe(true);
@@ -245,9 +246,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            features: ['BETA_FEATURES']
-          }
-        }
+            features: ['BETA_FEATURES'],
+          },
+        },
       });
 
       expect(shouldLoad).toBe(false);
@@ -260,9 +261,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            features: ['BETA_FEATURES']
-          }
-        }
+            features: ['BETA_FEATURES'],
+          },
+        },
       });
 
       expect(shouldLoadWithFeature).toBe(true);
@@ -278,9 +279,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            custom: () => false
-          }
-        }
+            custom: () => false,
+          },
+        },
       });
 
       expect(shouldLoad).toBe(false);
@@ -290,9 +291,9 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
         config: {
           conditions: {
-            custom: () => true
-          }
-        }
+            custom: () => true,
+          },
+        },
       });
 
       expect(shouldLoadTrue).toBe(true);
@@ -308,8 +309,8 @@ describe('Moro Auto-Discovery Integration', () => {
         autoDiscover: {
           enabled: true,
           paths: ['./modules'],
-          failOnError: false
-        }
+          failOnError: false,
+        },
       });
 
       // Should not throw error
@@ -328,8 +329,8 @@ describe('Moro Auto-Discovery Integration', () => {
           autoDiscover: {
             enabled: true,
             paths: ['./modules'],
-            failOnError: true
-          }
+            failOnError: true,
+          },
         });
       }).not.toThrow(); // Constructor doesn't throw, but async discovery will
 
@@ -341,7 +342,7 @@ describe('Moro Auto-Discovery Integration', () => {
     it('should work with legacy autoDiscover boolean', async () => {
       await createTestModule('legacy', {
         name: 'legacy',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const app = createApp({ autoDiscover: true });
@@ -356,7 +357,7 @@ describe('Moro Auto-Discovery Integration', () => {
       // Create module in custom path (using the same structure as other tests)
       await createTestModule('custom-path', {
         name: 'custom-path',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const app = createApp({ modulesPath: './modules' });
@@ -370,7 +371,7 @@ describe('Moro Auto-Discovery Integration', () => {
     it('should disable auto-discovery when autoDiscover is false', async () => {
       await createTestModule('disabled', {
         name: 'disabled',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const app = createApp({ autoDiscover: false });

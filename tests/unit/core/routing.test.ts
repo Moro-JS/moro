@@ -1,5 +1,6 @@
 // Unit Tests - Intelligent Routing System
-import { createRoute, EXECUTION_PHASES, z, defineModule } from '../../../src';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { createRoute, EXECUTION_PHASES, z, defineModule } from '../../../src/index.js';
 
 describe('Intelligent Routing System', () => {
   describe('createRoute helper', () => {
@@ -26,12 +27,7 @@ describe('Intelligent Routing System', () => {
     });
 
     it('should create routes with different paths', () => {
-      const paths = [
-        '/users',
-        '/users/:id',
-        '/api/v1/users',
-        '/complex/path/with/many/segments'
-      ];
+      const paths = ['/users', '/users/:id', '/api/v1/users', '/complex/path/with/many/segments'];
 
       paths.forEach(path => {
         const builder = createRoute('GET', path);
@@ -73,7 +69,7 @@ describe('Intelligent Routing System', () => {
         'transform',
         'cache',
         'after',
-        'handler'
+        'handler',
       ];
 
       expect(EXECUTION_PHASES).toEqual(expectedOrder);
@@ -89,7 +85,7 @@ describe('Intelligent Routing System', () => {
       const userSchema = z.object({
         name: z.string().min(2),
         email: z.string().email(),
-        age: z.number().min(18).optional()
+        age: z.number().min(18).optional(),
       });
 
       // Test that the schema works
@@ -108,7 +104,7 @@ describe('Intelligent Routing System', () => {
       const querySchema = z.object({
         page: z.coerce.number().min(1).default(1),
         limit: z.coerce.number().min(1).max(100).default(10),
-        search: z.string().optional()
+        search: z.string().optional(),
       });
 
       // Test schema functionality
@@ -125,17 +121,17 @@ describe('Intelligent Routing System', () => {
     it('should work with path parameter schemas', () => {
       const paramsSchema = z.object({
         id: z.string().uuid(),
-        category: z.enum(['users', 'posts', 'comments'])
+        category: z.enum(['users', 'posts', 'comments']),
       });
 
       // Test schema functionality
       const validParams = {
         id: '123e4567-e89b-12d3-a456-426614174000',
-        category: 'users'
+        category: 'users',
       };
       const invalidParams = {
         id: 'invalid-uuid',
-        category: 'invalid-category'
+        category: 'invalid-category',
       };
 
       expect(paramsSchema.safeParse(validParams).success).toBe(true);
@@ -153,28 +149,28 @@ describe('Intelligent Routing System', () => {
         user: z.object({
           profile: z.object({
             name: z.string(),
-            age: z.number()
+            age: z.number(),
           }),
           settings: z.object({
             theme: z.enum(['light', 'dark']),
-            notifications: z.boolean()
-          })
+            notifications: z.boolean(),
+          }),
         }),
         metadata: z.object({
           source: z.string(),
-          timestamp: z.string().datetime()
-        })
+          timestamp: z.string().datetime(),
+        }),
       });
 
       const validData = {
         user: {
           profile: { name: 'John', age: 30 },
-          settings: { theme: 'dark', notifications: true }
+          settings: { theme: 'dark', notifications: true },
         },
         metadata: {
           source: 'api',
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
 
       expect(complexSchema.safeParse(validData).success).toBe(true);
@@ -186,18 +182,23 @@ describe('Intelligent Routing System', () => {
 
     it('should handle array validation', () => {
       const arraySchema = z.object({
-        items: z.array(z.object({
-          id: z.number(),
-          name: z.string(),
-          tags: z.array(z.string()).max(5)
-        })).min(1).max(10)
+        items: z
+          .array(
+            z.object({
+              id: z.number(),
+              name: z.string(),
+              tags: z.array(z.string()).max(5),
+            })
+          )
+          .min(1)
+          .max(10),
       });
 
       const validData = {
         items: [
           { id: 1, name: 'Item 1', tags: ['tag1', 'tag2'] },
-          { id: 2, name: 'Item 2', tags: ['tag3'] }
-        ]
+          { id: 2, name: 'Item 2', tags: ['tag3'] },
+        ],
       };
 
       expect(arraySchema.safeParse(validData).success).toBe(true);
@@ -208,25 +209,24 @@ describe('Intelligent Routing System', () => {
     });
 
     it('should handle custom validation refinements', () => {
-      const passwordSchema = z.object({
-        password: z.string().min(8),
-        confirmPassword: z.string()
-      }).refine(
-        (data: any) => data.password === data.confirmPassword,
-        {
+      const passwordSchema = z
+        .object({
+          password: z.string().min(8),
+          confirmPassword: z.string(),
+        })
+        .refine((data: any) => data.password === data.confirmPassword, {
           message: "Passwords don't match",
-          path: ['confirmPassword']
-        }
-      );
+          path: ['confirmPassword'],
+        });
 
       const validData = {
         password: 'secret123',
-        confirmPassword: 'secret123'
+        confirmPassword: 'secret123',
       };
 
       const invalidData = {
         password: 'secret123',
-        confirmPassword: 'different'
+        confirmPassword: 'different',
       };
 
       expect(passwordSchema.safeParse(validData).success).toBe(true);
@@ -243,7 +243,7 @@ describe('Intelligent Routing System', () => {
       const module = defineModule({
         name: 'dependent-module',
         version: '1.0.0',
-        dependencies: ['auth@1.0.0', 'users@2.0.0', 'database@1.5.0']
+        dependencies: ['auth@1.0.0', 'users@2.0.0', 'database@1.5.0'],
       });
 
       expect(module.dependencies).toEqual(['auth@1.0.0', 'users@2.0.0', 'database@1.5.0']);
@@ -260,9 +260,9 @@ describe('Intelligent Routing System', () => {
           features: {
             caching: true,
             logging: false,
-            analytics: true
-          }
-        }
+            analytics: true,
+          },
+        },
       });
 
       expect(module.config).toEqual({
@@ -272,8 +272,8 @@ describe('Intelligent Routing System', () => {
         features: {
           caching: true,
           logging: false,
-          analytics: true
-        }
+          analytics: true,
+        },
       });
     });
 
@@ -284,8 +284,8 @@ describe('Intelligent Routing System', () => {
         config: {
           setting1: 'value1',
           setting2: 42,
-          setting3: true
-        }
+          setting3: true,
+        },
       });
 
       expect(module.name).toBe('config-only-module');

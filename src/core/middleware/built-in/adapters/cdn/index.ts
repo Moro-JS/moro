@@ -1,12 +1,12 @@
 // CDN Adapters
-export { CloudflareCDNAdapter } from './cloudflare';
-export { CloudFrontCDNAdapter } from './cloudfront';
-export { AzureCDNAdapter } from './azure';
+export { CloudflareCDNAdapter } from './cloudflare.js';
+export { CloudFrontCDNAdapter } from './cloudfront.js';
+export { AzureCDNAdapter } from './azure.js';
 
-import { CloudflareCDNAdapter } from './cloudflare';
-import { CloudFrontCDNAdapter } from './cloudfront';
-import { AzureCDNAdapter } from './azure';
-import { CDNAdapter } from '../../../../../types/cdn';
+import { CloudflareCDNAdapter } from './cloudflare.js';
+import { CloudFrontCDNAdapter } from './cloudfront.js';
+import { AzureCDNAdapter } from './azure.js';
+import { CDNAdapter } from '../../../../../types/cdn.js';
 
 // Adapter factory function for auto-loading
 export function createCDNAdapter(type: string, options: any = {}): CDNAdapter {

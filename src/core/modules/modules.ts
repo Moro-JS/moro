@@ -1,10 +1,10 @@
 // Module System - Definition and Loading
 import { promises as fs } from 'fs';
 import path from 'path';
-import { Container } from '../utilities';
-import { ModuleConfig } from '../../types/module';
-import { ModuleDefinition, ModuleRoute, ModuleSocket } from '../../types/module';
-import { createFrameworkLogger } from '../logger';
+import { Container } from '../utilities/index.js';
+import { ModuleConfig } from '../../types/module.js';
+import { ModuleDefinition, ModuleRoute, ModuleSocket } from '../../types/module.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {

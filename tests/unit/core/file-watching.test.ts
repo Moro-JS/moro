@@ -1,7 +1,8 @@
 // Unit Tests - File Watching and Hot Reloading
-import { ModuleDiscovery } from '../../../src/core/modules/auto-discovery';
-import { ModuleConfig } from '../../../src/types/module';
-import { ModuleDefaultsConfig } from '../../../src/types/config';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { ModuleDiscovery } from '../../../src/core/modules/auto-discovery.js';
+import { ModuleConfig } from '../../../src/types/module.js';
+import { ModuleDefaultsConfig } from '../../../src/types/config.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -38,7 +39,7 @@ describe('Module File Watching and Hot Reloading', () => {
       // Create initial module
       await createTestModule('watched', {
         name: 'watched',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const config: ModuleDefaultsConfig['autoDiscovery'] = {
@@ -51,7 +52,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       let callbackCount = 0;
@@ -68,7 +69,7 @@ describe('Module File Watching and Hot Reloading', () => {
       // Modify the module file
       await updateTestModule('watched', {
         name: 'watched',
-        version: '1.1.0' // Version change
+        version: '1.1.0', // Version change
       });
 
       // Wait for file change to be detected
@@ -90,7 +91,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       const callback = jest.fn();
@@ -111,7 +112,7 @@ describe('Module File Watching and Hot Reloading', () => {
       // Create test module
       await createTestModule('legacy', {
         name: 'legacy',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const callback = jest.fn();
@@ -131,7 +132,7 @@ describe('Module File Watching and Hot Reloading', () => {
     it('should only trigger on files matching patterns', async () => {
       await createTestModule('pattern-test', {
         name: 'pattern-test',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       // Create non-matching file
@@ -147,7 +148,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       const callback = jest.fn();
@@ -163,7 +164,7 @@ describe('Module File Watching and Hot Reloading', () => {
       // Update the module file (should trigger callback if watching works)
       await updateTestModule('pattern-test', {
         name: 'pattern-test',
-        version: '1.1.0'
+        version: '1.1.0',
       });
 
       await new Promise(resolve => setTimeout(resolve, 200));
@@ -185,7 +186,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       const callback = jest.fn();
@@ -208,7 +209,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       const callback = jest.fn();
@@ -225,13 +226,13 @@ describe('Module File Watching and Hot Reloading', () => {
       // Create modules in different paths
       await createTestModule('path1/module1', {
         name: 'module1',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       await fs.mkdir(join(tempDir, 'path2'), { recursive: true });
       await createTestModule('path2/module2', {
         name: 'module2',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const config: ModuleDefaultsConfig['autoDiscovery'] = {
@@ -244,7 +245,7 @@ describe('Module File Watching and Hot Reloading', () => {
         ignorePatterns: [],
         loadOrder: 'alphabetical',
         failOnError: false,
-        maxDepth: 5
+        maxDepth: 5,
       };
 
       const callback = jest.fn();
@@ -255,12 +256,12 @@ describe('Module File Watching and Hot Reloading', () => {
       // Update modules in both paths
       await updateTestModule('path1/module1', {
         name: 'module1',
-        version: '1.1.0'
+        version: '1.1.0',
       });
 
       await updateTestModule('path2/module2', {
         name: 'module2',
-        version: '1.1.0'
+        version: '1.1.0',
       });
 
       await new Promise(resolve => setTimeout(resolve, 300));

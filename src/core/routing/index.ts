@@ -1,9 +1,9 @@
 // Intelligent Routing System for Moro Framework
 // Schema-first with automatic middleware ordering and chainable API
 
-import { ValidationSchema } from '../validation/schema-interface';
-import { HttpRequest, HttpResponse } from '../http';
-import { createFrameworkLogger } from '../logger';
+import { ValidationSchema } from '../validation/schema-interface.js';
+import { HttpRequest, HttpResponse } from '../http/index.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('IntelligentRouting');
 

@@ -1,6 +1,7 @@
 // Database MySQL Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 
 interface MySQLConfig {
   host?: string;
@@ -27,11 +28,17 @@ interface MySQLConfig {
 export class MySQLAdapter implements DatabaseAdapter {
   private pool: any;
   private logger = createFrameworkLogger('MySQL');
+  private initPromise: Promise<void>;
 
   constructor(config: MySQLConfig) {
+    this.initPromise = this.initialize(config);
+  }
+
+  private async initialize(config: MySQLConfig): Promise<void> {
     try {
-      const mysql = require('mysql2/promise');
-      this.pool = mysql.createPool({
+      const mysqlPath = resolveUserPackage('mysql2/promise');
+      const mysql = await import(mysqlPath);
+      this.pool = mysql.default.createPool({
         host: config.host || 'localhost',
         port: config.port || 3306,
         user: config.user || 'root',
@@ -50,6 +57,7 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async connect(): Promise<void> {
+    await this.initPromise;
     try {
       const connection = await this.pool.getConnection();
       connection.release();
@@ -63,10 +71,12 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async disconnect(): Promise<void> {
+    await this.initPromise;
     await this.pool.end();
   }
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    await this.initPromise;
     const [rows] = await this.pool.execute(sql, params);
     return rows as T[];
   }
@@ -77,6 +87,7 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
+    await this.initPromise;
     const keys = Object.keys(data);
     const values = Object.values(data);
     const placeholders = keys.map(() => '?').join(', ');
@@ -97,6 +108,7 @@ export class MySQLAdapter implements DatabaseAdapter {
     data: Record<string, any>,
     where: Record<string, any>
   ): Promise<T> {
+    await this.initPromise;
     const setClause = Object.keys(data)
       .map(key => `${key} = ?`)
       .join(', ');
@@ -119,6 +131,7 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
+    await this.initPromise;
     const whereClause = Object.keys(where)
       .map(key => `${key} = ?`)
       .join(' AND ');
@@ -129,6 +142,7 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+    await this.initPromise;
     const connection = await this.pool.getConnection();
 
     try {

@@ -4,9 +4,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
-import { createApp } from '../../../src';
-import { loadConfig, loadConfigWithOptions, resetConfig } from '../../../src/core/config';
-import { MoroOptions } from '../../../src/types/core';
+import { createApp } from '../../../src/index.js';
+import { loadConfig, loadConfigWithOptions, resetConfig } from '../../../src/core/config/index.js';
+import { MoroOptions } from '../../../src/types/core.js';
+import { performance } from 'perf_hooks';
 
 describe('Configuration System Validation', () => {
   const configPath = join(process.cwd(), 'moro.config.js');
@@ -82,7 +83,7 @@ describe('Configuration System Validation', () => {
     it('should merge createApp options correctly', () => {
       const options: MoroOptions = {
         cors: false,
-        server: { port: 7000 }
+        server: { port: 7000 },
       };
 
       const config = loadConfigWithOptions(options);
@@ -124,11 +125,15 @@ describe('Configuration System Validation', () => {
       process.env.PORT = '5000'; // Should win
 
       const app = createApp({
-        server: { port: 6000 } // Should lose to env var
+        server: { port: 6000 }, // Should lose to env var
       });
       const config = (app as any).config;
 
-      console.log('🔍 Config precedence test - port is:', config.server.port, '(env=5000, options=6000, file=4000)');
+      console.log(
+        '🔍 Config precedence test - port is:',
+        config.server.port,
+        '(env=5000, options=6000, file=4000)'
+      );
 
       // Test what actually happens
       expect(typeof config.server.port).toBe('number');
@@ -186,16 +191,16 @@ describe('Configuration System Validation', () => {
             url: 'redis://test:6379',
             maxRetries: 3,
             retryDelay: 1000,
-            keyPrefix: 'test:'
-          }
+            keyPrefix: 'test:',
+          },
         },
         performance: {
           compression: {
             enabled: false,
             level: 6,
-            threshold: 1024
-          }
-        }
+            threshold: 1024,
+          },
+        },
       };
 
       const iterations = 30;

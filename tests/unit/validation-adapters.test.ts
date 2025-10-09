@@ -1,18 +1,13 @@
 // Unit Tests - Universal Validation Adapters
-import {
-  ValidationSchema,
-  joi,
-  yup,
-  customValidator,
-  z
-} from '../../src';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { ValidationSchema, joi, yup, customValidator, z } from '../../src/index.js';
 
 describe('Universal Validation Adapters', () => {
   describe('Zod (Native Support)', () => {
     it('should work directly with Zod schemas', async () => {
       const schema = z.object({
         name: z.string(),
-        age: z.number().min(18)
+        age: z.number().min(18),
       });
 
       const validData = { name: 'John', age: 25 };
@@ -24,7 +19,7 @@ describe('Universal Validation Adapters', () => {
     it('should throw ValidationError for invalid data', async () => {
       const schema = z.object({
         name: z.string(),
-        age: z.number().min(18)
+        age: z.number().min(18),
       });
 
       const invalidData = { name: 'John', age: 16 };
@@ -44,7 +39,7 @@ describe('Universal Validation Adapters', () => {
         }
         return {
           name: data.name,
-          age: data.age || null
+          age: data.age || null,
         };
       });
 
@@ -80,10 +75,12 @@ describe('Universal Validation Adapters', () => {
     });
 
     it('should work in validation config', async () => {
-      const customSchema: ValidationSchema<{ name: string }> = customValidator(async (data: any) => {
-        if (!data.name) throw new Error('Name required');
-        return { name: data.name };
-      });
+      const customSchema: ValidationSchema<{ name: string }> = customValidator(
+        async (data: any) => {
+          if (!data.name) throw new Error('Name required');
+          return { name: data.name };
+        }
+      );
 
       const result = await customSchema.parseAsync({ name: 'John' });
       expect(result).toEqual({ name: 'John' });
@@ -94,7 +91,7 @@ describe('Universal Validation Adapters', () => {
     it('should maintain type safety with Zod', async () => {
       const schema = z.object({
         name: z.string(),
-        age: z.number()
+        age: z.number(),
       });
 
       const data = await schema.parseAsync({ name: 'John', age: 25 });
@@ -116,7 +113,7 @@ describe('Universal Validation Adapters', () => {
       const schema: ValidationSchema<User> = customValidator(async (data: any): Promise<User> => {
         return {
           name: String(data.name),
-          age: Number(data.age)
+          age: Number(data.age),
         };
       });
 

@@ -1,10 +1,10 @@
 // Auth Middleware Unit Tests
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { auth, providers } from '../../../src/core/middleware/built-in/auth';
-import { AuthProvider, AuthOptions } from '../../../src/types/auth';
+import { auth, providers } from '../../../src/core/middleware/built-in/auth.js';
+import { AuthProvider, AuthOptions } from '../../../src/types/auth.js';
 
 // Mock logger
-jest.mock('../../../src/core/logger', () => ({
+jest.mock('../../../src/core/logger/index.js', () => ({
   createFrameworkLogger: () => ({
     debug: jest.fn(),
     info: jest.fn(),
@@ -256,7 +256,8 @@ describe('Auth Middleware', () => {
     });
 
     it('should handle JWT token from Authorization header', async () => {
-      mockRequest.headers.authorization = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+      mockRequest.headers.authorization =
+        'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
 
       const context = {
         request: mockRequest,

@@ -12,27 +12,31 @@
  */
 
 // Export types and core components
-export * from './schema';
-export * from './config-sources';
-export * from './config-validator';
-export * from './file-loader';
+export * from './schema.js';
+export * from './config-sources.js';
+export * from './config-validator.js';
+export * from './file-loader.js';
 
 // Export specific functions from config-manager to avoid conflicts
-export { initializeAndLockConfig, isConfigLocked, resetConfigForTesting } from './config-manager';
+export {
+  initializeAndLockConfig,
+  isConfigLocked,
+  resetConfigForTesting,
+} from './config-manager.js';
 
 // Export utilities for backward compatibility
-export * from './utils';
+export * from './utils.js';
 
-import { MoroOptions } from '../../types/core';
-import { AppConfig } from '../../types/config';
-import { loadConfigFromAllSources } from './config-sources';
+import { MoroOptions } from '../../types/core.js';
+import { AppConfig } from '../../types/config.js';
+import { loadConfigFromAllSources } from './config-sources.js';
 import {
   initializeAndLockConfig,
   getGlobalConfig as getConfig,
   isConfigLocked,
   resetConfigForTesting,
-} from './config-manager';
-import { createFrameworkLogger } from '../logger';
+} from './config-manager.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigSystem');
 

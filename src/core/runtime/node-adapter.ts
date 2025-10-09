@@ -1,9 +1,9 @@
 // Node.js runtime adapter
 import { IncomingMessage, ServerResponse } from 'http';
-import { BaseRuntimeAdapter } from './base-adapter';
-import { HttpRequest, HttpResponse } from '../../types/http';
-import { RuntimeHttpResponse } from '../../types/runtime';
-import { MoroHttpServer } from '../http/http-server';
+import { BaseRuntimeAdapter } from './base-adapter.js';
+import { HttpRequest, HttpResponse } from '../../types/http.js';
+import { RuntimeHttpResponse } from '../../types/runtime.js';
+import { MoroHttpServer } from '../http/http-server.js';
 
 export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
   readonly type = 'node' as const;

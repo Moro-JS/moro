@@ -32,33 +32,27 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // Flush logger buffer immediately to ensure all events are processed
+  // Clean up logger resources FIRST to prevent Jest open handles
+  // Flush synchronously, then destroy to clear all timeouts
   try {
-    logger.flushBuffer(); // Immediate synchronous flush only
-    // Skip full flush() to avoid creating new timeouts during test cleanup
+    logger.flush();
+    destroyGlobalLogger();
   } catch {
-    // Ignore flush errors
+    // Ignore cleanup errors
   }
 
   // Restore console methods after each test
   console.log = originalConsoleLog;
   console.error = originalConsoleError;
   console.warn = originalConsoleWarn;
-
-  // Clean up logger resources to prevent Jest open handles
-  try {
-    destroyGlobalLogger();
-  } catch {
-    // Ignore cleanup errors
-  }
 });
 
 // Global cleanup after all tests complete
 afterAll(async () => {
-  // Final flush and cleanup of logger resources
+  // Final cleanup of logger resources
+  // Flush synchronously, then destroy to clear all timeouts
   try {
-    logger.flushBuffer(); // Immediate synchronous flush only
-    // Skip full flush() to avoid Jest hanging on open handles
+    logger.flush();
     destroyGlobalLogger();
   } catch {
     // Ignore cleanup errors
@@ -76,19 +70,24 @@ export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, 
  */
 export const closeApp = async (app: any): Promise<void> => {
   try {
-    // Flush logger buffer immediately (synchronous only)
-    if (app && app.logger && typeof app.logger.flushBuffer === 'function') {
-      app.logger.flushBuffer();
-    }
-
     // Close HTTP server with timeout to prevent hanging
     if (app && app.core && app.core.httpServer) {
       await Promise.race([
-        new Promise<void>((resolve) => {
+        new Promise<void>(resolve => {
           app.core.httpServer.close(() => resolve());
         }),
-        new Promise<void>(resolve => setTimeout(resolve, 1000)) // 1 second timeout
+        new Promise<void>(resolve => setTimeout(resolve, 1000)), // 1 second timeout
       ]);
+    }
+
+    // Flush and destroy logger to clear all timeouts and prevent open handles
+    if (app && app.logger) {
+      if (typeof app.logger.flush === 'function') {
+        app.logger.flush();
+      }
+      if (typeof app.logger.destroy === 'function') {
+        app.logger.destroy();
+      }
     }
   } catch (error) {
     // Ignore close errors in tests

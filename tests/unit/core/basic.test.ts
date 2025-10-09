@@ -1,5 +1,6 @@
 // Unit Tests - Basic MoroJS Functionality
-import { z, defineModule } from '../../../src';
+import { describe, it, expect } from '@jest/globals';
+import { z, defineModule } from '../../../src/index.js';
 
 describe('MoroJS Basic Functionality', () => {
   describe('Framework exports', () => {
@@ -28,7 +29,7 @@ describe('MoroJS Basic Functionality', () => {
     it('should create and validate schemas', () => {
       const schema = z.object({
         name: z.string(),
-        age: z.number()
+        age: z.number(),
       });
 
       const validData = { name: 'John', age: 30 };
@@ -50,9 +51,9 @@ describe('MoroJS Basic Functionality', () => {
           {
             method: 'GET',
             path: '/test',
-            handler: async () => ({ success: true })
-          }
-        ]
+            handler: async () => ({ success: true }),
+          },
+        ],
       });
 
       expect(module).toBeDefined();
@@ -63,7 +64,7 @@ describe('MoroJS Basic Functionality', () => {
     it('should create a module with validation', () => {
       const userSchema = z.object({
         name: z.string(),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const module = defineModule({
@@ -74,9 +75,9 @@ describe('MoroJS Basic Functionality', () => {
             method: 'POST',
             path: '/users',
             validation: { body: userSchema },
-            handler: async (req: any) => ({ success: true, user: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ success: true, user: req.body }),
+          },
+        ],
       });
 
       expect(module).toBeDefined();
@@ -90,7 +91,7 @@ describe('MoroJS Basic Functionality', () => {
       const userSchema = z.object({
         name: z.string().min(2),
         email: z.string().email(),
-        age: z.number().optional()
+        age: z.number().optional(),
       });
 
       const validUser = { name: 'John Doe', email: 'john@example.com' };
@@ -108,9 +109,9 @@ describe('MoroJS Basic Functionality', () => {
           {
             method: 'GET',
             path: '/test',
-            handler: async () => ({ success: true })
-          }
-        ]
+            handler: async () => ({ success: true }),
+          },
+        ],
       });
 
       expect(module).toBeDefined();
@@ -119,4 +120,4 @@ describe('MoroJS Basic Functionality', () => {
       expect(module.routes).toHaveLength(1);
     });
   });
-}); 
+});

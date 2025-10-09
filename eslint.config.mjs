@@ -7,8 +7,8 @@ import prettierConfig from 'eslint-config-prettier';
 export default [
   js.configs.recommended,
   {
-    files: ['src/**/*.ts', 'tests/**/*.ts'],
-    ignores: ['src/**/*.d.ts', 'src/**/*.js', 'dist/**/*'],
+    files: ['src/**/*.ts'],
+    ignores: ['src/**/*.d.ts', 'src/**/*.js', 'dist/**/*', 'tests/**/*'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
@@ -65,9 +65,20 @@ export default [
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts'],
+    files: ['**/*.js', '**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
     },
   },

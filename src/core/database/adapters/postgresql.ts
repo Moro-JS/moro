@@ -1,6 +1,7 @@
 // Database PostgreSQL Adapter
-import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database';
-import { createFrameworkLogger } from '../../logger';
+import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
+import { createFrameworkLogger } from '../../logger/index.js';
+import { resolveUserPackage } from '../../utilities/package-utils.js';
 
 interface PostgreSQLConfig {
   host?: string;
@@ -25,10 +26,17 @@ interface PostgreSQLConfig {
 export class PostgreSQLAdapter implements DatabaseAdapter {
   private pool: any;
   private logger = createFrameworkLogger('PostgreSQL');
+  private initPromise: Promise<void>;
 
   constructor(config: PostgreSQLConfig) {
+    this.initPromise = this.initialize(config);
+  }
+
+  private async initialize(config: PostgreSQLConfig): Promise<void> {
     try {
-      const { Pool } = require('pg');
+      const pgPath = resolveUserPackage('pg');
+      const pg = await import(pgPath);
+      const { Pool } = pg.default;
       this.pool = new Pool({
         host: config.host || 'localhost',
         port: config.port || 5432,
@@ -54,6 +62,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async connect(): Promise<void> {
+    await this.initPromise;
     try {
       const client = await this.pool.connect();
       client.release();
@@ -67,10 +76,12 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async disconnect(): Promise<void> {
+    await this.initPromise;
     await this.pool.end();
   }
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    await this.initPromise;
     const result = await this.pool.query(sql, params);
     return result.rows as T[];
   }
@@ -81,6 +92,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
+    await this.initPromise;
     const keys = Object.keys(data);
     const values = Object.values(data);
     const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
@@ -96,6 +108,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     data: Record<string, any>,
     where: Record<string, any>
   ): Promise<T> {
+    await this.initPromise;
     const dataKeys = Object.keys(data);
     const dataValues = Object.values(data);
     const whereKeys = Object.keys(where);
@@ -114,6 +127,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
+    await this.initPromise;
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
     const whereClause = whereKeys.map((key, index) => `${key} = $${index + 1}`).join(' AND ');
@@ -125,6 +139,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
+    await this.initPromise;
     const client = await this.pool.connect();
 
     try {

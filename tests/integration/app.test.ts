@@ -1,6 +1,8 @@
+// @ts-nocheck
 // Integration Tests - Framework Component Integration
-import { defineModule, z, validate, body, query } from '../../src';
-import { createTestPort, delay } from '../setup';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { defineModule, z, validate, body, query } from '../../src/index.js';
+import { createTestPort, delay } from '../setup.js';
 
 describe('Framework Component Integration', () => {
   describe('Module and Validation Integration', () => {
@@ -8,12 +10,12 @@ describe('Framework Component Integration', () => {
       const userSchema = z.object({
         name: z.string().min(2).max(50),
         email: z.string().email(),
-        role: z.enum(['user', 'admin']).default('user')
+        role: z.enum(['user', 'admin']).default('user'),
       });
 
       const querySchema = z.object({
         limit: z.coerce.number().min(1).max(100).default(10),
-        search: z.string().optional()
+        search: z.string().optional(),
       });
 
       const module = defineModule({
@@ -29,8 +31,8 @@ describe('Framework Component Integration', () => {
             handler: async (req: any) => ({
               success: true,
               data: [],
-              query: req.query
-            })
+              query: req.query,
+            }),
           },
           {
             method: 'POST',
@@ -39,10 +41,10 @@ describe('Framework Component Integration', () => {
             rateLimit: { requests: 10, window: 60000 },
             handler: async (req: any) => ({
               success: true,
-              user: req.body
-            })
-          }
-        ]
+              user: req.body,
+            }),
+          },
+        ],
       });
 
       expect(module.name).toBe('integrated-users');
@@ -64,18 +66,18 @@ describe('Framework Component Integration', () => {
           profile: z.object({
             firstName: z.string().min(2),
             lastName: z.string().min(2),
-            age: z.number().min(18)
+            age: z.number().min(18),
           }),
           preferences: z.object({
             theme: z.enum(['light', 'dark']),
             notifications: z.boolean(),
-            languages: z.array(z.string()).min(1)
-          })
+            languages: z.array(z.string()).min(1),
+          }),
         }),
         metadata: z.object({
           source: z.string(),
-          timestamp: z.string().datetime()
-        })
+          timestamp: z.string().datetime(),
+        }),
       });
 
       const handler = jest.fn().mockResolvedValue({ success: true });
@@ -83,18 +85,18 @@ describe('Framework Component Integration', () => {
         body: {
           user: {
             profile: { firstName: 'John', lastName: 'Doe', age: 30 },
-            preferences: { theme: 'dark', notifications: true, languages: ['en'] }
+            preferences: { theme: 'dark', notifications: true, languages: ['en'] },
           },
           metadata: {
             source: 'api',
-            timestamp: new Date().toISOString()
-          }
-        }
+            timestamp: new Date().toISOString(),
+          },
+        },
       };
       const mockRes = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
-        headersSent: false
+        headersSent: false,
       };
 
       const wrappedHandler = validate({ body: complexSchema }, handler);
@@ -102,7 +104,7 @@ describe('Framework Component Integration', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: mockReq.body
+          body: mockReq.body,
         }),
         mockRes
       );
@@ -113,7 +115,7 @@ describe('Framework Component Integration', () => {
         name: z.string().min(3, 'Name must be at least 3 characters'),
         email: z.string().email('Invalid email format'),
         age: z.number().min(18, 'Must be 18 or older'),
-        tags: z.array(z.string()).min(1, 'At least one tag required')
+        tags: z.array(z.string()).min(1, 'At least one tag required'),
       });
 
       const handler = jest.fn();
@@ -122,13 +124,13 @@ describe('Framework Component Integration', () => {
           name: 'Jo', // Too short
           email: 'invalid-email', // Invalid format
           age: 16, // Too young
-          tags: [] // Empty array
-        }
+          tags: [], // Empty array
+        },
       };
       const mockRes = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
-        headersSent: false
+        headersSent: false,
       };
 
       const wrappedHandler = validate({ body: strictSchema }, handler);
@@ -142,21 +144,21 @@ describe('Framework Component Integration', () => {
           details: expect.arrayContaining([
             expect.objectContaining({
               field: 'name',
-              message: 'Name must be at least 3 characters'
+              message: 'Name must be at least 3 characters',
             }),
             expect.objectContaining({
               field: 'email',
-              message: 'Invalid email format'
+              message: 'Invalid email format',
             }),
             expect.objectContaining({
               field: 'age',
-              message: 'Must be 18 or older'
+              message: 'Must be 18 or older',
             }),
             expect.objectContaining({
               field: 'tags',
-              message: 'At least one tag required'
-            })
-          ])
+              message: 'At least one tag required',
+            }),
+          ]),
         })
       );
       expect(handler).not.toHaveBeenCalled();
@@ -173,44 +175,44 @@ describe('Framework Component Integration', () => {
             event: 'join-room',
             validation: z.object({
               room: z.string().min(1),
-              username: z.string().min(2)
+              username: z.string().min(2),
             }),
             handler: async (socket: any, data: any) => {
               socket.join(data.room);
               return { success: true, room: data.room };
-            }
+            },
           },
           {
             event: 'send-message',
             validation: z.object({
               room: z.string(),
-              message: z.string().min(1).max(500)
+              message: z.string().min(1).max(500),
             }),
             rateLimit: { requests: 10, window: 60000 },
             handler: async (socket: any, data: any) => {
               socket.to(data.room).emit('new-message', {
                 username: socket.username,
                 message: data.message,
-                timestamp: new Date()
+                timestamp: new Date(),
               });
               return { success: true };
-            }
+            },
           },
           {
             event: 'typing',
             validation: z.object({
               room: z.string(),
-              isTyping: z.boolean()
+              isTyping: z.boolean(),
             }),
             handler: async (socket: any, data: any) => {
               socket.to(data.room).emit('user-typing', {
                 username: socket.username,
-                isTyping: data.isTyping
+                isTyping: data.isTyping,
               });
               return { success: true };
-            }
-          }
-        ]
+            },
+          },
+        ],
       });
 
       expect(chatModule.name).toBe('chat-system');
@@ -239,12 +241,19 @@ describe('Framework Component Integration', () => {
           firstName: z.string().min(2).max(30),
           lastName: z.string().min(2).max(30),
           email: z.string().email(),
-          phone: z.string().regex(/^\+?[1-9]\d{1,14}$/).optional()
+          phone: z
+            .string()
+            .regex(/^\+?[1-9]\d{1,14}$/)
+            .optional(),
         }),
         account: z.object({
-          username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
+          username: z
+            .string()
+            .min(3)
+            .max(20)
+            .regex(/^[a-zA-Z0-9_]+$/),
           password: z.string().min(8),
-          role: z.enum(['user', 'moderator', 'admin']).default('user')
+          role: z.enum(['user', 'moderator', 'admin']).default('user'),
         }),
         preferences: z.object({
           theme: z.enum(['light', 'dark', 'auto']).default('auto'),
@@ -252,23 +261,23 @@ describe('Framework Component Integration', () => {
           notifications: z.object({
             email: z.boolean().default(true),
             push: z.boolean().default(false),
-            sms: z.boolean().default(false)
-          })
-        })
+            sms: z.boolean().default(false),
+          }),
+        }),
       });
 
       const enterpriseModule = defineModule({
         name: 'enterprise-user-management',
         version: '3.2.1',
         dependencies: ['auth@2.0.0', 'audit@1.5.0', 'analytics@1.0.0'],
-                          config: {
-           features: {
-             auditLogging: true,
-             analyticsTracking: true,
-             advancedValidation: true,
-             multiFactorAuth: false
-           }
-         },
+        config: {
+          features: {
+            auditLogging: true,
+            analyticsTracking: true,
+            advancedValidation: true,
+            multiFactorAuth: false,
+          },
+        },
         routes: [
           {
             method: 'POST',
@@ -278,8 +287,8 @@ describe('Framework Component Integration', () => {
             handler: async (req: any) => ({
               success: true,
               user: { id: Date.now(), ...req.body },
-              message: 'User registered successfully'
-            })
+              message: 'User registered successfully',
+            }),
           },
           {
             method: 'GET',
@@ -291,8 +300,8 @@ describe('Framework Component Integration', () => {
                 role: z.enum(['user', 'moderator', 'admin']).optional(),
                 search: z.string().min(2).optional(),
                 sortBy: z.enum(['name', 'email', 'created', 'lastLogin']).default('created'),
-                sortOrder: z.enum(['asc', 'desc']).default('desc')
-              })
+                sortOrder: z.enum(['asc', 'desc']).default('desc'),
+              }),
             },
             cache: { ttl: 120 },
             rateLimit: { requests: 100, window: 60000 },
@@ -300,23 +309,23 @@ describe('Framework Component Integration', () => {
               success: true,
               data: [],
               pagination: req.query,
-              total: 0
-            })
+              total: 0,
+            }),
           },
           {
             method: 'PUT',
             path: '/users/:id/profile',
             validation: {
               params: z.object({ id: z.string().uuid() }),
-              body: userSchema.shape.profile.partial()
+              body: userSchema.shape.profile.partial(),
             },
             rateLimit: { requests: 20, window: 60000 },
             handler: async (req: any) => ({
               success: true,
               userId: req.params.id,
-              updatedProfile: req.body
-            })
-          }
+              updatedProfile: req.body,
+            }),
+          },
         ],
         sockets: [
           {
@@ -324,23 +333,28 @@ describe('Framework Component Integration', () => {
             validation: z.object({
               userId: z.string().uuid(),
               status: z.enum(['online', 'away', 'busy', 'offline']),
-              lastSeen: z.string().datetime().optional()
+              lastSeen: z.string().datetime().optional(),
             }),
             handler: async (socket: any, data: any) => {
               socket.broadcast.emit('user-status-changed', {
                 ...data,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
               });
               return { success: true, statusUpdated: true };
-            }
+            },
           },
           {
             event: 'bulk-user-update',
             validation: z.object({
-              updates: z.array(z.object({
-                userId: z.string().uuid(),
-                changes: z.record(z.string(), z.any())
-              })).min(1).max(50)
+              updates: z
+                .array(
+                  z.object({
+                    userId: z.string().uuid(),
+                    changes: z.record(z.string(), z.any()),
+                  })
+                )
+                .min(1)
+                .max(50),
             }),
             rateLimit: { requests: 2, window: 60000 },
             handler: async (socket: any, data: any) => {
@@ -348,20 +362,24 @@ describe('Framework Component Integration', () => {
               const results = data.updates.map((update: any) => ({
                 userId: update.userId,
                 success: true,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
               }));
 
               socket.emit('bulk-update-complete', { results });
               return { success: true, processed: results.length };
-            }
-          }
-        ]
+            },
+          },
+        ],
       });
 
       // Comprehensive validation of the enterprise module
       expect(enterpriseModule.name).toBe('enterprise-user-management');
       expect(enterpriseModule.version).toBe('3.2.1');
-      expect(enterpriseModule.dependencies).toEqual(['auth@2.0.0', 'audit@1.5.0', 'analytics@1.0.0']);
+      expect(enterpriseModule.dependencies).toEqual([
+        'auth@2.0.0',
+        'audit@1.5.0',
+        'analytics@1.0.0',
+      ]);
 
       // Validate configuration structure
       expect(enterpriseModule.config).toHaveProperty('features');
@@ -388,24 +406,26 @@ describe('Framework Component Integration', () => {
     it('should validate complex schema combinations', async () => {
       // Test body validation wrapper
       const registrationSchema = z.object({
-        credentials: z.object({
-          username: z.string().min(3).max(20),
-          password: z.string().min(8),
-          confirmPassword: z.string()
-        }).refine((data: any) => data.password === data.confirmPassword, {
-          message: "Passwords don't match",
-          path: ['confirmPassword']
-        }),
+        credentials: z
+          .object({
+            username: z.string().min(3).max(20),
+            password: z.string().min(8),
+            confirmPassword: z.string(),
+          })
+          .refine((data: any) => data.password === data.confirmPassword, {
+            message: "Passwords don't match",
+            path: ['confirmPassword'],
+          }),
         profile: z.object({
           email: z.string().email(),
           firstName: z.string().min(2),
-          lastName: z.string().min(2)
+          lastName: z.string().min(2),
         }),
         terms: z.object({
-                     accepted: z.literal(true),
+          accepted: z.literal(true),
           version: z.string().default('1.0'),
-          timestamp: z.string().datetime()
-        })
+          timestamp: z.string().datetime(),
+        }),
       });
 
       const handler = jest.fn().mockResolvedValue({ success: true });
@@ -413,24 +433,24 @@ describe('Framework Component Integration', () => {
         credentials: {
           username: 'johndoe',
           password: 'securepassword123',
-          confirmPassword: 'securepassword123'
+          confirmPassword: 'securepassword123',
         },
         profile: {
           email: 'john@example.com',
           firstName: 'John',
-          lastName: 'Doe'
+          lastName: 'Doe',
         },
         terms: {
           accepted: true,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
 
       const mockReq = { body: validData };
       const mockRes = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
-        headersSent: false
+        headersSent: false,
       };
 
       const wrappedHandler = body(registrationSchema)(handler);
@@ -443,9 +463,9 @@ describe('Framework Component Integration', () => {
             profile: validData.profile,
             terms: expect.objectContaining({
               accepted: true,
-              version: '1.0'
-            })
-          })
+              version: '1.0',
+            }),
+          }),
         }),
         mockRes
       );
@@ -453,23 +473,27 @@ describe('Framework Component Integration', () => {
 
     it('should handle query parameter validation with defaults', async () => {
       const advancedQuerySchema = z.object({
-        filters: z.object({
-          status: z.enum(['active', 'inactive', 'pending']).optional(),
-          role: z.enum(['user', 'admin', 'moderator']).optional(),
-          dateRange: z.object({
-            start: z.string().datetime().optional(),
-            end: z.string().datetime().optional()
-          }).optional()
-        }).optional(),
+        filters: z
+          .object({
+            status: z.enum(['active', 'inactive', 'pending']).optional(),
+            role: z.enum(['user', 'admin', 'moderator']).optional(),
+            dateRange: z
+              .object({
+                start: z.string().datetime().optional(),
+                end: z.string().datetime().optional(),
+              })
+              .optional(),
+          })
+          .optional(),
         pagination: z.object({
           page: z.coerce.number().min(1).default(1),
-          limit: z.coerce.number().min(1).max(100).default(20)
+          limit: z.coerce.number().min(1).max(100).default(20),
         }),
         sorting: z.object({
           field: z.enum(['name', 'email', 'created', 'lastLogin']).default('created'),
-          order: z.enum(['asc', 'desc']).default('desc')
+          order: z.enum(['asc', 'desc']).default('desc'),
         }),
-        include: z.array(z.enum(['profile', 'preferences', 'activity'])).default([])
+        include: z.array(z.enum(['profile', 'preferences', 'activity'])).default([]),
       });
 
       const handler = jest.fn().mockResolvedValue({ success: true });
@@ -480,7 +504,7 @@ describe('Framework Component Integration', () => {
         'pagination[limit]': '50',
         'sorting[field]': 'name',
         'sorting[order]': 'asc',
-        'include': ['profile', 'preferences']
+        include: ['profile', 'preferences'],
       };
 
       // Simulate how query parameters would be parsed
@@ -488,14 +512,14 @@ describe('Framework Component Integration', () => {
         filters: { status: 'active', role: 'user' },
         pagination: { page: 2, limit: 50 },
         sorting: { field: 'name', order: 'asc' },
-        include: ['profile', 'preferences']
+        include: ['profile', 'preferences'],
       };
 
       const mockReq = { query: parsedQuery };
       const mockRes = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
-        headersSent: false
+        headersSent: false,
       };
 
       const wrappedHandler = query(advancedQuerySchema)(handler);
@@ -506,8 +530,8 @@ describe('Framework Component Integration', () => {
           query: expect.objectContaining({
             pagination: { page: 2, limit: 50 },
             sorting: { field: 'name', order: 'asc' },
-            include: ['profile', 'preferences']
-          })
+            include: ['profile', 'preferences'],
+          }),
         }),
         mockRes
       );
@@ -523,21 +547,21 @@ describe('Framework Component Integration', () => {
         validation: {
           query: z.object({
             id: z.coerce.number().default(i),
-            type: z.enum(['data', 'meta', 'stats']).default('data')
-          })
+            type: z.enum(['data', 'meta', 'stats']).default('data'),
+          }),
         },
         cache: { ttl: 60 + i },
         handler: async (req: any) => ({
           success: true,
           endpoint: i,
-          query: req.query
-        })
+          query: req.query,
+        }),
       }));
 
       const highVolumeModule = defineModule({
         name: 'high-volume-api',
         version: '1.0.0',
-        routes
+        routes,
       });
 
       expect(highVolumeModule.routes).toHaveLength(50);
@@ -558,15 +582,20 @@ describe('Framework Component Integration', () => {
           level2: z.object({
             level3: z.object({
               level4: z.object({
-                data: z.array(z.object({
-                  id: z.number(),
-                  name: z.string(),
-                  attributes: z.record(z.string(), z.any())
-                })).min(1).max(100)
-              })
-            })
-          })
-        })
+                data: z
+                  .array(
+                    z.object({
+                      id: z.number(),
+                      name: z.string(),
+                      attributes: z.record(z.string(), z.any()),
+                    })
+                  )
+                  .min(1)
+                  .max(100),
+              }),
+            }),
+          }),
+        }),
       });
 
       const testData = {
@@ -577,12 +606,12 @@ describe('Framework Component Integration', () => {
                 data: Array.from({ length: 10 }, (_, i) => ({
                   id: i,
                   name: `Item ${i}`,
-                  attributes: { type: 'test', priority: i % 3 }
-                }))
-              }
-            }
-          }
-        }
+                  attributes: { type: 'test', priority: i % 3 },
+                })),
+              },
+            },
+          },
+        },
       };
 
       // Validate the complex schema

@@ -1,10 +1,10 @@
 // Auto-discovery system for Moro modules
 import { readdirSync, statSync } from 'fs';
 import { join, extname, relative, isAbsolute } from 'path';
-import { ModuleConfig } from '../../types/module';
-import { DiscoveryOptions } from '../../types/discovery';
-import { ModuleDefaultsConfig } from '../../types/config';
-import { createFrameworkLogger } from '../logger';
+import { ModuleConfig } from '../../types/module.js';
+import { DiscoveryOptions } from '../../types/discovery.js';
+import { ModuleDefaultsConfig } from '../../types/config.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 export class ModuleDiscovery {
   private baseDir: string;

@@ -1,10 +1,12 @@
 // WebSocket Manager for Moro Framework
 // Manages WebSocket connections using pluggable adapters
-import { Container } from '../utilities';
-import { CircuitBreaker } from '../utilities';
-import { ModuleConfig, WebSocketDefinition } from '../../types/module';
-import { WebSocketAdapter, WebSocketNamespace, WebSocketConnection } from './websocket-adapter';
-import { createFrameworkLogger } from '../logger';
+import * as zlib from 'zlib';
+import { Container } from '../utilities/index.js';
+import { CircuitBreaker } from '../utilities/index.js';
+import { ModuleConfig, WebSocketDefinition } from '../../types/module.js';
+import { WebSocketAdapter, WebSocketNamespace, WebSocketConnection } from './websocket-adapter.js';
+import { createFrameworkLogger } from '../logger/index.js';
+import { normalizeValidationError } from '../validation/schema-interface.js';
 
 export class WebSocketManager {
   private circuitBreakers = new Map<string, CircuitBreaker>();
@@ -134,7 +136,6 @@ export class WebSocketManager {
             data = await wsConfig.validation.parseAsync(data);
           } catch (validationError: any) {
             // Handle universal validation errors
-            const { normalizeValidationError } = require('../validation/schema-interface');
             const normalizedError = normalizeValidationError(validationError);
             const error = {
               success: false,
@@ -264,7 +265,6 @@ export class WebSocketManager {
     if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
       // This is gzipped data
       try {
-        const zlib = require('zlib');
         return zlib.gunzipSync(buffer);
       } catch {
         return buffer;

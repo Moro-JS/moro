@@ -7,9 +7,9 @@ export {
   createAppEdge,
   createAppLambda,
   createAppWorker,
-} from './moro';
+} from './moro.js';
 
-export type { MoroOptions } from './core/framework';
+export type { MoroOptions } from './core/framework.js';
 
 // Export auth types and middleware
 export type {
@@ -29,13 +29,13 @@ export type {
   EmailProvider,
   SignInOptions,
   SignOutOptions,
-} from './types/auth';
+} from './types/auth.js';
 
 // Export native @auth/morojs adapter
-export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter';
+export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter.js';
 
 // Export Auth.js middleware and providers
-export { auth, providers } from './core/middleware/built-in/auth';
+export { auth, providers } from './core/middleware/built-in/auth.js';
 
 // Runtime system exports
 export type {
@@ -43,7 +43,7 @@ export type {
   RuntimeAdapter,
   RuntimeConfig,
   RuntimeHttpResponse,
-} from './types/runtime';
+} from './types/runtime.js';
 
 export {
   NodeRuntimeAdapter,
@@ -55,23 +55,27 @@ export {
   createEdgeHandler,
   createLambdaHandler,
   createWorkerHandler,
-} from './core/runtime';
+} from './core/runtime/index.js';
 
 // Runtime-specific types
-export type { LambdaEvent, LambdaContext, LambdaResponse } from './core/runtime/aws-lambda-adapter';
-export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-workers-adapter';
+export type {
+  LambdaEvent,
+  LambdaContext,
+  LambdaResponse,
+} from './core/runtime/aws-lambda-adapter.js';
+export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-workers-adapter.js';
 
 // Core exports
-export { MoroHttpServer, middleware as httpMiddleware } from './core/http';
-export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in';
+export {
+  MoroHttpServer,
+  UWebSocketsHttpServer,
+  middleware as httpMiddleware,
+} from './core/http/index.js';
+export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in/index.js';
 
 // Networking System
-export {
-  WebSocketManager,
-  ServiceRegistry,
-  ServiceInfo,
-  ServiceDiscoveryOptions,
-} from './core/networking';
+export { WebSocketManager, ServiceRegistry } from './core/networking/index.js';
+export type { ServiceInfo, ServiceDiscoveryOptions } from './core/networking/service-discovery.js';
 
 // Utilities and Container System
 export {
@@ -87,10 +91,13 @@ export {
   HookManager,
   HOOK_EVENTS,
   middleware,
-} from './core/utilities';
+  isPackageAvailable,
+  resolveUserPackage,
+  createUserRequire,
+} from './core/utilities/index.js';
 
 // Event System
-export { MoroEventBus } from './core/events';
+export { MoroEventBus } from './core/events/index.js';
 export type {
   EventContext,
   EventPayload,
@@ -100,38 +107,29 @@ export type {
   EventMetrics,
   SystemEvents,
   EventHandler,
-} from './types/events';
+} from './types/events.js';
 
 // Logger System
-export { createFrameworkLogger, logger } from './core/logger';
+export { createFrameworkLogger, logger } from './core/logger/index.js';
 
 // Universal Validation System
-export { validate, body, query, params, combineSchemas } from './core/validation';
+export { validate, body, query, params, combineSchemas, z } from './core/validation/index.js';
 
-// Dynamic Zod export (optional dependency)
-let z: any;
-try {
-  z = require('zod').z;
-} catch {
-  // Zod not available - that's fine!
-  z = undefined;
-}
-export { z };
 export type {
   ValidationConfig,
   ValidationResult,
   ValidationErrorDetail,
   ValidatedRequest,
-} from './core/validation';
+} from './core/validation/index.js';
 
-// Universal Validation Interfaces and Adapters
+// Validation Interfaces and Adapters
 export type {
   ValidationSchema,
   ValidationError,
   InferSchemaType,
-} from './core/validation/schema-interface';
-export { normalizeValidationError } from './core/validation/schema-interface';
-export { joi, yup, fn as customValidator, classValidator } from './core/validation/adapters';
+} from './core/validation/schema-interface.js';
+export { normalizeValidationError } from './core/validation/schema-interface.js';
+export { joi, yup, fn as customValidator, classValidator } from './core/validation/adapters.js';
 
 // Module System
 export {
@@ -139,8 +137,8 @@ export {
   ModuleLoader,
   ModuleDiscovery,
   autoDiscoverModuleDirectories,
-} from './core/modules';
-export type { ModuleDefinition, ModuleRoute, ModuleSocket, ModuleConfig } from './types/module';
+} from './core/modules/index.js';
+export type { ModuleDefinition, ModuleRoute, ModuleSocket, ModuleConfig } from './types/module.js';
 
 // WebSocket Adapter System
 export type {
@@ -151,14 +149,18 @@ export type {
   WebSocketEmitter,
   WebSocketMiddleware,
   WebSocketEventHandler,
-} from './core/networking/websocket-adapter';
+} from './core/networking/websocket-adapter.js';
 
 // Built-in WebSocket Adapters
-export { SocketIOAdapter, WSAdapter } from './core/networking/adapters';
+export {
+  SocketIOAdapter,
+  WSAdapter,
+  UWebSocketsAdapter,
+} from './core/networking/adapters/index.js';
 
 // Intelligent Routing System
-export { createRoute, defineRoute, EXECUTION_PHASES } from './core/routing';
-export { IntelligentRoutingManager, RouteRegistry } from './core/routing/app-integration';
+export { createRoute, defineRoute, EXECUTION_PHASES } from './core/routing/index.js';
+export { IntelligentRoutingManager, RouteRegistry } from './core/routing/app-integration.js';
 export type {
   RouteBuilder,
   RouteSchema,
@@ -169,7 +171,7 @@ export type {
   CacheConfig,
   MiddlewarePhases,
   ExecutionPhase,
-} from './core/routing';
+} from './core/routing/index.js';
 
 // Documentation System
 export {
@@ -177,8 +179,8 @@ export {
   AppDocumentationManager,
   createDocumentationSystem,
   generateDocsFromIntelligentRoutes,
-} from './core/docs';
-export type { DocsConfig } from './core/docs';
+} from './core/docs/index.js';
+export type { DocsConfig } from './core/docs/index.js';
 
 // Configuration utilities
 export {
@@ -193,34 +195,39 @@ export {
   requireEnvVars,
   envVar,
   getConfigValue,
-} from './core/config/utils';
+} from './core/config/utils.js';
 
-export { initializeConfig, getGlobalConfig, isConfigInitialized, resetConfig } from './core/config';
+export {
+  initializeConfig,
+  getGlobalConfig,
+  isConfigInitialized,
+  resetConfig,
+} from './core/config/index.js';
 
 // Export configuration types for TypeScript users
-export type { AppConfig } from './core/config';
+export type { AppConfig } from './core/config/index.js';
 
 // Middleware System
-export { MiddlewareManager } from './core/middleware';
-export type { MiddlewareInterface, MoroMiddleware } from './core/middleware';
+export { MiddlewareManager } from './core/middleware/index.js';
+export type { MiddlewareInterface, MoroMiddleware } from './core/middleware/index.js';
 
 // Types
-export type * from './types/core';
-export type * from './types/http';
-export type * from './types/hooks';
-export type * from './types/cache';
-export type * from './types/cdn';
-export type * from './types/database';
-export type * from './types/logger';
-export type * from './types/session';
-export type * from './types/discovery';
+export type * from './types/core.js';
+export type * from './types/http.js';
+export type * from './types/hooks.js';
+export type * from './types/cache.js';
+export type * from './types/cdn.js';
+export type * from './types/database.js';
+export type * from './types/logger.js';
+export type * from './types/session.js';
+export type * from './types/discovery.js';
 
 // Adapters
-export * from './core/middleware/built-in/adapters';
-export * from './core/database/adapters';
+export * from './core/middleware/built-in/adapters/index.js';
+export * from './core/database/adapters/index.js';
 
 // Re-export commonly used types for convenience
-export type { CacheAdapter, CacheOptions, CacheStrategy } from './types/cache';
-export type { CDNAdapter, CDNOptions } from './types/cdn';
-export type { DatabaseAdapter, DatabaseTransaction, DatabaseConfig } from './types/database';
-export type { CookieOptions } from './types/http';
+export type { CacheAdapter, CacheOptions, CacheStrategy } from './types/cache.js';
+export type { CDNAdapter, CDNOptions } from './types/cdn.js';
+export type { DatabaseAdapter, DatabaseTransaction, DatabaseConfig } from './types/database.js';
+export type { CookieOptions } from './types/http.js';

@@ -5,6 +5,8 @@
  * in their custom authentication middleware.
  */
 
+import { resolveUserPackage } from '../../utilities/package-utils.js';
+
 export interface JWTVerificationResult {
   success: boolean;
   payload?: any;
@@ -24,15 +26,16 @@ export interface JWTVerificationResult {
  * @param options - Additional JWT verification options
  * @returns JWTVerificationResult with success status and payload or error details
  */
-export function safeVerifyJWT(
+export async function safeVerifyJWT(
   token: string,
   secret: string,
   options: any = {}
-): JWTVerificationResult {
+): Promise<JWTVerificationResult> {
   // Check if jsonwebtoken is available
   let jwt: any;
   try {
-    jwt = require('jsonwebtoken');
+    const jwtPath = resolveUserPackage('jsonwebtoken');
+    jwt = await import(jwtPath);
   } catch (error) {
     return {
       success: false,

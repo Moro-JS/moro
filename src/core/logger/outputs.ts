@@ -1,7 +1,7 @@
 // Advanced Logger Outputs
 import { writeFile, appendFile, mkdir } from 'fs/promises';
 import { join, dirname } from 'path';
-import { LogEntry, LogOutput } from '../../types/logger';
+import { LogEntry, LogOutput } from '../../types/logger.js';
 
 // File output for persistent logging
 export class FileOutput implements LogOutput {

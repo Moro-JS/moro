@@ -1,8 +1,8 @@
 // Simple Documentation Generator - Fallback for when Swagger UI has issues
 // Generates clean, readable API documentation from routes
 
-import { CompiledRoute, RouteSchema } from '../routing';
-import { createFrameworkLogger } from '../logger';
+import { CompiledRoute, RouteSchema } from '../routing/index.js';
+import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('SimpleDocs');
 

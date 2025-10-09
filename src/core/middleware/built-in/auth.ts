@@ -1,7 +1,8 @@
 // Auth.js Authentication Middleware
 
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { createFrameworkLogger } from '../../logger';
+import crypto from 'crypto';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 import {
   AuthOptions,
   AuthProvider,
@@ -11,8 +12,8 @@ import {
   OAuthProvider,
   CredentialsProvider,
   EmailProvider,
-} from '../../../types/auth';
-import { safeVerifyJWT, createAuthErrorResponse } from './jwt-helpers';
+} from '../../../types/auth.js';
+import { safeVerifyJWT, createAuthErrorResponse } from './jwt-helpers.js';
 
 const logger = createFrameworkLogger('AuthMiddleware');
 
@@ -334,7 +335,7 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
       const secret = process.env.JWT_SECRET || config.jwt?.secret || config.secret || '';
 
       // Use the safe JWT verification function
-      const result = safeVerifyJWT(token, secret);
+      const result = await safeVerifyJWT(token, secret);
 
       if (!result.success) {
         // Create a custom error that includes the structured error information
@@ -378,7 +379,6 @@ async function initializeAuthJS(config: AuthOptions): Promise<any> {
 
     getCsrfToken: async () => {
       // Basic CSRF token generation
-      const crypto = require('crypto');
       return crypto.randomBytes(32).toString('hex');
     },
   };

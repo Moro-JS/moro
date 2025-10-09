@@ -1,5 +1,6 @@
-import { createModuleConfig } from '../../../src/core/config/utils';
-import { resetConfig } from '../../../src/core/config';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { createModuleConfig } from '../../../src/core/config/utils.js';
+import { resetConfig } from '../../../src/core/config/index.js';
 import { z } from 'zod';
 
 describe('Config Utils - createModuleConfig', () => {
@@ -21,7 +22,7 @@ describe('Config Utils - createModuleConfig', () => {
     timeout: z.number().default(3000),
     retries: z.number().default(3),
     enabled: z.boolean().default(true),
-    features: z.array(z.string()).default([])
+    features: z.array(z.string()).default([]),
   });
 
   describe('createModuleConfig function', () => {
@@ -60,11 +61,7 @@ describe('Config Utils - createModuleConfig', () => {
       process.env.TEST_ENABLED = 'true';
       process.env.TEST_RETRIES = '10';
 
-      const result = createModuleConfig(
-        TestModuleSchema,
-        {},
-        'TEST_'
-      );
+      const result = createModuleConfig(TestModuleSchema, {}, 'TEST_');
 
       expect(result.timeout).toBe(7500);
       expect(typeof result.timeout).toBe('number');
@@ -75,10 +72,7 @@ describe('Config Utils - createModuleConfig', () => {
     });
 
     it('should work without environment prefix', () => {
-      const result = createModuleConfig(
-        TestModuleSchema,
-        { apiKey: 'no-prefix-test' }
-      );
+      const result = createModuleConfig(TestModuleSchema, { apiKey: 'no-prefix-test' });
 
       expect(result.apiKey).toBe('no-prefix-test');
       expect(result.timeout).toBe(3000); // Schema default
@@ -89,11 +83,7 @@ describe('Config Utils - createModuleConfig', () => {
       process.env.TEST_TIMEOUT = '2000';
 
       expect(() => {
-        createModuleConfig(
-          TestModuleSchema,
-          {},
-          'TEST_'
-        );
+        createModuleConfig(TestModuleSchema, {}, 'TEST_');
       }).not.toThrow();
     });
 
@@ -101,18 +91,14 @@ describe('Config Utils - createModuleConfig', () => {
       // This test ensures that even after type coercion, schema validation still catches invalid data
       const StrictSchema = z.object({
         timeout: z.number().min(1000).max(10000), // Strict range
-        apiKey: z.string().min(5)
+        apiKey: z.string().min(5),
       });
 
       process.env.TEST_TIMEOUT = '50'; // Too low
       process.env.TEST_API_KEY = 'x'; // Too short
 
       expect(() => {
-        createModuleConfig(
-          StrictSchema,
-          {},
-          'TEST_'
-        );
+        createModuleConfig(StrictSchema, {}, 'TEST_');
       }).toThrow();
     });
 
@@ -122,14 +108,10 @@ describe('Config Utils - createModuleConfig', () => {
 
       const ExtendedSchema = z.object({
         apiKey: z.string(),
-        maxRetries: z.number().default(3)
+        maxRetries: z.number().default(3),
       });
 
-      const result = createModuleConfig(
-        ExtendedSchema,
-        {},
-        'TEST_'
-      );
+      const result = createModuleConfig(ExtendedSchema, {}, 'TEST_');
 
       expect(result.apiKey).toBe('underscore-test');
       expect(result.maxRetries).toBe(5);
@@ -138,11 +120,7 @@ describe('Config Utils - createModuleConfig', () => {
     it('should handle JSON values in environment variables', () => {
       process.env.TEST_FEATURES = '["feature1", "feature2"]';
 
-      const result = createModuleConfig(
-        TestModuleSchema,
-        {},
-        'TEST_'
-      );
+      const result = createModuleConfig(TestModuleSchema, {}, 'TEST_');
 
       expect(result.features).toEqual(['feature1', 'feature2']);
       expect(Array.isArray(result.features)).toBe(true);
@@ -152,11 +130,7 @@ describe('Config Utils - createModuleConfig', () => {
       process.env.OTHER_API_KEY = 'should-be-ignored';
       process.env.TEST_API_KEY = 'should-be-used';
 
-      const result = createModuleConfig(
-        TestModuleSchema,
-        { apiKey: 'default' },
-        'TEST_'
-      );
+      const result = createModuleConfig(TestModuleSchema, { apiKey: 'default' }, 'TEST_');
 
       expect(result.apiKey).toBe('should-be-used');
     });

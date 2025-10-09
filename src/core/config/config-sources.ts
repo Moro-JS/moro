@@ -5,12 +5,12 @@
  * Environment Variables > createApp Options > Config File > Schema Defaults
  */
 
-import { AppConfig } from '../../types/config';
-import { MoroOptions } from '../../types/core';
-import { DEFAULT_CONFIG } from './schema';
-import { loadConfigFileSync } from './file-loader';
-import { createFrameworkLogger } from '../logger';
-import { validateConfig } from './config-validator';
+import { AppConfig } from '../../types/config.js';
+import { MoroOptions } from '../../types/core.js';
+import { DEFAULT_CONFIG } from './schema.js';
+import { loadConfigFileSync } from './file-loader.js';
+import { createFrameworkLogger } from '../logger/index.js';
+import { validateConfig } from './config-validator.js';
 
 const logger = createFrameworkLogger('ConfigSources');
 

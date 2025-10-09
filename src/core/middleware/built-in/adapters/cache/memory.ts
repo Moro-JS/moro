@@ -1,6 +1,6 @@
 // Memory Cache Adapter
-import { CacheAdapter } from '../../../../../types/cache';
-import { createFrameworkLogger } from '../../../../logger';
+import { CacheAdapter } from '../../../../../types/cache.js';
+import { createFrameworkLogger } from '../../../../logger/index.js';
 
 const logger = createFrameworkLogger('MemoryCacheAdapter');
 

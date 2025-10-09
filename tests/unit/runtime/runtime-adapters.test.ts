@@ -1,18 +1,18 @@
 // Runtime Adapters Unit Tests
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { 
+import {
   NodeRuntimeAdapter,
   VercelEdgeAdapter,
   AWSLambdaAdapter,
   CloudflareWorkersAdapter,
-  createRuntimeAdapter
-} from '../../../src/core/runtime';
-import type { 
-  LambdaEvent, 
-  LambdaContext, 
-  WorkersEnv, 
-  WorkersContext 
-} from '../../../src/core/runtime';
+  createRuntimeAdapter,
+} from '../../../src/core/runtime/index.js';
+import type {
+  LambdaEvent,
+  LambdaContext,
+  WorkersEnv,
+  WorkersContext,
+} from '../../../src/core/runtime/index.js';
 import { IncomingMessage, ServerResponse } from 'http';
 
 describe('Runtime Adapters', () => {
@@ -42,7 +42,9 @@ describe('Runtime Adapters', () => {
     });
 
     it('should throw error for unsupported runtime', () => {
-      expect(() => createRuntimeAdapter('invalid' as any)).toThrow('Unsupported runtime type: invalid');
+      expect(() => createRuntimeAdapter('invalid' as any)).toThrow(
+        'Unsupported runtime type: invalid'
+      );
     });
   });
 
@@ -66,7 +68,7 @@ describe('Runtime Adapters', () => {
         on: jest.fn(),
         httpVersion: '1.1',
         httpVersionMajor: 1,
-        httpVersionMinor: 1
+        httpVersionMinor: 1,
       } as any;
 
       // Mock the body parsing for GET request (no body)
@@ -84,7 +86,7 @@ describe('Runtime Adapters', () => {
     it('should create HTTP server', () => {
       const mockHandler = jest.fn(async (req: any, res: any) => {});
       const server = adapter.createServer(mockHandler);
-      
+
       expect(server).toBeDefined();
       expect(typeof server.listen).toBe('function');
     });
@@ -106,8 +108,8 @@ describe('Runtime Adapters', () => {
         method: 'GET',
         headers: {
           'content-type': 'application/json',
-          'x-forwarded-for': '192.168.1.1'
-        }
+          'x-forwarded-for': '192.168.1.1',
+        },
       });
 
       const adaptedReq = await adapter.adaptRequest(mockRequest);
@@ -124,7 +126,7 @@ describe('Runtime Adapters', () => {
       const mockRequest = new Request('https://example.com/api/post', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
       });
 
       const adaptedReq = await adapter.adaptRequest(mockRequest);
@@ -136,7 +138,7 @@ describe('Runtime Adapters', () => {
     it('should create Edge handler', () => {
       const mockHandler = jest.fn(async (req: any, res: any) => {});
       const handler = adapter.createServer(mockHandler);
-      
+
       expect(typeof handler).toBe('function');
     });
 
@@ -144,7 +146,7 @@ describe('Runtime Adapters', () => {
       const mockResponse = {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: { message: 'success' }
+        body: { message: 'success' },
       } as any;
 
       const webResponse = await adapter.adaptResponse(mockResponse);
@@ -152,7 +154,7 @@ describe('Runtime Adapters', () => {
       expect(webResponse).toBeInstanceOf(Response);
       expect(webResponse.status).toBe(200);
       expect(webResponse.headers.get('Content-Type')).toBe('application/json');
-      
+
       const responseBody = await webResponse.json();
       expect(responseBody).toEqual({ message: 'success' });
     });
@@ -178,8 +180,8 @@ describe('Runtime Adapters', () => {
         pathParameters: { id: '123' },
         body: null,
         requestContext: {
-          identity: { sourceIp: '192.168.1.1' }
-        }
+          identity: { sourceIp: '192.168.1.1' },
+        },
       };
 
       const mockContext: LambdaContext = {
@@ -191,7 +193,7 @@ describe('Runtime Adapters', () => {
         memoryLimitInMB: '128',
         logGroupName: '/aws/lambda/test',
         logStreamName: '2023/01/01/[$LATEST]abc123',
-        getRemainingTimeInMillis: () => 30000
+        getRemainingTimeInMillis: () => 30000,
       };
 
       const adaptedReq = await adapter.adaptRequest(mockEvent, mockContext);
@@ -212,12 +214,12 @@ describe('Runtime Adapters', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
         queryStringParameters: null,
-        pathParameters: null
+        pathParameters: null,
       };
 
       const mockContext: LambdaContext = {
         awsRequestId: 'aws-123',
-        getRemainingTimeInMillis: () => 30000
+        getRemainingTimeInMillis: () => 30000,
       } as any;
 
       const adaptedReq = await adapter.adaptRequest(mockEvent, mockContext);
@@ -229,7 +231,7 @@ describe('Runtime Adapters', () => {
     it('should create Lambda handler', () => {
       const mockHandler = jest.fn(async (req: any, res: any) => {});
       const handler = adapter.createServer(mockHandler);
-      
+
       expect(typeof handler).toBe('function');
     });
 
@@ -237,7 +239,7 @@ describe('Runtime Adapters', () => {
       const mockResponse = {
         statusCode: 201,
         headers: { 'Content-Type': 'application/json' },
-        body: { id: 1, name: 'test' }
+        body: { id: 1, name: 'test' },
       } as any;
 
       const lambdaResponse = await adapter.adaptResponse(mockResponse);
@@ -266,14 +268,14 @@ describe('Runtime Adapters', () => {
         headers: {
           'cf-connecting-ip': '192.168.1.1',
           'cf-ray': '123abc456def',
-          'cf-ipcountry': 'US'
-        }
+          'cf-ipcountry': 'US',
+        },
       });
 
       const mockEnv: WorkersEnv = { API_KEY: 'secret' };
       const mockCtx: WorkersContext = {
         waitUntil: jest.fn(),
-        passThroughOnException: jest.fn()
+        passThroughOnException: jest.fn(),
       };
 
       const adaptedReq = await adapter.adaptRequest(mockRequest, mockEnv, mockCtx);
@@ -295,7 +297,7 @@ describe('Runtime Adapters', () => {
       const mockRequest = new Request('https://example.com/api/form', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: formData
+        body: formData,
       });
 
       const adaptedReq = await adapter.adaptRequest(mockRequest, {}, {} as any);
@@ -307,7 +309,7 @@ describe('Runtime Adapters', () => {
     it('should create Workers handler', () => {
       const mockHandler = jest.fn(async (req: any, res: any) => {});
       const handler = adapter.createServer(mockHandler);
-      
+
       expect(typeof handler).toBe('function');
     });
 
@@ -315,14 +317,14 @@ describe('Runtime Adapters', () => {
       const mockResponse = {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: { worker: true }
+        body: { worker: true },
       } as any;
 
       const webResponse = await adapter.adaptResponse(mockResponse);
 
       expect(webResponse).toBeInstanceOf(Response);
       expect(webResponse.status).toBe(200);
-      
+
       const responseBody = await webResponse.json();
       expect(responseBody).toEqual({ worker: true });
     });
@@ -334,7 +336,7 @@ describe('Runtime Adapters', () => {
         new NodeRuntimeAdapter(),
         new VercelEdgeAdapter(),
         new AWSLambdaAdapter(),
-        new CloudflareWorkersAdapter()
+        new CloudflareWorkersAdapter(),
       ];
 
       for (const adapter of adapters) {
@@ -344,7 +346,7 @@ describe('Runtime Adapters', () => {
 
         const handler = adapter.createServer(mockHandler);
         expect(handler).toBeDefined();
-        
+
         // Node.js adapter returns MoroHttpServer object, others return functions
         if (adapter.type === 'node') {
           expect(typeof handler).toBe('object');
@@ -357,15 +359,15 @@ describe('Runtime Adapters', () => {
 
     it('should preserve request data through adaptation', async () => {
       const testData = { test: 'data', number: 42 };
-      
+
       // Test Vercel Edge
       const edgeAdapter = new VercelEdgeAdapter();
       const edgeRequest = new Request('https://example.com/api/test', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(testData)
+        body: JSON.stringify(testData),
       });
-      
+
       const adaptedEdgeReq = await edgeAdapter.adaptRequest(edgeRequest);
       expect(adaptedEdgeReq.body).toEqual(testData);
 
@@ -375,12 +377,12 @@ describe('Runtime Adapters', () => {
         httpMethod: 'POST',
         path: '/api/test',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(testData)
+        body: JSON.stringify(testData),
       };
       const lambdaContext = { awsRequestId: 'test' } as any;
-      
+
       const adaptedLambdaReq = await lambdaAdapter.adaptRequest(lambdaEvent, lambdaContext);
       expect(adaptedLambdaReq.body).toEqual(testData);
     });
   });
-}); 
+});

@@ -1,6 +1,7 @@
 // CSRF Protection Middleware
-import { MiddlewareInterface, HookContext } from '../../../types/hooks';
-import { createFrameworkLogger } from '../../logger';
+import crypto from 'crypto';
+import { MiddlewareInterface, HookContext } from '../../../types/hooks.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 const logger = createFrameworkLogger('CSRFMiddleware');
 
@@ -33,7 +34,6 @@ export const csrf = (
     const ignoreMethods = options.ignoreMethods || ['GET', 'HEAD', 'OPTIONS'];
 
     const generateToken = () => {
-      const crypto = require('crypto');
       return crypto.randomBytes(tokenLength).toString('hex');
     };
 
