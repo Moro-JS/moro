@@ -1,3 +1,8 @@
+## [1.6.0] - 2025-10-09
+
+### Fixed
+- fix: resolve ESM import issues in scripts and prepare for v1.6.0 release
+
 ## [1.5.17] - 2025-09-29
 
 ### Critical Fix
