@@ -2,57 +2,53 @@
 
 <div align="center">
 
-![Moro Logo](https://img.shields.io/badge/MoroJS-2563eb?style=for-the-badge&logo=typescript&logoColor=white)
+![Moro Logo](https://morojs.com/MoroText.png)
 
-**Modern TypeScript framework with intelligent routing and multi-runtime deployment**
-*Functional • Type-safe • Multi-environment • Production-ready*
+**Modern TypeScript framework with intelligent routing, ESM, and extreme performance**
 
 [![npm version](https://badge.fury.io/js/@morojs%2Fmoro.svg)](https://badge.fury.io/js/@morojs%2Fmoro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)](https://www.typescriptlang.org/)
 
-[**Documentation**](./docs/) • [**Quick Start**](#quick-start) • [**Examples**](#examples) • [**API Reference**](./docs/API.md)
+[**Website**](https://morojs.com) • [**Documentation**](https://morojs.com/docs) • [**Quick Start**](https://morojs.com/docs/getting-started) • [**Discord**](https://morojs.com/discord)
 
 </div>
 
 ---
 
-## What is MoroJS?
+## Why MoroJS?
 
-MoroJS is a modern Node.js framework designed for building high-performance APIs and web applications. It features intelligent routing with automatic middleware ordering, ensuring your application logic runs efficiently without worrying about execution sequence.
+Build high-performance APIs with intelligent routing that automatically orders middleware execution. Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
 
-**Core Features:**
-
-- **Multi-Runtime Deployment** - Write once, deploy everywhere: Node.js, Vercel Edge, AWS Lambda, Cloudflare Workers
-- **Intelligent Routing** - Automatic middleware ordering with chainable and schema-first API approaches
-- **Enterprise Authentication** - Built-in Auth.js integration with RBAC, OAuth providers, and custom native adapter
-- **Universal Validation** - Use any validation library (Zod, Joi, Yup, Class Validator) with full TypeScript inference
-- **WebSocket Support** - Pluggable adapters for Socket.IO, native WebSockets, or automatic detection
-- **Zero Dependencies** - Lightweight core with optional peer dependencies for flexibility
-- **Functional Architecture** - Pure functional patterns without decorators for better performance
-- **Type Safety** - Complete TypeScript support with compile-time and runtime type validation
+**Key Features:**
+- **200k+ req/s** - built-in clustering or uWebSockets.js integration (single core)
+- **Intelligent Routing** - Automatic middleware ordering, no configuration needed
+- **Enterprise Auth** - Built-in Auth.js with OAuth & RBAC
+- **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
+- **Multi-Runtime** - Deploy to Node.js, Edge, Lambda, or Workers
+- **Powerful CLI** - Scaffold projects, generate modules, deploy with one command
+- **Zero Dependencies** - Lightweight core with optional integrations
 
 ## Performance
 
-| Framework | Req/sec | Latency | Memory |
-|-----------|---------|---------|--------|
-| **Moro**  | **52,400** | **1.8ms** | **24MB** |
-| Express   | 28,540  | 3.8ms   | 45MB   |
-| Fastify   | 38,120  | 2.9ms   | 35MB   |
-| NestJS    | 22,100  | 4.5ms   | 58MB   |
+| Framework | Req/sec | Latency | Memory | Notes |
+|-----------|---------|---------|--------|-------|
+| **Moro + uWebSockets.js** | **200,000+** | **<0.5ms** | **18MB** | Single core |
+| **Moro (Clustering)**  | **200,000+** | **1.5ms** | **96MB** | Multi-core |
+| **Moro (Standard)**  | **52,400** | **1.8ms** | **24MB** | Single core |
+| Fastify   | 38,120  | 2.9ms   | 35MB   | Single core |
+| Express   | 28,540  | 3.8ms   | 45MB   | Single core |
+| NestJS    | 22,100  | 4.5ms   | 58MB   | Single core |
+
+> **uWebSockets.js** achieves multi-core performance on a single core - perfect for WebSockets and serverless. **Clustering** scales across CPU cores for traditional HTTP workloads.
 
 ## Quick Start
 
-### Installation
+### Install Manually
 
 ```bash
 npm install @morojs/moro
-# or
-yarn add @morojs/moro
 ```
-
-### Hello World
 
 ```typescript
 import { createApp, z } from '@morojs/moro';
@@ -62,287 +58,92 @@ const app = createApp();
 // Intelligent routing - order doesn't matter!
 app.post('/users')
    .body(z.object({
-     name: z.string().min(2).max(50),
+     name: z.string().min(2),
      email: z.string().email()
    }))
    .rateLimit({ requests: 10, window: 60000 })
-   .describe('Create a new user')
    .handler((req, res) => {
-     // req.body is fully typed and validated!
+     // req.body is fully typed and validated
      return { success: true, data: req.body };
    });
 
-app.get('/health', () => ({ status: 'healthy' }));
+app.listen(3000);
+```
 
-app.listen(3000, () => {
-  console.log('Moro server running on http://localhost:3000');
+### Or Use the CLI
+
+Scaffold a complete project with auth, database, WebSockets, and deployment ready:
+
+```bash
+npm install -g @morojs/cli
+morojs-cli init my-api --runtime=node --database=postgresql --features=auth,websocket,docs
+cd my-api
+npm run dev
+```
+
+Learn more at [morojs.com/cli](https://morojs.com/cli)
+
+### Ultra-High Performance (Optional)
+
+```typescript
+const app = createApp({
+  server: {
+    useUWebSockets: true  // 200k+ req/s on single core
+  }
 });
 ```
 
-### Multi-Runtime Support
+## Deploy Everywhere
 
-Deploy the **same code** everywhere:
+Same code, multiple platforms:
 
 ```typescript
-// Node.js (default)
-import { createApp } from '@morojs/moro';
-const app = createApp();
+// Node.js
 app.listen(3000);
 
-// Vercel Edge Functions
-import { createAppEdge } from '@morojs/moro';
-const app = createAppEdge();
+// Vercel Edge
 export default app.getHandler();
 
 // AWS Lambda
-import { createAppLambda } from '@morojs/moro';
-const app = createAppLambda();
 export const handler = app.getHandler();
 
 // Cloudflare Workers
-import { createAppWorker } from '@morojs/moro';
-const app = createAppWorker();
 export default { fetch: app.getHandler() };
-```
-
-## How MoroJS Works
-
-### **Intelligent Middleware Ordering**
-
-MoroJS automatically organizes middleware execution into logical phases, eliminating order-dependency issues:
-
-```typescript
-// Write middleware in any order - the framework optimizes execution
-app.post('/users')
-   .body(UserSchema)                              // Validation phase
-   .rateLimit({ requests: 10, window: 60000 })    // Rate limiting phase
-   .auth({ roles: ['user'] })                     // Authentication phase
-   .handler(createUser);                          // Handler phase (always last)
-
-// Behind the scenes, MoroJS executes in this order:
-// 1. CORS & Security (helmet)
-// 2. Rate Limiting
-// 3. Authentication & Authorization
-// 4. Body Parsing & Validation
-// 5. Custom Middleware
-// 6. Route Handler
-```
-
-### **Universal Validation System**
-
-MoroJS provides a unified validation interface that works with any validation library while maintaining full TypeScript inference:
-
-```typescript
-// Using Zod (built-in support)
-import { z } from '@morojs/moro';
-const UserSchema = z.object({
-  name: z.string().min(2).max(50),
-  email: z.string().email(),
-  age: z.number().min(18).optional()
-});
-
-// Using Joi with MoroJS adapter
-import { joi } from '@morojs/moro';
-import Joi from 'joi';
-const UserSchemaJoi = joi(Joi.object({
-  name: Joi.string().min(2).max(50).required(),
-  email: Joi.string().email().required(),
-  age: Joi.number().min(18).optional()
-}));
-
-// Using Yup with MoroJS adapter
-import { yup } from '@morojs/moro';
-import * as Yup from 'yup';
-const UserSchemaYup = yup(Yup.object({
-  name: Yup.string().min(2).max(50).required(),
-  email: Yup.string().email().required(),
-  age: Yup.number().min(18).optional()
-}));
-
-// All validation libraries provide the same TypeScript experience
-app.post('/users')
-   .body(UserSchema)  // Full type inference regardless of validation library
-   .handler((req, res) => {
-     const user = req.body; // ✨ Fully typed based on schema
-     return { success: true, data: user };
-   });
-```
-
-## Examples
-
-### API Styles
-
-```typescript
-// Chainable API (complex routes)
-app.post('/orders')
-   .body(OrderSchema)
-   .auth({ roles: ['user'] })
-   .rateLimit({ requests: 5, window: 60000 })
-   .cache({ ttl: 300 })
-   .handler(createOrder);
-
-// Schema-first (simple routes)
-app.route({
-  method: 'GET',
-  path: '/users/:id',
-  validation: { params: z.object({ id: z.string().uuid() }) },
-  handler: getUserById
-});
-```
-
-### WebSocket Support
-
-Pluggable WebSocket adapters with auto-detection:
-
-```typescript
-import { createApp, SocketIOAdapter, WSAdapter } from '@morojs/moro';
-
-const app = createApp({
-  // Auto-detect available WebSocket library
-  websocket: { enabled: true },
-
-  // Or use specific adapter
-  websocket: { adapter: new SocketIOAdapter() },
-
-  // Or native WebSockets
-  websocket: { adapter: new WSAdapter() }
-});
-
-// Define WebSocket handlers
-app.websocket('/chat', {
-  connect: (socket) => {
-    console.log(`Client connected: ${socket.id}`);
-    socket.join('general');
-  },
-
-  message: (socket, data) => {
-    socket.to('general').emit('message', {
-      user: socket.user,
-      text: data.text,
-      timestamp: new Date()
-    });
-  },
-
-  disconnect: (socket) => {
-    console.log(`Client disconnected: ${socket.id}`);
-  }
-});
-```
-
-### Authentication & Security
-
-Built-in Auth.js integration with enterprise features:
-
-```typescript
-import { auth, requireAuth, authUtils } from '@morojs/moro/middleware';
-
-// Setup Auth.js with multiple providers
-app.use(auth({
-  providers: [
-    providers.github({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    }),
-    providers.google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
-  secret: process.env.AUTH_SECRET!,
-}));
-
-// Protect routes with role-based access
-app.get('/admin/users', withMiddleware(requireAuth({
-  roles: ['admin']
-}), (req, res) => {
-  return { users: getAllUsers() };
-}));
-
-// Manual authentication checks
-app.get('/profile', (req, res) => {
-  if (!authUtils.isAuthenticated(req)) {
-    return authResponses.unauthorized(res);
-  }
-
-  return {
-    user: authUtils.getUser(req),
-    permissions: authUtils.getUserPermissions(req)
-  };
-});
-```
-
-**Features:**
-- **OAuth Providers** - GitHub, Google, Microsoft, LinkedIn, Discord
-- **Enterprise SSO** - Okta, Auth0, AWS Cognito
-- **Role-Based Access Control (RBAC)** - Fine-grained permissions
-- **Native Auth.js Adapter** - Zero external dependencies
-- **Security Audit Logging** - Track authentication events
-- **Production Ready** - JWT sessions, CSRF protection, secure cookies
-
-### Functional Modules
-
-```typescript
-export default defineModule({
-  name: 'users',
-  routes: [
-    {
-      method: 'GET',
-      path: '/',
-      validation: {
-        query: z.object({ limit: z.coerce.number().default(10) })
-      },
-      handler: async (req, res) => {
-        return { users: await getUsers(req.query) };
-      }
-    }
-  ]
-});
-
-await app.loadModule(UsersModule);
 ```
 
 ## Documentation
 
-### **Complete Guides**
-- [**Getting Started**](./docs/GETTING_STARTED.md) - Detailed setup and first app
-- [**Authentication Guide**](./docs/AUTH_GUIDE.md) - Complete Auth.js integration with RBAC
-- [**Native Auth Adapter**](./docs/NATIVE_AUTH_ADAPTER.md) - Custom `@auth/morojs` adapter
-- [**API Reference**](./docs/API.md) - Complete framework API documentation
-- [**Migration Guide**](./docs/MIGRATION.md) - From Express, Fastify, NestJS
-- [**Performance Guide**](./docs/PERFORMANCE.md) - Optimization and benchmarks
-- [**Runtime System**](./docs/RUNTIME.md) - Multi-runtime deployment guide
-- [**Examples Repository**](../Moro-JS/examples/) - Working examples
+📚 **Complete guides at [morojs.com/docs](https://morojs.com/docs)**
 
-### **Key Concepts**
-- **Multi-Runtime Support** - Same API works on Node.js, Edge, Lambda, and Workers
-- **Intelligent Routing** - Automatic middleware ordering eliminates Express.js pain points
-- **Enterprise Authentication** - Auth.js integration with OAuth, RBAC, and native adapter
-- **Universal Validation** - Support for any validation library with full type safety
-- **WebSocket Flexibility** - Choose between Socket.IO, native WebSockets, or auto-detection
-- **Functional Architecture** - No decorators, pure functions, better performance
-- **Type Safety** - Universal validation with compile-time and runtime type safety
+- [Getting Started](https://morojs.com/docs)
+- [CLI Tools](https://morojs.com/cli)
+- [Authentication](https://morojs.com/docs/features/authentication)
+- [Validation](https://morojs.com/docs/validation)
+- [WebSockets](https://morojs.com/docs/features/websockets)
+- [uWebSockets.js Setup](./docs/UWEBSOCKETS_GUIDE.md)
+- [API Reference](https://morojs.com/technical)
 
-## Key Benefits
+## Examples
 
-**Universal Deployment** - Write your application once and deploy it seamlessly to Node.js, Vercel Edge Functions, AWS Lambda, or Cloudflare Workers using the same codebase
+Check out [working examples](https://github.com/Moro-JS/examples) for:
+- REST APIs with validation
+- Real-time WebSocket apps
+- Auth.js integration
+- Multi-runtime deployment
+- Database integration
+- And more...
 
-**Intelligent Architecture** - The framework automatically handles middleware execution order, eliminating configuration complexity and potential runtime errors
+## Why Choose MoroJS?
 
-**Enterprise-Grade Authentication** - Comprehensive Auth.js integration includes OAuth providers, RBAC permissions, custom session management, and a native `@auth/morojs` adapter
+**vs Express** - Intelligent middleware ordering eliminates configuration complexity and race conditions
 
-**Flexible Validation** - Choose your preferred validation library (Zod, Joi, Yup, or Class Validator) while maintaining complete TypeScript inference and runtime safety
+**vs Fastify** - 4x faster with uWebSockets.js, plus multi-runtime deployment without adapters
 
-**Real-Time Communication** - Built-in WebSocket support with pluggable adapters for Socket.IO, native WebSockets, or automatic library detection
-
-**Type Safety Throughout** - End-to-end TypeScript support ensures compile-time validation, runtime type checking, and full IDE integration
-
-**Developer Experience** - Clean chainable APIs and schema-first routing patterns make complex applications simple to build and maintain
-
-**Production Features** - Circuit breakers, rate limiting, event systems, caching, monitoring, and performance optimization built-in
+**vs NestJS** - Functional architecture without decorators, 9x faster, 3x less memory
 
 ## Contributing
 
-We welcome contributions! See our [Contributing Guide](./docs/CONTRIBUTING.md) for details.
+Contributions welcome! See [CONTRIBUTING.md](./docs/CONTRIBUTING.md)
 
 ## License
 
@@ -352,8 +153,8 @@ MIT © [Moro Framework Team](https://morojs.com)
 
 <div align="center">
 
-**Ready to deploy everywhere with one codebase?**
+**Ready to build high-performance APIs?**
 
-[Get Started](./docs/GETTING_STARTED.md) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro) • [Discord](https://morojs.com/discord)
+[Get Started](https://morojs.com/docs/getting-started) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro) • [Discord](https://morojs.com/discord)
 
 </div>
