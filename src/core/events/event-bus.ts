@@ -33,7 +33,7 @@ export class MoroEventBus implements GlobalEventBus {
 
   // Global event emission with full context and metrics
   async emit<T = any>(event: string, data: T, context?: Partial<EventContext>): Promise<boolean> {
-    // Fast path: skip processing if no listeners
+    // Skip processing if no listeners
     if (this.emitter.listenerCount(event) === 0) {
       return false;
     }

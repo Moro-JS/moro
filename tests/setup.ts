@@ -1,6 +1,8 @@
 // Test Setup - Global configuration and utilities for MoroJS tests
 import { jest, beforeEach, afterEach, afterAll } from '@jest/globals';
 import { destroyGlobalLogger, logger } from '../src/core/logger';
+import { UnifiedRouter } from '../src/core/routing/unified-router.js';
+import { ObjectPoolManager } from '../src/core/pooling/object-pool-manager.js';
 
 // Set up minimal test environment configuration for MoroJS
 process.env.NODE_ENV = 'development';
@@ -25,6 +27,10 @@ const originalConsoleError = console.error;
 const originalConsoleWarn = console.warn;
 
 beforeEach(() => {
+  // Reset singletons before each test to ensure test isolation
+  UnifiedRouter.reset();
+  ObjectPoolManager.reset();
+
   // Reset console mocks before each test
   console.log = jest.fn();
   console.error = jest.fn();
@@ -33,9 +39,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   // Clean up logger resources FIRST to prevent Jest open handles
-  // Flush synchronously, then destroy to clear all timeouts
+  // destroy() clears all timeouts and flushes buffer
   try {
-    logger.flush();
     destroyGlobalLogger();
   } catch {
     // Ignore cleanup errors
@@ -50,9 +55,8 @@ afterEach(async () => {
 // Global cleanup after all tests complete
 afterAll(async () => {
   // Final cleanup of logger resources
-  // Flush synchronously, then destroy to clear all timeouts
+  // destroy() clears all timeouts and flushes buffer
   try {
-    logger.flush();
     destroyGlobalLogger();
   } catch {
     // Ignore cleanup errors
@@ -80,14 +84,10 @@ export const closeApp = async (app: any): Promise<void> => {
       ]);
     }
 
-    // Flush and destroy logger to clear all timeouts and prevent open handles
-    if (app && app.logger) {
-      if (typeof app.logger.flush === 'function') {
-        app.logger.flush();
-      }
-      if (typeof app.logger.destroy === 'function') {
-        app.logger.destroy();
-      }
+    // Destroy logger to clear all timeouts and prevent open handles
+    // destroy() already flushes the buffer internally
+    if (app && app.logger && typeof app.logger.destroy === 'function') {
+      app.logger.destroy();
     }
   } catch (error) {
     // Ignore close errors in tests

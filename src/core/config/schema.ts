@@ -10,9 +10,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxConnections: 1000,
     timeout: 30000,
     bodySizeLimit: '10mb',
-    useUWebSockets: false, // Opt-in for ultra-high performance
+    useUWebSockets: false, // Opt-in for high performance
     requestTracking: {
       enabled: true, // Enable by default for debugging
+    },
+    requestLogging: {
+      enabled: true, // Enable by default - logs requests independently
     },
     errorBoundary: {
       enabled: true, // Always enabled for safety

@@ -1,8 +1,9 @@
 // uWebSockets.js HTTP Server Implementation for Moro Framework
-// Provides ultra-high-performance HTTP and WebSocket server using uWebSockets.js
+// Provides high-performance HTTP and WebSocket server using uWebSockets.js
 
 import cluster from 'cluster';
 import { createFrameworkLogger } from '../logger/index.js';
+import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 import {
   HttpRequest,
   HttpResponse,
@@ -19,24 +20,18 @@ export class UWebSocketsHttpServer {
   private app: any; // uWebSockets app instance
   private uws: any; // uWebSockets module reference (stored to avoid re-importing)
   private listenSocket: any; // uWebSockets listen socket
-  private routes: RouteEntry[] = [];
   private globalMiddleware: Middleware[] = [];
   private logger = createFrameworkLogger('UWSHttpServer');
   private hookManager: any;
   private requestCounter = 0;
+  private requestTrackingEnabled = true; // Generate request IDs
   private isListening = false;
   private port?: number;
   private host?: string;
   private initPromise: Promise<void>;
 
-  // Route caching for performance
-  private staticRoutes = new Map<string, RouteEntry>();
-  private dynamicRoutes: RouteEntry[] = [];
-
-  // Performance optimizations - object pooling
-  private paramObjectPool: Record<string, string>[] = [];
-  private queryObjectPool: Record<string, string>[] = [];
-  private readonly maxPoolSize = 100;
+  // Performance optimizations - shared object pooling
+  private poolManager = ObjectPoolManager.getInstance();
 
   // String interning for common values
   private static readonly INTERNED_METHODS = new Map([
@@ -102,106 +97,11 @@ export class UWebSocketsHttpServer {
   }
 
   private setupRouteHandlers(): void {
-    // Handle all HTTP methods through catchall for proper routing
+    // Handle all HTTP methods through catchall
+    // All requests go through middleware chain (includes UnifiedRouter)
     this.app.any('/*', (res: any, req: any) => {
-      // Try fast synchronous path first
-      const method = req.getMethod().toUpperCase();
-      const path = req.getUrl();
-
-      // Fast path: No body, no global middleware
-      if (this.globalMiddleware.length === 0 && method === 'GET') {
-        const route = this.findRoute(method, path);
-        if (route && (!route.middleware || route.middleware.length === 0)) {
-          this.handleRequestSync(req, res, route, method, path);
-          return;
-        }
-      }
-
-      // Slow path: Has middleware or body or other complexity
       this.handleRequest(req, res);
     });
-  }
-
-  // Fast synchronous handler for simple GET requests
-  private handleRequestSync(
-    req: any,
-    res: any,
-    route: RouteEntry,
-    method: string,
-    path: string
-  ): void {
-    this.requestCounter++;
-    let httpReq: any;
-
-    try {
-      httpReq = this.createMoroRequest(req, res);
-      const httpRes = this.createMoroResponse(req, res);
-
-      // Extract params if needed
-      if (route.paramNames.length > 0) {
-        const matches = path.match(route.pattern);
-        if (matches) {
-          httpReq.params = this.acquireParamObject();
-          route.paramNames.forEach((name: string, index: number) => {
-            httpReq.params![name] = matches[index + 1];
-          });
-          (httpReq as any)._pooledParams = httpReq.params;
-        }
-      }
-
-      // Execute handler synchronously
-      const result = route.handler(httpReq, httpRes);
-
-      // Handle return value
-      if (result && typeof result.then === 'function') {
-        // Oops, handler is async - handle it
-        result
-          .then((data: any) => {
-            if (data !== undefined && data !== null && !httpRes.headersSent) {
-              httpRes.json(data);
-            }
-          })
-          .catch(() => {
-            if (!res.aborted) {
-              res.cork(() => {
-                res.writeStatus('500 Internal Server Error');
-                res.end('{"success":false,"error":"Internal server error"}');
-              });
-            }
-          });
-      } else if (result !== undefined && result !== null && !httpRes.headersSent) {
-        httpRes.json(result);
-      }
-    } finally {
-      const pooledParams = (httpReq as any)?._pooledParams;
-      if (pooledParams) this.releaseParamObject(pooledParams);
-
-      const pooledQuery = (httpReq as any)?._pooledQuery;
-      if (pooledQuery) this.releaseQueryObject(pooledQuery);
-    }
-  }
-
-  // Object pooling methods for performance
-  private acquireParamObject(): Record<string, string> {
-    return this.paramObjectPool.pop() || {};
-  }
-
-  private releaseParamObject(obj: Record<string, string>): void {
-    if (this.paramObjectPool.length < this.maxPoolSize) {
-      for (const key in obj) delete obj[key];
-      this.paramObjectPool.push(obj);
-    }
-  }
-
-  private acquireQueryObject(): Record<string, string> {
-    return this.queryObjectPool.pop() || {};
-  }
-
-  private releaseQueryObject(obj: Record<string, string>): void {
-    if (this.queryObjectPool.length < this.maxPoolSize) {
-      for (const key in obj) delete obj[key];
-      this.queryObjectPool.push(obj);
-    }
   }
 
   private async handleRequest(req: any, res: any): Promise<void> {
@@ -209,11 +109,12 @@ export class UWebSocketsHttpServer {
 
     // Declare outside try block for cleanup in finally
     let httpReq: any;
+    let httpRes: any;
 
     try {
       // Create Moro-compatible request object
       httpReq = this.createMoroRequest(req, res);
-      const httpRes = this.createMoroResponse(req, res);
+      httpRes = this.createMoroResponse(req, res);
 
       // Parse body only if there's actually a body (check content-length)
       const method = req.getMethod().toUpperCase();
@@ -234,47 +135,17 @@ export class UWebSocketsHttpServer {
         });
       }
 
-      // Find route first (before middleware)
-      const route = this.findRoute(httpReq.method!, httpReq.path);
-
-      if (!route) {
-        // 404 Not Found - fast path
+      // Execute middleware chain (includes UnifiedRouter for routing)
+      // The UnifiedRouter will handle route matching, params extraction, and handler execution
+      if (this.globalMiddleware.length > 0) {
+        await this.executeMiddleware(this.globalMiddleware, httpReq, httpRes);
+      } else {
+        // No middleware - send 404 (router middleware should be present)
         if (!httpRes.headersSent) {
           httpRes.statusCode = 404;
           httpRes.setHeader('Content-Type', 'application/json');
           httpRes.end('{"success":false,"error":"Not found"}');
         }
-        return;
-      }
-
-      // Extract path parameters early - use pooled object
-      const matches = httpReq.path.match(route.pattern);
-      if (matches) {
-        httpReq.params = this.acquireParamObject();
-        route.paramNames.forEach((name: string, index: number) => {
-          httpReq.params![name] = matches[index + 1];
-        });
-        // Store for cleanup
-        (httpReq as any)._pooledParams = httpReq.params;
-      }
-
-      // Execute ALL middleware in one pass (global + route)
-      if (this.globalMiddleware.length > 0 || (route.middleware && route.middleware.length > 0)) {
-        const allMiddleware =
-          route.middleware && route.middleware.length > 0
-            ? [...this.globalMiddleware, ...route.middleware]
-            : this.globalMiddleware;
-
-        await this.executeMiddleware(allMiddleware, httpReq, httpRes);
-        if (httpRes.headersSent) return;
-      }
-
-      // Execute route handler
-      const result = await route.handler(httpReq, httpRes);
-
-      // If handler returns data and response hasn't been sent, send it
-      if (result !== undefined && result !== null && !httpRes.headersSent) {
-        httpRes.json(result);
       }
     } catch (error) {
       this.logger.error(
@@ -295,15 +166,18 @@ export class UWebSocketsHttpServer {
         }
       }
     } finally {
-      // Cleanup: Release pooled objects back to pool for reuse
-      const pooledParams = (httpReq as any)._pooledParams;
-      if (pooledParams) {
-        this.releaseParamObject(pooledParams);
-      }
+      // CRITICAL: Release pooled objects back to pool
+      if (httpReq) {
+        const pooledQuery = (httpReq as any)._pooledQuery;
+        const pooledHeaders = (httpReq as any)._pooledHeaders;
 
-      const pooledQuery = (httpReq as any)._pooledQuery;
-      if (pooledQuery) {
-        this.releaseQueryObject(pooledQuery);
+        if (pooledQuery && Object.keys(pooledQuery).length > 0) {
+          this.poolManager.releaseQuery(pooledQuery);
+        }
+
+        if (pooledHeaders && Object.keys(pooledHeaders).length > 0) {
+          this.poolManager.releaseHeaders(pooledHeaders);
+        }
       }
     }
   }
@@ -316,11 +190,11 @@ export class UWebSocketsHttpServer {
     // Use interned method string if available
     const method = UWebSocketsHttpServer.INTERNED_METHODS.get(methodRaw) || methodRaw.toUpperCase();
 
-    // Lazy query parsing - use pooled object
-    let queryParams: Record<string, string> | undefined;
+    // Optimized query parsing with pooled object
+    let queryParams: Record<string, string>;
     if (queryString) {
-      queryParams = this.acquireQueryObject();
-      // Fast query parsing without URLSearchParams overhead
+      queryParams = this.poolManager.acquireQuery();
+      // Query parsing without URLSearchParams overhead
       const pairs = queryString.split('&');
       for (let i = 0; i < pairs.length; i++) {
         const pair = pairs[i];
@@ -331,10 +205,12 @@ export class UWebSocketsHttpServer {
           queryParams[decodeURIComponent(key)] = decodeURIComponent(value);
         }
       }
+    } else {
+      queryParams = {};
     }
 
-    // Lazy header parsing - only parse headers that exist
-    const headers: Record<string, string> = {};
+    // Optimized header parsing with pooled object
+    const headers = this.poolManager.acquireHeaders();
     req.forEach((key: string, value: string) => {
       const lowerKey = key.toLowerCase();
       headers[lowerKey] = value;
@@ -344,16 +220,17 @@ export class UWebSocketsHttpServer {
       method,
       path: url,
       url: url,
-      query: queryParams || {},
+      query: queryParams,
       params: {}, // Will be filled by route matching
       headers,
       body: null,
       ip: '', // Lazy - only compute if accessed
-      requestId: '', // Lazy - only generate if accessed
+      requestId: this.requestTrackingEnabled ? this.poolManager.generateRequestId() : '', // ID generation (if enabled)
     } as HttpRequest;
 
-    // Store original query object for cleanup
+    // Store pooled objects for cleanup
     (httpReq as any)._pooledQuery = queryParams;
+    (httpReq as any)._pooledHeaders = headers;
 
     return httpReq;
   }
@@ -599,99 +476,19 @@ export class UWebSocketsHttpServer {
     }
   }
 
-  private findRoute(method: string, path: string): RouteEntry | null {
-    // Fast path: static route lookup
-    const staticKey = `${method}:${path}`;
-    const staticRoute = this.staticRoutes.get(staticKey);
-    if (staticRoute) return staticRoute;
-
-    // Dynamic route matching
-    for (const route of this.dynamicRoutes) {
-      if (route.method === method && route.pattern.test(path)) {
-        return route;
-      }
-    }
-
-    return null;
-  }
-
   // Public API - matches MoroHttpServer interface
 
   use(middleware: Middleware): void {
     this.globalMiddleware.push(middleware);
   }
 
-  get(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('GET', path, handler, middleware);
+  // Configure request tracking (ID generation)
+  setRequestTracking(enabled: boolean): void {
+    this.requestTrackingEnabled = enabled;
   }
 
-  post(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('POST', path, handler, middleware);
-  }
-
-  put(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('PUT', path, handler, middleware);
-  }
-
-  delete(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('DELETE', path, handler, middleware);
-  }
-
-  patch(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('PATCH', path, handler, middleware);
-  }
-
-  options(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('OPTIONS', path, handler, middleware);
-  }
-
-  head(path: string, handler: HttpHandler, middleware?: Middleware[]): void {
-    this.addRoute('HEAD', path, handler, middleware);
-  }
-
-  private addRoute(
-    method: string,
-    path: string,
-    handler: HttpHandler,
-    middleware?: Middleware[]
-  ): void {
-    const { pattern, paramNames } = this.pathToRegex(path);
-
-    const route: RouteEntry = {
-      method,
-      path,
-      pattern,
-      paramNames,
-      handler,
-      middleware: middleware || [],
-    };
-
-    this.routes.push(route);
-
-    // Optimize route lookup
-    if (paramNames.length === 0) {
-      // Static route
-      this.staticRoutes.set(`${method}:${path}`, route);
-    } else {
-      // Dynamic route
-      this.dynamicRoutes.push(route);
-    }
-
-    this.logger.debug(`Route registered: ${method} ${path}`, 'RouteRegistration');
-  }
-
-  private pathToRegex(path: string): { pattern: RegExp; paramNames: string[] } {
-    const paramNames: string[] = [];
-    const regexPath = path.replace(/\//g, '\\/').replace(/:([^/]+)/g, (match, paramName) => {
-      paramNames.push(paramName);
-      return '([^/]+)';
-    });
-
-    return {
-      pattern: new RegExp(`^${regexPath}$`),
-      paramNames,
-    };
-  }
+  // Note: Route registration methods (get, post, etc.) are not used by uWebSockets adapter
+  // All routing is handled by UnifiedRouter through the middleware chain
 
   setHookManager(hookManager: any): void {
     this.hookManager = hookManager;

@@ -7,7 +7,7 @@ import {
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse, middleware } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
-import { Router } from './http/router.js';
+import { Router } from './routing/router.js';
 import { Container } from './utilities/container.js';
 import { ModuleLoader } from './modules/index.js';
 import { WebSocketManager } from './networking/websocket-manager.js';
@@ -87,7 +87,7 @@ export class Moro extends EventEmitter {
 
     if (useUWebSockets) {
       try {
-        // Try to use uWebSockets for ultra-high performance HTTP and WebSocket
+        // Try to use uWebSockets for high performance HTTP and WebSocket
         const sslOptions = this.config.server?.ssl || options.https;
         this.httpServer = new UWebSocketsHttpServer({ ssl: sslOptions });
         this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
@@ -199,9 +199,14 @@ export class Moro extends EventEmitter {
     // Body size middleware - always enabled with configurable limit
     this.httpServer.use(middleware.bodySize({ limit: this.config.server.bodySizeLimit }));
 
-    // Request tracking middleware - configurable
-    if (this.config.server.requestTracking.enabled) {
-      this.httpServer.use(this.requestTrackingMiddleware());
+    // Configure request tracking (ID generation) in HTTP server
+    if (this.httpServer.setRequestTracking) {
+      this.httpServer.setRequestTracking(this.config.server.requestTracking.enabled);
+    }
+
+    // Request logging middleware - separate from request tracking (ID generation)
+    if (this.config.server.requestLogging.enabled) {
+      this.httpServer.use(this.requestLoggingMiddleware());
     }
 
     // Error boundary middleware - configurable but recommended to keep enabled
@@ -339,15 +344,15 @@ export class Moro extends EventEmitter {
     return null;
   }
 
-  private requestTrackingMiddleware() {
+  private requestLoggingMiddleware() {
     return (req: HttpRequest, res: HttpResponse, next: () => void) => {
       const startTime = Date.now();
 
       res.on('finish', () => {
         const duration = Date.now() - startTime;
-        this.logger.info(
-          `${req.method} ${req.path} - ${res.statusCode} - ${duration}ms [${req.requestId}]`
-        );
+        // Include request ID in log if request tracking is enabled
+        const idPart = req.requestId ? ` [${req.requestId}]` : '';
+        this.logger.info(`${req.method} ${req.path} - ${res.statusCode} - ${duration}ms${idPart}`);
       });
 
       next();

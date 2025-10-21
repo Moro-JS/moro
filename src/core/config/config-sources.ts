@@ -438,8 +438,12 @@ function normalizeCreateAppOptions(options: MoroOptions): Partial<AppConfig> {
       },
     } as any;
   }
+  // Handle both 'logger' and 'logging' options (logger is an alias)
   if (options.logging) {
     config.logging = { ...config.logging, ...options.logging } as any;
+  }
+  if ((options as any).logger) {
+    config.logging = { ...config.logging, ...(options as any).logger } as any;
   }
   if (options.security) {
     config.security = { ...config.security, ...options.security } as any;

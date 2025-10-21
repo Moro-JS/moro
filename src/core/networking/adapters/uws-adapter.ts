@@ -15,7 +15,7 @@ import { createFrameworkLogger } from '../../logger/index.js';
 
 /**
  * uWebSockets adapter implementation
- * Provides ultra-high-performance WebSocket support using uWebSockets.js
+ * Provides high-performance WebSocket support using uWebSockets.js
  */
 export class UWebSocketsAdapter implements WebSocketAdapter {
   private app: any; // uWebSockets app instance

@@ -14,7 +14,10 @@ const app = createApp({
         port: 3111,        // Default benchmark port (can be overridden by PORT env var)
         host: '127.0.0.1',  // Default benchmark host (can be overridden by HOST env var)
         requestTracking: {
-            enabled: false, // Disable for fair comparison
+            enabled: false, // Disable IDs for max performance
+        },
+        requestLogging: {
+            enabled: false, // But still log requests for production monitoring
         },
         errorBoundary: {
             enabled: false, // Disable for fair comparison
@@ -23,14 +26,14 @@ const app = createApp({
     // Minimal middleware for fair comparison
     performance: {
         clustering: {
-            enabled: true, // unleash the power of clustering to really see the power
-            workers: 'auto'
+            enabled: true, // unleash the power of clustering
+            workers: 'auto',
         },
     },
 
     // Minimal logging for benchmarks
     logger: {
-        level: 'warn'  // This will now work correctly without env var override
+        level: 'warn'
     }
 })
 

@@ -1,5 +1,8 @@
 // Integration layer for intelligent routing system with main Moro app
 // Provides both chainable and schema-first APIs
+//
+// NOTE: This is now a thin facade to UnifiedRouter
+// All routing logic has been consolidated in unified-router.ts
 
 import {
   RouteBuilder,
@@ -10,13 +13,42 @@ import {
   HttpMethod,
 } from './index.js';
 import { HttpRequest, HttpResponse } from '../http/index.js';
+import { UnifiedRouter } from './unified-router.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('AppIntegration');
 
+// ===== RouteRegistry (Public API - Backward Compatibility) =====
+
+/**
+ * RouteRegistry - Facade to UnifiedRouter for backward compatibility
+ * This was part of the public API, so we maintain it as an alias
+ */
+export class RouteRegistry {
+  private router = UnifiedRouter.getInstance();
+
+  register(route: CompiledRoute): void {
+    // Routes are automatically registered with UnifiedRouter when created
+    // This is a no-op for API compatibility
+  }
+
+  async handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> {
+    return this.router.handleRequest(req, res) as Promise<boolean>;
+  }
+
+  getRoutes(): CompiledRoute[] {
+    const routes = this.router.getAllRoutes();
+    return routes.map(routeSchema => ({
+      schema: routeSchema as RouteSchema,
+      execute: async (_req: HttpRequest, _res: HttpResponse) => {
+        throw new Error('CompiledRoute.execute() not used - routing handled by UnifiedRouter');
+      },
+    }));
+  }
+}
+
 // Extended app interface with intelligent routing
 export interface IntelligentApp {
-  // Chainable route methods
   get(path: string): RouteBuilder;
   post(path: string): RouteBuilder;
   put(path: string): RouteBuilder;
@@ -24,100 +56,17 @@ export interface IntelligentApp {
   patch(path: string): RouteBuilder;
   head(path: string): RouteBuilder;
   options(path: string): RouteBuilder;
-
-  // Schema-first route method
   route(schema: RouteSchema): CompiledRoute;
-
-  // Route registration for compiled routes
   register(route: CompiledRoute): void;
-
-  // Direct route method (deprecated)
   directRoute(method: string, path: string, handler: Function, options?: any): void;
 }
 
-// Route registry for managing compiled routes
-export class RouteRegistry {
-  private routes = new Map<string, CompiledRoute>();
-  private routePatterns: {
-    pattern: RegExp;
-    route: CompiledRoute;
-    method: string;
-    paramNames: string[];
-  }[] = [];
-
-  register(route: CompiledRoute): void {
-    const key = `${route.schema.method}:${route.schema.path}`;
-    this.routes.set(key, route);
-
-    // Convert path to regex pattern for matching
-    const { pattern, paramNames } = this.pathToRegex(route.schema.path);
-    this.routePatterns.push({
-      pattern,
-      route,
-      method: route.schema.method,
-      paramNames,
-    });
-
-    logger.debug(`Registered route: ${key}`, 'RouteRegistry', {
-      path: route.schema.path,
-      hasValidation: !!route.schema.validation,
-      hasAuth: !!route.schema.auth,
-      hasRateLimit: !!route.schema.rateLimit,
-    });
-  }
-
-  async handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> {
-    const method = req.method?.toUpperCase();
-    const path = req.path;
-
-    // Find matching route
-    for (const routePattern of this.routePatterns) {
-      if (routePattern.method === method && routePattern.pattern.test(path)) {
-        // Extract path parameters
-        const matches = path.match(routePattern.pattern);
-        if (matches) {
-          req.params = {};
-          routePattern.paramNames.forEach((name, index) => {
-            req.params[name] = matches[index + 1];
-          });
-        }
-
-        // Execute the route
-        await routePattern.route.execute(req, res);
-        return true; // Route handled
-      }
-    }
-
-    return false; // No route matched
-  }
-
-  getRoutes(): CompiledRoute[] {
-    return Array.from(this.routes.values());
-  }
-
-  private pathToRegex(path: string): { pattern: RegExp; paramNames: string[] } {
-    const paramNames: string[] = [];
-
-    // Convert path parameters like :id to regex groups
-    const regexPath = path
-      .replace(/\//g, '\\/') // Escape forward slashes
-      .replace(/:([^/]+)/g, (match, paramName) => {
-        paramNames.push(paramName);
-        return '([^/]+)'; // Match parameter value
-      });
-
-    return {
-      pattern: new RegExp(`^${regexPath}$`),
-      paramNames,
-    };
-  }
-}
-
 // Intelligent routing manager class
+// Now a thin facade to UnifiedRouter
 export class IntelligentRoutingManager implements IntelligentApp {
-  private routeRegistry = new RouteRegistry();
+  private router = UnifiedRouter.getInstance();
 
-  // Chainable route methods
+  // Chainable route methods - delegate to createRoute
   get(path: string): RouteBuilder {
     return this.createChainableRoute('GET', path);
   }
@@ -153,22 +102,31 @@ export class IntelligentRoutingManager implements IntelligentApp {
     return compiledRoute;
   }
 
-  // Register compiled route
-  register(route: CompiledRoute): void {
-    this.routeRegistry.register(route);
+  // Register compiled route (no-op, already registered by defineRoute)
+  register(_route: CompiledRoute): void {
+    // Routes are automatically registered with UnifiedRouter in defineRoute()
+    // This is just for API compatibility
   }
 
-  // Handle incoming requests with intelligent routing
+  // Handle incoming requests - delegates to UnifiedRouter
   async handleIntelligentRoute(req: HttpRequest, res: HttpResponse): Promise<boolean> {
-    return await this.routeRegistry.handleRequest(req, res);
+    return this.router.handleRequest(req, res) as Promise<boolean>;
   }
 
-  // Get all registered routes (useful for debugging/docs)
+  // Get all registered routes - fetch from UnifiedRouter
   getIntelligentRoutes(): CompiledRoute[] {
-    return this.routeRegistry.getRoutes();
+    // Convert UnifiedRouter's internal routes to CompiledRoute format for docs
+    const routes = this.router.getAllRoutes();
+    return routes.map(routeSchema => ({
+      schema: routeSchema as RouteSchema, // Cast to match CompiledRoute interface
+      execute: async (_req: HttpRequest, _res: HttpResponse) => {
+        // Not used - routing handled by UnifiedRouter
+        throw new Error('CompiledRoute.execute() not used - routing handled by UnifiedRouter');
+      },
+    }));
   }
 
-  // Direct route method (deprecated)
+  // Direct route method (deprecated but kept for compatibility)
   directRoute(method: string, path: string, handler: Function, options?: any): void {
     logger.warn('Using deprecated direct route method', 'DirectRoute', {
       method,
@@ -176,7 +134,6 @@ export class IntelligentRoutingManager implements IntelligentApp {
       suggestion: 'Use chainable or schema-first API instead',
     });
 
-    // Convert direct options to new schema format
     const schema: RouteSchema = {
       method: method.toUpperCase() as HttpMethod,
       path,
@@ -195,17 +152,8 @@ export class IntelligentRoutingManager implements IntelligentApp {
   }
 
   private createChainableRoute(method: HttpMethod, path: string): RouteBuilder {
-    const builder = createRoute(method, path);
-
-    // Override the handler method to auto-register the route
-    const originalHandler = builder.handler.bind(builder);
-    builder.handler = <T>(handler: any) => {
-      const compiledRoute = originalHandler(handler);
-      this.register(compiledRoute);
-      return compiledRoute;
-    };
-
-    return builder;
+    // Just create and return the builder - it auto-registers with UnifiedRouter
+    return createRoute(method, path);
   }
 }
 

@@ -84,6 +84,9 @@ function validateServerConfig(config: any, path: string) {
     requestTracking: {
       enabled: validateBoolean(config.requestTracking?.enabled, `${path}.requestTracking.enabled`),
     },
+    requestLogging: {
+      enabled: validateBoolean(config.requestLogging?.enabled, `${path}.requestLogging.enabled`),
+    },
     errorBoundary: {
       enabled: validateBoolean(config.errorBoundary?.enabled, `${path}.errorBoundary.enabled`),
     },

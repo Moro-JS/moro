@@ -9,6 +9,9 @@ export interface ServerConfig {
   requestTracking: {
     enabled: boolean;
   };
+  requestLogging: {
+    enabled: boolean;
+  };
   errorBoundary: {
     enabled: boolean;
   };

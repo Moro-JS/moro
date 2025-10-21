@@ -11,7 +11,11 @@ import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger/
 import { Logger } from './types/logger.js';
 import { MiddlewareManager } from './core/middleware/index.js';
 import { IntelligentRoutingManager } from './core/routing/app-integration.js';
-import { RouteBuilder, RouteSchema, CompiledRoute } from './core/routing/index.js';
+import { RouteSchema } from './core/routing/index.js';
+import {
+  UnifiedRouter,
+  RouteBuilder as UnifiedRouteBuilder,
+} from './core/routing/unified-router.js';
 import { AppDocumentationManager, DocsConfig } from './core/docs/index.js';
 import { EventEmitter } from 'events';
 import cluster from 'cluster';
@@ -37,12 +41,16 @@ export class Moro extends EventEmitter {
   private eventBus!: MoroEventBus;
   // Application logger
   private logger!: Logger;
-  // Intelligent routing system
-  private intelligentRouting = new IntelligentRoutingManager();
+  // Unified routing system (singleton - shared across all routers)
+  private unifiedRouter!: UnifiedRouter;
+  // Legacy intelligent routing (kept for backward compatibility, now a facade)
+  private intelligentRouting!: IntelligentRoutingManager;
   // Documentation system
   private documentation = new AppDocumentationManager();
   // Configuration system
   private config!: AppConfig;
+  // Track if user explicitly set logger options (for worker log level handling)
+  private userSetLogger = false;
   // Runtime system
   private runtimeAdapter!: RuntimeAdapter;
   private runtimeType!: RuntimeType;
@@ -57,6 +65,9 @@ export class Moro extends EventEmitter {
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
+
+    // Track if user explicitly set logger/logging options
+    this.userSetLogger = !!(options.logger || options.logging);
 
     // Apply logging configuration BEFORE config loading to avoid DEBUG spam
     // 1. Environment variables (base level)
@@ -76,12 +87,17 @@ export class Moro extends EventEmitter {
     // Use simplified global configuration system
     this.config = initializeConfig(options);
 
-    // Apply config file logging if it exists (may override createApp options if needed)
-    if (this.config.logging && !options.logger) {
+    // Apply final config logging (this includes normalized logger → logging conversion)
+    // Always apply this as it's the authoritative merged config
+    if (this.config.logging) {
       applyLoggingConfiguration(this.config.logging, undefined);
       // Recreate logger with updated config
       this.logger = createFrameworkLogger('App');
     }
+
+    // NOW initialize routing systems AFTER logger is configured
+    this.unifiedRouter = UnifiedRouter.getInstance();
+    this.intelligentRouting = new IntelligentRoutingManager();
 
     this.logger.info(
       `Configuration system initialized: ${process.env.NODE_ENV || 'development'}:${this.config.server.port}`
@@ -181,84 +197,85 @@ export class Moro extends EventEmitter {
 
   // Intelligent route methods - chainable with automatic middleware ordering
   // Overloads for better TypeScript inference
-  get(path: string): RouteBuilder;
+  get(path: string): UnifiedRouteBuilder;
   get(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   get(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
-  ): RouteBuilder | this {
+  ): UnifiedRouteBuilder | this {
     if (handler) {
       // Direct route registration
       return this.addRoute('GET', path, handler, options);
     }
-    // Chainable route builder
-    return this.intelligentRouting.get(path);
+    // Use unified router for chainable API
+    return this.unifiedRouter.get(path);
   }
 
-  post(path: string): RouteBuilder;
+  post(path: string): UnifiedRouteBuilder;
   post(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   post(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
-  ): RouteBuilder | this {
+  ): UnifiedRouteBuilder | this {
     if (handler) {
       // Direct route registration
       return this.addRoute('POST', path, handler, options);
     }
-    // Chainable route builder
-    return this.intelligentRouting.post(path);
+    // Use unified router for chainable API
+    return this.unifiedRouter.post(path);
   }
 
-  put(path: string): RouteBuilder;
+  put(path: string): UnifiedRouteBuilder;
   put(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   put(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
-  ): RouteBuilder | this {
+  ): UnifiedRouteBuilder | this {
     if (handler) {
       // Direct route registration
       return this.addRoute('PUT', path, handler, options);
     }
-    // Chainable route builder
-    return this.intelligentRouting.put(path);
+    // Use unified router for chainable API
+    return this.unifiedRouter.put(path);
   }
 
-  delete(path: string): RouteBuilder;
+  delete(path: string): UnifiedRouteBuilder;
   delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   delete(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
-  ): RouteBuilder | this {
+  ): UnifiedRouteBuilder | this {
     if (handler) {
       // Direct route registration
       return this.addRoute('DELETE', path, handler, options);
     }
-    // Chainable route builder
-    return this.intelligentRouting.delete(path);
+    // Use unified router for chainable API
+    return this.unifiedRouter.delete(path);
   }
 
-  patch(path: string): RouteBuilder;
+  patch(path: string): UnifiedRouteBuilder;
   patch(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   patch(
     path: string,
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
-  ): RouteBuilder | this {
+  ): UnifiedRouteBuilder | this {
     if (handler) {
       // Direct route registration
       return this.addRoute('PATCH', path, handler, options);
     }
-    // Chainable route builder
-    return this.intelligentRouting.patch(path);
+    // Use unified router for chainable API
+    return this.unifiedRouter.patch(path);
   }
 
   // Schema-first route method
-  route(schema: RouteSchema): CompiledRoute {
-    return this.intelligentRouting.route(schema);
+  route(schema: RouteSchema): void {
+    // Use unified router for schema-first registration
+    this.unifiedRouter.route(schema);
   }
 
   // Enable automatic API documentation
@@ -554,18 +571,31 @@ export class Moro extends EventEmitter {
       this.logger.debug('Documentation not enabled', 'Documentation');
     }
 
-    // Add intelligent routing middleware to handle chainable routes
-    this.coreFramework.addMiddleware(
-      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-        // Try intelligent routing first
-        const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
-        if (!handled) {
-          next(); // Fall back to direct routes
+    // Add unified routing middleware (handles both chainable and direct routes)
+    // Optimized: call router without extra async wrapper when possible
+    this.coreFramework.addMiddleware((req: HttpRequest, res: HttpResponse, next: () => void) => {
+      // Try unified router first (handles all route types)
+      const handled = this.unifiedRouter.handleRequest(req, res);
+
+      // Check if it's a promise (async route) or sync
+      if (handled && typeof (handled as any).then === 'function') {
+        // Async - await the result
+        (handled as Promise<boolean>)
+          .then(isHandled => {
+            if (!isHandled) {
+              next(); // Fall back to legacy routes if any
+            }
+          })
+          .catch(() => next());
+      } else {
+        // Sync - check immediately
+        if (!(handled as boolean)) {
+          next();
         }
       }
-    );
+    });
 
-    // Register direct routes with the HTTP server
+    // Register legacy direct routes with the HTTP server (for backward compatibility)
     if (this.routes.length > 0) {
       this.registerDirectRoutes();
     }
@@ -581,10 +611,12 @@ export class Moro extends EventEmitter {
         }
         this.logger.info('Learn more at https://morojs.com', 'Server');
 
-        // Log intelligent routes info
-        const intelligentRoutes = this.intelligentRouting.getIntelligentRoutes();
-        if (intelligentRoutes.length > 0) {
-          this.logger.info(`Intelligent Routes: ${intelligentRoutes.length} registered`, 'Server');
+        // Log unified router stats
+        const routeCount = this.unifiedRouter.getRouteCount();
+        if (routeCount > 0) {
+          this.logger.info(`Unified Router: ${routeCount} routes registered`, 'Server');
+          // Log performance stats
+          this.unifiedRouter.logPerformanceStats();
         }
 
         this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
@@ -744,11 +776,11 @@ export class Moro extends EventEmitter {
         // Documentation not enabled, that's fine
       }
 
-      // Try intelligent routing first
-      const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
+      // Try unified router first (handles all routes)
+      const handled = await this.unifiedRouter.handleRequest(req, res);
       if (handled) return;
 
-      // Handle direct routes
+      // Handle legacy direct routes (backward compatibility)
       if (this.routes.length > 0) {
         await this.handleDirectRoutes(req, res);
       }
@@ -915,8 +947,11 @@ export class Moro extends EventEmitter {
 
   // Private methods
   private addRoute(method: string, path: string, handler: Function, options: any = {}) {
-    const handlerName = `handler_${this.routes.length}`;
+    // Register with unified router (primary routing system)
+    this.unifiedRouter.addRoute(method as any, path, handler as any, options.middleware || []);
 
+    // Also store in legacy routes array for backward compatibility
+    const handlerName = `handler_${this.routes.length}`;
     const route = {
       method: method as any,
       path,
@@ -929,10 +964,10 @@ export class Moro extends EventEmitter {
 
     this.routes.push(route);
 
-    // Organize routes for optimal lookup
+    // Organize routes for optimal lookup (legacy)
     this.organizeRouteForLookup(route);
 
-    // Store handler for later module creation
+    // Store handler for later module creation (legacy)
     this.routeHandlers[handlerName] = handler;
 
     return this;
@@ -1440,8 +1475,9 @@ export class Moro extends EventEmitter {
 
       // Reduce logging contention in workers (major bottleneck)
       // Multiple workers writing to same log files creates I/O contention
-      if (this.config.logging) {
-        // Workers log less frequently to reduce I/O contention
+      // ONLY reduce log level if user didn't explicitly set one
+      if (!this.userSetLogger) {
+        // Workers log less frequently to reduce I/O contention (only if not explicitly configured)
         applyLoggingConfiguration(undefined, { level: 'warn' }); // Only warnings and errors
       }
 
@@ -1462,9 +1498,9 @@ export class Moro extends EventEmitter {
         'Worker'
       );
 
-      // Optimize V8 flags for better performance (Rust-level optimizations)
+      // Optimize V8 flags for better performance
       if (process.env.NODE_ENV === 'production') {
-        // Ultra-aggressive V8 optimizations for maximum performance
+        // Aggressive V8 optimizations for maximum performance
         const v8Flags = [
           '--optimize-for-size', // Trade memory for speed
           '--always-opt', // Always optimize functions
@@ -1523,17 +1559,31 @@ export class Moro extends EventEmitter {
         // Documentation not enabled, that's fine
       }
 
-      // Add intelligent routing middleware
-      this.coreFramework.addMiddleware(
-        async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-          const handled = await this.intelligentRouting.handleIntelligentRoute(req, res);
-          if (!handled) {
+      // Add unified routing middleware (handles both chainable and direct routes)
+      // Optimized: call router without extra async wrapper when possible
+      this.coreFramework.addMiddleware((req: HttpRequest, res: HttpResponse, next: () => void) => {
+        // Try unified router first (handles all route types)
+        const handled = this.unifiedRouter.handleRequest(req, res);
+
+        // Check if it's a promise (async route) or sync
+        if (handled && typeof (handled as any).then === 'function') {
+          // Async - await the result
+          (handled as Promise<boolean>)
+            .then(isHandled => {
+              if (!isHandled) {
+                next(); // Fall back to legacy routes if any
+              }
+            })
+            .catch(() => next());
+        } else {
+          // Sync - check immediately
+          if (!(handled as boolean)) {
             next();
           }
         }
-      );
+      });
 
-      // Register direct routes
+      // Register legacy direct routes with the HTTP server (for backward compatibility)
       if (this.routes.length > 0) {
         this.registerDirectRoutes();
       }

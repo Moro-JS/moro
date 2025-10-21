@@ -36,7 +36,10 @@ export function loadConfigFileSync(cwd: string = process.cwd()): Partial<AppConf
     // Clear the require cache to ensure fresh config on each load
     delete moduleRequire.cache[moduleRequire.resolve(configFile)];
 
-    const config = moduleRequire(configFile);
+    const configModule = moduleRequire(configFile);
+
+    // Handle ES module default export
+    const config = configModule.default || configModule;
 
     if (!config || typeof config !== 'object') {
       logger.warn(`Configuration file ${configFile} did not export a valid configuration object`);

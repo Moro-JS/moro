@@ -12,6 +12,8 @@ import {
   Middleware,
   RouteEntry,
 } from '../../types/http.js';
+import { PathMatcher } from '../routing/path-matcher.js';
+import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 
 const gzip = promisify(zlib.gzip);
 const deflate = promisify(zlib.deflate);
@@ -22,46 +24,15 @@ export class MoroHttpServer {
   private globalMiddleware: Middleware[] = [];
   private compressionEnabled = true;
   private compressionThreshold = 1024;
+  private requestTrackingEnabled = true; // Generate request IDs
   private logger = createFrameworkLogger('HttpServer');
   private hookManager: any;
   private requestCounter = 0;
 
-  // Efficient object pooling with minimal overhead
-  private paramObjectPool: Record<string, string>[] = [];
-  private bufferPool: Buffer[] = [];
-  private readonly maxPoolSize = 50;
+  // Use shared object pool manager
+  private poolManager = ObjectPoolManager.getInstance();
 
-  // Request handler pooling to avoid function creation overhead
-  private middlewareExecutionCache = new Map<string, Function>();
-
-  // Response caching for ultra-fast common responses
-  private responseCache = new Map<string, Buffer>();
-  private responseCacheHits = 0;
-  private responseCacheMisses = 0;
-
-  // String interning for common values (massive memory savings)
-  private static readonly INTERNED_METHODS = new Map([
-    ['GET', 'GET'],
-    ['POST', 'POST'],
-    ['PUT', 'PUT'],
-    ['DELETE', 'DELETE'],
-    ['PATCH', 'PATCH'],
-    ['HEAD', 'HEAD'],
-    ['OPTIONS', 'OPTIONS'],
-  ]);
-
-  private static readonly INTERNED_HEADERS = new Map([
-    ['content-type', 'content-type'],
-    ['content-length', 'content-length'],
-    ['authorization', 'authorization'],
-    ['accept', 'accept'],
-    ['user-agent', 'user-agent'],
-    ['host', 'host'],
-    ['connection', 'connection'],
-    ['cache-control', 'cache-control'],
-  ]);
-
-  // Pre-compiled response templates for ultra-common responses
+  // Pre-compiled response templates for common responses
   private static readonly RESPONSE_TEMPLATES = {
     notFound: Buffer.from('{"success":false,"error":"Not found"}'),
     unauthorized: Buffer.from('{"success":false,"error":"Unauthorized"}'),
@@ -71,7 +42,7 @@ export class MoroHttpServer {
     rateLimited: Buffer.from('{"success":false,"error":"Rate limit exceeded"}'),
   };
 
-  // Ultra-fast buffer pool for zero-copy operations (Rust-level performance)
+  // Buffer pool for zero-copy operations
   private static readonly BUFFER_SIZES = [64, 256, 1024, 4096, 16384];
   private static readonly BUFFER_POOLS = new Map<number, Buffer[]>();
 
@@ -137,6 +108,11 @@ export class MoroHttpServer {
       this.compressionEnabled = false;
       this.compressionThreshold = Infinity; // Never compress
     }
+  }
+
+  // Configure request tracking (ID generation)
+  setRequestTracking(enabled: boolean): void {
+    this.requestTrackingEnabled = enabled;
   }
 
   // Middleware management
@@ -206,45 +182,37 @@ export class MoroHttpServer {
   }
 
   private pathToRegex(path: string): { pattern: RegExp; paramNames: string[] } {
-    const paramNames: string[] = [];
-
-    // Convert parameterized routes to regex
-    const regexPattern = path
-      .replace(/\/:([^/]+)/g, (match, paramName) => {
-        paramNames.push(paramName);
-        return '/([^/]+)';
-      })
-      .replace(/\//g, '\\/');
-
+    // Use shared PathMatcher for consistent path compilation
+    const compiled = PathMatcher.compile(path);
     return {
-      pattern: new RegExp(`^${regexPattern}$`),
-      paramNames,
+      pattern: compiled.pattern || new RegExp(`^${path.replace(/\//g, '\\/')}$`),
+      paramNames: compiled.paramNames,
     };
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const httpReq = this.enhanceRequest(req);
-    const httpRes = this.enhanceResponse(res);
+    const httpRes = this.enhanceResponse(res, httpReq);
 
     // Store original params for efficient cleanup
     const originalParams = httpReq.params;
 
     try {
-      // Optimized URL and query parsing
+      // Optimized URL and query parsing with object pooling
       const urlString = req.url!;
       const queryIndex = urlString.indexOf('?');
 
       if (queryIndex === -1) {
-        // No query string - fast path
+        // No query string
         httpReq.path = urlString;
         httpReq.query = {};
       } else {
-        // Has query string - parse efficiently
+        // Has query string - parse efficiently with pooled object
         httpReq.path = urlString.substring(0, queryIndex);
-        httpReq.query = this.parseQueryString(urlString.substring(queryIndex + 1));
+        httpReq.query = this.parseQueryStringPooled(urlString.substring(queryIndex + 1));
       }
 
-      // Ultra-fast method checking - avoid array includes
+      // Method checking - avoid array includes
       const method = req.method!;
       if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
         httpReq.body = await this.parseBody(req);
@@ -269,7 +237,7 @@ export class MoroHttpServer {
       // Find matching route
       const route = this.findRoute(req.method!, httpReq.path);
       if (!route) {
-        // Ultra-fast 404 response with pre-compiled buffer
+        // 404 response with pre-compiled buffer
         httpRes.statusCode = 404;
         httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
         httpRes.setHeader('Content-Length', MoroHttpServer.RESPONSE_TEMPLATES.notFound.length);
@@ -318,7 +286,7 @@ export class MoroHttpServer {
             requestId: httpReq.requestId,
           });
         } else {
-          // Ultra-defensive fallback - check each method individually
+          // Defensive fallback - check each method individually
           if (typeof httpRes.setHeader === 'function') {
             httpRes.statusCode = 500;
             httpRes.setHeader('Content-Type', 'application/json');
@@ -376,55 +344,32 @@ export class MoroHttpServer {
     });
   }
 
-  // Efficient object pooling for parameter objects with ES2022 optimizations
+  // Use shared object pool for parameter objects
   private acquireParamObject(): Record<string, string> {
-    const obj = this.paramObjectPool.pop();
-    if (obj) {
-      // ES2022: Use Object.hasOwn for safer property checks and faster clearing
-      // Clear existing properties more efficiently
-      for (const key in obj) {
-        if (Object.hasOwn(obj, key)) {
-          delete obj[key];
-        }
-      }
-      return obj;
-    }
-    return {};
+    return this.poolManager.acquireParams();
   }
 
   private releaseParamObject(params: Record<string, string>): void {
-    if (this.paramObjectPool.length < this.maxPoolSize) {
-      this.paramObjectPool.push(params);
-    }
+    this.poolManager.releaseParams(params);
   }
 
   // Force cleanup of all pooled objects
   private forceCleanupPools(): void {
-    // ES2022: More efficient array clearing
-    this.paramObjectPool.splice(0);
-    this.bufferPool.splice(0);
+    // Use shared pool manager cleanup
+    this.poolManager.clearAll();
 
     // Force garbage collection if available
-    // Use modern globalThis check with optional chaining
     if (globalThis?.gc) {
       globalThis.gc();
     }
   }
 
   private acquireBuffer(size: number): Buffer {
-    // ES2022: Use findIndex for better performance than find + indexOf
-    const index = this.bufferPool.findIndex(b => b.length >= size);
-    if (index !== -1) {
-      const buffer = this.bufferPool.splice(index, 1)[0];
-      return buffer.subarray(0, size);
-    }
-    return Buffer.allocUnsafe(size);
+    return this.poolManager.acquireBuffer(size);
   }
 
   private releaseBuffer(buffer: Buffer): void {
-    if (this.bufferPool.length < this.maxPoolSize && buffer.length <= 8192) {
-      this.bufferPool.push(buffer);
-    }
+    this.poolManager.releaseBuffer(buffer);
   }
 
   private streamLargeResponse(res: any, data: any): void {
@@ -448,7 +393,7 @@ export class MoroHttpServer {
       return this.pathNormalizationCache.get(path)!;
     }
 
-    // Fast normalization: remove trailing slash (except root), decode once
+    // Normalization: remove trailing slash (except root), decode once
     let normalized = path;
     if (normalized.length > 1 && normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1);
@@ -469,8 +414,8 @@ export class MoroHttpServer {
     httpReq.body = null;
     httpReq.path = '';
     httpReq.ip = req.socket.remoteAddress || '';
-    // Faster request ID generation
-    httpReq.requestId = Date.now().toString(36) + (++this.requestCounter).toString(36);
+    // Request ID generation using pool manager (if enabled)
+    httpReq.requestId = this.requestTrackingEnabled ? this.poolManager.generateRequestId() : '';
     httpReq.headers = req.headers as Record<string, string>;
 
     // Parse cookies
@@ -493,8 +438,11 @@ export class MoroHttpServer {
     return cookies;
   }
 
-  private enhanceResponse(res: ServerResponse): HttpResponse {
+  private enhanceResponse(res: ServerResponse, req: HttpRequest): HttpResponse {
     const httpRes = res as HttpResponse;
+
+    // Store request reference for access to headers (needed for compression, logging, etc.)
+    (httpRes as any).req = req;
 
     // BULLETPROOF status method - always works
     httpRes.status = (code: number) => {
@@ -505,21 +453,7 @@ export class MoroHttpServer {
     httpRes.json = async (data: any) => {
       if (httpRes.headersSent) return;
 
-      // PERFORMANCE OPTIMIZATION: Check response cache for common patterns
-      const cacheKey = this.getResponseCacheKey(data);
-      if (cacheKey) {
-        const cachedBuffer = this.responseCache.get(cacheKey);
-        if (cachedBuffer) {
-          this.responseCacheHits++;
-          httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
-          httpRes.setHeader('Content-Length', cachedBuffer.length);
-          httpRes.end(cachedBuffer);
-          return;
-        }
-        this.responseCacheMisses++;
-      }
-
-      // Ultra-fast JSON serialization with zero-copy buffers
+      // JSON serialization with zero-copy buffers
       let jsonString: string;
 
       // Enhanced JSON optimization for common API patterns
@@ -605,11 +539,6 @@ export class MoroHttpServer {
       });
 
       httpRes.end(finalBuffer);
-
-      // PERFORMANCE OPTIMIZATION: Cache small, common responses
-      if (cacheKey && finalBuffer.length < 1024 && this.responseCache.size < 100) {
-        this.responseCache.set(cacheKey, Buffer.from(finalBuffer));
-      }
 
       // Return buffer to pool after response (zero-copy achievement!)
       process.nextTick(() => MoroHttpServer.returnBuffer(buffer));
@@ -915,12 +844,20 @@ export class MoroHttpServer {
     return result;
   }
 
+  // Legacy method for backward compatibility
   private parseQueryString(queryString: string): Record<string, string> {
-    const result: Record<string, string> = {};
-    if (!queryString) return result;
+    return this.parseQueryStringPooled(queryString);
+  }
 
+  // Optimized query string parser with object pooling
+  private parseQueryStringPooled(queryString: string): Record<string, string> {
+    if (!queryString) return {};
+
+    const result = this.poolManager.acquireQuery();
     const pairs = queryString.split('&');
-    for (const pair of pairs) {
+
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
       const equalIndex = pair.indexOf('=');
       if (equalIndex === -1) {
         result[decodeURIComponent(pair)] = '';
@@ -940,7 +877,7 @@ export class MoroHttpServer {
   private routesBySegmentCount = new Map<number, RouteEntry[]>();
   private pathNormalizationCache = new Map<string, string>();
 
-  // Ultra-fast CPU cache-friendly optimizations (Rust-level performance)
+  // CPU cache-friendly optimizations
   private routeHitCount = new Map<string, number>(); // Track route popularity for cache optimization
   private static readonly HOT_ROUTE_THRESHOLD = 100; // Routes accessed 100+ times get hot path treatment
 
@@ -996,21 +933,25 @@ export class MoroHttpServer {
     return route;
   }
 
+  // Optimized middleware execution with reduced Promise allocation
   private async executeMiddleware(
     middleware: Middleware[],
     req: HttpRequest,
     res: HttpResponse
   ): Promise<void> {
-    for (const mw of middleware) {
+    for (let i = 0; i < middleware.length; i++) {
       // Short-circuit if response already sent
       if (res.headersSent) return;
 
-      await new Promise<void>((resolve, reject) => {
-        let nextCalled = false;
+      const mw = middleware[i];
 
+      await new Promise<void>((resolve, reject) => {
+        let resolved = false;
+
+        // Reuse next function to reduce allocations
         const next = () => {
-          if (nextCalled) return;
-          nextCalled = true;
+          if (resolved) return;
+          resolved = true;
           resolve();
         };
 
@@ -1018,17 +959,21 @@ export class MoroHttpServer {
           const result = mw(req, res, next);
 
           // Handle async middleware
-          if (result instanceof Promise) {
-            result
+          if (result && typeof (result as any).then === 'function') {
+            (result as Promise<void>)
               .then(() => {
-                if (!nextCalled) next();
+                if (!resolved) next();
               })
-              .catch(error => {
-                reject(error);
-              });
+              .catch(reject);
+          } else if (!resolved) {
+            // Sync middleware that didn't call next
+            next();
           }
         } catch (error) {
-          reject(error);
+          if (!resolved) {
+            resolved = true;
+            reject(error);
+          }
         }
       });
     }
@@ -1065,44 +1010,14 @@ export class MoroHttpServer {
     return this.server;
   }
 
-  // PERFORMANCE OPTIMIZATION: Generate cache key for common response patterns
-  private getResponseCacheKey(data: any): string | null {
-    // Only cache simple, common responses
-    if (!data || typeof data !== 'object') {
-      // Simple primitives or strings - generate key
-      const key = JSON.stringify(data);
-      return key.length < 100 ? key : null;
-    }
-
-    // Common API response patterns
-    if ('hello' in data && Object.keys(data).length <= 2) {
-      // Hello world type responses
-      return `hello:${JSON.stringify(data)}`;
-    }
-
-    if ('status' in data && Object.keys(data).length <= 3) {
-      // Status responses like {status: "ok", version: "1.0.0"}
-      return `status:${JSON.stringify(data)}`;
-    }
-
-    if ('success' in data && 'message' in data && Object.keys(data).length <= 3) {
-      // Simple success/error responses
-      return `msg:${data.success}:${data.message}`;
-    }
-
-    // Don't cache complex objects
-    return null;
-  }
-
   // Performance statistics
   getPerformanceStats() {
+    const poolStats = this.poolManager.getStats();
     return {
-      responseCacheHits: this.responseCacheHits,
-      responseCacheMisses: this.responseCacheMisses,
-      responseCacheSize: this.responseCache.size,
-      paramObjectPoolSize: this.paramObjectPool.length,
-      bufferPoolSize: this.bufferPool.length,
-      middlewareExecutionCacheSize: this.middlewareExecutionCache.size,
+      paramObjectPoolSize: poolStats.paramPool.poolSize,
+      queryObjectPoolSize: poolStats.queryPool.poolSize,
+      headerObjectPoolSize: poolStats.headerPool.poolSize,
+      poolManager: poolStats,
     };
   }
 }
