@@ -1,4 +1,16 @@
+## [1.6.2] - 2025-10-22
+
+### Fixed
+- **Critical: Republish with correct build** - The 1.6.1 npm package was built from outdated code
+  - Fixed ES module configuration loading (`createApp` options now work correctly)
+  - Fixed unified router integration
+  - Fixed object pooling system
+  - All recent performance and stability improvements now included
+
 ## [1.6.1] - 2025-10-21
+
+### Note
+- ⚠️ This version was published with an incorrect build. Please use 1.6.2 instead.
 
 ### Added
 - feat: enhanced routing system with unified router and object pooling
