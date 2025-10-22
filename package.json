@@ -1,6 +1,6 @@
 {
   "name": "@morojs/moro",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, enterprise authentication (Auth.js), type-safe validation, and functional architecture",
   "type": "module",
   "main": "dist/index.js",
@@ -177,12 +177,8 @@
   },
   "files": [
     "dist/**/*",
-    "src/**/*",
     "README.md",
-    "LICENSE",
-    "API.md",
-    "tsconfig.json",
-    "jest.config.mjs"
+    "LICENSE"
   ],
   "lint-staged": {
     "src/**/*.ts": [

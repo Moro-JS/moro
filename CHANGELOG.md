@@ -1,3 +1,20 @@
+## [1.6.3] - 2025-10-22
+
+### Changed
+- **Built-in Middleware Organization** - Restructured all built-in middleware into consistent directory patterns
+  - Moved all middleware from single files to directories with `core.ts`, `middleware.ts`, `hook.ts`, and `index.ts`
+  - Organized auth-related utilities: `auth-helpers.ts`, `auth-providers.ts`, and `jwt-helpers.ts` moved into `auth/` directory
+  - Applied consistent structure to simple middleware: `request-logger`, `performance-monitor`, and `error-tracker`
+  - Improved code organization and maintainability across 11 complex middleware and 3 simple middleware
+  - All public APIs remain unchanged - fully backward compatible
+
+### Fixed
+- **npm Package Size** - Removed unnecessary files from published package
+  - Removed TypeScript source files (`src/**/*`) from npm package
+  - Removed build configuration files (`tsconfig.json`, `jest.config.mjs`)
+  - Package now only includes compiled JavaScript (`dist`), README, and LICENSE
+  - Significantly reduced package size for faster installations
+
 ## [1.6.2] - 2025-10-22
 
 ### Fixed

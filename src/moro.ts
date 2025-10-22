@@ -573,27 +573,27 @@ export class Moro extends EventEmitter {
 
     // Add unified routing middleware (handles both chainable and direct routes)
     // Optimized: call router without extra async wrapper when possible
-    this.coreFramework.addMiddleware((req: HttpRequest, res: HttpResponse, next: () => void) => {
-      // Try unified router first (handles all route types)
-      const handled = this.unifiedRouter.handleRequest(req, res);
+    this.coreFramework.addMiddleware(
+      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+        // Try unified router first (handles all route types)
 
-      // Check if it's a promise (async route) or sync
-      if (handled && typeof (handled as any).then === 'function') {
-        // Async - await the result
-        (handled as Promise<boolean>)
-          .then(isHandled => {
-            if (!isHandled) {
-              next(); // Fall back to legacy routes if any
-            }
-          })
-          .catch(() => next());
-      } else {
-        // Sync - check immediately
-        if (!(handled as boolean)) {
-          next();
+        const handled = this.unifiedRouter.handleRequest(req, res);
+
+        // Check if it's a promise (async route) or sync (fast-path)
+        if (handled && typeof (handled as any).then === 'function') {
+          // Async - await the result
+          const isHandled = await (handled as Promise<boolean>);
+          if (!isHandled) {
+            next();
+          }
+        } else {
+          // Sync - check immediately
+          if (!(handled as boolean)) {
+            next();
+          }
         }
       }
-    });
+    );
 
     // Register legacy direct routes with the HTTP server (for backward compatibility)
     if (this.routes.length > 0) {
@@ -1561,27 +1561,26 @@ export class Moro extends EventEmitter {
 
       // Add unified routing middleware (handles both chainable and direct routes)
       // Optimized: call router without extra async wrapper when possible
-      this.coreFramework.addMiddleware((req: HttpRequest, res: HttpResponse, next: () => void) => {
-        // Try unified router first (handles all route types)
-        const handled = this.unifiedRouter.handleRequest(req, res);
+      this.coreFramework.addMiddleware(
+        async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+          // Try unified router first (handles all route types)
+          const handled = this.unifiedRouter.handleRequest(req, res);
 
-        // Check if it's a promise (async route) or sync
-        if (handled && typeof (handled as any).then === 'function') {
-          // Async - await the result
-          (handled as Promise<boolean>)
-            .then(isHandled => {
-              if (!isHandled) {
-                next(); // Fall back to legacy routes if any
-              }
-            })
-            .catch(() => next());
-        } else {
-          // Sync - check immediately
-          if (!(handled as boolean)) {
-            next();
+          // Check if it's a promise (async route) or sync (fast-path)
+          if (handled && typeof (handled as any).then === 'function') {
+            // Async - await the result
+            const isHandled = await (handled as Promise<boolean>);
+            if (!isHandled) {
+              next();
+            }
+          } else {
+            // Sync - check immediately
+            if (!(handled as boolean)) {
+              next();
+            }
           }
         }
-      });
+      );
 
       // Register legacy direct routes with the HTTP server (for backward compatibility)
       if (this.routes.length > 0) {

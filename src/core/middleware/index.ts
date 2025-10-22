@@ -1,4 +1,11 @@
 // Middleware System for Moro
+/*
+  All middleware in Moro should follow or adopt all of the following patterns:
+  Core - Core.method(req, res, config) - Direct logic, no next, used by router directly
+  Middleware - (req, res, next) => { ... next() } - For middleware chains, calls next
+  Hooks - MiddlewareInterface with before/after hooks
+*/
+
 import { EventEmitter } from 'events';
 import { HookManager } from '../utilities/index.js';
 import {

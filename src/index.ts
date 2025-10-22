@@ -35,7 +35,7 @@ export type {
 export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter.js';
 
 // Export Auth.js middleware and providers
-export { auth, providers } from './core/middleware/built-in/auth.js';
+export { auth, providers } from './core/middleware/built-in/auth/index.js';
 
 // Runtime system exports
 export type {
@@ -223,7 +223,8 @@ export type * from './types/session.js';
 export type * from './types/discovery.js';
 
 // Adapters
-export * from './core/middleware/built-in/adapters/index.js';
+export * from './core/middleware/built-in/cache/adapters/index.js';
+export * from './core/middleware/built-in/cdn/adapters/index.js';
 export * from './core/database/adapters/index.js';
 
 // Re-export commonly used types for convenience

@@ -5,9 +5,18 @@ import { PathMatcher, CompiledPath } from './path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse } from '../../types/http.js';
+import { RateLimitCore, type RateLimitConfig } from '../middleware/built-in/rate-limit/index.js';
+import { CacheCore, type CacheConfig } from '../middleware/built-in/cache/index.js';
+import { ValidationCore, type ValidationConfig } from '../middleware/built-in/validation/index.js';
+import { requireAuth } from '../middleware/built-in/auth/helpers.js';
 import { ValidationSchema } from '../validation/schema-interface.js';
 
 const logger = createFrameworkLogger('UnifiedRouter');
+
+// Shared Core instances for route-based features
+const rateLimitCore = new RateLimitCore();
+const cacheCore = new CacheCore();
+const validationCore = new ValidationCore();
 
 // ===== Types =====
 
@@ -19,30 +28,14 @@ export type Middleware = (
   next: () => void
 ) => void | Promise<void>;
 
-export interface ValidationConfig {
-  body?: ValidationSchema;
-  query?: ValidationSchema;
-  params?: ValidationSchema;
-  headers?: ValidationSchema;
-}
-
 export interface AuthConfig {
   roles?: string[];
   permissions?: string[];
   optional?: boolean;
 }
 
-export interface RateLimitConfig {
-  requests: number;
-  window: number;
-  skipSuccessfulRequests?: boolean;
-}
-
-export interface CacheConfig {
-  ttl: number;
-  key?: string;
-  tags?: string[];
-}
+// Re-export config types from built-in middleware for convenience
+export type { RateLimitConfig, CacheConfig, ValidationConfig };
 
 export interface MiddlewarePhases {
   before?: Middleware[];
@@ -69,6 +62,11 @@ interface InternalRoute {
   compiledPath: CompiledPath;
   isFastPath: boolean; // No middleware, auth, validation, rate limiting
   executionOrder: string[]; // Ordered list of execution phases
+  // Route-specific configs (not middleware)
+  rateLimitConfig?: RateLimitConfig;
+  cacheConfig?: CacheConfig;
+  authMiddleware?: Middleware; // Auth keeps middleware since it's using requireAuth helper
+  validationConfig?: ValidationConfig;
 }
 
 // ===== Route Builder (Chainable API) =====
@@ -273,11 +271,22 @@ export class UnifiedRouter {
     // Determine execution order
     const executionOrder = this.buildExecutionOrder(schema);
 
+    // Store configs directly (not middleware) - router will use Core classes
     const route: InternalRoute = {
       schema,
       compiledPath,
       isFastPath,
       executionOrder,
+      rateLimitConfig: schema.rateLimit,
+      cacheConfig: schema.cache,
+      authMiddleware: schema.auth
+        ? requireAuth({
+            roles: schema.auth.roles,
+            permissions: schema.auth.permissions,
+            allowUnauthenticated: schema.auth.optional,
+          })
+        : undefined,
+      validationConfig: schema.validation,
     };
 
     // Store in appropriate structures
@@ -286,12 +295,13 @@ export class UnifiedRouter {
       this.staticRoutes.set(key, route);
       this.stats.staticRoutes++;
     } else {
-      // Group by segment count for faster matching
       const segmentCount = compiledPath.segments;
-      if (!this.dynamicRoutesBySegments.has(segmentCount)) {
-        this.dynamicRoutesBySegments.set(segmentCount, []);
+      let routes = this.dynamicRoutesBySegments.get(segmentCount);
+      if (!routes) {
+        routes = [];
+        this.dynamicRoutesBySegments.set(segmentCount, routes);
       }
-      this.dynamicRoutesBySegments.get(segmentCount)!.push(route);
+      routes.push(route);
       this.stats.dynamicRoutes++;
     }
 
@@ -419,7 +429,7 @@ export class UnifiedRouter {
                   }
                   return true;
                 }
-              } catch (error) {
+              } catch {
                 if (!res.headersSent) {
                   res.status(500).json({ error: 'Internal server error' });
                 }
@@ -463,7 +473,7 @@ export class UnifiedRouter {
                     }
                     return true;
                   }
-                } catch (error) {
+                } catch {
                   if (!res.headersSent) {
                     res.status(500).json({ error: 'Internal server error' });
                   }
@@ -484,8 +494,17 @@ export class UnifiedRouter {
       // Check pool manager cache
       const cachedRoute = this.poolManager.getCachedRoute(staticKey);
       if (cachedRoute) {
-        await this.executeRoute(cachedRoute, req, res, { params: {} });
-        return true;
+        // Re-extract params for dynamic routes (cached route might be dynamic)
+        if (!cachedRoute.compiledPath.isStatic) {
+          const matchResult = PathMatcher.match(cachedRoute.compiledPath, path);
+          if (matchResult) {
+            await this.executeRoute(cachedRoute, req, res, matchResult);
+            return true;
+          }
+        } else {
+          await this.executeRoute(cachedRoute, req, res, { params: {} });
+          return true;
+        }
       }
 
       const staticRoute = this.staticRoutes.get(staticKey);
@@ -542,6 +561,10 @@ export class UnifiedRouter {
         if (result !== undefined && !res.headersSent) {
           await res.json(result);
         }
+      } else {
+        // Headers already sent by middleware (e.g., cache hit, validation error, rate limit, auth)
+        // This is expected behavior, not an error
+        logger.debug('Handler skipped - response already sent by middleware', 'Execution');
       }
     } catch (error) {
       logger.error('Route execution error', 'Execution', {
@@ -584,20 +607,26 @@ export class UnifiedRouter {
         break;
 
       case 'rateLimit':
-        if (schema.rateLimit) {
-          await this.executeRateLimit(req, res, schema.rateLimit);
+        // Use Core directly for route-based rate limiting
+        if (route.rateLimitConfig) {
+          await rateLimitCore.checkLimit(req, res, route.rateLimitConfig);
         }
         break;
 
       case 'auth':
-        if (schema.auth) {
-          await this.executeAuth(req, res, schema.auth);
+        // Auth uses middleware (from requireAuth helper)
+        if (route.authMiddleware) {
+          await this.executeMiddleware(route.authMiddleware, req, res);
         }
         break;
 
       case 'validation':
-        if (schema.validation) {
-          await this.executeValidation(req, res, schema.validation);
+        // Use Core directly for route-based validation
+        if (route.validationConfig) {
+          const isValid = await validationCore.validate(req, res, route.validationConfig);
+          if (!isValid) {
+            return; // Validation failed, response already sent
+          }
         }
         break;
 
@@ -611,8 +640,12 @@ export class UnifiedRouter {
         break;
 
       case 'cache':
-        if (schema.cache) {
-          await this.executeCache(req, res, schema.cache);
+        // Use Core directly for route-based caching
+        if (route.cacheConfig) {
+          const cached = await cacheCore.tryGet(req, res, route.cacheConfig);
+          if (cached) {
+            return; // Cache hit, response already sent
+          }
         }
         break;
 
@@ -666,123 +699,6 @@ export class UnifiedRouter {
         }
       }
     });
-  }
-
-  private async executeRateLimit(
-    _req: HttpRequest,
-    _res: HttpResponse,
-    _config: RateLimitConfig
-  ): Promise<void> {
-    // Rate limiting implementation placeholder
-    // TODO: Implement actual rate limiting logic
-  }
-
-  private async executeAuth(
-    req: HttpRequest,
-    res: HttpResponse,
-    config: AuthConfig
-  ): Promise<void> {
-    const auth = (req as any).auth;
-
-    if (!auth) {
-      res.status(500).json({
-        success: false,
-        error: 'Authentication middleware not configured',
-      });
-      return;
-    }
-
-    if (!config.optional && !auth.isAuthenticated) {
-      res.status(401).json({
-        success: false,
-        error: 'Authentication required',
-      });
-      return;
-    }
-
-    if (auth.isAuthenticated && config.roles) {
-      const userRoles = auth.user?.roles || [];
-      const hasRole = config.roles.some(role => userRoles.includes(role));
-      if (!hasRole) {
-        res.status(403).json({
-          success: false,
-          error: 'Insufficient permissions',
-          message: `Required roles: ${config.roles.join(', ')}`,
-        });
-        return;
-      }
-    }
-
-    if (auth.isAuthenticated && config.permissions) {
-      const userPermissions = auth.user?.permissions || [];
-      const hasPermission = config.permissions.every(permission =>
-        userPermissions.includes(permission)
-      );
-      if (!hasPermission) {
-        res.status(403).json({
-          success: false,
-          error: 'Insufficient permissions',
-          message: `Required permissions: ${config.permissions.join(', ')}`,
-        });
-        return;
-      }
-    }
-  }
-
-  private async executeValidation(
-    req: HttpRequest,
-    res: HttpResponse,
-    config: ValidationConfig
-  ): Promise<void> {
-    try {
-      if (config.body && req.body !== undefined) {
-        (req as any).validatedBody = await config.body.parseAsync(req.body);
-        req.body = (req as any).validatedBody;
-      }
-
-      if (config.query && req.query !== undefined) {
-        (req as any).validatedQuery = await config.query.parseAsync(req.query);
-        req.query = (req as any).validatedQuery;
-      }
-
-      if (config.params && req.params !== undefined) {
-        (req as any).validatedParams = await config.params.parseAsync(req.params);
-        req.params = (req as any).validatedParams;
-      }
-
-      if (config.headers && req.headers !== undefined) {
-        (req as any).validatedHeaders = await config.headers.parseAsync(req.headers);
-      }
-    } catch (error: any) {
-      const field = error.field || 'unknown';
-      if (error.issues) {
-        res.status(400).json({
-          success: false,
-          error: `Validation failed for ${field}`,
-          details: error.issues.map((issue: any) => ({
-            field: issue.path.length > 0 ? issue.path.join('.') : field,
-            message: issue.message,
-            code: issue.code,
-          })),
-          requestId: req.requestId,
-        });
-      } else {
-        res.status(400).json({
-          success: false,
-          error: `Validation failed for ${field}`,
-          requestId: req.requestId,
-        });
-      }
-    }
-  }
-
-  private async executeCache(
-    _req: HttpRequest,
-    _res: HttpResponse,
-    _config: CacheConfig
-  ): Promise<void> {
-    // Cache implementation placeholder
-    // TODO: Implement actual caching logic
   }
 
   // ===== Helper Methods =====

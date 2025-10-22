@@ -457,21 +457,25 @@ export class MoroHttpServer {
       let jsonString: string;
 
       // Enhanced JSON optimization for common API patterns
+      // Only optimize simple patterns without extra fields
       if (data && typeof data === 'object' && 'success' in data) {
-        if ('data' in data && 'error' in data && !('total' in data)) {
-          // {success, data, error} pattern
+        const keys = Object.keys(data);
+        const keyCount = keys.length;
+
+        if (keyCount === 3 && 'data' in data && 'error' in data) {
+          // {success, data, error} pattern (exactly 3 keys)
           jsonString = `{"success":${data.success},"data":${JSON.stringify(data.data)},"error":${JSON.stringify(data.error)}}`;
-        } else if ('data' in data && 'total' in data && !('error' in data)) {
-          // {success, data, total} pattern
+        } else if (keyCount === 3 && 'data' in data && 'total' in data) {
+          // {success, data, total} pattern (exactly 3 keys)
           jsonString = `{"success":${data.success},"data":${JSON.stringify(data.data)},"total":${data.total}}`;
-        } else if ('data' in data && !('error' in data) && !('total' in data)) {
-          // {success, data} pattern
+        } else if (keyCount === 2 && 'data' in data) {
+          // {success, data} pattern (exactly 2 keys)
           jsonString = `{"success":${data.success},"data":${JSON.stringify(data.data)}}`;
-        } else if ('error' in data && !('data' in data) && !('total' in data)) {
-          // {success, error} pattern
+        } else if (keyCount === 2 && 'error' in data) {
+          // {success, error} pattern (exactly 2 keys)
           jsonString = `{"success":${data.success},"error":${JSON.stringify(data.error)}}`;
         } else {
-          // Complex object - use standard JSON.stringify
+          // Complex object or has additional fields - use standard JSON.stringify
           jsonString = JSON.stringify(data);
         }
       } else {

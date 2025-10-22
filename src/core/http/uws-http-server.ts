@@ -268,7 +268,7 @@ export class UWebSocketsHttpServer {
         return httpRes as HttpResponse;
       },
 
-      json(data: any) {
+      async json(data: any) {
         if (headersSent || res.aborted) return;
 
         const body = JSON.stringify(data);

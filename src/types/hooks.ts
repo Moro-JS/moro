@@ -3,6 +3,10 @@ import { HttpRequest, HttpResponse } from '../core/http/index.js';
 
 export type HookFunction = (...args: any[]) => Promise<any> | any;
 
+export interface StandardMiddleware {
+  (req: HttpRequest, res: HttpResponse, next: () => Promise<void>): Promise<void> | void;
+}
+
 export interface HookContext {
   request?: HttpRequest;
   response?: HttpResponse;
