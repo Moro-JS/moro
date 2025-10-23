@@ -1,3 +1,8 @@
+## [1.6.4] - 2025-10-23
+
+### Maintenance
+- Version bump to 1.6.4
+
 ## [1.6.3] - 2025-10-22
 
 ### Changed
