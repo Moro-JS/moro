@@ -4,13 +4,7 @@
 import cluster from 'cluster';
 import { createFrameworkLogger } from '../logger/index.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
-import {
-  HttpRequest,
-  HttpResponse,
-  HttpHandler,
-  Middleware,
-  RouteEntry,
-} from '../../types/http.js';
+import { HttpRequest, HttpResponse, Middleware } from '../../types/http.js';
 
 /**
  * uWebSockets HTTP Server Adapter
@@ -49,6 +43,23 @@ export class UWebSocketsHttpServer {
     notFound: Buffer.from('{"success":false,"error":"Not found"}'),
     serverError: Buffer.from('{"success":false,"error":"Internal server error"}'),
   };
+
+  // Pre-cached status strings for common codes (performance optimization)
+  private static readonly STATUS_STRINGS = new Map([
+    [200, '200 OK'],
+    [201, '201 Created'],
+    [204, '204 No Content'],
+    [301, '301 Moved Permanently'],
+    [302, '302 Found'],
+    [304, '304 Not Modified'],
+    [400, '400 Bad Request'],
+    [401, '401 Unauthorized'],
+    [403, '403 Forbidden'],
+    [404, '404 Not Found'],
+    [500, '500 Internal Server Error'],
+    [502, '502 Bad Gateway'],
+    [503, '503 Service Unavailable'],
+  ]);
 
   constructor(
     options: {
@@ -161,7 +172,7 @@ export class UWebSocketsHttpServer {
             res.writeHeader('Content-Type', 'application/json');
             res.end('{"success":false,"error":"Internal server error"}');
           });
-        } catch (writeError) {
+        } catch {
           this.logger.error('Failed to send error response', 'ResponseError');
         }
       }
@@ -182,7 +193,7 @@ export class UWebSocketsHttpServer {
     }
   }
 
-  private createMoroRequest(req: any, res: any): HttpRequest {
+  private createMoroRequest(req: any, _res: any): HttpRequest {
     const url = req.getUrl();
     const queryString = req.getQuery();
     const methodRaw = req.getMethod();
@@ -235,10 +246,54 @@ export class UWebSocketsHttpServer {
     return httpReq;
   }
 
+  // Optimized helper to write headers - avoids Object.entries() overhead
+  private static writeHeaders(
+    res: any,
+    headers: Record<string, string | string[]>,
+    headerKeys: string[]
+  ): void {
+    const len = headerKeys.length;
+    // Fast-path for common cases
+    if (len === 0) return;
+
+    if (len === 1) {
+      // Single header (most common case) - no loop needed
+      const key = headerKeys[0];
+      const value = headers[key];
+      res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
+      return;
+    }
+
+    if (len === 2) {
+      // Two headers - unroll loop
+      const key0 = headerKeys[0];
+      const value0 = headers[key0];
+      res.writeHeader(key0, Array.isArray(value0) ? value0.join(', ') : String(value0));
+
+      const key1 = headerKeys[1];
+      const value1 = headers[key1];
+      res.writeHeader(key1, Array.isArray(value1) ? value1.join(', ') : String(value1));
+      return;
+    }
+
+    // Multiple headers - use loop
+    for (let i = 0; i < len; i++) {
+      const key = headerKeys[i];
+      const value = headers[key];
+      res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
+    }
+  }
+
+  // Helper to get status string (cached for performance)
+  private static getStatusString(code: number): string {
+    return UWebSocketsHttpServer.STATUS_STRINGS.get(code) || `${code} OK`;
+  }
+
   private createMoroResponse(req: any, res: any): HttpResponse {
     let headersSent = false;
     let statusCode = 200;
     const responseHeaders: Record<string, string | string[]> = {};
+    let headerKeys: string[] = []; // Track header keys for fast iteration
     //eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
 
@@ -255,7 +310,11 @@ export class UWebSocketsHttpServer {
       },
 
       setHeader(name: string, value: string | string[]) {
-        responseHeaders[name.toLowerCase()] = value;
+        const lowerName = name.toLowerCase();
+        if (!(lowerName in responseHeaders)) {
+          headerKeys.push(lowerName);
+        }
+        responseHeaders[lowerName] = value;
         return httpRes as HttpResponse;
       },
 
@@ -264,7 +323,11 @@ export class UWebSocketsHttpServer {
       },
 
       removeHeader(name: string) {
-        delete responseHeaders[name.toLowerCase()];
+        const lowerName = name.toLowerCase();
+        if (lowerName in responseHeaders) {
+          delete responseHeaders[lowerName];
+          headerKeys = headerKeys.filter(k => k !== lowerName);
+        }
         return httpRes as HttpResponse;
       },
 
@@ -272,18 +335,21 @@ export class UWebSocketsHttpServer {
         if (headersSent || res.aborted) return;
 
         const body = JSON.stringify(data);
-        responseHeaders['content-type'] = 'application/json';
+
+        // Set content-type if not already set
+        if (!('content-type' in responseHeaders)) {
+          responseHeaders['content-type'] = 'application/json';
+          headerKeys.push('content-type');
+        }
 
         try {
           res.cork(() => {
-            res.writeStatus(`${statusCode} OK`);
-            Object.entries(responseHeaders).forEach(([key, value]) => {
-              res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
-            });
+            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
+            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
             res.end(body);
           });
           headersSent = true;
-        } catch (error) {
+        } catch {
           self.logger.error('Failed to send JSON response', 'ResponseError');
         }
       },
@@ -295,14 +361,12 @@ export class UWebSocketsHttpServer {
 
         try {
           res.cork(() => {
-            res.writeStatus(`${statusCode} OK`);
-            Object.entries(responseHeaders).forEach(([key, value]) => {
-              res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
-            });
+            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
+            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
             res.end(body);
           });
           headersSent = true;
-        } catch (error) {
+        } catch {
           self.logger.error('Failed to send response', 'ResponseError');
         }
       },
@@ -315,15 +379,13 @@ export class UWebSocketsHttpServer {
 
         try {
           res.cork(() => {
-            res.writeStatus(`${statusCode} OK`);
-            Object.entries(responseHeaders).forEach(([key, value]) => {
-              res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
-            });
+            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
+            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
             res.end(data || '');
           });
           headersSent = true;
           if (typeof callback === 'function') callback();
-        } catch (error) {
+        } catch {
           self.logger.error('Failed to end response', 'ResponseError');
           if (typeof callback === 'function') callback();
         }
@@ -339,32 +401,34 @@ export class UWebSocketsHttpServer {
 
         try {
           res.cork(() => {
-            res.writeStatus(`${redirectCode} Found`);
+            res.writeStatus(UWebSocketsHttpServer.getStatusString(redirectCode));
             res.writeHeader('Location', url);
+            // Write any existing headers
+            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
             res.end();
           });
           headersSent = true;
-        } catch (error) {
+        } catch {
           self.logger.error('Failed to send redirect', 'ResponseError');
         }
       },
 
       // EventEmitter compatibility - stub implementations for middleware
-      on(event: string, callback: Function) {
+      on(_event: string, _callback: (...args: any[]) => void) {
         // uWebSockets doesn't use events like Node.js, but middleware might try to listen
         // Only implement 'finish' and 'close' events as stubs
         return httpRes;
       },
 
-      once(event: string, callback: Function) {
+      once(_event: string, _callback: (...args: any[]) => void) {
         return httpRes;
       },
 
-      emit(event: string, ...args: any[]) {
+      emit(_event: string, ..._args: any[]) {
         return true;
       },
 
-      removeListener(event: string, callback: Function) {
+      removeListener(_event: string, _callback: (...args: any[]) => void) {
         return httpRes;
       },
 
@@ -380,15 +444,17 @@ export class UWebSocketsHttpServer {
           if (options.sameSite) cookie += `; SameSite=${options.sameSite}`;
         }
 
-        const existing = responseHeaders['set-cookie'];
+        const lowerKey = 'set-cookie';
+        const existing = responseHeaders[lowerKey];
         if (existing) {
           if (Array.isArray(existing)) {
-            responseHeaders['set-cookie'] = [...existing, cookie];
+            responseHeaders[lowerKey] = [...existing, cookie];
           } else {
-            responseHeaders['set-cookie'] = [existing as string, cookie];
+            responseHeaders[lowerKey] = [existing as string, cookie];
           }
         } else {
-          responseHeaders['set-cookie'] = cookie;
+          responseHeaders[lowerKey] = cookie;
+          headerKeys.push(lowerKey);
         }
 
         return httpRes as HttpResponse;
@@ -399,7 +465,7 @@ export class UWebSocketsHttpServer {
   }
 
   private async readBody(res: any, httpReq: HttpRequest): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
       let buffer: Buffer;
 
       res.onData((chunk: ArrayBuffer, isLast: boolean) => {
@@ -429,7 +495,7 @@ export class UWebSocketsHttpServer {
             }
 
             resolve();
-          } catch (error) {
+          } catch {
             this.logger.error('Failed to parse request body', 'BodyParseError');
             httpReq.body = null;
             resolve();
@@ -494,7 +560,7 @@ export class UWebSocketsHttpServer {
     this.hookManager = hookManager;
   }
 
-  configurePerformance(config: any): void {
+  configurePerformance(_config: any): void {
     // uWebSockets is already highly optimized
     // This method exists for API compatibility
     this.logger.debug('Performance configuration noted (uWebSockets is pre-optimized)', 'Config');
@@ -519,7 +585,6 @@ export class UWebSocketsHttpServer {
 
         // Check if we're in a cluster environment
         const isClusterWorker = cluster.isWorker;
-        const isClusterPrimary = cluster.isPrimary;
 
         // ALWAYS use LIBUS_LISTEN_EXCLUSIVE_PORT when clustering
         // This enables SO_REUSEPORT at the OS level, allowing multiple processes to bind to the same port
@@ -569,7 +634,7 @@ export class UWebSocketsHttpServer {
         this.logger.info('uWebSockets HTTP server closed', 'Close');
       }
       if (callback) callback();
-    } catch (error) {
+    } catch {
       this.logger.error('Error closing server', 'Close');
       if (callback) callback();
     }

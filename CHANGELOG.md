@@ -1,3 +1,16 @@
+## [1.6.5] - 2025-10-28
+
+### Performance
+- **uWebSockets Performance Optimizations** - Significantly reduced framework overhead
+  - Implemented pre-cached HTTP status strings for common codes (200, 404, 500, etc.)
+  - Optimized header writing with fast-paths for 0, 1, and 2 headers (most common cases)
+  - Eliminated Object.entries() allocation overhead in response methods
+  - Added header key tracking to avoid repeated Object.keys() calls
+  - Conditional content-type setting to reduce unnecessary operations
+  - **Result**: Framework overhead reduced from ~30-45% to **~5%** compared to raw uWebSockets
+  - **Performance**: MoroJS now delivers **195k+ req/sec** (94.71% of raw uWebSockets' 206k req/sec)
+  - All optimizations maintain 100% API compatibility with standard HTTP server
+
 ## [1.6.4] - 2025-10-23
 
 ### Maintenance

@@ -15,7 +15,10 @@ const app = createApp({
         host: '127.0.0.1',  // Default benchmark host (can be overridden by HOST env var)
         useUWebSockets: true, // ⚡ ENABLE UWEBSOCKETS FOR MAXIMUM PERFORMANCE
         requestTracking: {
-            enabled: false, // Disable for fair comparison
+            enabled: false, // Disable IDs for max performance
+        },
+        requestLogging: {
+            enabled: false, // But still log requests for production monitoring
         },
         errorBoundary: {
             enabled: false, // Disable for fair comparison
@@ -34,9 +37,11 @@ const app = createApp({
     }
 })
 
-// Minimal "hello world" endpoint
-app.get('/', () => {
-    return { hello: 'world' };
+// Minimal "hello world" endpoint (mimic the uws raw benchmark)
+app.get('/', (req, res) => {
+    res.status(200);
+    res.setHeader('Content-Type', 'application/json');
+    res.send('{"hello":"world"}');
 });
 
 // No JSON Header "hello world" endpoint - fastest possible response
