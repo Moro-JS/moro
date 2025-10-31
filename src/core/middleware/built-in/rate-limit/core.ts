@@ -27,6 +27,16 @@ interface RateLimitStore {
 export class RateLimitCore {
   private store = new Map<string, RateLimitStore>();
 
+  // Monotonic timestamp optimization
+  private static readonly startTime = Date.now();
+
+  /**
+   * Get monotonic timestamp (smaller integers for better JIT optimization)
+   */
+  private static getTime(): number {
+    return Date.now() - RateLimitCore.startTime;
+  }
+
   /**
    * High-level check for router use: checkLimit(req, res, config)
    * Sends response if rate limit exceeded
@@ -59,27 +69,23 @@ export class RateLimitCore {
    */
   check(clientId: string, routeKey: string, requests: number, window: number): boolean {
     const key = `${routeKey}:${clientId}`;
-    const now = Date.now();
+    const now = RateLimitCore.getTime();
 
-    if (!this.store.has(key)) {
+    const limitData = this.store.get(key);
+    if (!limitData) {
       this.store.set(key, { count: 1, resetTime: now + window });
       return true;
     }
 
-    const limitData = this.store.get(key);
-    if (!limitData) {
-      return true;
-    }
-
+    // Fast path: check if window expired
     if (now > limitData.resetTime) {
       limitData.count = 1;
       limitData.resetTime = now + window;
       return true;
     }
 
-    limitData.count++;
-
-    if (limitData.count > requests) {
+    // Check limit before incrementing
+    if (limitData.count >= requests) {
       logger.warn('Rate limit exceeded', 'RateLimit', {
         clientId,
         route: routeKey,
@@ -89,6 +95,7 @@ export class RateLimitCore {
       return false;
     }
 
+    limitData.count++;
     return true;
   }
 
@@ -99,7 +106,8 @@ export class RateLimitCore {
     const key = `${routeKey}:${clientId}`;
     const limitData = this.store.get(key);
     if (limitData) {
-      return Math.ceil((limitData.resetTime - Date.now()) / 1000);
+      const now = RateLimitCore.getTime();
+      return Math.ceil((limitData.resetTime - now) / 1000);
     }
     return 0;
   }

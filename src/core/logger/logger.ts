@@ -41,6 +41,9 @@ export class MoroLogger implements Logger {
   private lastTimestamp = 0;
   private timestampCacheInterval = 100; // 100ms for better precision
 
+  // Metrics tracking toggle (disabled by default)
+  private metricsEnabled = false;
+
   // Object pooling for LogEntry objects (Pino's technique)
   private static readonly ENTRY_POOL: LogEntry[] = [];
   private static readonly MAX_POOL_SIZE = 100;
@@ -115,11 +118,21 @@ export class MoroLogger implements Logger {
 
     this.level = this.options.level || 'info';
 
+    // Enable metrics only if explicitly requested
+    this.metricsEnabled = this.options.enableMetrics ?? false;
+
     // Initialize buffer size from options
     this.maxBufferSize = this.options.maxBufferSize || 1000;
 
     // Initialize buffer overflow protection
     this.bufferOverflowThreshold = this.maxBufferSize * 2;
+
+    // Initialize log methods based on level
+    this.debug = this.createLogMethod('debug');
+    this.info = this.createLogMethod('info');
+    this.warn = this.createLogMethod('warn');
+    this.error = this.createLogMethod('error');
+    this.fatal = this.createLogMethod('fatal');
 
     // Add default console output
     this.addOutput({
@@ -129,8 +142,18 @@ export class MoroLogger implements Logger {
     });
 
     // Add custom outputs
-    this.options.outputs?.forEach(output => this.addOutput(output));
-    this.options.filters?.forEach(filter => this.addFilter(filter));
+    if (this.options.outputs) {
+      const outputsLen = this.options.outputs.length;
+      for (let i = 0; i < outputsLen; i++) {
+        this.addOutput(this.options.outputs[i]);
+      }
+    }
+    if (this.options.filters) {
+      const filtersLen = this.options.filters.length;
+      for (let i = 0; i < filtersLen; i++) {
+        this.addFilter(this.options.filters[i]);
+      }
+    }
   }
 
   // Object pooling methods
@@ -185,28 +208,43 @@ export class MoroLogger implements Logger {
     return result;
   }
 
-  debug(message: string, context?: string, metadata?: Record<string, any>): void {
-    this.log('debug', message, context, metadata);
-  }
+  // Noop functions for disabled log levels
+  // These are replaced when level changes to avoid unnecessary calls
+  debug: (message: string, context?: string, metadata?: Record<string, any>) => void =
+    this.createLogMethod('debug');
 
-  info(message: string, context?: string, metadata?: Record<string, any>): void {
-    this.log('info', message, context, metadata);
-  }
+  info: (message: string, context?: string, metadata?: Record<string, any>) => void =
+    this.createLogMethod('info');
 
-  warn(message: string, context?: string, metadata?: Record<string, any>): void {
-    this.log('warn', message, context, metadata);
-  }
+  warn: (message: string, context?: string, metadata?: Record<string, any>) => void =
+    this.createLogMethod('warn');
 
-  error(message: string | Error, context?: string, metadata?: Record<string, any>): void {
-    const msg = message instanceof Error ? message.message : message;
-    const stack = message instanceof Error ? message.stack : undefined;
-    this.log('error', msg, context, { ...metadata, stack });
-  }
+  error: (message: string | Error, context?: string, metadata?: Record<string, any>) => void =
+    this.createLogMethod('error');
 
-  fatal(message: string | Error, context?: string, metadata?: Record<string, any>): void {
-    const msg = message instanceof Error ? message.message : message;
-    const stack = message instanceof Error ? message.stack : undefined;
-    this.log('fatal', msg, context, { ...metadata, stack });
+  fatal: (message: string | Error, context?: string, metadata?: Record<string, any>) => void =
+    this.createLogMethod('fatal');
+
+  // Create log method with level check optimization
+  private createLogMethod(level: LogLevel): any {
+    // If this level is disabled, return noop function
+    if (MoroLogger.LEVELS[level] < MoroLogger.LEVELS[this.level]) {
+      // Noop - zero overhead!
+      return () => {};
+    }
+
+    // Return actual logging function
+    if (level === 'error' || level === 'fatal') {
+      return (message: string | Error, context?: string, metadata?: Record<string, any>) => {
+        const msg = message instanceof Error ? message.message : message;
+        const stack = message instanceof Error ? message.stack : undefined;
+        this.log(level, msg, context, { ...metadata, stack });
+      };
+    }
+
+    return (message: string, context?: string, metadata?: Record<string, any>) => {
+      this.log(level, message, context, metadata);
+    };
   }
 
   time(label: string): void {
@@ -243,6 +281,13 @@ export class MoroLogger implements Logger {
 
   setLevel(level: LogLevel): void {
     this.level = level;
+
+    // Rebuild log methods to update noop functions
+    this.debug = this.createLogMethod('debug');
+    this.info = this.createLogMethod('info');
+    this.warn = this.createLogMethod('warn');
+    this.error = this.createLogMethod('error');
+    this.fatal = this.createLogMethod('fatal');
   }
 
   getLevel(): LogLevel {
@@ -408,11 +453,11 @@ export class MoroLogger implements Logger {
       }
     }
 
-    // Update metrics
-    this.updateMetrics(entry);
-
-    // Store in history with circular buffer optimization
-    this.addToHistory(entry);
+    // Only update metrics and history if enabled
+    if (this.metricsEnabled) {
+      this.updateMetrics(entry);
+      this.addToHistory(entry);
+    }
 
     // Write to outputs with batched processing
     this.writeToOutputs(entry, level);
@@ -503,6 +548,9 @@ export class MoroLogger implements Logger {
   }
 
   private updateMetrics(entry: LogEntry): void {
+    // NOOP when metrics disabled
+    if (!this.metricsEnabled) return;
+
     this.metrics.totalLogs++;
     this.metrics.logsByLevel[entry.level]++;
 

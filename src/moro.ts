@@ -16,6 +16,7 @@ import {
   UnifiedRouter,
   RouteBuilder as UnifiedRouteBuilder,
 } from './core/routing/unified-router.js';
+import { PathMatcher } from './core/routing/path-matcher.js';
 import { AppDocumentationManager, DocsConfig } from './core/docs/index.js';
 import { EventEmitter } from 'events';
 import cluster from 'cluster';
@@ -886,8 +887,7 @@ export class Moro extends EventEmitter {
     }
 
     // Phase 2: Optimized dynamic route matching by segment count
-    const segments = path.split('/').filter(s => s.length > 0);
-    const segmentCount = segments.length;
+    const segmentCount = PathMatcher.countSegments(path);
     const candidateRoutes = this.dynamicRoutesBySegments.get(segmentCount) || [];
 
     for (const route of candidateRoutes) {
@@ -980,8 +980,7 @@ export class Moro extends EventEmitter {
       this.staticRouteMap.set(staticKey, route);
     } else {
       // Dynamic route - organize by segment count
-      const segments = route.path.split('/').filter((s: string) => s.length > 0);
-      const segmentCount = segments.length;
+      const segmentCount = PathMatcher.countSegments(route.path);
 
       if (!this.dynamicRoutesBySegments.has(segmentCount)) {
         this.dynamicRoutesBySegments.set(segmentCount, []);
@@ -1507,7 +1506,7 @@ export class Moro extends EventEmitter {
           '--turbo-fast-api-calls', // Optimize API calls
           '--turbo-escape-analysis', // Escape analysis optimization
           '--turbo-inline-api-calls', // Inline API calls
-          '--max-old-space-size=1024', // Limit memory to prevent GC pressure
+          `--max-old-space-size=${heapSizePerWorkerMB}`, // Limit memory to prevent GC pressure
         ];
         process.env.NODE_OPTIONS = (process.env.NODE_OPTIONS || '') + ' ' + v8Flags.join(' ');
       }

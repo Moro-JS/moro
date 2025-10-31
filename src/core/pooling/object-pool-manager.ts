@@ -229,18 +229,20 @@ export class ObjectPoolManager {
 
     // Initialize buffer pools with enhanced sizing
     this.bufferPools = new Map();
-    this.bufferSizes.forEach(size => {
+    const bufferSizesLen = this.bufferSizes.length;
+    for (let i = 0; i < bufferSizesLen; i++) {
+      const size = this.bufferSizes[i];
       this.bufferPools.set(
         size,
         new ObjectPool<Buffer>(() => Buffer.allocUnsafe(size), this.getOptimalPoolSize(size))
       );
-    });
+    }
 
     // Initialize caches with enhanced statistics
     this.routeCache = new LRUCache(500);
     this.responseCache = new LRUCache(200); // Increased for full response caching
 
-    // Pre-warm pools for better initial performance
+    // Pre-warm pools with optimal defaults
     this.preWarmPools();
 
     logger.debug(
@@ -250,39 +252,58 @@ export class ObjectPoolManager {
   }
 
   /**
-   * Pre-warm pools with initial objects for better startup performance
+   * Pre-warm pools with optimal sizes for better startup performance
+   * Can be called with custom sizes to override defaults
    */
-  private preWarmPools(): void {
+  preWarmPools(sizes?: {
+    params?: number;
+    query?: number;
+    headers?: number;
+    buffers?: Record<number, number>;
+  }): void {
+    // Aggressive pre-warming for common scenarios
+    const paramSize = sizes?.params ?? 50; // More aggressive default
+    const querySize = sizes?.query ?? 50;
+    const headerSize = sizes?.headers ?? 10;
+
     // Pre-warm parameter pool
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < paramSize; i++) {
       const obj = this.paramPool.acquire();
       this.paramPool.release(obj);
     }
 
-    // Pre-warm header pool
-    for (let i = 0; i < 10; i++) {
-      const obj = this.headerPool.acquire();
-      this.headerPool.release(obj);
-    }
-
     // Pre-warm query pool
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < querySize; i++) {
       const obj = this.queryPool.acquire();
       this.queryPool.release(obj);
     }
 
-    // Pre-warm buffer pools
-    this.bufferSizes.forEach(size => {
+    // Pre-warm header pool
+    for (let i = 0; i < headerSize; i++) {
+      const obj = this.headerPool.acquire();
+      this.headerPool.release(obj);
+    }
+
+    // Pre-warm buffer pools with configurable sizes
+    const bufferSizes = sizes?.buffers ?? {};
+    const bufferSizesLen = this.bufferSizes.length;
+    for (let i = 0; i < bufferSizesLen; i++) {
+      const size = this.bufferSizes[i];
       const pool = this.bufferPools.get(size);
       if (pool) {
-        for (let i = 0; i < Math.min(10, pool.stats.maxSize); i++) {
+        const warmCount = bufferSizes[size] ?? Math.min(25, pool.stats.maxSize);
+        for (let j = 0; j < warmCount; j++) {
           const buffer = pool.acquire();
           pool.release(buffer);
         }
       }
-    });
+    }
 
-    logger.debug('Object pools pre-warmed', 'PoolManager');
+    logger.debug('Object pools pre-warmed with optimal sizes', 'PoolManager', {
+      params: paramSize,
+      query: querySize,
+      headers: headerSize,
+    });
   }
 
   /**
@@ -505,7 +526,9 @@ export class ObjectPoolManager {
     }
 
     // Adjust buffer pool sizes
-    this.bufferSizes.forEach(size => {
+    const bufferSizesLen = this.bufferSizes.length;
+    for (let i = 0; i < bufferSizesLen; i++) {
+      const size = this.bufferSizes[i];
       const poolKey = `buffer_${size}`;
       const history = this.poolUsageHistory.get(poolKey) || [];
       if (history.length >= 10) {
@@ -523,7 +546,7 @@ export class ObjectPoolManager {
           }
         }
       }
-    });
+    }
 
     logger.debug('Pool size adjustment cycle completed', 'PoolManager');
   }

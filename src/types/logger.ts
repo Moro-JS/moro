@@ -26,6 +26,7 @@ export interface LoggerOptions {
   enableContext?: boolean;
   enableMetadata?: boolean;
   enablePerformance?: boolean;
+  enableMetrics?: boolean;
   format?: 'pretty' | 'json' | 'compact';
   outputs?: LogOutput[];
   filters?: LogFilter[];

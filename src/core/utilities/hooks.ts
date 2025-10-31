@@ -17,14 +17,137 @@ export class HookManager extends EventEmitter {
   private afterHooks = new Map<string, HookFunction[]>();
   private logger = createFrameworkLogger('Hooks');
 
+  // Cached execute functions
+  // When no hooks are registered, replace execute() with noop
+  private executeCache = new Map<string, (context: HookContext) => Promise<HookContext>>();
+
+  // Track if hooks are synchronous to avoid Promise overhead
+  private hookSyncStatus = new Map<string, boolean>();
+
   constructor() {
     super();
     // Initialize hook arrays
-    Object.values(HOOK_EVENTS).forEach(event => {
+    const hookEventValues = Object.values(HOOK_EVENTS);
+    const hookEventLen = hookEventValues.length;
+    for (let i = 0; i < hookEventLen; i++) {
+      const event = hookEventValues[i];
       this.hooks.set(event, []);
       this.beforeHooks.set(event, []);
       this.afterHooks.set(event, []);
-    });
+      // Initialize with noop functions
+      this.updateExecuteCache(event);
+    }
+  }
+
+  // Update cached execute function for an event
+  private updateExecuteCache(event: string): void {
+    const beforeHooks = this.beforeHooks.get(event) || [];
+    const hooks = this.hooks.get(event) || [];
+    const afterHooks = this.afterHooks.get(event) || [];
+
+    // If no hooks registered, use noop for zero overhead
+    if (beforeHooks.length === 0 && hooks.length === 0 && afterHooks.length === 0) {
+      this.executeCache.set(event, async (context: HookContext) => context);
+      this.hookSyncStatus.set(event, true); // Mark as sync (noop)
+      return;
+    }
+
+    // Detect if all hooks are synchronous
+    const allSync = this.areHooksSynchronous(beforeHooks, hooks, afterHooks);
+    this.hookSyncStatus.set(event, allSync);
+
+    if (allSync) {
+      // FAST PATH: Create synchronous version (no Promise overhead)
+      // Cast to Promise return type to satisfy interface
+      this.executeCache.set(event, ((context: HookContext) => {
+        // Execute before hooks synchronously
+        const beforeLen = beforeHooks.length;
+        for (let i = 0; i < beforeLen; i++) {
+          try {
+            beforeHooks[i](context);
+          } catch (error) {
+            this.logger.error('Hook execution error', 'HookExecution', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
+
+        // Execute main hooks synchronously
+        const hooksLen = hooks.length;
+        for (let i = 0; i < hooksLen; i++) {
+          try {
+            hooks[i](context);
+          } catch (error) {
+            this.logger.error('Hook execution error', 'HookExecution', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
+
+        // Execute after hooks synchronously
+        const afterLen = afterHooks.length;
+        for (let i = 0; i < afterLen; i++) {
+          try {
+            afterHooks[i](context);
+          } catch (error) {
+            this.logger.error('Hook execution error', 'HookExecution', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
+
+        // Emit event for listeners
+        this.emit(event, context);
+
+        return context as any; // Cast to satisfy Promise return
+      }) as any);
+    } else {
+      // SLOW PATH: Use async version only when needed
+      this.executeCache.set(event, async (context: HookContext) => {
+        // Execute before hooks
+        const beforeLen = beforeHooks.length;
+        for (let i = 0; i < beforeLen; i++) {
+          await this.executeHook(beforeHooks[i], context);
+        }
+
+        // Execute main hooks
+        const hooksLen = hooks.length;
+        for (let i = 0; i < hooksLen; i++) {
+          await this.executeHook(hooks[i], context);
+        }
+
+        // Execute after hooks
+        const afterLen = afterHooks.length;
+        for (let i = 0; i < afterLen; i++) {
+          await this.executeHook(afterHooks[i], context);
+        }
+
+        // Emit event for listeners
+        this.emit(event, context);
+
+        return context;
+      });
+    }
+  }
+
+  // Detect if hooks are synchronous by checking function signatures
+  private areHooksSynchronous(...hookArrays: HookFunction[][]): boolean {
+    for (const hooks of hookArrays) {
+      for (const hook of hooks) {
+        // Check if function is async or returns a Promise
+        if (hook.constructor.name === 'AsyncFunction') {
+          return false;
+        }
+        // Additional heuristic: check if function name suggests async
+        if (hook.name && (hook.name.includes('async') || hook.name.includes('Async'))) {
+          return false;
+        }
+      }
+    }
+    return true; // Assume synchronous by default
   }
 
   // Register a hook for a specific event
@@ -33,6 +156,7 @@ export class HookManager extends EventEmitter {
       this.hooks.set(event, []);
     }
     this.hooks.get(event)!.push(fn);
+    this.updateExecuteCache(event); // Update cache
     return this;
   }
 
@@ -42,6 +166,7 @@ export class HookManager extends EventEmitter {
       this.beforeHooks.set(event, []);
     }
     this.beforeHooks.get(event)!.push(fn);
+    this.updateExecuteCache(event); // Update cache
     return this;
   }
 
@@ -51,33 +176,20 @@ export class HookManager extends EventEmitter {
       this.afterHooks.set(event, []);
     }
     this.afterHooks.get(event)!.push(fn);
+    this.updateExecuteCache(event); // Update cache
     return this;
   }
 
-  // Execute hooks for an event
+  // Execute hooks for an event - optimized with cached functions
   async execute(event: string, context: HookContext = {}): Promise<HookContext> {
-    // Execute before hooks
-    const beforeHooks = this.beforeHooks.get(event) || [];
-    for (const hook of beforeHooks) {
-      await this.executeHook(hook, context);
+    const executeFn = this.executeCache.get(event);
+    if (executeFn) {
+      return executeFn(context);
     }
 
-    // Execute main hooks
-    const hooks = this.hooks.get(event) || [];
-    for (const hook of hooks) {
-      await this.executeHook(hook, context);
-    }
-
-    // Execute after hooks
-    const afterHooks = this.afterHooks.get(event) || [];
-    for (const hook of afterHooks) {
-      await this.executeHook(hook, context);
-    }
-
-    // Emit event for listeners
-    this.emit(event, context);
-
-    return context;
+    // Fallback for events not in cache (shouldn't happen in normal operation)
+    this.updateExecuteCache(event);
+    return this.executeCache.get(event)!(context);
   }
 
   // Execute a single hook with error handling
@@ -100,7 +212,10 @@ export class HookManager extends EventEmitter {
       this.beforeHooks.delete(event);
       this.afterHooks.delete(event);
     } else {
-      [this.hooks, this.beforeHooks, this.afterHooks].forEach(map => {
+      const maps = [this.hooks, this.beforeHooks, this.afterHooks];
+      const mapsLen = maps.length;
+      for (let i = 0; i < mapsLen; i++) {
+        const map = maps[i];
         const hooks = map.get(event);
         if (hooks) {
           const index = hooks.indexOf(fn);
@@ -108,8 +223,9 @@ export class HookManager extends EventEmitter {
             hooks.splice(index, 1);
           }
         }
-      });
+      }
     }
+    this.updateExecuteCache(event); // Update cache
     return this;
   }
 

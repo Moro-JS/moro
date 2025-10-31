@@ -130,7 +130,10 @@ export class UWebSocketsHttpServer {
       // Parse body only if there's actually a body (check content-length)
       const method = req.getMethod().toUpperCase();
       const contentLength = req.getHeader('content-length');
+      // Optimized: Check first char for early exit (all body methods start with 'P')
+      const firstChar = method.charCodeAt(0);
       if (
+        firstChar === 80 && // 'P' char code
         (method === 'POST' || method === 'PUT' || method === 'PATCH') &&
         contentLength &&
         parseInt(contentLength) > 0
@@ -182,13 +185,34 @@ export class UWebSocketsHttpServer {
         const pooledQuery = (httpReq as any)._pooledQuery;
         const pooledHeaders = (httpReq as any)._pooledHeaders;
 
-        if (pooledQuery && Object.keys(pooledQuery).length > 0) {
-          this.poolManager.releaseQuery(pooledQuery);
+        // Only release if object has keys (avoid pool churn for empty objects)
+        if (pooledQuery) {
+          let hasKeys = false;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          for (const _key in pooledQuery) {
+            hasKeys = true;
+            break;
+          }
+          if (hasKeys) {
+            this.poolManager.releaseQuery(pooledQuery);
+          }
         }
 
-        if (pooledHeaders && Object.keys(pooledHeaders).length > 0) {
-          this.poolManager.releaseHeaders(pooledHeaders);
+        if (pooledHeaders) {
+          let hasKeys = false;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          for (const _key in pooledHeaders) {
+            hasKeys = true;
+            break;
+          }
+          if (hasKeys) {
+            this.poolManager.releaseHeaders(pooledHeaders);
+          }
         }
+      }
+
+      if (httpRes) {
+        this.releaseResponse(httpRes);
       }
     }
   }
@@ -223,8 +247,7 @@ export class UWebSocketsHttpServer {
     // Optimized header parsing with pooled object
     const headers = this.poolManager.acquireHeaders();
     req.forEach((key: string, value: string) => {
-      const lowerKey = key.toLowerCase();
-      headers[lowerKey] = value;
+      headers[key] = value;
     });
 
     const httpReq = {
@@ -246,39 +269,10 @@ export class UWebSocketsHttpServer {
     return httpReq;
   }
 
-  // Optimized helper to write headers - avoids Object.entries() overhead
-  private static writeHeaders(
-    res: any,
-    headers: Record<string, string | string[]>,
-    headerKeys: string[]
-  ): void {
-    const len = headerKeys.length;
-    // Fast-path for common cases
-    if (len === 0) return;
-
-    if (len === 1) {
-      // Single header (most common case) - no loop needed
-      const key = headerKeys[0];
-      const value = headers[key];
-      res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
-      return;
-    }
-
-    if (len === 2) {
-      // Two headers - unroll loop
-      const key0 = headerKeys[0];
-      const value0 = headers[key0];
-      res.writeHeader(key0, Array.isArray(value0) ? value0.join(', ') : String(value0));
-
-      const key1 = headerKeys[1];
-      const value1 = headers[key1];
-      res.writeHeader(key1, Array.isArray(value1) ? value1.join(', ') : String(value1));
-      return;
-    }
-
-    // Multiple headers - use loop
-    for (let i = 0; i < len; i++) {
-      const key = headerKeys[i];
+  // Optimized helper to write headers
+  private static writeHeaders(res: any, headers: Record<string, string | string[]>): void {
+    // Performance: for...in is the fastest way to iterate response headers
+    for (const key in headers) {
       const value = headers[key];
       res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
     }
@@ -289,179 +283,238 @@ export class UWebSocketsHttpServer {
     return UWebSocketsHttpServer.STATUS_STRINGS.get(code) || `${code} OK`;
   }
 
-  private createMoroResponse(req: any, res: any): HttpResponse {
-    let headersSent = false;
-    let statusCode = 200;
-    const responseHeaders: Record<string, string | string[]> = {};
-    let headerKeys: string[] = []; // Track header keys for fast iteration
-    //eslint-disable-next-line @typescript-eslint/no-this-alias
-    const self = this;
+  // Pre-define methods on prototype instead of creating new closures for each request
+  private static readonly ResponsePrototype = class {
+    public headersSent = false;
+    public statusCode = 200;
+    public responseHeaders: Record<string, string | string[]> = {};
+    private _res: any;
+    private _req: any;
+    private _logger: any;
 
-    const httpRes = {
-      statusCode,
-      get headersSent() {
-        return headersSent;
-      },
+    init(res: any, req: any, logger: any) {
+      this.headersSent = false;
+      this.statusCode = 200;
+      // Clear headers object (reuse to avoid allocation)
+      for (const key in this.responseHeaders) {
+        delete this.responseHeaders[key];
+      }
+      this._res = res;
+      this._req = req;
+      this._logger = logger;
+      return this;
+    }
 
-      status(code: number) {
-        statusCode = code;
-        (httpRes as any).statusCode = code;
-        return httpRes as HttpResponse;
-      },
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    }
 
-      setHeader(name: string, value: string | string[]) {
-        const lowerName = name.toLowerCase();
-        if (!(lowerName in responseHeaders)) {
-          headerKeys.push(lowerName);
-        }
-        responseHeaders[lowerName] = value;
-        return httpRes as HttpResponse;
-      },
+    setHeader(name: string, value: string | string[]) {
+      this.responseHeaders[name.toLowerCase()] = value;
+      return this;
+    }
 
-      getHeader(name: string) {
-        return responseHeaders[name.toLowerCase()];
-      },
+    getHeader(name: string) {
+      return this.responseHeaders[name.toLowerCase()];
+    }
 
-      removeHeader(name: string) {
-        const lowerName = name.toLowerCase();
-        if (lowerName in responseHeaders) {
-          delete responseHeaders[lowerName];
-          headerKeys = headerKeys.filter(k => k !== lowerName);
-        }
-        return httpRes as HttpResponse;
-      },
+    removeHeader(name: string) {
+      const lowerName = name.toLowerCase();
+      if (lowerName in this.responseHeaders) {
+        delete this.responseHeaders[lowerName];
+      }
+      return this;
+    }
 
-      async json(data: any) {
-        if (headersSent || res.aborted) return;
+    async json(data: any) {
+      if (this.headersSent || this._res.aborted) return;
 
-        const body = JSON.stringify(data);
+      // Fast-path JSON serialization for common API patterns
+      let body: string;
 
-        // Set content-type if not already set
-        if (!('content-type' in responseHeaders)) {
-          responseHeaders['content-type'] = 'application/json';
-          headerKeys.push('content-type');
-        }
+      if (data && typeof data === 'object' && 'success' in data) {
+        let keyCount = 0;
+        let hasData = false;
+        let hasError = false;
+        let hasTotal = false;
 
-        try {
-          res.cork(() => {
-            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
-            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
-            res.end(body);
-          });
-          headersSent = true;
-        } catch {
-          self.logger.error('Failed to send JSON response', 'ResponseError');
-        }
-      },
-
-      send(data: string | Buffer) {
-        if (headersSent || res.aborted) return;
-
-        const body = typeof data === 'string' ? data : data.toString();
-
-        try {
-          res.cork(() => {
-            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
-            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
-            res.end(body);
-          });
-          headersSent = true;
-        } catch {
-          self.logger.error('Failed to send response', 'ResponseError');
-        }
-      },
-
-      end(data?: any, encoding?: any, callback?: any) {
-        if (headersSent || res.aborted) {
-          if (typeof callback === 'function') callback();
-          return httpRes as HttpResponse;
-        }
-
-        try {
-          res.cork(() => {
-            res.writeStatus(UWebSocketsHttpServer.getStatusString(statusCode));
-            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
-            res.end(data || '');
-          });
-          headersSent = true;
-          if (typeof callback === 'function') callback();
-        } catch {
-          self.logger.error('Failed to end response', 'ResponseError');
-          if (typeof callback === 'function') callback();
-        }
-
-        return httpRes as HttpResponse;
-      },
-
-      redirect(url: string, code?: number) {
-        if (headersSent || res.aborted) return;
-
-        const redirectCode = code || 302;
-        statusCode = redirectCode;
-
-        try {
-          res.cork(() => {
-            res.writeStatus(UWebSocketsHttpServer.getStatusString(redirectCode));
-            res.writeHeader('Location', url);
-            // Write any existing headers
-            UWebSocketsHttpServer.writeHeaders(res, responseHeaders, headerKeys);
-            res.end();
-          });
-          headersSent = true;
-        } catch {
-          self.logger.error('Failed to send redirect', 'ResponseError');
-        }
-      },
-
-      // EventEmitter compatibility - stub implementations for middleware
-      on(_event: string, _callback: (...args: any[]) => void) {
-        // uWebSockets doesn't use events like Node.js, but middleware might try to listen
-        // Only implement 'finish' and 'close' events as stubs
-        return httpRes;
-      },
-
-      once(_event: string, _callback: (...args: any[]) => void) {
-        return httpRes;
-      },
-
-      emit(_event: string, ..._args: any[]) {
-        return true;
-      },
-
-      removeListener(_event: string, _callback: (...args: any[]) => void) {
-        return httpRes;
-      },
-
-      cookie(name: string, value: string, options?: any) {
-        let cookie = `${name}=${value}`;
-
-        if (options) {
-          if (options.maxAge) cookie += `; Max-Age=${options.maxAge}`;
-          if (options.domain) cookie += `; Domain=${options.domain}`;
-          if (options.path) cookie += `; Path=${options.path}`;
-          if (options.secure) cookie += '; Secure';
-          if (options.httpOnly) cookie += '; HttpOnly';
-          if (options.sameSite) cookie += `; SameSite=${options.sameSite}`;
-        }
-
-        const lowerKey = 'set-cookie';
-        const existing = responseHeaders[lowerKey];
-        if (existing) {
-          if (Array.isArray(existing)) {
-            responseHeaders[lowerKey] = [...existing, cookie];
-          } else {
-            responseHeaders[lowerKey] = [existing as string, cookie];
+        for (const key in data) {
+          if (Object.prototype.hasOwnProperty.call(data, key)) {
+            keyCount++;
+            if (key === 'data') hasData = true;
+            else if (key === 'error') hasError = true;
+            else if (key === 'total') hasTotal = true;
           }
-        } else {
-          responseHeaders[lowerKey] = cookie;
-          headerKeys.push(lowerKey);
         }
 
-        return httpRes as HttpResponse;
-      },
-    } as any;
+        if (keyCount === 3 && hasData && hasError) {
+          body = `{"success":${data.success},"data":${JSON.stringify(data.data)},"error":${JSON.stringify(data.error)}}`;
+        } else if (keyCount === 3 && hasData && hasTotal) {
+          body = `{"success":${data.success},"data":${JSON.stringify(data.data)},"total":${data.total}}`;
+        } else if (keyCount === 2 && hasData) {
+          body = `{"success":${data.success},"data":${JSON.stringify(data.data)}}`;
+        } else if (keyCount === 2 && hasError) {
+          body = `{"success":${data.success},"error":${JSON.stringify(data.error)}}`;
+        } else {
+          body = JSON.stringify(data);
+        }
+      } else {
+        body = JSON.stringify(data);
+      }
 
-    return httpRes as HttpResponse;
+      if (!('content-type' in this.responseHeaders)) {
+        this.responseHeaders['content-type'] = 'application/json';
+      }
+
+      try {
+        this._res.cork(() => {
+          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          this._res.end(body);
+        });
+        this.headersSent = true;
+      } catch {
+        this._logger.error('Failed to send JSON response', 'ResponseError');
+      }
+    }
+
+    send(data: string | Buffer) {
+      if (this.headersSent || this._res.aborted) return;
+
+      const body = typeof data === 'string' ? data : data.toString();
+
+      try {
+        this._res.cork(() => {
+          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          this._res.end(body);
+        });
+        this.headersSent = true;
+      } catch {
+        this._logger.error('Failed to send response', 'ResponseError');
+      }
+    }
+
+    end(data?: any, encoding?: any, callback?: any) {
+      if (this.headersSent || this._res.aborted) {
+        if (typeof callback === 'function') callback();
+        return this;
+      }
+
+      try {
+        this._res.cork(() => {
+          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          this._res.end(data || '');
+        });
+        this.headersSent = true;
+        if (typeof callback === 'function') callback();
+      } catch {
+        this._logger.error('Failed to end response', 'ResponseError');
+        if (typeof callback === 'function') callback();
+      }
+
+      return this;
+    }
+
+    redirect(url: string, code?: number) {
+      if (this.headersSent || this._res.aborted) return;
+
+      const redirectCode = code || 302;
+      this.statusCode = redirectCode;
+
+      try {
+        this._res.cork(() => {
+          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(redirectCode));
+          this._res.writeHeader('Location', url);
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          this._res.end();
+        });
+        this.headersSent = true;
+      } catch {
+        this._logger.error('Failed to send redirect', 'ResponseError');
+      }
+    }
+
+    // EventEmitter stubs for middleware compatibility
+    on(_event: string, _callback: (...args: any[]) => void) {
+      return this;
+    }
+
+    once(_event: string, _callback: (...args: any[]) => void) {
+      return this;
+    }
+
+    emit(_event: string, ..._args: any[]) {
+      return true;
+    }
+
+    removeListener(_event: string, _callback: (...args: any[]) => void) {
+      return this;
+    }
+
+    cookie(name: string, value: string, options?: any) {
+      // Optimized: Build cookie string with array join for better performance
+      const parts = [name, '=', value];
+
+      if (options) {
+        if (options.maxAge) {
+          parts.push('; Max-Age=', String(options.maxAge));
+        }
+        if (options.domain) {
+          parts.push('; Domain=', options.domain);
+        }
+        if (options.path) {
+          parts.push('; Path=', options.path);
+        }
+        if (options.secure) {
+          parts.push('; Secure');
+        }
+        if (options.httpOnly) {
+          parts.push('; HttpOnly');
+        }
+        if (options.sameSite) {
+          parts.push('; SameSite=', options.sameSite);
+        }
+      }
+
+      const cookie = parts.join('');
+      const lowerKey = 'set-cookie';
+      const existing = this.responseHeaders[lowerKey];
+      if (existing) {
+        if (Array.isArray(existing)) {
+          existing.push(cookie);
+        } else {
+          this.responseHeaders[lowerKey] = [existing as string, cookie];
+        }
+      } else {
+        this.responseHeaders[lowerKey] = cookie;
+      }
+
+      return this;
+    }
+  };
+
+  // Object pool for response objects (further optimization)
+  private responsePool: InstanceType<typeof UWebSocketsHttpServer.ResponsePrototype>[] = [];
+  private readonly MAX_RESPONSE_POOL_SIZE = 100;
+
+  private createMoroResponse(req: any, res: any): HttpResponse {
+    const httpRes =
+      this.responsePool.length > 0
+        ? (this.responsePool.pop() as InstanceType<typeof UWebSocketsHttpServer.ResponsePrototype>)
+        : new UWebSocketsHttpServer.ResponsePrototype();
+
+    httpRes.init(res, req, this.logger);
+    return httpRes as any as HttpResponse;
+  }
+
+  private releaseResponse(httpRes: HttpResponse) {
+    // Return response object to pool for reuse
+    if (this.responsePool.length < this.MAX_RESPONSE_POOL_SIZE) {
+      this.responsePool.push(httpRes as any);
+    }
   }
 
   private async readBody(res: any, httpReq: HttpRequest): Promise<void> {

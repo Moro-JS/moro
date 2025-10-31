@@ -38,7 +38,47 @@ export class ValidationCore {
     }
 
     try {
-      if (config.body && req.body !== undefined) {
+      // Order by likelihood and cost: params > query > body > headers
+      // Params are fastest (already parsed, small) and most common in REST APIs
+      if (config.params !== undefined && req.params !== undefined) {
+        // Skip empty params objects for better performance
+        let hasParams = false;
+        for (const _key in req.params) {
+          hasParams = true;
+          break;
+        }
+        if (hasParams) {
+          try {
+            (req as any).validatedParams = await config.params.parseAsync(req.params);
+            req.params = (req as any).validatedParams;
+          } catch (error: any) {
+            this.handleValidationError(error, 'params', req, res);
+            return false;
+          }
+        }
+      }
+
+      // Query is second (common on GET requests, already parsed)
+      if (config.query !== undefined && req.query !== undefined) {
+        // Skip empty query objects for better performance
+        let hasQuery = false;
+        for (const _key in req.query) {
+          hasQuery = true;
+          break;
+        }
+        if (hasQuery) {
+          try {
+            (req as any).validatedQuery = await config.query.parseAsync(req.query);
+            req.query = (req as any).validatedQuery;
+          } catch (error: any) {
+            this.handleValidationError(error, 'query', req, res);
+            return false;
+          }
+        }
+      }
+
+      // Body is expensive (POST/PUT/PATCH only, requires parsing)
+      if (config.body !== undefined && req.body !== undefined) {
         try {
           (req as any).validatedBody = await config.body.parseAsync(req.body);
           req.body = (req as any).validatedBody;
@@ -48,27 +88,8 @@ export class ValidationCore {
         }
       }
 
-      if (config.query && req.query !== undefined) {
-        try {
-          (req as any).validatedQuery = await config.query.parseAsync(req.query);
-          req.query = (req as any).validatedQuery;
-        } catch (error: any) {
-          this.handleValidationError(error, 'query', req, res);
-          return false;
-        }
-      }
-
-      if (config.params && req.params !== undefined) {
-        try {
-          (req as any).validatedParams = await config.params.parseAsync(req.params);
-          req.params = (req as any).validatedParams;
-        } catch (error: any) {
-          this.handleValidationError(error, 'params', req, res);
-          return false;
-        }
-      }
-
-      if (config.headers && req.headers !== undefined) {
+      // Headers are rarely validated
+      if (config.headers !== undefined && req.headers !== undefined) {
         try {
           (req as any).validatedHeaders = await config.headers.parseAsync(req.headers);
         } catch (error: any) {

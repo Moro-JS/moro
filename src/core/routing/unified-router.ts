@@ -271,6 +271,9 @@ export class UnifiedRouter {
     // Determine execution order
     const executionOrder = this.buildExecutionOrder(schema);
 
+    // Pre-compile param extractor for this route (faster for 1-2 param routes)
+    const paramExtractor = this.compileParamExtractor(compiledPath);
+
     // Store configs directly (not middleware) - router will use Core classes
     const route: InternalRoute = {
       schema,
@@ -287,7 +290,8 @@ export class UnifiedRouter {
           })
         : undefined,
       validationConfig: schema.validation,
-    };
+      paramExtractor, // Add pre-compiled extractor
+    } as any;
 
     // Store in appropriate structures
     if (compiledPath.isStatic) {
@@ -322,6 +326,42 @@ export class UnifiedRouter {
         segments: compiledPath.segments,
       }
     );
+  }
+
+  /**
+   * Compile specialized param extractor for common cases
+   */
+  private compileParamExtractor(
+    compiledPath: CompiledPath
+  ): (matches: RegExpMatchArray) => Record<string, string> {
+    const paramNames = compiledPath.paramNames;
+    const paramCount = paramNames.length;
+
+    // Specialized extractors for common cases
+    if (paramCount === 0) {
+      return () => ({}); // No allocation needed
+    } else if (paramCount === 1) {
+      const name = paramNames[0];
+      return matches => ({ [name]: matches[1] });
+    } else if (paramCount === 2) {
+      const name1 = paramNames[0];
+      const name2 = paramNames[1];
+      return matches => ({ [name1]: matches[1], [name2]: matches[2] });
+    } else if (paramCount === 3) {
+      const name1 = paramNames[0];
+      const name2 = paramNames[1];
+      const name3 = paramNames[2];
+      return matches => ({ [name1]: matches[1], [name2]: matches[2], [name3]: matches[3] });
+    } else {
+      // Generic path for 4+ params
+      return matches => {
+        const params: Record<string, string> = {};
+        for (let i = 0; i < paramCount; i++) {
+          params[paramNames[i]] = matches[i + 1];
+        }
+        return params;
+      };
+    }
   }
 
   /**
@@ -442,13 +482,10 @@ export class UnifiedRouter {
             if (pattern) {
               const matches = path.match(pattern);
               if (matches) {
-                // Extract params inline (avoid function call)
-                const params: Record<string, string> = {};
-                const paramNames = route.compiledPath.paramNames;
-                for (let i = 0; i < paramNames.length; i++) {
-                  params[paramNames[i]] = matches[i + 1];
-                }
-                req.params = params;
+                // Use pre-compiled extractor for faster param extraction
+                req.params = (route as any).paramExtractor
+                  ? (route as any).paramExtractor(matches)
+                  : {};
 
                 try {
                   const result = route.schema.handler(req, res);
@@ -516,8 +553,7 @@ export class UnifiedRouter {
       }
 
       // Phase 3: Segment-based dynamic route matching
-      const segments = path.split('/').filter(s => s.length > 0);
-      const segmentCount = segments.length;
+      const segmentCount = PathMatcher.countSegments(path);
       const candidates = this.dynamicRoutesBySegments.get(segmentCount) || [];
 
       for (const route of candidates) {
@@ -549,10 +585,14 @@ export class UnifiedRouter {
     Object.assign(req.params, matchResult.params);
 
     try {
-      // Execute middleware phases in order
-      for (const phase of route.executionOrder) {
-        if (res.headersSent) break;
-        await this.executePhase(phase, route, req, res);
+      // Performance: Skip empty executionOrder array iteration
+      // Most routes have empty or very short executionOrder
+      if (route.executionOrder.length > 0) {
+        // Execute middleware phases in order
+        for (const phase of route.executionOrder) {
+          if (res.headersSent) break;
+          await this.executePhase(phase, route, req, res);
+        }
       }
 
       // Execute handler
@@ -597,14 +637,19 @@ export class UnifiedRouter {
     const middleware = schema.middleware;
 
     switch (phase) {
-      case 'before':
-        if (middleware && 'before' in middleware && Array.isArray(middleware.before)) {
-          for (const mw of middleware.before) {
-            await this.executeMiddleware(mw, req, res);
-            if (res.headersSent) return;
-          }
+      case 'before': {
+        // Performance: Early exit if no middleware present (fast path)
+        if (!middleware || !('before' in middleware)) break;
+        const beforeMw = (middleware as MiddlewarePhases).before;
+        if (!beforeMw || beforeMw.length === 0) break;
+
+        const beforeLen = beforeMw.length;
+        for (let i = 0; i < beforeLen; i++) {
+          await this.executeMiddleware(beforeMw[i], req, res);
+          if (res.headersSent) return;
         }
         break;
+      }
 
       case 'rateLimit':
         // Use Core directly for route-based rate limiting
@@ -630,14 +675,19 @@ export class UnifiedRouter {
         }
         break;
 
-      case 'transform':
-        if (middleware && 'transform' in middleware && Array.isArray(middleware.transform)) {
-          for (const mw of middleware.transform) {
-            await this.executeMiddleware(mw, req, res);
-            if (res.headersSent) return;
-          }
+      case 'transform': {
+        // Performance: Early exit if no middleware present (fast path)
+        if (!middleware || !('transform' in middleware)) break;
+        const transformMw = (middleware as MiddlewarePhases).transform;
+        if (!transformMw || transformMw.length === 0) break;
+
+        const transformLen = transformMw.length;
+        for (let i = 0; i < transformLen; i++) {
+          await this.executeMiddleware(transformMw[i], req, res);
+          if (res.headersSent) return;
         }
         break;
+      }
 
       case 'cache':
         // Use Core directly for route-based caching
@@ -649,24 +699,32 @@ export class UnifiedRouter {
         }
         break;
 
-      case 'after':
-        if (middleware && 'after' in middleware && Array.isArray(middleware.after)) {
-          for (const mw of middleware.after) {
-            await this.executeMiddleware(mw, req, res);
-            if (res.headersSent) return;
-          }
-        }
-        break;
+      case 'after': {
+        // Performance: Early exit if no middleware present (fast path)
+        if (!middleware || !('after' in middleware)) break;
+        const afterMw = (middleware as MiddlewarePhases).after;
+        if (!afterMw || afterMw.length === 0) break;
 
-      case 'middleware':
-        // Handle array-style middleware (backward compatibility)
-        if (middleware && Array.isArray(middleware)) {
-          for (const mw of middleware) {
-            await this.executeMiddleware(mw, req, res);
-            if (res.headersSent) return;
-          }
+        const afterLen = afterMw.length;
+        for (let i = 0; i < afterLen; i++) {
+          await this.executeMiddleware(afterMw[i], req, res);
+          if (res.headersSent) return;
         }
         break;
+      }
+
+      case 'middleware': {
+        // Handle array-style middleware (backward compatibility)
+        // Performance: Early exit if no middleware present (fast path)
+        if (!middleware || !Array.isArray(middleware) || middleware.length === 0) break;
+
+        const middlewareLen = middleware.length;
+        for (let i = 0; i < middlewareLen; i++) {
+          await this.executeMiddleware(middleware[i], req, res);
+          if (res.headersSent) return;
+        }
+        break;
+      }
     }
   }
 
@@ -687,7 +745,8 @@ export class UnifiedRouter {
 
       try {
         const result = middleware(req, res, next);
-        if (result instanceof Promise) {
+        // Optimized: Duck typing faster than instanceof
+        if (result && typeof result.then === 'function') {
           result.then(() => !resolved && next()).catch(reject);
         } else if (!resolved) {
           next();
