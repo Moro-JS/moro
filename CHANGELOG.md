@@ -1,3 +1,8 @@
+## [1.6.6] - 2025-10-31
+
+### Other
+- perf: optimize core modules with NOOP fast-paths and string interning
+
 ## [1.6.5] - 2025-10-28
 
 ### Performance
