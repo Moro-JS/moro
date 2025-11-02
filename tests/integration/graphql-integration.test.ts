@@ -28,6 +28,9 @@ describe('GraphQL Integration with Moro', () => {
       },
     });
 
+    // Wait for GraphQL to initialize
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
     const schema = app.getGraphQLSchema();
     expect(schema).toBeDefined();
     expect(schema?.getQueryType()).toBeDefined();
@@ -106,6 +109,9 @@ describe('GraphQL Integration with Moro', () => {
         userId: 'test-user-123',
       }),
     });
+
+    // Wait for initialization
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const schema = app.getGraphQLSchema();
     expect(schema).toBeDefined();

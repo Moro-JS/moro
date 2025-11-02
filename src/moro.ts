@@ -98,6 +98,7 @@ export class Moro extends EventEmitter {
   // GraphQL system
   private graphqlCore?: any; // Use any to avoid import dependency
   private graphqlSubscriptionManager?: any;
+  private graphqlInitPromise?: Promise<void>;
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
@@ -2242,8 +2243,8 @@ export class Moro extends EventEmitter {
    * });
    * ```
    */
-  async graphql(options: GraphQLOptions): Promise<this> {
-    if (this.graphqlCore) {
+  graphql(options: GraphQLOptions): this {
+    if (this.graphqlCore || this.graphqlInitPromise) {
       throw new Error('GraphQL has already been configured. Call graphql() only once.');
     }
 
@@ -2257,38 +2258,49 @@ export class Moro extends EventEmitter {
       );
     }
 
-    // Lazy load GraphQL modules
-    await this.loadGraphQLModules();
-
     this.logger.info('Configuring GraphQL', 'GraphQL', {
       path: options.path || '/graphql',
       jit: options.enableJIT !== false,
       playground: options.enablePlayground !== false,
     });
 
-    // Create GraphQL core
-    this.graphqlCore = new GraphQLCore(options);
+    // Initialize GraphQL asynchronously (like WebSocket registration pattern)
+    this.graphqlInitPromise = this.initializeGraphQL(options);
 
-    // Initialize GraphQL (async, but we'll complete it before server starts)
-    const initPromise = this.graphqlCore.initialize().then(() => {
+    // Add to initialization promises
+    const originalEnsure = this.ensureAutoDiscoveryComplete.bind(this);
+    this.ensureAutoDiscoveryComplete = async () => {
+      await originalEnsure();
+      await this.graphqlInitPromise;
+    };
+
+    return this;
+  }
+
+  /**
+   * Initialize GraphQL system asynchronously
+   */
+  private async initializeGraphQL(options: GraphQLOptions): Promise<void> {
+    try {
+      // Lazy load GraphQL modules
+      await this.loadGraphQLModules();
+
+      // Create GraphQL core
+      this.graphqlCore = new GraphQLCore(options);
+
+      // Initialize GraphQL
+      await this.graphqlCore.initialize();
+
       this.logger.info('GraphQL initialized successfully', 'GraphQL');
 
       // Setup subscriptions if enabled
       if (options.enableSubscriptions !== false && this.config.websocket.enabled) {
         this.setupGraphQLSubscriptions(options);
       }
-    });
-
-    // Add to initialization promises
-    this.ensureAutoDiscoveryComplete = (() => {
-      const originalEnsure = this.ensureAutoDiscoveryComplete.bind(this);
-      return async () => {
-        await originalEnsure();
-        await initPromise;
-      };
-    })();
-
-    return this;
+    } catch (error) {
+      this.logger.error('Failed to initialize GraphQL', 'GraphQL', { error });
+      throw error;
+    }
   }
 
   /**
