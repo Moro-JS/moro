@@ -1,6 +1,6 @@
 // Advanced Logger Outputs
-import { writeFile, appendFile, mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
+import { appendFile, mkdir } from 'fs/promises';
+import { dirname } from 'path';
 import { LogEntry, LogOutput } from '../../types/logger.js';
 
 // File output for persistent logging
@@ -29,6 +29,7 @@ export class FileOutput implements LogOutput {
 
       // TODO: Implement log rotation if needed
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('File logger error:', error);
     }
   }
@@ -76,6 +77,7 @@ export class WebhookOutput implements LogOutput {
         throw new Error(`Webhook failed: ${response.status}`);
       }
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Webhook logger error:', error);
     }
   }

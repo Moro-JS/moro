@@ -81,9 +81,13 @@
   },
   "peerDependencies": {
     "@auth/core": "^0.37.3",
+    "@pothos/core": "^4.10.0",
     "better-sqlite3": "^12.2.0",
     "class-validator": "^0.14.0",
+    "dataloader": "^2.2.3",
     "drizzle-orm": "^0.44.5",
+    "graphql": "^16.12.0",
+    "graphql-jit": "^0.8.7",
     "ioredis": "^5.7.0",
     "joi": "^17.0.0",
     "mongodb": "^6.19.0",
@@ -97,6 +101,9 @@
   },
   "peerDependenciesMeta": {
     "@auth/core": {
+      "optional": true
+    },
+    "@pothos/core": {
       "optional": true
     },
     "mysql2": {
@@ -140,21 +147,34 @@
     },
     "class-validator": {
       "optional": true
+    },
+    "graphql": {
+      "optional": true
+    },
+    "graphql-jit": {
+      "optional": true
+    },
+    "dataloader": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@jest/globals": "^30.1.2",
+    "@pothos/core": "^4.10.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.3.1",
     "@types/supertest": "^6.0.2",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.18.2",
     "@typescript-eslint/parser": "^8.18.2",
+    "dataloader": "^2.2.3",
     "depcheck": "^1.4.7",
     "eslint": "^9.35.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.2.1",
+    "graphql": "^16.12.0",
+    "graphql-jit": "^0.8.7",
     "http-server": "^14.1.1",
     "husky": "^9.1.7",
     "jest": "^30.1.3",

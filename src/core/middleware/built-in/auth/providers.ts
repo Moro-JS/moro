@@ -112,7 +112,7 @@ export const extendedProviders = {
     token: 'https://appleid.apple.com/auth/token',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
-    profile: (profile, tokens) => ({
+    profile: (profile, _tokens) => ({
       id: profile.sub,
       name: profile.name ? `${profile.name.firstName} ${profile.name.lastName}` : null,
       email: profile.email,

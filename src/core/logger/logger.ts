@@ -159,6 +159,7 @@ export class MoroLogger implements Logger {
   // Object pooling methods
   private static getPooledEntry(): LogEntry {
     if (MoroLogger.ENTRY_POOL.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const entry = MoroLogger.ENTRY_POOL.pop()!;
       // Properly reset ALL properties to prevent memory leaks
       entry.timestamp = new Date();
@@ -851,7 +852,7 @@ export class MoroLogger implements Logger {
     try {
       const message = this.outputBuffer.join('');
       process.stdout.write(message);
-    } catch (error) {
+    } catch {
       // Emergency fallback - write individual messages
       for (const msg of this.outputBuffer) {
         try {
@@ -894,7 +895,7 @@ export class MoroLogger implements Logger {
 
     try {
       return JSON.stringify(stringify(obj, 0));
-    } catch (error) {
+    } catch {
       return '[Stringify Error]';
     }
   }
@@ -906,6 +907,7 @@ export class MoroLogger implements Logger {
     // Validate log level
     const validLevels = ['debug', 'info', 'warn', 'error', 'fatal'];
     if (validated.level && !validLevels.includes(validated.level)) {
+      // eslint-disable-next-line no-console
       console.warn(`[MoroLogger] Invalid log level: ${validated.level}, defaulting to 'info'`);
       validated.level = 'info';
     }
@@ -913,6 +915,7 @@ export class MoroLogger implements Logger {
     // Validate max entries
     if (validated.maxEntries !== undefined) {
       if (validated.maxEntries < 1 || validated.maxEntries > 100000) {
+        // eslint-disable-next-line no-console
         console.warn(
           `[MoroLogger] Invalid maxEntries: ${validated.maxEntries}, defaulting to 1000`
         );
@@ -923,6 +926,7 @@ export class MoroLogger implements Logger {
     // Validate buffer size
     if (validated.maxBufferSize !== undefined) {
       if (validated.maxBufferSize < 10 || validated.maxBufferSize > 10000) {
+        // eslint-disable-next-line no-console
         console.warn(
           `[MoroLogger] Invalid maxBufferSize: ${validated.maxBufferSize}, defaulting to 1000`
         );
@@ -934,7 +938,7 @@ export class MoroLogger implements Logger {
   }
 
   // Error handling methods
-  private handleOutputError(outputName: string, error: any): void {
+  private handleOutputError(outputName: string, _error: any): void {
     // Could implement output retry logic, circuit breaker, etc.
     // For now, just track the error
     if (!this.metrics.outputErrors) {

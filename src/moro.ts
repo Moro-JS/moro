@@ -26,6 +26,34 @@ import { normalizeValidationError } from './core/validation/schema-interface.js'
 import { initializeConfig, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
 import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime/index.js';
+// uWebSockets Worker Thread Clustering
+import { UWSWorkerClusterManager } from './core/http/utils/uws-worker-clustering.js';
+import { isMainThread } from 'worker_threads';
+// Job System Integration
+import {
+  JobScheduler,
+  JobSchedulerOptions,
+  JobHealthChecker,
+  everyInterval,
+  cronSchedule,
+} from './core/jobs/index.js';
+import type {
+  JobSchedule,
+  JobOptions,
+  SimpleJobOptions,
+  JobFunction,
+  JobMetrics,
+  SchedulerStats,
+  JobHealth,
+  LeaderElectionOptions,
+} from './core/jobs/index.js';
+// GraphQL System Integration (lazy loaded)
+import type { GraphQLOptions } from './core/graphql/types.js';
+
+// Lazy imports for GraphQL to avoid crashes when not installed
+let GraphQLCore: any;
+let GraphQLSubscriptionManager: any;
+let setupGraphQLSubscriptions: any;
 
 export class Moro extends EventEmitter {
   private coreFramework!: MoroCore;
@@ -33,7 +61,7 @@ export class Moro extends EventEmitter {
   private moduleCounter = 0;
   private loadedModules = new Set<string>();
   private lazyModules = new Map<string, ModuleConfig>();
-  private routeHandlers: Record<string, Function> = {};
+  private routeHandlers: Record<string, CallableFunction> = {};
   private moduleDiscovery?: any; // Store for cleanup
   private autoDiscoveryOptions: MoroOptions | null = null;
   private autoDiscoveryInitialized = false;
@@ -60,9 +88,16 @@ export class Moro extends EventEmitter {
   // Queued WebSocket registrations (for async adapter detection)
   private queuedWebSocketRegistrations: Array<{
     namespace: string;
-    handlers: Record<string, Function>;
+    handlers: Record<string, CallableFunction>;
     processed: boolean;
   }> = [];
+  // Job scheduling system
+  private jobScheduler?: JobScheduler;
+  private jobHealthChecker?: JobHealthChecker;
+  private jobsStarted = false;
+  // GraphQL system
+  private graphqlCore?: any; // Use any to avoid import dependency
+  private graphqlSubscriptionManager?: any;
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
@@ -144,6 +179,43 @@ export class Moro extends EventEmitter {
 
     // Access enterprise event bus from core framework
     this.eventBus = (this.coreFramework as any).eventBus;
+
+    // Initialize job scheduler if enabled in config
+    // Default to enabled (true) unless explicitly disabled
+    const jobsEnabled = this.config.jobs?.enabled !== false && options.jobs?.enabled !== false;
+    if (jobsEnabled) {
+      const leaderElectionOptions: LeaderElectionOptions | undefined =
+        this.config.jobs?.leaderElection?.enabled !== false
+          ? {
+              strategy:
+                (this.config.jobs?.leaderElection?.strategy as 'file' | 'redis' | 'none') ?? 'file',
+              lockPath: this.config.jobs?.leaderElection?.lockPath,
+              lockTimeout: this.config.jobs?.leaderElection?.lockTimeout,
+              heartbeatInterval: this.config.jobs?.leaderElection?.heartbeatInterval,
+            }
+          : undefined;
+
+      const jobSchedulerOptions: JobSchedulerOptions = {
+        maxConcurrentJobs: this.config.jobs?.maxConcurrentJobs,
+        enableLeaderElection: this.config.jobs?.leaderElection?.enabled !== false,
+        leaderElection: leaderElectionOptions,
+        executor: this.config.jobs?.executor,
+        stateManager: this.config.jobs?.stateManager,
+        gracefulShutdownTimeout: this.config.jobs?.gracefulShutdownTimeout,
+      };
+
+      this.jobScheduler = new JobScheduler(createFrameworkLogger('Jobs'), jobSchedulerOptions);
+
+      this.jobHealthChecker = new JobHealthChecker(
+        this.jobScheduler,
+        createFrameworkLogger('JobHealth')
+      );
+
+      this.logger.info('Job scheduler initialized', 'Jobs', {
+        maxConcurrentJobs: jobSchedulerOptions.maxConcurrentJobs,
+        leaderElection: jobSchedulerOptions.enableLeaderElection,
+      });
+    }
 
     // Setup default middleware if enabled - use config defaults with options override
     this.setupDefaultMiddleware({
@@ -405,7 +477,7 @@ export class Moro extends EventEmitter {
   }
 
   // WebSocket helper with events
-  websocket(namespace: string, handlers: Record<string, Function>) {
+  websocket(namespace: string, handlers: Record<string, CallableFunction>) {
     // Queue the registration to be processed after adapter initialization
     const registration = { namespace, handlers, processed: false };
     this.queuedWebSocketRegistrations.push(registration);
@@ -424,7 +496,7 @@ export class Moro extends EventEmitter {
 
   private processWebSocketRegistration(
     namespace: string,
-    handlers: Record<string, Function>,
+    handlers: Record<string, CallableFunction>,
     adapter: any
   ) {
     this.emit('websocket:registering', { namespace, handlers });
@@ -544,18 +616,19 @@ export class Moro extends EventEmitter {
     }
 
     // Check if clustering is enabled for massive performance gains
-    // NOTE: uWebSockets.js does NOT support Node.js clustering - it's single-threaded only
     const usingUWebSockets = this.config.server?.useUWebSockets || false;
 
     if (this.config.performance?.clustering?.enabled) {
       if (usingUWebSockets) {
-        this.logger.warn(
-          'Clustering is not supported with uWebSockets.js - running in single-threaded mode. ' +
-            'uWebSockets is so fast that single-threaded performance often exceeds multi-threaded Node.js!',
+        // Use worker thread clustering for uWebSockets
+        this.logger.info(
+          'uWebSockets clustering enabled - using worker threads with acceptor pattern',
           'Cluster'
         );
-        // Continue without clustering
+        this.startWithUWSClustering(port, host as string, callback);
+        return;
       } else {
+        // Use traditional Node.js cluster module for standard HTTP
         this.startWithClustering(port, host as string, callback);
         return;
       }
@@ -567,7 +640,7 @@ export class Moro extends EventEmitter {
       const docsMiddleware = this.documentation.getDocsMiddleware();
       this.coreFramework.addMiddleware(docsMiddleware);
       this.logger.debug('Documentation middleware added', 'Documentation');
-    } catch (error) {
+    } catch {
       // Documentation not enabled, that's fine
       this.logger.debug('Documentation not enabled', 'Documentation');
     }
@@ -621,6 +694,12 @@ export class Moro extends EventEmitter {
         }
 
         this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
+
+        // Start job scheduler after server starts
+        this.startJobScheduler().catch(err => {
+          this.logger.error(`Failed to start job scheduler: ${String(err)}`);
+        });
+
         if (callback) callback();
       };
 
@@ -773,7 +852,7 @@ export class Moro extends EventEmitter {
         const docsMiddleware = this.documentation.getDocsMiddleware();
         await docsMiddleware(req, res, () => {});
         if (res.headersSent) return;
-      } catch (error) {
+      } catch {
         // Documentation not enabled, that's fine
       }
 
@@ -794,6 +873,7 @@ export class Moro extends EventEmitter {
   // Handle direct routes for runtime adapters
   private async handleDirectRoutes(req: HttpRequest, res: HttpResponse) {
     // Find matching route
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const route = this.findMatchingRoute(req.method!, req.path);
     if (!route) {
       (res as any).status(404).json({ success: false, error: 'Not found' });
@@ -946,7 +1026,12 @@ export class Moro extends EventEmitter {
   }
 
   // Private methods
-  private addRoute(method: string, path: string, handler: Function, options: any = {}) {
+  private addRoute(
+    method: string,
+    path: string,
+    handler: (req: any, res: any) => any | Promise<any>,
+    options: any = {}
+  ) {
     // Register with unified router (primary routing system)
     this.unifiedRouter.addRoute(method as any, path, handler as any, options.middleware || []);
 
@@ -985,6 +1070,7 @@ export class Moro extends EventEmitter {
       if (!this.dynamicRoutesBySegments.has(segmentCount)) {
         this.dynamicRoutesBySegments.set(segmentCount, []);
       }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       this.dynamicRoutesBySegments.get(segmentCount)!.push(route);
     }
   }
@@ -1421,6 +1507,7 @@ export class Moro extends EventEmitter {
         this.logger.info('Gracefully shutting down cluster...', 'Cluster');
 
         // Clean up all workers
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         for (const [pid, worker] of this.clusterWorkers) {
           worker.removeAllListeners();
           worker.kill('SIGTERM');
@@ -1438,6 +1525,7 @@ export class Moro extends EventEmitter {
       // Fork workers with basic tracking
       for (let i = 0; i < workerCount; i++) {
         const worker = cluster.fork();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         this.clusterWorkers.set(worker.process.pid!, worker);
         this.logger.info(`Worker ${worker.process.pid} started`, 'Cluster');
 
@@ -1458,6 +1546,7 @@ export class Moro extends EventEmitter {
 
           // Simple restart
           const newWorker = cluster.fork();
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           this.clusterWorkers.set(newWorker.process.pid!, newWorker);
           this.logger.info(`Worker ${newWorker.process.pid} restarted`, 'Cluster');
         }
@@ -1554,7 +1643,7 @@ export class Moro extends EventEmitter {
       try {
         const docsMiddleware = this.documentation.getDocsMiddleware();
         this.coreFramework.addMiddleware(docsMiddleware);
-      } catch (error) {
+      } catch {
         // Documentation not enabled, that's fine
       }
 
@@ -1639,17 +1728,240 @@ export class Moro extends EventEmitter {
   }
 
   /**
+   * uWebSockets Worker Thread Clustering Implementation
+   * Uses worker threads with acceptor pattern for maximum performance
+   */
+  private async startWithUWSClustering(
+    port: number,
+    host?: string,
+    callback?: () => void
+  ): Promise<void> {
+    // Check if we're in a worker thread spawned by UWSWorkerClusterManager
+    if (UWSWorkerClusterManager.isUWSWorker()) {
+      // Worker thread mode - setup the app and send descriptor to acceptor
+      await this.startUWSWorker(port, host, callback);
+      return;
+    }
+
+    // Main thread mode - create acceptor and spawn workers
+    if (isMainThread) {
+      await this.startUWSAcceptor(port, host, callback);
+      return;
+    }
+  }
+
+  private async startUWSAcceptor(
+    port: number,
+    host?: string,
+    callback?: () => void
+  ): Promise<void> {
+    const clusterManager = new UWSWorkerClusterManager({
+      workers: this.config.performance?.clustering?.workers,
+      memoryPerWorkerGB: this.config.performance?.clustering?.memoryPerWorkerGB,
+      port,
+      host,
+      ssl: this.config.server?.ssl,
+    });
+
+    try {
+      await clusterManager.startAcceptorAndWorkers(() => {
+        // This factory function is not used in our implementation
+        // as we're using process.argv[1] to spawn workers
+        return null;
+      });
+
+      if (callback) {
+        callback();
+      }
+    } catch (error) {
+      this.logger.error('Failed to start uWebSockets cluster', 'UWSCluster', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private async startUWSWorker(port: number, host?: string, callback?: () => void): Promise<void> {
+    this.logger.info(`UWS Worker thread ${process.pid} initializing`, 'UWSWorker');
+
+    // Reduce logging contention in workers
+    if (!this.userSetLogger) {
+      applyLoggingConfiguration(undefined, { level: 'warn' });
+    }
+
+    // Worker-specific optimizations
+    process.env.UV_THREADPOOL_SIZE = '64';
+
+    // Setup graceful shutdown for worker
+    let isShuttingDown = false;
+    const shutdownWorker = async () => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+
+      this.logger.info(`UWS Worker thread ${process.pid} shutting down...`, 'UWSWorker');
+
+      // Close the server to clean up handles
+      const httpServer = (this.coreFramework as any).httpServer;
+      if (httpServer && typeof httpServer.close === 'function') {
+        // Convert callback-based close to Promise
+        await new Promise<void>(resolve => {
+          httpServer.close(() => {
+            resolve();
+          });
+
+          // Timeout after 1.5 seconds
+          setTimeout(() => {
+            this.logger.warn('HTTP server close timeout', 'UWSWorker');
+            resolve();
+          }, 1500);
+        });
+      }
+
+      // Clean up ALL event listeners
+      try {
+        this.eventBus.removeAllListeners();
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        this.removeAllListeners();
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      // Remove all signal handlers
+      process.removeAllListeners('SIGINT');
+      process.removeAllListeners('SIGTERM');
+
+      this.logger.info(`UWS Worker thread ${process.pid} cleanup complete`, 'UWSWorker');
+    };
+
+    // Handle shutdown messages from parent
+    UWSWorkerClusterManager.setupWorkerShutdownHandler(shutdownWorker);
+
+    // Also handle direct signals
+    process.once('SIGINT', shutdownWorker);
+    process.once('SIGTERM', shutdownWorker);
+
+    // Emit worker starting event
+    this.eventBus.emit('server:starting', {
+      port,
+      runtime: this.runtimeType,
+      worker: process.pid,
+      workerType: 'thread',
+    });
+
+    // Add documentation middleware first (if enabled)
+    try {
+      const docsMiddleware = this.documentation.getDocsMiddleware();
+      this.coreFramework.addMiddleware(docsMiddleware);
+    } catch {
+      // Documentation not enabled, that's fine
+    }
+
+    // Add unified routing middleware
+    this.coreFramework.addMiddleware(
+      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+        const handled = this.unifiedRouter.handleRequest(req, res);
+
+        if (handled && typeof (handled as any).then === 'function') {
+          const isHandled = await (handled as Promise<boolean>);
+          if (!isHandled) {
+            next();
+          }
+        } else {
+          if (!(handled as boolean)) {
+            next();
+          }
+        }
+      }
+    );
+
+    // Register legacy direct routes with the HTTP server
+    if (this.routes.length > 0) {
+      this.registerDirectRoutes();
+    }
+
+    const workerCallback = () => {
+      const displayHost = host || 'localhost';
+      this.logger.info(
+        `UWS Worker thread ${process.pid} ready on ${displayHost}:${port}`,
+        'UWSWorker'
+      );
+      this.eventBus.emit('server:started', {
+        port,
+        runtime: this.runtimeType,
+        worker: process.pid,
+        workerType: 'thread',
+      });
+
+      // Send descriptor to acceptor
+      const httpServer = (this.coreFramework as any).httpServer;
+      if (httpServer && typeof httpServer.getDescriptor === 'function') {
+        UWSWorkerClusterManager.sendDescriptorToAcceptor(httpServer.getApp())
+          .then(() => {
+            if (callback) {
+              callback();
+            }
+          })
+          .catch((error: Error) => {
+            this.logger.error('Failed to send descriptor to acceptor', 'UWSWorker', {
+              error: error.message,
+            });
+          });
+      } else {
+        this.logger.error('HTTP server does not support getDescriptor()', 'UWSWorker');
+      }
+    };
+
+    // Ensure WebSocket setup is complete before starting worker
+    await this.processQueuedWebSocketRegistrations();
+
+    // Start listening on worker-specific port (4000 range)
+    const workerPort = 4000 + parseInt(process.env.UWS_WORKER_INDEX || '0', 10);
+
+    if (host) {
+      this.coreFramework.listen(workerPort, host, workerCallback);
+    } else {
+      this.coreFramework.listen(workerPort, workerCallback);
+    }
+  }
+
+  /**
    * Gracefully close the application and clean up resources
    * This should be called in tests and during shutdown
    */
   async close(): Promise<void> {
     this.logger.debug('Closing Moro application...');
 
+    // Shutdown job scheduler first
+    if (this.jobScheduler) {
+      try {
+        this.logger.info('Shutting down job scheduler...');
+        await this.jobScheduler.shutdown();
+        this.jobsStarted = false;
+      } catch (err) {
+        this.logger.error(`Error shutting down job scheduler: ${String(err)}`);
+      }
+    }
+
+    // Cleanup GraphQL executor timers
+    if (this.graphqlCore) {
+      try {
+        const executor = this.graphqlCore.getExecutor();
+        if (executor) {
+          executor.cleanup();
+        }
+      } catch (err) {
+        this.logger.error(`Error cleaning up GraphQL: ${String(err)}`);
+      }
+    }
+
     // Flush logger buffer before shutdown
     try {
       // Use flushBuffer for immediate synchronous flush
       this.logger.flushBuffer();
-    } catch (error) {
+    } catch {
       // Ignore flush errors during shutdown
     }
 
@@ -1664,7 +1976,7 @@ export class Moro extends EventEmitter {
           }),
           new Promise<void>(resolve => setTimeout(resolve, 2000)), // 2 second timeout
         ]);
-      } catch (error) {
+      } catch {
         // Force close if graceful close fails
         this.logger.warn('Force closing HTTP server due to timeout');
       }
@@ -1674,7 +1986,7 @@ export class Moro extends EventEmitter {
     if (this.moduleDiscovery && typeof this.moduleDiscovery.cleanup === 'function') {
       try {
         this.moduleDiscovery.cleanup();
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors
       }
     }
@@ -1683,11 +1995,381 @@ export class Moro extends EventEmitter {
     try {
       this.eventBus.removeAllListeners();
       this.removeAllListeners();
-    } catch (error) {
+    } catch {
       // Ignore cleanup errors
     }
 
     this.logger.debug('Moro application closed successfully');
+  }
+
+  // ========================================
+  // Job Scheduling API
+  // ========================================
+
+  /**
+   * Register a background job with cron or interval schedule
+   * @param name - Job name (used for identification)
+   * @param schedule - Cron expression, interval string ('5m', '1h'), or schedule object
+   * @param handler - Job function to execute
+   * @param options - Job configuration options
+   * @returns Job ID for management
+   *
+   * @example
+   * // Cron schedule
+   * app.job('cleanup', '0 2 * * *', async () => {
+   *   await cleanupOldData();
+   * });
+   *
+   * // Interval schedule
+   * app.job('health-check', '5m', async (ctx) => {
+   *   console.log('Health check', ctx.executionId);
+   * });
+   *
+   * // Advanced options
+   * app.job('report', '@daily', generateReport, {
+   *   timeout: 60000,
+   *   maxRetries: 3,
+   *   onError: (ctx, error) => console.error('Job failed', error)
+   * });
+   */
+  job(
+    name: string,
+    schedule: string | JobSchedule,
+    handler: JobFunction,
+    options: SimpleJobOptions = {}
+  ): string {
+    if (!this.jobScheduler) {
+      throw new Error('Job scheduler is not enabled. Set config.jobs.enabled = true');
+    }
+
+    let jobSchedule: JobSchedule;
+
+    // Parse schedule input
+    if (typeof schedule === 'string') {
+      // Check if it's a cron expression or interval
+      if (schedule.match(/^(\d+[smhd]|\d+\s*(seconds?|minutes?|hours?|days?))$/i)) {
+        // Interval format
+        jobSchedule = everyInterval(schedule);
+      } else {
+        // Cron format
+        jobSchedule = cronSchedule(schedule, options.timezone);
+      }
+    } else {
+      jobSchedule = schedule;
+    }
+
+    const jobOptions: Partial<JobOptions> = {
+      name: options.name || name,
+      enabled: options.enabled,
+      priority: options.priority,
+      timezone: options.timezone,
+      maxConcurrent: options.maxConcurrent,
+      timeout: options.timeout,
+      maxRetries: options.maxRetries,
+      retryDelay: options.retryDelay,
+      retryBackoff: options.retryBackoff,
+      enableCircuitBreaker: options.enableCircuitBreaker,
+      metadata: options.metadata,
+      onStart: options.onStart,
+      onComplete: options.onComplete,
+      onError: options.onError,
+    };
+
+    const jobId = this.jobScheduler.registerJob(name, jobSchedule, handler, jobOptions);
+
+    this.logger.info(`Job registered: ${name} (${jobId})`);
+
+    return jobId;
+  }
+
+  /**
+   * Enable or disable a registered job
+   */
+  setJobEnabled(jobId: string, enabled: boolean): boolean {
+    if (!this.jobScheduler) {
+      return false;
+    }
+
+    return this.jobScheduler.setJobEnabled(jobId, enabled);
+  }
+
+  /**
+   * Manually trigger a job execution
+   */
+  async triggerJob(jobId: string, metadata?: Record<string, any>): Promise<any> {
+    if (!this.jobScheduler) {
+      throw new Error('Job scheduler is not enabled');
+    }
+
+    return this.jobScheduler.triggerJob(jobId, metadata);
+  }
+
+  /**
+   * Unregister a job
+   */
+  unregisterJob(jobId: string): boolean {
+    if (!this.jobScheduler) {
+      throw new Error('Job scheduler is not enabled');
+    }
+
+    return this.jobScheduler.unregisterJob(jobId);
+  }
+
+  /**
+   * Get job metrics
+   */
+  getJobMetrics(jobId: string): JobMetrics | null {
+    if (!this.jobScheduler) {
+      return null;
+    }
+
+    return this.jobScheduler.getJobMetrics(jobId);
+  }
+
+  /**
+   * Get job health status
+   */
+  getJobHealth(jobId?: string): JobHealth | JobHealth[] {
+    if (!this.jobHealthChecker) {
+      if (jobId) {
+        return {
+          jobId,
+          name: 'Unknown',
+          status: 'unknown',
+          enabled: false,
+          consecutiveFailures: 0,
+          message: 'Job scheduler not enabled',
+        };
+      }
+      return [];
+    }
+
+    if (jobId) {
+      return this.jobHealthChecker.checkJobHealth(jobId);
+    }
+
+    return this.jobHealthChecker.checkAllJobs();
+  }
+
+  /**
+   * Get scheduler statistics
+   */
+  getJobStats(): SchedulerStats | null {
+    if (!this.jobScheduler) {
+      return null;
+    }
+
+    return this.jobScheduler.getStats();
+  }
+
+  /**
+   * Get overall scheduler health
+   */
+  getSchedulerHealth() {
+    if (!this.jobHealthChecker) {
+      return {
+        status: 'unknown' as const,
+        message: 'Job scheduler not enabled',
+        stats: null,
+        jobs: [],
+        unhealthyJobCount: 0,
+      };
+    }
+
+    return this.jobHealthChecker.getSchedulerHealth();
+  }
+
+  /**
+   * Start the job scheduler (called automatically on listen)
+   */
+  private async startJobScheduler(): Promise<void> {
+    if (!this.jobScheduler || this.jobsStarted) {
+      return;
+    }
+
+    try {
+      await this.jobScheduler.start();
+      this.jobsStarted = true;
+      this.logger.info('Job scheduler started');
+    } catch (err) {
+      this.logger.error(`Failed to start job scheduler: ${String(err)}`);
+    }
+  }
+
+  // ========================================
+  // GraphQL API
+  // ========================================
+
+  /**
+   * Configure GraphQL endpoint with schema, resolvers, and options
+   *
+   * @param options - GraphQL configuration options
+   *
+   * @example
+   * ```ts
+   * // Using type definitions and resolvers
+   * app.graphql({
+   *   typeDefs: `
+   *     type Query {
+   *       hello: String
+   *       users: [User]
+   *     }
+   *     type User {
+   *       id: ID!
+   *       name: String!
+   *     }
+   *   `,
+   *   resolvers: {
+   *     Query: {
+   *       hello: () => 'Hello World!',
+   *       users: () => [{ id: '1', name: 'Alice' }]
+   *     }
+   *   }
+   * });
+   *
+   * // Using Pothos schema builder
+   * import SchemaBuilder from '@pothos/core';
+   *
+   * const builder = new SchemaBuilder();
+   * builder.queryType({
+   *   fields: (t) => ({
+   *     hello: t.string({ resolve: () => 'Hello World!' })
+   *   })
+   * });
+   *
+   * app.graphql({
+   *   pothosSchema: builder
+   * });
+   * ```
+   */
+  async graphql(options: GraphQLOptions): Promise<this> {
+    if (this.graphqlCore) {
+      throw new Error('GraphQL has already been configured. Call graphql() only once.');
+    }
+
+    // Check if graphql package is available
+    if (!this.isGraphQLAvailable()) {
+      throw new Error(
+        'GraphQL support requires the graphql package to be installed.\n' +
+          'Install it with: npm install graphql\n' +
+          'For TypeScript-first GraphQL, also consider: npm install @pothos/core\n' +
+          'For performance boost: npm install graphql-jit'
+      );
+    }
+
+    // Lazy load GraphQL modules
+    await this.loadGraphQLModules();
+
+    this.logger.info('Configuring GraphQL', 'GraphQL', {
+      path: options.path || '/graphql',
+      jit: options.enableJIT !== false,
+      playground: options.enablePlayground !== false,
+    });
+
+    // Create GraphQL core
+    this.graphqlCore = new GraphQLCore(options);
+
+    // Initialize GraphQL (async, but we'll complete it before server starts)
+    const initPromise = this.graphqlCore.initialize().then(() => {
+      this.logger.info('GraphQL initialized successfully', 'GraphQL');
+
+      // Setup subscriptions if enabled
+      if (options.enableSubscriptions !== false && this.config.websocket.enabled) {
+        this.setupGraphQLSubscriptions(options);
+      }
+    });
+
+    // Add to initialization promises
+    this.ensureAutoDiscoveryComplete = (() => {
+      const originalEnsure = this.ensureAutoDiscoveryComplete.bind(this);
+      return async () => {
+        await originalEnsure();
+        await initPromise;
+      };
+    })();
+
+    return this;
+  }
+
+  /**
+   * Check if GraphQL package is available
+   */
+  private isGraphQLAvailable(): boolean {
+    try {
+      require.resolve('graphql');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Lazy load GraphQL modules
+   */
+  private async loadGraphQLModules(): Promise<void> {
+    if (GraphQLCore) {
+      return; // Already loaded
+    }
+
+    try {
+      const coreModule = await import('./core/graphql/core.js');
+      GraphQLCore = coreModule.GraphQLCore;
+
+      const subsModule = await import('./core/middleware/built-in/graphql/subscriptions.js');
+      GraphQLSubscriptionManager = subsModule.GraphQLSubscriptionManager;
+      setupGraphQLSubscriptions = subsModule.setupGraphQLSubscriptions;
+    } catch (error) {
+      this.logger.error('Failed to load GraphQL modules', 'GraphQL', { error });
+      throw new Error('Failed to load GraphQL modules. Please ensure graphql is installed.');
+    }
+  }
+
+  /**
+   * Setup GraphQL subscriptions
+   */
+  private setupGraphQLSubscriptions(options: GraphQLOptions): void {
+    const websocketAdapter = this.coreFramework.getWebSocketAdapter();
+
+    if (!websocketAdapter) {
+      this.logger.warn('GraphQL subscriptions require WebSocket to be enabled', 'GraphQL');
+      return;
+    }
+
+    if (!this.graphqlCore) {
+      return;
+    }
+
+    const schema = this.graphqlCore.getSchema();
+
+    this.graphqlSubscriptionManager = setupGraphQLSubscriptions(websocketAdapter, schema, {
+      path: options.path ? `${options.path}/subscriptions` : '/graphql/subscriptions',
+      contextFactory: options.context,
+    });
+
+    this.logger.info('GraphQL subscriptions enabled', 'GraphQL', {
+      path: options.path ? `${options.path}/subscriptions` : '/graphql/subscriptions',
+    });
+  }
+
+  /**
+   * Get GraphQL schema (if configured)
+   */
+  getGraphQLSchema(): any | undefined {
+    return this.graphqlCore?.getSchema();
+  }
+
+  /**
+   * Get GraphQL stats
+   */
+  getGraphQLStats() {
+    if (!this.graphqlCore) {
+      return null;
+    }
+
+    return {
+      ...this.graphqlCore.getStats(),
+      subscriptions: this.graphqlSubscriptionManager?.getSubscriptionCount() || 0,
+    };
   }
 }
 

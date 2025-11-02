@@ -60,6 +60,7 @@ export class MemoryCacheAdapter implements CacheAdapter {
   }
 
   async exists(key: string): Promise<boolean> {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.cache.has(key) && Date.now() <= this.cache.get(key)!.expires;
   }
 

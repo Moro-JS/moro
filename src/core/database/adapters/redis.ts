@@ -93,7 +93,7 @@ export class RedisAdapter implements DatabaseAdapter {
       });
 
       this.logger.info('Redis adapter initialized', 'Redis');
-    } catch (error) {
+    } catch {
       throw new Error(
         'ioredis package is required for Redis adapter. Install it with: npm install ioredis'
       );
@@ -334,7 +334,7 @@ class RedisTransaction implements DatabaseTransaction {
     return `${this.keyPrefix}${key}`;
   }
 
-  async query<T = any>(pattern: string, _params?: any[]): Promise<T[]> {
+  async query<T = any>(_pattern: string, _params?: any[]): Promise<T[]> {
     // Note: Redis transactions can't perform read operations during MULTI
     // This is a limitation of Redis transactions
     throw new Error(

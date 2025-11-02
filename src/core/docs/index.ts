@@ -5,12 +5,11 @@ import { CompiledRoute } from '../routing/index.js';
 import { IntelligentRoutingManager } from '../routing/app-integration.js';
 import {
   OpenAPIGenerator,
-  generateOpenAPIFromRoutes,
   GenerationOptions,
   OpenAPISpec,
   defaultSecuritySchemes,
 } from './openapi-generator.js';
-import { SwaggerUIMiddleware, SwaggerUIOptions, createDocsMiddleware } from './swagger-ui.js';
+import { SwaggerUIMiddleware, SwaggerUIOptions } from './swagger-ui.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('DocumentationSystem');

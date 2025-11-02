@@ -4,12 +4,7 @@
 import { HttpRequest, HttpResponse } from '../http/index.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { createUserRequire, isPackageAvailable } from '../utilities/package-utils.js';
-import {
-  ValidationSchema,
-  normalizeValidationError,
-  InferSchemaType,
-  ValidationError,
-} from './schema-interface.js';
+import { ValidationSchema, normalizeValidationError } from './schema-interface.js';
 
 const logger = createFrameworkLogger('Validation');
 
@@ -103,6 +98,7 @@ export interface ValidatedRequest<T = any> extends HttpRequest {
 }
 
 // Main validation wrapper function
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function validate<TBody = any, TQuery = any, TParams = any>(
   config: ValidationConfig,
   handler: (req: ValidatedRequest<TBody>, res: HttpResponse) => any | Promise<any>
@@ -115,6 +111,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.body) {
         const result = await validateField(config.body, req.body, 'body');
         if (!result.success) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           return sendValidationError(res, result.errors!, 'body');
         }
         validatedReq.validatedBody = result.data;
@@ -125,6 +122,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.query) {
         const result = await validateField(config.query, req.query, 'query');
         if (!result.success) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           return sendValidationError(res, result.errors!, 'query');
         }
         validatedReq.validatedQuery = result.data;
@@ -135,6 +133,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.params) {
         const result = await validateField(config.params, req.params, 'params');
         if (!result.success) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           return sendValidationError(res, result.errors!, 'params');
         }
         validatedReq.validatedParams = result.data;
@@ -145,6 +144,7 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.headers) {
         const result = await validateField(config.headers, req.headers, 'headers');
         if (!result.success) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           return sendValidationError(res, result.errors!, 'headers');
         }
         validatedReq.validatedHeaders = result.data;

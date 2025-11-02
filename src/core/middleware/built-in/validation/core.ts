@@ -43,7 +43,8 @@ export class ValidationCore {
       if (config.params !== undefined && req.params !== undefined) {
         // Skip empty params objects for better performance
         let hasParams = false;
-        for (const _key in req.params) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const key in req.params) {
           hasParams = true;
           break;
         }
@@ -62,7 +63,8 @@ export class ValidationCore {
       if (config.query !== undefined && req.query !== undefined) {
         // Skip empty query objects for better performance
         let hasQuery = false;
-        for (const _key in req.query) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const key in req.query) {
           hasQuery = true;
           break;
         }

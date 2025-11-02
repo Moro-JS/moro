@@ -1,6 +1,6 @@
 // Hook System for Moro
 import { EventEmitter } from 'events';
-import { HookFunction, HookContext, MoroMiddleware } from '../../types/hooks.js';
+import { HookFunction, HookContext } from '../../types/hooks.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 export const HOOK_EVENTS = {
@@ -155,6 +155,7 @@ export class HookManager extends EventEmitter {
     if (!this.hooks.has(event)) {
       this.hooks.set(event, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.hooks.get(event)!.push(fn);
     this.updateExecuteCache(event); // Update cache
     return this;
@@ -165,6 +166,7 @@ export class HookManager extends EventEmitter {
     if (!this.beforeHooks.has(event)) {
       this.beforeHooks.set(event, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.beforeHooks.get(event)!.push(fn);
     this.updateExecuteCache(event); // Update cache
     return this;
@@ -175,6 +177,7 @@ export class HookManager extends EventEmitter {
     if (!this.afterHooks.has(event)) {
       this.afterHooks.set(event, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.afterHooks.get(event)!.push(fn);
     this.updateExecuteCache(event); // Update cache
     return this;
@@ -189,6 +192,7 @@ export class HookManager extends EventEmitter {
 
     // Fallback for events not in cache (shouldn't happen in normal operation)
     this.updateExecuteCache(event);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.executeCache.get(event)!(context);
   }
 

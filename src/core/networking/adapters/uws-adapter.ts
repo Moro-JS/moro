@@ -176,7 +176,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
     this.logger.debug(`WebSocket connection opened: ${id} from ${ip}`, 'Connection');
   }
 
-  private handleMessage(ws: any, message: ArrayBuffer, isBinary: boolean): void {
+  private handleMessage(ws: any, message: ArrayBuffer, _isBinary: boolean): void {
     const connectionId = ws.connectionId;
     const connection = this.connections.get(connectionId);
 
@@ -234,6 +234,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
       this.namespaces.set(namespace, ns);
       this.logger.debug(`Created namespace: ${namespace}`, 'Namespace');
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.namespaces.get(namespace)!;
   }
 
@@ -243,6 +244,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
 
   async close(): Promise<void> {
     // Close all connections
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [id, connection] of this.connections) {
       connection.disconnect(true);
     }
@@ -344,6 +346,7 @@ class UWSNamespaceWrapper implements WebSocketNamespace {
   }
 
   emit(event: string, data: any): void {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [id, connection] of this.connections) {
       if (connection.connected) {
         connection.emit(event, data);
@@ -409,6 +412,7 @@ class UWSConnectionWrapper implements WebSocketConnection {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.eventHandlers.get(event)!.push(handler);
   }
 
@@ -484,7 +488,7 @@ class UWSConnectionWrapper implements WebSocketConnection {
     }
   }
 
-  handleClose(code: number, message: ArrayBuffer): void {
+  handleClose(code: number, _message: ArrayBuffer): void {
     this.connected = false;
     this.logger.debug(`Connection ${this.id} closed with code ${code}`, 'Close');
   }
@@ -569,6 +573,7 @@ class UWSEmitterWrapper implements WebSocketEmitter {
   }
 
   emit(event: string, data: any): void {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [id, connection] of this.connections) {
       if (!connection.connected) continue;
 

@@ -12,8 +12,7 @@ import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('AuthAdapter');
 
-// Mock Auth.js types until we have the actual package
-// These would come from @auth/core in a real implementation
+// Auth.js types
 export interface AuthConfig {
   providers: any[];
   secret?: string;
@@ -41,21 +40,21 @@ export interface Session {
 
 export type AuthAction = 'signin' | 'signout' | 'callback' | 'session' | 'providers' | 'csrf';
 
-// Mock Auth function - would be imported from @auth/core
-const Auth = async (request: Request, config: any): Promise<Response> => {
-  // This is a placeholder implementation
-  // In the real version, this would be the actual Auth.js core function
-  const url = new URL(request.url);
-  const pathname = url.pathname;
-
-  if (pathname === '/session') {
-    return new Response(JSON.stringify({ user: null }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  }
-
-  return new Response('Not implemented', { status: 501 });
+/**
+ * Placeholder Auth function
+ *
+ * NOTE: This is a stub implementation. To use Auth.js with MoroJS:
+ * 1. Install @auth/core: npm install @auth/core
+ * 2. Import the real Auth function: import { Auth } from '@auth/core';
+ * 3. Replace this stub with the actual Auth function
+ *
+ * This stub allows the adapter to compile without @auth/core installed.
+ */
+const Auth = async (_request: Request, _config: any): Promise<Response> => {
+  throw new Error(
+    'Auth.js is not configured. Please install @auth/core and configure it properly. ' +
+      'See docs/AUTH_GUIDE.md for setup instructions.'
+  );
 };
 
 // MoroJS-specific types
@@ -237,6 +236,7 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
 
         // Determine the auth action from the URL
         const url = new URL(webRequest.url);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const action = (url.pathname.split('/')[1] as AuthAction) || 'session';
 
         // Apply request transformer if provided
@@ -350,7 +350,9 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
 
     const options = {};
     const mergedConfig = { ...config, ...options };
-    const { handler, auth } = await MoroJSAuth(mergedConfig);
+    await MoroJSAuth(mergedConfig);
+    // Note: The auth handler would need to be registered as routes in a complete implementation
+    // For now, we just use the basePath for generating URLs
     const basePath = mergedConfig.basePath || '/api/auth';
 
     // Register request hook

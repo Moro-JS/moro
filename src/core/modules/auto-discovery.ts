@@ -223,7 +223,7 @@ export class ModuleDiscovery {
       if (!stat.isDirectory()) {
         return modules;
       }
-    } catch (error) {
+    } catch {
       return modules;
     }
 
@@ -343,11 +343,12 @@ export class ModuleDiscovery {
       try {
         const testIterator = glob(join(searchPath, '*'));
         let testCount = 0;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         for await (const _ of testIterator) {
           testCount++;
           if (testCount > 0) break; // Just test that it works
         }
-      } catch (testError) {
+      } catch {
         return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
       }
 
@@ -378,7 +379,7 @@ export class ModuleDiscovery {
           return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
         }
       }
-    } catch (error) {
+    } catch {
       // fs.glob not available, fall back to manual file discovery
       this.discoveryLogger.debug('Native fs.glob not available, using fallback');
       return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
@@ -408,7 +409,7 @@ export class ModuleDiscovery {
     try {
       const { access } = await import('fs/promises');
       await access(fullSearchPath);
-    } catch (e) {
+    } catch {
       return [];
     }
 

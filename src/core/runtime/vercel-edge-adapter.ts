@@ -7,6 +7,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
   readonly type = 'vercel-edge' as const;
 
   async adaptRequest(request: Request): Promise<HttpRequest> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const url = new URL(request.url);
     const { pathname, query } = this.parseUrl(request.url);
 

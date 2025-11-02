@@ -207,6 +207,77 @@ export {
 // Export configuration types for TypeScript users
 export type { AppConfig } from './core/config/index.js';
 
+// GraphQL System - Only export if user wants to use it
+// These are lazy-loaded to avoid requiring graphql package
+export type {
+  GraphQLContext,
+  GraphQLResolver,
+  GraphQLSubscriptionResolver,
+  GraphQLSchemaBuilderOptions,
+  GraphQLResolvers,
+  GraphQLExecutionOptions,
+  GraphQLOptions,
+  GraphQLPlugin,
+  GraphQLRequestContext,
+  GraphQLRequestListener,
+  GraphQLRequest,
+  GraphQLResponse,
+  GraphQLMetrics,
+  GraphQLSubscriptionOptions,
+  DataLoaderOptions,
+  ComplexityEstimator,
+  QueryComplexityOptions,
+  DepthLimitOptions,
+} from './core/graphql/types.js';
+
+// Re-export common GraphQL utilities (lazy loaded)
+export {
+  createGraphQLCore,
+  createSchemaBuilder,
+  buildGraphQLSchema,
+} from './core/graphql/index.js';
+
+// GraphQL helpers (lazy loaded)
+export {
+  createPothosBuilder,
+  isPothosAvailable,
+  isPothosSchema,
+  pothosToSchema,
+  createComplexityPlugin,
+  createDepthLimitPlugin,
+  createDataLoader,
+} from './core/middleware/built-in/graphql/helpers.js';
+
+// Job System
+export {
+  JobScheduler,
+  JobHealthChecker,
+  CronParser,
+  parseInterval,
+  formatDuration,
+  everyInterval,
+  cronSchedule,
+  oneTimeAt,
+  createJob,
+} from './core/jobs/index.js';
+
+export type {
+  JobSchedule,
+  JobOptions,
+  SimpleJobOptions,
+  JobFunction,
+  JobMetrics,
+  SchedulerStats,
+  JobHealth,
+  JobHealthStatus,
+  JobContext,
+  JobExecution,
+  JobState,
+  JobSchedulerOptions,
+  ExecutionContext,
+  ExecutionResult,
+} from './core/jobs/index.js';
+
 // Middleware System
 export { MiddlewareManager } from './core/middleware/index.js';
 export type { MiddlewareInterface, MoroMiddleware } from './core/middleware/index.js';

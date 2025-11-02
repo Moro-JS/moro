@@ -300,6 +300,7 @@ function convertZodObject(def: any, options: ConversionOptions): OpenAPISchema {
       typeDef = zodType;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     schema.properties![key] = convertZodType(typeDef, options);
 
     // Check if field is required (not optional and no default)
@@ -310,11 +311,13 @@ function convertZodObject(def: any, options: ConversionOptions): OpenAPISchema {
       typeStr !== 'default' &&
       typeStr !== 'ZodDefault'
     ) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       schema.required!.push(key);
     }
   }
 
   // Remove required array if empty
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   if (schema.required!.length === 0) {
     delete schema.required;
   }
@@ -412,6 +415,7 @@ function isOptionalType(type: any): boolean {
   return (type._def as any).typeName === 'ZodOptional';
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function hasDefault(type: any): boolean {
   return (type._def as any).typeName === 'ZodDefault';
 }

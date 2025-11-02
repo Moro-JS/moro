@@ -41,7 +41,7 @@ export class SocketIOAdapter implements WebSocketAdapter {
       if (options.compression) {
         this.setCompression(true);
       }
-    } catch (error) {
+    } catch {
       throw new Error(
         'Socket.IO not found. Install it with: npm install socket.io\n' +
           'Or use a different WebSocket adapter.'

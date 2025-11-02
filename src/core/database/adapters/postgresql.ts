@@ -54,7 +54,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
       });
 
       this.logger.info('PostgreSQL adapter initialized', 'PostgreSQL');
-    } catch (error) {
+    } catch {
       throw new Error(
         'pg package is required for PostgreSQL adapter. Install it with: npm install pg'
       );

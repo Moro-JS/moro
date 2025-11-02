@@ -13,13 +13,16 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
 
     // Parse body for POST/PUT/PATCH requests
     let body: any;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     if (['POST', 'PUT', 'PATCH'].includes(req.method!)) {
       body = await this.parseRequestBody(req);
     }
 
     const baseRequest = {
       // Copy IncomingMessage properties we need
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       method: req.method!,
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       url: req.url!,
       headers: req.headers as Record<string, string>,
       httpVersion: req.httpVersion,
@@ -43,7 +46,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
 
   async adaptResponse(
     moroResponse: HttpResponse | RuntimeHttpResponse,
-    req: IncomingMessage
+    _req: IncomingMessage
   ): Promise<ServerResponse> {
     // For Node.js, we typically work with the actual ServerResponse
     // This method is mainly for converting mock responses back to real ones
@@ -137,7 +140,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
     }
 
     if (!enhanced.cookie) {
-      enhanced.cookie = function (name: string, value: string, options?: any) {
+      enhanced.cookie = function (name: string, value: string, _options?: any) {
         if (!this.headersSent) {
           const cookieString = `${name}=${value}`;
           this.setHeader('Set-Cookie', cookieString);
@@ -147,7 +150,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
     }
 
     if (!enhanced.clearCookie) {
-      enhanced.clearCookie = function (name: string, options?: any) {
+      enhanced.clearCookie = function (name: string, _options?: any) {
         if (!this.headersSent) {
           this.setHeader('Set-Cookie', `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`);
         }
@@ -190,7 +193,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
           const contentType = contentTypes[ext] || 'application/octet-stream';
           this.setHeader('Content-Type', contentType);
           this.end(data);
-        } catch (error) {
+        } catch {
           this.statusCode = 404;
           this.end('File not found');
         }

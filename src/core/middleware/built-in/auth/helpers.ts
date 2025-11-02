@@ -112,7 +112,7 @@ export function requireAuth(options: AuthGuardOptions = {}) {
             message: 'Custom authorization check failed',
           });
         }
-      } catch (error) {
+      } catch {
         return res.status(500).json({
           error: 'Authorization error',
           message: 'Failed to verify authorization',

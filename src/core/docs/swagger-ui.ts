@@ -66,6 +66,7 @@ export class SwaggerUIMiddleware {
 
   // Generate HTML page for Swagger UI
   private generateHTML(basePath: string): string {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const swaggerOptions = {
       ...this.options.swaggerOptions,
       url: `${basePath}/openapi.json`, // Relative URL to the OpenAPI spec

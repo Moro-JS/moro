@@ -27,7 +27,7 @@ const logger = createFrameworkLogger('AppIntegration');
 export class RouteRegistry {
   private router = UnifiedRouter.getInstance();
 
-  register(route: CompiledRoute): void {
+  register(_route: CompiledRoute): void {
     // Routes are automatically registered with UnifiedRouter when created
     // This is a no-op for API compatibility
   }
@@ -58,7 +58,12 @@ export interface IntelligentApp {
   options(path: string): RouteBuilder;
   route(schema: RouteSchema): CompiledRoute;
   register(route: CompiledRoute): void;
-  directRoute(method: string, path: string, handler: Function, options?: any): void;
+  directRoute(
+    method: string,
+    path: string,
+    handler: (req: any, res: any) => any | Promise<any>,
+    options?: any
+  ): void;
 }
 
 // Intelligent routing manager class
@@ -127,7 +132,12 @@ export class IntelligentRoutingManager implements IntelligentApp {
   }
 
   // Direct route method (deprecated but kept for compatibility)
-  directRoute(method: string, path: string, handler: Function, options?: any): void {
+  directRoute(
+    method: string,
+    path: string,
+    handler: (req: any, res: any) => any | Promise<any>,
+    options?: any
+  ): void {
     logger.warn('Using deprecated direct route method', 'DirectRoute', {
       method,
       path,

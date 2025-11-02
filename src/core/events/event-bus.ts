@@ -96,7 +96,7 @@ export class MoroEventBus implements GlobalEventBus {
     return this;
   }
 
-  off(event: string, listener: Function): this {
+  off(event: string, listener: CallableFunction): this {
     this.emitter.off(event, listener as (...args: any[]) => void);
     return this;
   }
@@ -115,6 +115,7 @@ export class MoroEventBus implements GlobalEventBus {
     // Return existing bus if it already exists
     if (this.moduleBuses.has(moduleId)) {
       this.logger.debug(`Reusing existing event bus for module: ${moduleId}`, 'ModuleBus');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       return this.moduleBuses.get(moduleId)!;
     }
 
@@ -205,7 +206,7 @@ class ModuleEventBusImpl implements ModuleEventBus {
     return this;
   }
 
-  off(event: string, listener: Function): this {
+  off(event: string, listener: CallableFunction): this {
     const namespacedEvent = `module:${this.moduleId}:${event}`;
     this.globalBus.off(namespacedEvent, listener);
     return this;

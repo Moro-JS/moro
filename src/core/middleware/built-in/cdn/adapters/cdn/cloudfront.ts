@@ -37,7 +37,7 @@ export class CloudFrontCDNAdapter implements CDNAdapter {
 
       this.cloudfront = new AWS.default.CloudFront();
       logger.info('CloudFront CDN adapter initialized', 'CloudFront');
-    } catch (error) {
+    } catch {
       logger.error('AWS SDK not available', 'CloudFront');
       throw new Error('AWS SDK not installed. Run: npm install aws-sdk');
     }

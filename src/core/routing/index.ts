@@ -234,7 +234,7 @@ export class ExecutableRoute implements CompiledRoute {
     UnifiedRouter.getInstance().registerRoute(schema);
   }
 
-  async execute(req: HttpRequest, res: HttpResponse): Promise<void> {
+  async execute(_req: HttpRequest, _res: HttpResponse): Promise<void> {
     // This is never called - UnifiedRouter handles execution
     // But we implement it for interface compatibility
     throw new Error(

@@ -35,7 +35,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
       this.schema = config.schema;
 
       this.logger.info('Drizzle ORM adapter initialized', 'Drizzle');
-    } catch (error) {
+    } catch {
       this.logger.error('Drizzle ORM initialization failed', 'Drizzle');
       throw new Error(
         'Drizzle ORM configuration error. Ensure you have a valid Drizzle database instance.'
@@ -135,7 +135,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
             .returning();
 
           return result[0] as T;
-        } catch (importError) {
+        } catch {
           // Fallback to raw SQL if drizzle-orm is not available
           const setClause = Object.keys(data)
             .map((key, i) => `${key} = $${i + 1}`)
@@ -189,7 +189,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
           return (
             (result as any).changes || (result as any).rowCount || (result as any).affectedRows || 0
           );
-        } catch (importError) {
+        } catch {
           // Fallback to raw SQL if drizzle-orm is not available
           const whereClause = Object.keys(where)
             .map((key, i) => `${key} = $${i + 1}`)
@@ -340,7 +340,7 @@ class DrizzleTransaction implements DatabaseTransaction {
           .returning();
 
         return result[0] as T;
-      } catch (importError) {
+      } catch {
         // Fallback to raw SQL
         const setClause = Object.keys(data)
           .map((key, i) => `${key} = $${i + 1}`)
@@ -384,7 +384,7 @@ class DrizzleTransaction implements DatabaseTransaction {
         return (
           (result as any).changes || (result as any).rowCount || (result as any).affectedRows || 0
         );
-      } catch (importError) {
+      } catch {
         // Fallback to raw SQL
         const whereClause = Object.keys(where)
           .map((key, i) => `${key} = $${i + 1}`)

@@ -40,7 +40,7 @@ export class FileCacheAdapter implements CacheAdapter {
       }
 
       return parsed.value;
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -65,7 +65,7 @@ export class FileCacheAdapter implements CacheAdapter {
       const filePath = this.getFilePath(key);
       await fs.unlink(filePath);
       logger.debug(`Deleted file cache item: ${key}`, 'FileCache');
-    } catch (error) {
+    } catch {
       // File might not exist, which is okay
     }
   }
@@ -97,7 +97,7 @@ export class FileCacheAdapter implements CacheAdapter {
 
       const remaining = Math.floor((parsed.expires - Date.now()) / 1000);
       return remaining > 0 ? remaining : -1;
-    } catch (error) {
+    } catch {
       return -1;
     }
   }

@@ -50,8 +50,8 @@ export interface ModuleConfig {
   middleware?: any[]; // MiddlewareFunction from http types
   services?: ServiceDefinition[];
   config?: any; // Module-specific configuration
-  routeHandlers?: Record<string, Function>;
-  socketHandlers?: Record<string, Function>;
+  routeHandlers?: Record<string, CallableFunction>;
+  socketHandlers?: Record<string, CallableFunction>;
 }
 
 export interface InternalRouteDefinition {

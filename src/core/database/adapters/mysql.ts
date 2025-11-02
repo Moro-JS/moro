@@ -49,7 +49,7 @@ export class MySQLAdapter implements DatabaseAdapter {
         queueLimit: 0,
         ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
       });
-    } catch (error) {
+    } catch {
       throw new Error(
         'mysql2 package is required for MySQL adapter. Install it with: npm install mysql2'
       );
@@ -100,6 +100,7 @@ export class MySQLAdapter implements DatabaseAdapter {
       result.insertId,
     ]);
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return insertedRecord!;
   }
 
@@ -127,6 +128,7 @@ export class MySQLAdapter implements DatabaseAdapter {
       Object.values(where)
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return updatedRecord!;
   }
 
@@ -187,6 +189,7 @@ class MySQLTransaction implements DatabaseTransaction {
       result.insertId,
     ]);
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return insertedRecord!;
   }
 
@@ -212,6 +215,7 @@ class MySQLTransaction implements DatabaseTransaction {
       Object.values(where)
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return updatedRecord!;
   }
 

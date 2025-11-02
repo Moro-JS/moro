@@ -24,7 +24,7 @@ export interface CookieConfig {
  * }));
  * ```
  */
-export const cookie = (config: CookieConfig = {}): MiddlewareInterface => ({
+export const cookie = (_config: CookieConfig = {}): MiddlewareInterface => ({
   name: 'cookie',
   version: '1.0.0',
   metadata: {
@@ -34,7 +34,7 @@ export const cookie = (config: CookieConfig = {}): MiddlewareInterface => ({
     author: 'MoroJS Team',
   },
 
-  install: async (hooks: any, middlewareOptions: any = {}) => {
+  install: async (hooks: any, _middlewareOptions: any = {}) => {
     logger.debug('Installing cookie middleware', 'Installation');
 
     const cookieCore = new CookieCore();

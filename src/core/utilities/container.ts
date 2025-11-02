@@ -473,6 +473,7 @@ export class FunctionalContainer extends EventEmitter {
         if (!this.requestScopes.has(requestId)) {
           this.requestScopes.set(requestId, new Map());
         }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         return this.requestScopes.get(requestId)!;
       }
 
@@ -481,6 +482,7 @@ export class FunctionalContainer extends EventEmitter {
         if (!this.moduleScopes.has(moduleId)) {
           this.moduleScopes.set(moduleId, new Map());
         }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         return this.moduleScopes.get(moduleId)!;
       }
 
@@ -680,9 +682,13 @@ export class ServiceRegistrationBuilder<T> {
       factory: this._factory,
       metadata: {
         name: this.name,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         scope: this.metadata.scope!,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         tags: this.metadata.tags!,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         dependencies: this.metadata.dependencies!,
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         optional: this.metadata.optional!,
         lifecycle: this.metadata.lifecycle,
         fallback: this.metadata.fallback,

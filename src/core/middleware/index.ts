@@ -8,13 +8,7 @@
 
 import { EventEmitter } from 'events';
 import { HookManager } from '../utilities/index.js';
-import {
-  MiddlewareMetadata,
-  MiddlewareContext,
-  MiddlewareInterface,
-  SimpleMiddlewareFunction,
-  MoroMiddleware,
-} from '../../types/hooks.js';
+import { MiddlewareInterface, SimpleMiddlewareFunction } from '../../types/hooks.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 // Export types needed by built-in middleware
@@ -91,6 +85,7 @@ export class MiddlewareManager extends EventEmitter {
       throw new Error(`Middleware ${name} is not installed`);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const middleware = this.middleware.get(name)!;
 
     this.logger.debug(`Uninstalling middleware: ${name}`, 'Uninstallation');

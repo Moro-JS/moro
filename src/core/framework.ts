@@ -1,5 +1,5 @@
 // Core Moro Framework with Pluggable WebSocket Adapters
-import { createServer, Server } from 'http';
+import { Server } from 'http';
 import {
   createSecureServer as createHttp2SecureServer,
   createServer as createHttp2Server,
@@ -16,7 +16,6 @@ import { isPackageAvailable } from './utilities/package-utils.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
-import { LogLevel, LoggerOptions } from '../types/logger.js';
 import { MoroOptions as CoreMoroOptions } from '../types/core.js';
 import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter.js';
 
@@ -507,7 +506,7 @@ export class Moro extends EventEmitter {
       const method = route.method.toLowerCase() as keyof Router;
 
       // Add route to router
-      (router[method] as Function)(route.path, handler);
+      (router[method] as CallableFunction)(route.path, handler);
     }
 
     this.logger.debug(`Router created with ${router.getRoutes().length} total routes`, 'Router');
@@ -819,6 +818,7 @@ export class Moro extends EventEmitter {
       this.rateLimiters.set(identifier, new Map());
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const handlerLimiter = this.rateLimiters.get(identifier)!;
     const now = Date.now();
     const limit = handlerLimiter.get(identifier);
@@ -850,6 +850,7 @@ export class Moro extends EventEmitter {
         })
       );
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.circuitBreakers.get(key)!;
   }
 
@@ -866,7 +867,7 @@ export class Moro extends EventEmitter {
   }
 
   // Compatibility method for existing controllers
-  set(key: string, value: any): void {
+  set(key: string, _value: any): void {
     if (key === 'io') {
       // Deprecated: Use websocket adapter instead
       this.logger.warn(

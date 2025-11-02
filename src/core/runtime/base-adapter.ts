@@ -59,14 +59,14 @@ export abstract class BaseRuntimeAdapter implements RuntimeAdapter {
         this.headersSent = true;
       },
 
-      cookie: function (name: string, value: string, options?: any) {
+      cookie: function (name: string, value: string, _options?: any) {
         // Simple cookie implementation
         const cookieString = `${name}=${value}`;
         this.headers['Set-Cookie'] = cookieString;
         return this;
       },
 
-      clearCookie: function (name: string, options?: any) {
+      clearCookie: function (name: string, _options?: any) {
         this.headers['Set-Cookie'] = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
         return this;
       },
@@ -77,7 +77,7 @@ export abstract class BaseRuntimeAdapter implements RuntimeAdapter {
         this.headersSent = true;
       },
 
-      sendFile: async function (filePath: string) {
+      sendFile: async function (_filePath: string) {
         throw new Error('sendFile not implemented in this runtime');
       },
     };

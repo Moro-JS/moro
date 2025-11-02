@@ -15,6 +15,7 @@ export const contextFilter = (allowedContexts: string[]): LogFilter => ({
   name: 'context-filter',
   filter: (entry: LogEntry) => {
     if (!entry.context) return true;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return allowedContexts.some(ctx => entry.context!.includes(ctx));
   },
 });
@@ -26,6 +27,7 @@ export const rateLimitFilter = (maxPerSecond: number): LogFilter => {
 
   return {
     name: 'rate-limit',
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     filter: (entry: LogEntry) => {
       const now = Date.now();
 

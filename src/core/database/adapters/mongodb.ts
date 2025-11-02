@@ -27,10 +27,10 @@ interface MongoDBConfig {
   minPoolSize?: number;
 }
 
-interface MongoDocument {
-  _id?: any;
-  [key: string]: any;
-}
+// interface MongoDocument {
+//   _id?: any;
+//   [key: string]: any;
+// }
 
 export class MongoDBAdapter implements DatabaseAdapter {
   private client: any;
@@ -77,7 +77,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
       this.db = this.client.db(config.database || 'moro_app');
 
       this.logger.info('MongoDB adapter initialized', 'MongoDB');
-    } catch (error) {
+    } catch {
       throw new Error(
         'mongodb package is required for MongoDB adapter. Install it with: npm install mongodb'
       );

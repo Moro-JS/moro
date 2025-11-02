@@ -36,7 +36,7 @@ export async function safeVerifyJWT(
   try {
     const jwtPath = resolveUserPackage('jsonwebtoken');
     jwt = await import(jwtPath);
-  } catch (error) {
+  } catch {
     return {
       success: false,
       error: {

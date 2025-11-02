@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { Container } from '../utilities/index.js';
 import { ModuleConfig } from '../../types/module.js';
-import { ModuleDefinition, ModuleRoute, ModuleSocket } from '../../types/module.js';
+import { ModuleDefinition } from '../../types/module.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 // Module Definition Function
@@ -47,7 +47,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
         acc[`route_handler_${index}`] = route.handler;
         return acc;
       },
-      {} as Record<string, Function>
+      {} as Record<string, CallableFunction>
     );
   }
 
@@ -68,7 +68,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
         acc[`socket_handler_${index}`] = socket.handler;
         return acc;
       },
-      {} as Record<string, Function>
+      {} as Record<string, CallableFunction>
     );
   }
 

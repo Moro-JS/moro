@@ -672,24 +672,43 @@ export class UWebSocketsHttpServer {
       });
   }
 
-  async close(callback?: () => void): Promise<void> {
+  close(callback?: (error?: Error) => void): void {
     if (!this.isListening) {
       if (callback) callback();
       return;
     }
 
     try {
-      // Use stored module reference instead of re-importing
+      // Close the listen socket first
       if (this.listenSocket && this.uws) {
         this.uws.us_listen_socket_close(this.listenSocket);
         this.listenSocket = null;
         this.isListening = false;
-        this.logger.info('uWebSockets HTTP server closed', 'Close');
+        this.logger.info('uWebSockets listen socket closed', 'Close');
       }
-      if (callback) callback();
-    } catch {
-      this.logger.error('Error closing server', 'Close');
-      if (callback) callback();
+
+      // Clear middleware to break references
+      this.globalMiddleware = [];
+
+      // Clear the app reference to release uWebSockets resources
+      // This is critical for worker thread cleanup
+      if (this.app) {
+        // Remove any route handlers
+        this.app = null;
+      }
+
+      if (callback) {
+        // Give the event loop time to process any pending uWebSockets events
+        // before invoking the callback. This ensures handles are properly closed.
+        setTimeout(() => {
+          callback();
+        }, 50);
+      }
+    } catch (error) {
+      this.logger.error('Error closing server', 'Close', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (callback) callback(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -700,6 +719,22 @@ export class UWebSocketsHttpServer {
 
   getApp(): any {
     return this.app;
+  }
+
+  // Get app descriptor for worker thread clustering
+  getDescriptor(): any {
+    if (!this.app || typeof this.app.getDescriptor !== 'function') {
+      throw new Error('uWebSockets app does not support getDescriptor()');
+    }
+    return this.app.getDescriptor();
+  }
+
+  // Add child app descriptor for acceptor pattern
+  addChildAppDescriptor(descriptor: any): void {
+    if (!this.app || typeof this.app.addChildAppDescriptor !== 'function') {
+      throw new Error('uWebSockets app does not support addChildAppDescriptor()');
+    }
+    this.app.addChildAppDescriptor(descriptor);
   }
 
   forceCleanup(): void {

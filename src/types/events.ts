@@ -1,5 +1,4 @@
 // Enterprise Event System Types
-import { EventEmitter } from 'events';
 
 export interface EventContext {
   timestamp: Date;
@@ -27,7 +26,7 @@ export interface ModuleEventBus {
   emit<T = any>(event: string, data: T): Promise<boolean>;
   on<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this;
   once<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this;
-  off(event: string, listener: Function): this;
+  off(event: string, listener: CallableFunction): this;
   removeAllListeners(event?: string): this;
   listenerCount(event: string): number;
 }

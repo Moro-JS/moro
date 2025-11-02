@@ -63,6 +63,7 @@ import { sse } from './sse/index.js';
 import { session } from './session/index.js';
 import { cache } from './cache/index.js';
 import { cdn } from './cdn/index.js';
+import { graphql } from './graphql/index.js';
 
 export const builtInMiddleware = {
   auth,
@@ -78,6 +79,8 @@ export const builtInMiddleware = {
   // Clean architecture middleware
   cache,
   cdn,
+  // GraphQL
+  graphql,
 };
 
 export const simpleMiddleware = {

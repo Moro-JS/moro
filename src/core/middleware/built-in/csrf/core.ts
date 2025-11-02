@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createFrameworkLogger } from '../../../logger/index.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const logger = createFrameworkLogger('CSRFCore');
 
 // ===== Types =====

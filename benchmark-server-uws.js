@@ -4,6 +4,11 @@
 // Ultra-high performance C++ HTTP server
 // Run with: NODE_ENV=production LOG_LEVEL=warn node benchmark-server-uws.js
 // Or override port/host: PORT=8080 HOST=0.0.0.0 node benchmark-server-uws.js
+//
+// NOTE: When using clustering with uWebSockets, you may see "uv_loop_close() while having
+// open handles" warnings on shutdown. This is a known limitation of uWebSockets.js with
+// worker threads and is harmless. The process exits cleanly despite the warning.
+// To suppress: NODE_NO_WARNINGS=1 node benchmark-server-uws.js
 
 process.env.NODE_ENV = 'production';
 import { createApp } from './dist/index.js';
@@ -24,10 +29,9 @@ const app = createApp({
             enabled: false, // Disable for fair comparison
         },
     },
-    // Clustering doesn't work with uWebSockets - single-threaded only
     performance: {
         clustering: {
-            enabled: false,
+            enabled: true,
         },
     },
 

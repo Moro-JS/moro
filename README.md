@@ -33,9 +33,9 @@ Build high-performance APIs with intelligent routing that automatically orders m
 
 | Framework | Req/sec | Latency | Memory | Notes |
 |-----------|---------|---------|--------|-------|
-| **Moro + uWebSockets.js** | **200,000+** | **<0.5ms** | **18MB** | Single core |
-| **Moro (Clustering)**  | **200,000+** | **1.5ms** | **96MB** | Multi-core |
-| **Moro (Standard)**  | **52,400** | **1.8ms** | **24MB** | Single core |
+| **Moro + uWebSockets.js** | **200,000+** | **3.93ms** | **25MB** | Single core |
+| **Moro (Clustering)**  | **190,000+** | **3.62ms** | **24MB** | Multi-core |
+| **Moro (Standard)**  | **87,000** | **7.8ms** | **14MB** | Single core |
 | Fastify   | 38,120  | 2.9ms   | 35MB   | Single core |
 | Express   | 28,540  | 3.8ms   | 45MB   | Single core |
 | NestJS    | 22,100  | 4.5ms   | 58MB   | Single core |
@@ -86,12 +86,28 @@ Learn more at [morojs.com/cli](https://morojs.com/cli)
 ### Ultra-High Performance (Optional)
 
 ```typescript
+// uWebSockets.js - 200k+ req/s on single core
 const app = createApp({
   server: {
-    useUWebSockets: true  // 200k+ req/s on single core
+    useUWebSockets: true
+  }
+});
+
+// Or combine with worker thread clustering for even more power
+const app = createApp({
+  server: {
+    useUWebSockets: true
+  },
+  performance: {
+    clustering: {
+      enabled: true,
+      workers: 4  // or 'auto' for CPU count
+    }
   }
 });
 ```
+
+**NEW:** uWebSockets now supports worker thread clustering! See [UWS Clustering Guide](./docs/UWS_CLUSTERING_GUIDE.md)
 
 ## Deploy Everywhere
 

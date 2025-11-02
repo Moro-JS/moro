@@ -27,6 +27,7 @@ class ObjectPool<T> {
     this.acquireCount++;
 
     if (this.pool.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       return this.pool.pop()!;
     }
 
@@ -341,6 +342,7 @@ export class ObjectPoolManager {
     const obj = this.paramPool.acquire();
 
     if (this.poolUsageHistory.has('params')) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const history = this.poolUsageHistory.get('params')!;
       if (history.length >= 100) {
         history.shift(); // Keep only last 100 measurements
@@ -412,6 +414,7 @@ export class ObjectPoolManager {
           // Track usage for adaptive sizing
           const poolKey = `buffer_${poolSize}`;
           if (this.poolUsageHistory.has(poolKey)) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             const history = this.poolUsageHistory.get(poolKey)!;
             if (history.length >= 100) {
               history.shift();

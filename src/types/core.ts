@@ -1,6 +1,6 @@
 // Core Framework Types
 import { RuntimeConfig } from './runtime.js';
-import { LogLevel, LoggerOptions } from './logger.js';
+import { LoggerOptions } from './logger.js';
 import { AppConfig } from './config.js';
 
 export interface MoroOptions {
@@ -55,4 +55,5 @@ export interface MoroOptions {
   security?: Partial<AppConfig['security']>;
   external?: Partial<AppConfig['external']>;
   performance?: Partial<AppConfig['performance']>;
+  jobs?: Partial<AppConfig['jobs']>;
 }

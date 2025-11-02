@@ -114,7 +114,7 @@ export class WebSocketManager {
     wsConfig: WebSocketDefinition,
     moduleConfig: ModuleConfig
   ): void {
-    socket.on(wsConfig.event, async (data: any, callback?: Function) => {
+    socket.on(wsConfig.event, async (data: any, callback?: CallableFunction) => {
       const handlerKey = `${moduleConfig.name}.${wsConfig.handler}`;
 
       try {
@@ -207,6 +207,7 @@ export class WebSocketManager {
       });
       this.circuitBreakers.set(handlerKey, circuitBreaker);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.circuitBreakers.get(handlerKey)!;
   }
 
@@ -222,6 +223,7 @@ export class WebSocketManager {
       this.rateLimiters.set(handlerKey, new Map());
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const handlerLimiter = this.rateLimiters.get(handlerKey)!;
     const now = Date.now();
     const windowStart = now - rateLimit.window;

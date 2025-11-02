@@ -127,7 +127,7 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
   // Cloudflare Workers doesn't have a listen method - it's handled by the platform
   // listen method is optional in the interface
 
-  private getClientIP(headers: Record<string, string>, request: Request): string {
+  private getClientIP(headers: Record<string, string>, _request: Request): string {
     // Cloudflare provides the real IP in CF-Connecting-IP header
     return (
       headers['cf-connecting-ip'] ||

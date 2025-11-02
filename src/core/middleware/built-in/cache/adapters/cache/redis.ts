@@ -45,7 +45,7 @@ export class RedisCacheAdapter implements CacheAdapter {
       });
 
       logger.info('Redis cache adapter initialized', 'RedisCache');
-    } catch (error) {
+    } catch {
       logger.error('Redis not available, falling back to memory cache', 'RedisCache');
       throw new Error('Redis package not installed. Run: npm install redis');
     }

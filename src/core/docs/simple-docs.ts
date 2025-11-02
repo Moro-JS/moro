@@ -159,6 +159,7 @@ export class SimpleDocsGenerator {
         if (!grouped.has(tag)) {
           grouped.set(tag, []);
         }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         grouped.get(tag)!.push(route);
       }
     }
@@ -181,7 +182,7 @@ export class SimpleDocsGenerator {
   }
 
   private generateRouteSection(route: RouteSchema): string {
-    const methodClass = route.method.toLowerCase();
+    //const methodClass = route.method.toLowerCase();
 
     const html = `
     <div class="endpoint">

@@ -40,7 +40,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
       this.logger.info('SQLite connection established', 'Connection', {
         filename,
       });
-    } catch (error) {
+    } catch {
       throw new Error(
         'better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3'
       );
@@ -105,6 +105,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
         info.lastInsertRowid,
       ]);
 
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       return insertedRecord!;
     } catch (error) {
       this.logger.error('SQLite insert failed', 'Insert', {
@@ -141,6 +142,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
         Object.values(where)
       );
 
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       return updatedRecord!;
     } catch (error) {
       this.logger.error('SQLite update failed', 'Update', {
@@ -210,6 +212,7 @@ class SQLiteTransaction implements DatabaseTransaction {
       info.lastInsertRowid,
     ]);
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return insertedRecord!;
   }
 
@@ -236,6 +239,7 @@ class SQLiteTransaction implements DatabaseTransaction {
       Object.values(where)
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return updatedRecord!;
   }
 

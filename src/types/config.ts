@@ -215,6 +215,34 @@ export interface WebSocketConfig {
   };
 }
 
+export interface JobsConfig {
+  enabled?: boolean;
+  maxConcurrentJobs?: number;
+  gracefulShutdownTimeout?: number;
+  leaderElection?: {
+    enabled?: boolean;
+    strategy?: 'file' | 'redis' | 'none';
+    lockPath?: string;
+    lockTimeout?: number;
+    heartbeatInterval?: number;
+  };
+  executor?: {
+    maxRetries?: number;
+    retryDelay?: number;
+    retryBackoff?: 'linear' | 'exponential';
+    timeout?: number;
+    enableCircuitBreaker?: boolean;
+    enableMemoryMonitoring?: boolean;
+  };
+  stateManager?: {
+    persistPath?: string;
+    historySize?: number;
+    persistInterval?: number;
+    enableAutoPersist?: boolean;
+    enableRecovery?: boolean;
+  };
+}
+
 // Main configuration interface
 export interface AppConfig {
   server: ServerConfig;
@@ -226,4 +254,5 @@ export interface AppConfig {
   external: ExternalServicesConfig;
   performance: PerformanceConfig;
   websocket: WebSocketConfig;
+  jobs?: JobsConfig;
 }

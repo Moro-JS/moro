@@ -45,7 +45,7 @@ export class WSAdapter implements WebSocketAdapter {
 
       // Setup default namespace
       this.createNamespace('/');
-    } catch (error) {
+    } catch {
       throw new Error(
         'ws library not found. Install it with: npm install ws @types/ws\n' +
           'Or use a different WebSocket adapter.'
@@ -79,6 +79,7 @@ export class WSAdapter implements WebSocketAdapter {
       const ns = new WSNamespaceWrapper(namespace, this);
       this.namespaces.set(namespace, ns);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return this.namespaces.get(namespace)!;
   }
 
@@ -221,8 +222,8 @@ class WSNamespaceWrapper implements WebSocketNamespace {
  */
 class WSConnectionWrapper implements WebSocketConnection {
   public data: Record<string, any> = {};
-  private eventHandlers = new Map<string, Function[]>();
-  private anyHandlers: Function[] = [];
+  private eventHandlers = new Map<string, CallableFunction[]>();
+  private anyHandlers: CallableFunction[] = [];
   private rooms = new Set<string>();
   private _connected = true;
 
@@ -273,6 +274,7 @@ class WSConnectionWrapper implements WebSocketConnection {
       if (!this.eventHandlers.has(event)) {
         this.eventHandlers.set(event, []);
       }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       this.eventHandlers.get(event)!.push(handler);
       return;
     }
@@ -280,6 +282,7 @@ class WSConnectionWrapper implements WebSocketConnection {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.eventHandlers.get(event)!.push(handler);
   }
 
@@ -361,7 +364,7 @@ class WSConnectionWrapper implements WebSocketConnection {
       if (handlers) {
         handlers.forEach(handler => handler(messageData, callback));
       }
-    } catch (error) {
+    } catch {
       // Invalid message format - ignore
     }
   }
