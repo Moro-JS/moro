@@ -93,7 +93,7 @@ describe('Jobs Integration', () => {
           jobId,
           executionId: expect.stringMatching(/^exec_/),
           metadata: expect.objectContaining({ custom: 'data' }),
-        }),
+        })
       );
     });
 
@@ -213,7 +213,7 @@ describe('Jobs Integration', () => {
   });
 
   describe('Job Scheduler Lifecycle', () => {
-    it('should start job scheduler on listen', (done) => {
+    it('should start job scheduler on listen', done => {
       const handler = jest.fn().mockResolvedValue('success');
       app.job('test-job', '* * * * *', handler);
 
@@ -230,16 +230,16 @@ describe('Jobs Integration', () => {
     it('should shutdown job scheduler on close', async () => {
       const handler = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 500);
-          }),
+          })
       );
 
       const jobId = app.job('test-job', '* * * * *', handler);
 
       const port = 3100 + Math.floor(Math.random() * 1000);
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         app.listen(port, () => resolve());
       });
 
@@ -276,4 +276,3 @@ describe('Jobs Integration', () => {
     });
   });
 });
-

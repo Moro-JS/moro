@@ -27,11 +27,7 @@ describe('JobScheduler', () => {
     it('should register a cron job', () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       expect(jobId).toBeDefined();
       expect(jobId).toContain('job_');
@@ -48,7 +44,7 @@ describe('JobScheduler', () => {
       const jobId = scheduler.registerJob(
         'interval-job',
         { type: 'interval', interval: 5000 },
-        handler,
+        handler
       );
 
       const job = scheduler.getJob(jobId);
@@ -64,7 +60,7 @@ describe('JobScheduler', () => {
       const jobId = scheduler.registerJob(
         'onetime-job',
         { type: 'oneTime', at: futureDate },
-        handler,
+        handler
       );
 
       const job = scheduler.getJob(jobId);
@@ -78,7 +74,7 @@ describe('JobScheduler', () => {
       const jobId = scheduler.registerJob(
         'test-job',
         { type: 'interval', interval: 5000 },
-        handler,
+        handler
       );
 
       const job = scheduler.getJob(jobId);
@@ -91,11 +87,7 @@ describe('JobScheduler', () => {
     it('should execute job and track state', async () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       await scheduler.start();
       await scheduler.triggerJob(jobId);
@@ -113,7 +105,7 @@ describe('JobScheduler', () => {
       const jobId = scheduler.registerJob(
         'failing-job',
         { type: 'cron', cron: '* * * * *' },
-        handler,
+        handler
       );
 
       await scheduler.start();
@@ -132,11 +124,7 @@ describe('JobScheduler', () => {
       scheduler.on('job:start', startSpy);
       scheduler.on('job:complete', completeSpy);
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       await scheduler.start();
       await scheduler.triggerJob(jobId);
@@ -144,14 +132,14 @@ describe('JobScheduler', () => {
       expect(startSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           jobId,
-        }),
+        })
       );
 
       expect(completeSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           jobId,
           result: 'success',
-        }),
+        })
       );
     });
   });
@@ -160,11 +148,7 @@ describe('JobScheduler', () => {
     it('should enable/disable jobs', () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       // Disable job
       scheduler.setJobEnabled(jobId, false);
@@ -180,11 +164,7 @@ describe('JobScheduler', () => {
     it('should unregister jobs', () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       expect(scheduler.getJob(jobId)).toBeDefined();
 
@@ -208,9 +188,9 @@ describe('JobScheduler', () => {
     it('should respect global concurrency limit', async () => {
       const handler = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 500);
-          }),
+          })
       );
 
       const job1 = scheduler.registerJob('job1', { type: 'cron', cron: '* * * * *' }, handler);
@@ -227,7 +207,7 @@ describe('JobScheduler', () => {
       ];
 
       // Check stats while jobs are running - allow brief window for jobs to start
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 200));
       const stats = scheduler.getStats();
       // With some timing variance, we should see no more than 2-3 running
       expect(stats.runningJobs).toBeLessThanOrEqual(3);
@@ -239,27 +219,27 @@ describe('JobScheduler', () => {
     it('should respect per-job concurrency limit', async () => {
       const handler = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 300);
-          }),
+          })
       );
 
       const jobId = scheduler.registerJob(
         'test-job',
         { type: 'cron', cron: '* * * * *' },
         handler,
-        { maxConcurrent: 1 },
+        { maxConcurrent: 1 }
       );
 
       await scheduler.start();
 
       // Try to trigger job twice simultaneously
       const promise1 = scheduler.triggerJob(jobId);
-      await new Promise((resolve) => setTimeout(resolve, 50)); // Small delay
+      await new Promise(resolve => setTimeout(resolve, 50)); // Small delay
       const promise2 = scheduler.triggerJob(jobId);
 
       // One should be running, one queued
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 100));
       const stats = scheduler.getStats();
       expect(stats.runningJobs + stats.queuedJobs).toBeGreaterThanOrEqual(1);
 
@@ -273,12 +253,12 @@ describe('JobScheduler', () => {
 
       const lowPriorityHandler = jest.fn().mockImplementation(async () => {
         executionOrder.push('low');
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 100));
       });
 
       const highPriorityHandler = jest.fn().mockImplementation(async () => {
         executionOrder.push('high');
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 100));
       });
 
       // Create scheduler with concurrency of 1 to force queueing
@@ -291,14 +271,14 @@ describe('JobScheduler', () => {
         'low-priority',
         { type: 'cron', cron: '* * * * *' },
         lowPriorityHandler,
-        { priority: 1 },
+        { priority: 1 }
       );
 
       const highJob = scheduler.registerJob(
         'high-priority',
         { type: 'cron', cron: '* * * * *' },
         highPriorityHandler,
-        { priority: 10 },
+        { priority: 10 }
       );
 
       await scheduler.start();
@@ -306,7 +286,7 @@ describe('JobScheduler', () => {
       // Trigger low priority first, then high priority
       // The high priority should jump the queue
       const lowPromise = scheduler.triggerJob(lowJob);
-      await new Promise((resolve) => setTimeout(resolve, 10)); // Brief delay
+      await new Promise(resolve => setTimeout(resolve, 10)); // Brief delay
       const highPromise = scheduler.triggerJob(highJob);
 
       await Promise.all([lowPromise, highPromise]);
@@ -341,11 +321,7 @@ describe('JobScheduler', () => {
     it('should provide job metrics', async () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       await scheduler.start();
       await scheduler.triggerJob(jobId);
@@ -360,11 +336,7 @@ describe('JobScheduler', () => {
     it('should track job history', async () => {
       const handler = jest.fn().mockResolvedValue('success');
 
-      const jobId = scheduler.registerJob(
-        'test-job',
-        { type: 'cron', cron: '* * * * *' },
-        handler,
-      );
+      const jobId = scheduler.registerJob('test-job', { type: 'cron', cron: '* * * * *' }, handler);
 
       await scheduler.start();
       await scheduler.triggerJob(jobId);
@@ -380,9 +352,9 @@ describe('JobScheduler', () => {
     it('should complete running jobs before shutdown', async () => {
       const handler = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 500);
-          }),
+          })
       );
 
       // Register job as disabled so it won't fire from cron schedule
@@ -390,7 +362,7 @@ describe('JobScheduler', () => {
         'test-job',
         { type: 'cron', cron: '* * * * *' },
         handler,
-        { enabled: false },
+        { enabled: false }
       );
 
       await scheduler.start();
@@ -408,4 +380,3 @@ describe('JobScheduler', () => {
     });
   });
 });
-

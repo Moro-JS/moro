@@ -29,7 +29,7 @@ describe('GraphQL Integration with Moro', () => {
     });
 
     // Wait for GraphQL to initialize
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const schema = app.getGraphQLSchema();
     expect(schema).toBeDefined();
@@ -60,7 +60,7 @@ describe('GraphQL Integration with Moro', () => {
     });
 
     // Wait for initialization
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const stats = app.getGraphQLStats();
 
@@ -111,7 +111,7 @@ describe('GraphQL Integration with Moro', () => {
     });
 
     // Wait for initialization
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const schema = app.getGraphQLSchema();
     expect(schema).toBeDefined();
@@ -127,7 +127,7 @@ describe('GraphQL Integration with Moro', () => {
     });
 
     // Wait for initialization
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const stats = app.getGraphQLStats();
     expect(stats?.jit).toBeDefined();
@@ -143,10 +143,9 @@ describe('GraphQL Integration with Moro', () => {
     });
 
     // Wait for initialization
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const stats = app.getGraphQLStats();
     expect(stats?.jit?.enabled).toBe(false);
   });
 });
-

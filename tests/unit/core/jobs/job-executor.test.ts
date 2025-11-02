@@ -51,7 +51,7 @@ describe('JobExecutor', () => {
           jobId: 'job1',
           executionId: 'exec1',
           metadata: expect.objectContaining({ key: 'value' }),
-        }),
+        })
       );
     });
 
@@ -122,9 +122,9 @@ describe('JobExecutor', () => {
     it('should timeout long-running jobs', async () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(resolve, 10000); // 10 seconds
-          }),
+          })
       );
 
       const executor = new JobExecutor(logger, {
@@ -144,9 +144,9 @@ describe('JobExecutor', () => {
     it('should not timeout fast jobs', async () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 100);
-          }),
+          })
       );
 
       const executor = new JobExecutor(logger, {
@@ -230,9 +230,9 @@ describe('JobExecutor', () => {
 
       const jobFn = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(resolve, 5000);
-          }),
+          })
       );
 
       const promise = testExecutor.execute('job-cancel', 'exec1', jobFn);
@@ -253,9 +253,9 @@ describe('JobExecutor', () => {
     it('should track active executions', async () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(resolve, 1000);
-          }),
+          })
       );
 
       const promise = executor.execute('job1', 'exec1', jobFn);
@@ -280,9 +280,9 @@ describe('JobExecutor', () => {
     it('should wait for running jobs during shutdown', async () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
-          new Promise((resolve) => {
+          new Promise(resolve => {
             setTimeout(() => resolve('done'), 500);
-          }),
+          })
       );
 
       const promise = executor.execute('job1', 'exec1', jobFn);
@@ -305,11 +305,10 @@ describe('JobExecutor', () => {
 
       // Try to execute job
       await expect(executor.execute('job1', 'exec1', jobFn)).rejects.toThrow(
-        'JobExecutor is shutting down',
+        'JobExecutor is shutting down'
       );
 
       await shutdownPromise;
     });
   });
 });
-

@@ -90,7 +90,7 @@ describe('JobStateManager', () => {
     it('should end execution tracking successfully', async () => {
       stateManager.startExecution('job1', 'exec1');
       // Small delay to ensure duration > 0
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 10));
       const execution = stateManager.endExecution('exec1', 'completed');
 
       expect(execution).toBeDefined();
@@ -319,4 +319,3 @@ describe('JobStateManager', () => {
     });
   });
 });
-
