@@ -52,6 +52,7 @@ import type { GraphQLOptions } from './core/graphql/types.js';
 
 // Lazy imports for GraphQL to avoid crashes when not installed
 let GraphQLCore: any;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let GraphQLSubscriptionManager: any;
 let setupGraphQLSubscriptions: any;
 
