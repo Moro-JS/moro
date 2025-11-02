@@ -1,3 +1,15 @@
+## [1.6.7] - 2025-11-02
+
+### Added
+- feat: add GraphQL and Job Scheduling systems (experimental)
+
+### Changed
+- refactor: restructure GraphQL system with adapter pattern and lazy loading
+
+### Fixed
+- fix: revert GraphQL lazy loading, use peer dependency validation instead
+- fix: GraphQL integration test timing and moro initializer
+
 ## [1.6.6] - 2025-10-31
 
 ### Other
