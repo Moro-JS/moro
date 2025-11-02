@@ -40,7 +40,7 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
     logger.info('GraphQL endpoint configured', 'Configuration', {
       graphqlPath,
       playgroundPath: enablePlayground ? playgroundPath : 'disabled',
-      jit: graphqlCore.getStats().jit.enabled,
+      jit: graphqlCore.getStats()?.jit?.enabled || false,
     });
 
     // Register hooks for request processing
@@ -52,7 +52,7 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
       if (enablePlayground && req.path === playgroundPath && req.method === 'GET') {
         logger.debug('Serving GraphQL Playground', 'Playground');
         res.setHeader('Content-Type', 'text/html');
-        res.status(200).send(graphqlCore.getPlaygroundHTML(graphqlPath));
+        res.status(200).send(graphqlCore.getPlaygroundHTML());
         return; // Stop processing
       }
 

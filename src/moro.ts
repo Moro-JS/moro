@@ -2325,6 +2325,7 @@ export class Moro extends EventEmitter {
     }
 
     try {
+      // GraphQL core now uses adapters with no static imports from 'graphql'
       const coreModule = await import('./core/graphql/core.js');
       GraphQLCore = coreModule.GraphQLCore;
 

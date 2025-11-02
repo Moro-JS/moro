@@ -207,8 +207,8 @@ export {
 // Export configuration types for TypeScript users
 export type { AppConfig } from './core/config/index.js';
 
-// GraphQL System - Only export if user wants to use it
-// These are lazy-loaded to avoid requiring graphql package
+// GraphQL System - Only export types and adapter
+// The core classes are lazy-loaded internally via app.graphql()
 export type {
   GraphQLContext,
   GraphQLResolver,
@@ -230,14 +230,10 @@ export type {
   DepthLimitOptions,
 } from './core/graphql/types.js';
 
-// Re-export common GraphQL utilities (lazy loaded)
-export {
-  createGraphQLCore,
-  createSchemaBuilder,
-  buildGraphQLSchema,
-} from './core/graphql/index.js';
+export type { GraphQLAdapter, GraphQLStats } from './core/graphql/adapter.js';
+export { GraphQLJsAdapter } from './core/graphql/adapters/graphql-js-adapter.js';
 
-// GraphQL helpers (lazy loaded)
+// GraphQL helpers (these don't import graphql directly at module level)
 export {
   createPothosBuilder,
   isPothosAvailable,

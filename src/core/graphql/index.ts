@@ -1,14 +1,7 @@
-// GraphQL System - Main exports
-// These are lazy-loaded to avoid crashes when graphql is not installed
-
+// GraphQL System Exports
 export { GraphQLCore, createGraphQLCore } from './core.js';
-export {
-  GraphQLSchemaBuilder,
-  createSchemaBuilder,
-  buildGraphQLSchema,
-  GraphQLTypes,
-} from './schema-builder.js';
-export { GraphQLExecutor, createExecutor } from './executor.js';
+export type { GraphQLAdapter, GraphQLRequest, GraphQLResponse, GraphQLStats } from './adapter.js';
+export { GraphQLJsAdapter } from './adapters/graphql-js-adapter.js';
 
 // Re-export types
 export type * from './types.js';

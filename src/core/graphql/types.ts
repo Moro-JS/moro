@@ -84,12 +84,13 @@ export interface GraphQLExecutionOptions {
  * GraphQL configuration options
  */
 export interface GraphQLOptions {
+  // Adapter
+  adapter?: any; // GraphQLAdapter - using any to avoid circular dependency
+
   // Schema definition
-  schema?: GraphQLSchema;
+  schema?: any; // GraphQLSchema
   typeDefs?: string | string[];
   resolvers?: GraphQLResolvers;
-
-  // Pothos integration
   pothosSchema?: any; // PothosSchemaTypes.ExtendDefaultTypes
 
   // Context

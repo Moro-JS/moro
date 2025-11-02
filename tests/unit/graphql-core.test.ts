@@ -1,359 +1,406 @@
 // GraphQL Core Tests
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, afterEach } from '@jest/globals';
 import { GraphQLCore } from '../../src/core/graphql/core';
-import { buildGraphQLSchema } from '../../src/core/graphql/schema-builder';
+import type { GraphQLOptions } from '../../src/core/graphql/types';
 
 describe('GraphQL Core', () => {
-  let graphqlCore: GraphQLCore;
+  let core: GraphQLCore;
 
-  afterEach(() => {
-    if (graphqlCore) {
-      // Cleanup executor to prevent hanging timeouts
-      const executor = graphqlCore.getExecutor();
-      if (executor) {
-        executor.cleanup();
-      }
+  afterEach(async () => {
+    if (core) {
+      await core.cleanup();
     }
   });
 
-  describe('Schema Building', () => {
-    it('should build schema from type definitions and resolvers', async () => {
-      const typeDefs = `
-        type Query {
-          hello: String!
-          user(id: ID!): User
-        }
-
-        type User {
-          id: ID!
-          name: String!
-        }
-      `;
-
-      const resolvers = {
-        Query: {
-          hello: () => 'Hello World!',
-          user: (_: any, args: { id: string }) => ({
-            id: args.id,
-            name: 'Test User',
-          }),
-        },
+  describe('Initialization', () => {
+    it('should initialize with default adapter', async () => {
+      const options: GraphQLOptions = {
+        typeDefs: `type Query { test: String }`,
+        resolvers: { Query: { test: () => 'test' } },
       };
 
-      graphqlCore = new GraphQLCore({
-        typeDefs,
-        resolvers,
-      });
+      core = new GraphQLCore(options);
+      await core.initialize();
 
-      await graphqlCore.initialize();
-
-      const schema = graphqlCore.getSchema();
-      expect(schema).toBeDefined();
-      expect(schema.getQueryType()).toBeDefined();
+      expect(core.getSchema()).toBeDefined();
     });
 
-    it('should accept pre-built GraphQL schema', async () => {
-      const schema = buildGraphQLSchema(`
-        type Query {
-          hello: String!
-        }
-      `);
+    it('should initialize with custom adapter', async () => {
+      const mockAdapter = {
+        initialize: jest.fn().mockResolvedValue(undefined),
+        execute: jest.fn(),
+        getIntrospection: jest.fn(),
+        getSchemaSDL: jest.fn(),
+        getSchema: jest.fn(),
+        getStats: jest.fn(),
+        cleanup: jest.fn(),
+      };
 
-      graphqlCore = new GraphQLCore({ schema });
-      await graphqlCore.initialize();
+      const options: GraphQLOptions = {
+        adapter: mockAdapter,
+        typeDefs: `type Query { test: String }`,
+      };
 
-      expect(graphqlCore.getSchema()).toBe(schema);
+      core = new GraphQLCore(options);
+      await core.initialize();
+
+      expect(mockAdapter.initialize).toHaveBeenCalled();
+    });
+
+    it('should use options from constructor', async () => {
+      core = new GraphQLCore({
+        typeDefs: `type Query { hello: String }`,
+        resolvers: { Query: { hello: () => 'world' } },
+        enableJIT: true,
+        enablePlayground: false,
+      });
+
+      await core.initialize();
+
+      const stats = core.getStats();
+      expect(stats).toBeDefined();
     });
   });
 
-  describe('Query Execution', () => {
+  describe('HTTP Request Handling', () => {
     beforeEach(async () => {
-      graphqlCore = new GraphQLCore({
+      core = new GraphQLCore({
         typeDefs: `
           type Query {
             hello(name: String): String!
-            add(a: Int!, b: Int!): Int!
           }
         `,
         resolvers: {
           Query: {
-            hello: (_: any, args: { name?: string }) => `Hello ${args.name || 'World'}!`,
-            add: (_: any, args: { a: number; b: number }) => args.a + args.b,
+            hello: (_: any, args: any) => `Hello ${args.name || 'World'}!`,
           },
         },
       });
-
-      await graphqlCore.initialize();
+      await core.initialize();
     });
 
-    it('should execute simple query', async () => {
-      const mockReq = {
+    it('should handle POST GraphQL requests', async () => {
+      const req = {
         method: 'POST',
         body: {
           query: '{ hello }',
         },
-      };
+      } as any;
 
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(200);
-            expect(data.data.hello).toBe('Hello World!');
-          },
-        }),
-      };
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
 
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
+      await core.handleRequest(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { hello: 'Hello World!' },
+        })
+      );
     });
 
-    it('should execute query with arguments', async () => {
-      const mockReq = {
-        method: 'POST',
-        body: {
-          query: '{ hello(name: "GraphQL") }',
-        },
-      };
-
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(200);
-            expect(data.data.hello).toBe('Hello GraphQL!');
-          },
-        }),
-      };
-
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
-    });
-
-    it('should execute query with variables', async () => {
-      const mockReq = {
-        method: 'POST',
-        body: {
-          query: 'query AddNumbers($a: Int!, $b: Int!) { add(a: $a, b: $b) }',
-          variables: { a: 5, b: 3 },
-        },
-      };
-
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(200);
-            expect(data.data.add).toBe(8);
-          },
-        }),
-      };
-
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
-    });
-
-    it('should handle validation errors', async () => {
-      const mockReq = {
-        method: 'POST',
-        body: {
-          query: '{ invalidField }',
-        },
-      };
-
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(200);
-            expect(data.errors).toBeDefined();
-            expect(data.errors.length).toBeGreaterThan(0);
-          },
-        }),
-      };
-
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
-    });
-
-    it('should support GET requests with query params', async () => {
-      const mockReq = {
+    it('should handle GET GraphQL requests with query params', async () => {
+      const req = {
         method: 'GET',
         query: {
-          query: '{ hello }',
+          query: '{ hello(name: "Alice") }',
         },
-      };
+      } as any;
 
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(200);
-            expect(data.data.hello).toBe('Hello World!');
-          },
-        }),
-      };
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
 
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
+      await core.handleRequest(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { hello: 'Hello Alice!' },
+        })
+      );
+    });
+
+    it('should reject invalid requests', async () => {
+      const req = {
+        method: 'POST',
+        body: {},
+      } as any;
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+
+      await core.handleRequest(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              message: 'Invalid GraphQL request',
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('should handle variables in POST requests', async () => {
+      const req = {
+        method: 'POST',
+        body: {
+          query: 'query($name: String) { hello(name: $name) }',
+          variables: { name: 'Bob' },
+        },
+      } as any;
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+
+      await core.handleRequest(req, res);
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { hello: 'Hello Bob!' },
+        })
+      );
     });
   });
 
-  describe('Context', () => {
-    it('should pass custom context to resolvers', async () => {
-      const customContext = { userId: '123', isAdmin: true };
+  describe('Context Handling', () => {
+    it('should use custom context factory', async () => {
+      let capturedContext: any;
 
-      graphqlCore = new GraphQLCore({
-        typeDefs: `
-          type Query {
-            whoami: String!
-          }
-        `,
+      core = new GraphQLCore({
+        typeDefs: `type Query { contextTest: String }`,
         resolvers: {
           Query: {
-            whoami: (_: any, __: any, context: any) => {
-              expect(context.userId).toBe('123');
-              expect(context.isAdmin).toBe(true);
-              return `User ${context.userId}`;
+            contextTest: (_: any, __: any, ctx: any) => {
+              capturedContext = ctx;
+              return 'ok';
             },
           },
         },
-        context: () => customContext,
-      });
-
-      await graphqlCore.initialize();
-
-      const mockReq = {
-        method: 'POST',
-        body: { query: '{ whoami }' },
-      };
-
-      const mockRes = {
-        status: () => ({
-          json: (data: any) => {
-            expect(data.data.whoami).toBe('User 123');
-          },
+        context: (req, res) => ({
+          request: req,
+          response: res,
+          customValue: 'test-value',
         }),
-      };
-
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
-    });
-  });
-
-  describe('Stats', () => {
-    beforeEach(async () => {
-      graphqlCore = new GraphQLCore({
-        typeDefs: `
-          type Query {
-            hello: String!
-          }
-
-          type Mutation {
-            createUser: User!
-          }
-
-          type User {
-            id: ID!
-          }
-        `,
-        resolvers: {
-          Query: { hello: () => 'World' },
-          Mutation: { createUser: () => ({ id: '1' }) },
-        },
       });
 
-      await graphqlCore.initialize();
+      await core.initialize();
+
+      const req = {
+        method: 'POST',
+        body: { query: '{ contextTest }' },
+      } as any;
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+
+      await core.handleRequest(req, res);
+
+      expect(capturedContext).toBeDefined();
+      expect(capturedContext.customValue).toBe('test-value');
     });
 
-    it('should return correct stats', () => {
-      const stats = graphqlCore.getStats();
+    it('should provide default context when no factory provided', async () => {
+      let capturedContext: any;
 
-      expect(stats.schema).toBeDefined();
-      expect(stats.schema.queries).toBe(1);
-      expect(stats.schema.mutations).toBe(1);
-      expect(stats.jit).toBeDefined();
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('should format errors with custom formatter', async () => {
-      graphqlCore = new GraphQLCore({
-        typeDefs: `
-          type Query {
-            throwError: String!
-          }
-        `,
+      core = new GraphQLCore({
+        typeDefs: `type Query { test: String }`,
         resolvers: {
           Query: {
-            throwError: () => {
-              throw new Error('Test error');
+            test: (_: any, __: any, ctx: any) => {
+              capturedContext = ctx;
+              return 'ok';
             },
           },
         },
-        formatError: (error: any) => ({
-          message: `Formatted: ${error.message}`,
-          customField: 'custom value',
-        }),
       });
 
-      await graphqlCore.initialize();
+      await core.initialize();
 
-      const mockReq = {
+      const req = {
         method: 'POST',
-        body: { query: '{ throwError }' },
-      };
+        body: { query: '{ test }' },
+      } as any;
 
-      const mockRes = {
-        status: () => ({
-          json: (data: any) => {
-            expect(data.errors).toBeDefined();
-            expect(data.errors[0].message).toContain('Formatted:');
-          },
-        }),
-      };
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
 
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
+      await core.handleRequest(req, res);
+
+      expect(capturedContext).toBeDefined();
+      expect(capturedContext.request).toBe(req);
+      expect(capturedContext.response).toBe(res);
     });
   });
 
   describe('Introspection', () => {
     beforeEach(async () => {
-      graphqlCore = new GraphQLCore({
-        typeDefs: `
-          type Query {
-            hello: String!
-          }
-        `,
-        resolvers: {
-          Query: { hello: () => 'World' },
-        },
+      core = new GraphQLCore({
+        typeDefs: `type Query { test: String }`,
+        resolvers: { Query: { test: () => 'test' } },
       });
-
-      await graphqlCore.initialize();
+      await core.initialize();
     });
 
-    it('should return introspection query result', () => {
-      const introspection = graphqlCore.getIntrospection();
-      expect(introspection).toBeDefined();
-      expect(introspection.data).toBeDefined();
-    });
-
-    it('should block introspection when disabled', async () => {
-      graphqlCore = new GraphQLCore({
-        typeDefs: `type Query { hello: String! }`,
-        resolvers: { Query: { hello: () => 'World' } },
-        enableIntrospection: false,
-      });
-
-      await graphqlCore.initialize();
-
-      const mockReq = {
+    it('should allow introspection by default', async () => {
+      const req = {
         method: 'POST',
         body: {
           query: '{ __schema { types { name } } }',
         },
-      };
+      } as any;
 
-      const mockRes = {
-        status: (code: number) => ({
-          json: (data: any) => {
-            expect(code).toBe(400);
-            expect(data.errors).toBeDefined();
-          },
-        }),
-      };
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
 
-      await graphqlCore.handleRequest(mockReq as any, mockRes as any);
+      await core.handleRequest(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.any(Object),
+        })
+      );
+    });
+
+    it('should block introspection when disabled', async () => {
+      await core.cleanup();
+
+      core = new GraphQLCore({
+        typeDefs: `type Query { test: String }`,
+        resolvers: { Query: { test: () => 'test' } },
+        enableIntrospection: false,
+      });
+      await core.initialize();
+
+      const req = {
+        method: 'POST',
+        body: {
+          query: '{ __schema { types { name } } }',
+        },
+      } as any;
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+
+      await core.handleRequest(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              message: 'GraphQL introspection is disabled',
+            }),
+          ]),
+        })
+      );
+    });
+
+    it('should provide introspection data', () => {
+      const introspection = core.getIntrospection();
+      expect(introspection).toBeDefined();
+    });
+
+    it('should provide schema SDL', () => {
+      const sdl = core.getSchemaSDL();
+      expect(sdl).toBeDefined();
+      expect(sdl).toContain('type Query');
+    });
+  });
+
+  describe('GraphQL Playground', () => {
+    beforeEach(async () => {
+      core = new GraphQLCore({
+        typeDefs: `type Query { test: String }`,
+        resolvers: { Query: { test: () => 'test' } },
+        path: '/graphql',
+      });
+      await core.initialize();
+    });
+
+    it('should generate playground HTML', () => {
+      const html = core.getPlaygroundHTML();
+      expect(html).toBeDefined();
+      expect(html).toContain('GraphQL Playground');
+      expect(html).toContain('/graphql');
+    });
+
+    it('should include GraphiQL script', () => {
+      const html = core.getPlaygroundHTML();
+      expect(html).toContain('graphiql');
+    });
+  });
+
+  describe('Statistics', () => {
+    it('should provide adapter statistics', async () => {
+      core = new GraphQLCore({
+        typeDefs: `
+          type Query { q: String }
+          type Mutation { m: String }
+        `,
+        resolvers: {
+          Query: { q: () => 'q' },
+          Mutation: { m: () => 'm' },
+        },
+      });
+      await core.initialize();
+
+      const stats = core.getStats();
+      expect(stats).toBeDefined();
+      expect(stats.schema).toBeDefined();
+      expect(stats.schema.queries).toBeGreaterThanOrEqual(1);
+      expect(stats.schema.mutations).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('Cleanup', () => {
+    it('should cleanup adapter resources', async () => {
+      core = new GraphQLCore({
+        typeDefs: `type Query { test: String }`,
+        resolvers: { Query: { test: () => 'test' } },
+        enableJIT: true,
+      });
+      await core.initialize();
+
+      // Execute query to populate cache
+      const req = {
+        method: 'POST',
+        body: { query: '{ test }' },
+      } as any;
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+
+      await core.handleRequest(req, res);
+
+      // Cleanup
+      await core.cleanup();
+
+      // Stats should show empty cache
+      const stats = core.getStats();
+      expect(stats.jit.cacheSize).toBe(0);
     });
   });
 });

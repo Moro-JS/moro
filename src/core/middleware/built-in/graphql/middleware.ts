@@ -29,7 +29,7 @@ export function createGraphQLMiddleware(options: GraphQLOptions): StandardMiddle
       logger.info('GraphQL middleware initialized', 'Initialization', {
         graphqlPath,
         playgroundPath: enablePlayground ? playgroundPath : 'disabled',
-        jit: graphqlCore.getStats().jit.enabled,
+        jit: graphqlCore.getStats()?.jit?.enabled || false,
       });
     }
 
@@ -38,7 +38,7 @@ export function createGraphQLMiddleware(options: GraphQLOptions): StandardMiddle
     // Handle GraphQL Playground
     if (enablePlayground && reqAny.path === playgroundPath && req.method === 'GET') {
       (res as any).setHeader('Content-Type', 'text/html');
-      (res as any).status(200).send(graphqlCore.getPlaygroundHTML(graphqlPath));
+      (res as any).status(200).send(graphqlCore.getPlaygroundHTML());
       return;
     }
 
