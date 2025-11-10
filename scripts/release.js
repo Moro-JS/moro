@@ -182,6 +182,7 @@ function updateChangelog(newVersion, versionType) {
 
 function main() {
     const versionType = process.argv[2] || 'patch';
+    const skipTests = process.argv.includes('--skip-tests');
 
     if (!['major', 'minor', 'patch'].includes(versionType)) {
         log('❌ Invalid version type. Use: major, minor, or patch', 'red');
@@ -207,14 +208,22 @@ function main() {
     log('✅ No uncommitted changes', 'green');
 
     // Step 2: Run tests
-    log('\n🧪 Step 2: Running tests', 'blue');
-    exec('npm test');
-    log('✅ All tests passed', 'green');
+    if (skipTests) {
+        log('\n🧪 Step 2: Skipping tests (--skip-tests)', 'yellow');
+    } else {
+        log('\n🧪 Step 2: Running tests', 'blue');
+        exec('npm test');
+        log('✅ All tests passed', 'green');
+    }
 
     // Step 3: Run linting
-    log('\n🔍 Step 3: Running linting', 'blue');
-    exec('npm run lint');
-    log('✅ Linting passed', 'green');
+    if (skipTests) {
+        log('\n🔍 Step 3: Skipping linting (--skip-tests)', 'yellow');
+    } else {
+        log('\n🔍 Step 3: Running linting', 'blue');
+        exec('npm run lint');
+        log('✅ Linting passed', 'green');
+    }
 
     // Step 4: Update version
     log('\n📝 Step 4: Updating version', 'blue');
