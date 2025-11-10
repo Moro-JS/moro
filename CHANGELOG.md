@@ -1,3 +1,12 @@
+## [1.7.0] - 2025-11-10
+
+### Added
+- feat: add gRPC, email, queue systems, HTTP/2, workers, new middleware and performance improvements
+- feat: add gRPC, email, queue systems, HTTP/2, workers, new middleware and performance improvements
+- feat: add gRPC, email, queue systems, HTTP/2, workers, new middleware and performance improvements
+- feat: add gRPC, email, queue systems, HTTP/2, workers, new middleware and performance improvements
+- feat: add gRPC, email, queue systems, HTTP/2, workers, new middleware and performance improvements
+
 ## [1.6.8] - 2025-11-02
 
 ### Maintenance
