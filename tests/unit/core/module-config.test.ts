@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createModuleConfig } from '../../../src/core/config/utils.js';
 import { resetConfig } from '../../../src/core/config/index.js';
 import { z } from 'zod';

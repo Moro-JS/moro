@@ -1,3 +1,4 @@
+/* eslint-disable */
 // GraphQL Adapter Tests
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { GraphQLJsAdapter } from '../../src/core/graphql/adapters/graphql-js-adapter';

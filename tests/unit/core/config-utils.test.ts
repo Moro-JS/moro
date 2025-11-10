@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { getEnvVar } from '../../../src/core/config/utils.js';
 

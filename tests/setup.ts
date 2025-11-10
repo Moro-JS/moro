@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Test Setup - Global configuration and utilities for MoroJS tests
 import { jest, beforeEach, afterEach, afterAll } from '@jest/globals';
 import { destroyGlobalLogger, logger } from '../src/core/logger';

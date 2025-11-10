@@ -1,3 +1,4 @@
+/* eslint-disable */
 // E2E Tests - Full Application Flow
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';

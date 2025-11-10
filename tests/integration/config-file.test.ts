@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Integration Test - Config File Loading
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';

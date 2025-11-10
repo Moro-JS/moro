@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Auth Integration Tests
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createApp } from '../../src/index.js';

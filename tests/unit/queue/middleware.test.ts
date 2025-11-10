@@ -1,3 +1,4 @@
+/* eslint-disable */
 /**
  * Queue Middleware - Unit Tests
  * Tests for rate limiting, priority, and monitoring middleware

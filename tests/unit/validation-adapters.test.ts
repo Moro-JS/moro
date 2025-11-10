@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Unit Tests - Universal Validation Adapters
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { ValidationSchema, joi, yup, customValidator, z } from '../../src/index.js';

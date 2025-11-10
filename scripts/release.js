@@ -181,12 +181,26 @@ function updateChangelog(newVersion, versionType) {
 }
 
 function main() {
-    const versionType = process.argv[2] || 'patch';
-    const skipTests = process.argv.includes('--skip-tests');
+    const args = process.argv.slice(2);
+    const skipTests = args.includes('--skip-tests');
 
-    if (!['major', 'minor', 'patch'].includes(versionType)) {
-        log('❌ Invalid version type. Use: major, minor, or patch', 'red');
-        process.exit(1);
+    // Check for custom version
+    const versionArgIndex = args.findIndex(arg => arg.startsWith('--version='));
+    let customVersion = null;
+    let versionType = 'patch';
+
+    if (versionArgIndex !== -1) {
+        customVersion = args[versionArgIndex].split('=')[1];
+        if (!customVersion || !/^\d+\.\d+\.\d+$/.test(customVersion)) {
+            log('❌ Invalid version format. Use: --version=1.2.3', 'red');
+            process.exit(1);
+        }
+    } else {
+        versionType = args.find(arg => ['major', 'minor', 'patch'].includes(arg)) || 'patch';
+        if (!['major', 'minor', 'patch'].includes(versionType)) {
+            log('❌ Invalid version type. Use: major, minor, patch, or --version=X.Y.Z', 'red');
+            process.exit(1);
+        }
     }
 
     log('🚀 MoroJS Pre-Release Process', 'bright');
@@ -227,9 +241,20 @@ function main() {
 
     // Step 4: Update version
     log('\n📝 Step 4: Updating version', 'blue');
-    const { currentVersion, newVersion } = updateVersion(versionType);
-    log(`Version: ${currentVersion} → ${newVersion}`, 'cyan');
-    updatePackageJson(newVersion);
+    let currentVersion, newVersion;
+
+    if (customVersion) {
+        currentVersion = getCurrentVersion();
+        newVersion = customVersion;
+        log(`Version: ${currentVersion} → ${newVersion} (custom)`, 'cyan');
+        updatePackageJson(newVersion);
+    } else {
+        const versions = updateVersion(versionType);
+        currentVersion = versions.currentVersion;
+        newVersion = versions.newVersion;
+        log(`Version: ${currentVersion} → ${newVersion}`, 'cyan');
+        updatePackageJson(newVersion);
+    }
     log('✅ Version updated', 'green');
 
     // Step 5: Update CHANGELOG

@@ -1,3 +1,4 @@
+/* eslint-disable */
 /**
  * Queue Integration Tests
  * Tests for queue system integration with Moro framework

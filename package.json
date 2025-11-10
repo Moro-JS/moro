@@ -1,6 +1,6 @@
 {
   "name": "@morojs/moro",
-  "version": "1.8.0",
+  "version": "1.7.0",
   "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, enterprise authentication (Auth.js), type-safe validation, and functional architecture",
   "type": "module",
   "main": "dist/index.js",

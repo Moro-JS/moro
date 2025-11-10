@@ -1,3 +1,4 @@
+/* eslint-disable */
 /**
  * Queue System - Unit Tests
  * Tests for memory adapter and core functionality

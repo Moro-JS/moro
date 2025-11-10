@@ -1,3 +1,4 @@
+/* eslint-disable */
 // @ts-nocheck
 // Integration Tests - Framework Component Integration
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';

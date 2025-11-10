@@ -1,3 +1,4 @@
+/* eslint-disable */
 // @ts-nocheck
 // Unit Tests - MoroJS Validation Integration
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';

@@ -1,3 +1,4 @@
+ 
 // Auth Functional Tests - Testing the core functionality
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { auth, providers } from '../../src/core/middleware/built-in/auth.js';

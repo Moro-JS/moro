@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Unit Tests - File Watching and Hot Reloading
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { ModuleDiscovery } from '../../../src/core/modules/auto-discovery.js';

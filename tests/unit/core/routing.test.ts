@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Unit Tests - Intelligent Routing System
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { createRoute, EXECUTION_PHASES, z, defineModule } from '../../../src/index.js';

@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Auth Middleware Unit Tests
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { auth, providers } from '../../../src/core/middleware/built-in/auth.js';

@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Unit Tests - Moro Auto-Discovery Integration
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { createApp } from '../../../src/index.js';

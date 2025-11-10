@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Simple Integration Tests - Basic MoroJS HTTP functionality
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';

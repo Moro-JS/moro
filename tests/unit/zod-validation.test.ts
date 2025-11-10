@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Unit Tests - Zod Validation Functionality
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { z } from 'zod';

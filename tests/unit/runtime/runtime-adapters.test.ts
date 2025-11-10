@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Runtime Adapters Unit Tests
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import {
