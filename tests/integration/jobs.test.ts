@@ -66,7 +66,7 @@ describe('Jobs Integration', () => {
     });
 
     it('should throw error if job scheduler not enabled', async () => {
-      const app = createApp({ jobs: { enabled: false } });
+      const app = createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
 
       expect(() => {
         app.job('test-job', '* * * * *', () => {});
@@ -274,7 +274,7 @@ describe('Jobs Integration', () => {
     });
 
     it('should handle health check when scheduler not enabled', async () => {
-      const app = createApp({ jobs: { enabled: false } });
+      const app = createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
 
       const health = app.getJobHealth('job1');
       expect(health.status).toBe('unknown');

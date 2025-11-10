@@ -80,7 +80,7 @@ describe('Config File Integration', () => {
 
     // Should not throw error, just fall back to env vars
     expect(() => {
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
     }).not.toThrow();
   });
 
@@ -100,7 +100,7 @@ describe('Config File Integration', () => {
 
     // Should not throw error, just fall back to env vars
     expect(() => {
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
     }).not.toThrow();
   });
 });

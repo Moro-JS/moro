@@ -12,6 +12,7 @@ describe('gRPC Integration', () => {
         server: {
           port: 3999,
         },
+        logger: { level: 'error' },
       });
     });
 
@@ -69,6 +70,7 @@ describe('gRPC Integration', () => {
         server: {
           port: 4000,
         },
+        logger: { level: 'error' },
       });
     });
 

@@ -26,7 +26,7 @@ describe('Moro Auto-Discovery Integration', () => {
 
   describe('Configuration Merging', () => {
     it('should use default auto-discovery configuration', async () => {
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
 
       // Access private method for testing
       const config = (app as any).mergeAutoDiscoveryConfig({});
@@ -38,7 +38,7 @@ describe('Moro Auto-Discovery Integration', () => {
     });
 
     it('should handle boolean autoDiscover option', async () => {
-      const app = createApp({ autoDiscover: false });
+      const app = createApp({ autoDiscover: false, logger: { level: 'error' } });
 
       const config = (app as any).mergeAutoDiscoveryConfig({ autoDiscover: false });
 
@@ -46,7 +46,7 @@ describe('Moro Auto-Discovery Integration', () => {
     });
 
     it('should handle legacy modulesPath option', async () => {
-      const app = createApp({ modulesPath: './custom-modules' });
+      const app = createApp({ modulesPath: './custom-modules', logger: { level: 'error' } });
 
       const config = (app as any).mergeAutoDiscoveryConfig({
         modulesPath: './custom-modules',
@@ -63,7 +63,7 @@ describe('Moro Auto-Discovery Integration', () => {
         watchForChanges: true,
       };
 
-      const app = createApp({ autoDiscover: customConfig });
+      const app = createApp({ autoDiscover: customConfig, logger: { level: 'error' } });
 
       const config = (app as any).mergeAutoDiscoveryConfig({
         autoDiscover: customConfig,
@@ -112,6 +112,7 @@ describe('Moro Auto-Discovery Integration', () => {
           paths: ['./modules'],
           loadingStrategy: 'eager',
         },
+        logger: { level: 'error' },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -129,6 +130,7 @@ describe('Moro Auto-Discovery Integration', () => {
           paths: ['./modules'],
           loadingStrategy: 'lazy',
         },
+        logger: { level: 'error' },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -172,6 +174,7 @@ describe('Moro Auto-Discovery Integration', () => {
           paths: ['./modules'],
           loadingStrategy: 'conditional',
         },
+        logger: { level: 'error' },
       });
 
       // Trigger auto-discovery manually (using the async method for tests)
@@ -201,7 +204,7 @@ describe('Moro Auto-Discovery Integration', () => {
         },
       });
 
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
 
       // Test with development environment
       const originalEnv = process.env.NODE_ENV;
@@ -238,7 +241,7 @@ describe('Moro Auto-Discovery Integration', () => {
     });
 
     it('should respect feature flag conditions', async () => {
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
 
       // Test without feature flag
       const shouldLoad = (app as any).shouldLoadModule({
@@ -272,7 +275,7 @@ describe('Moro Auto-Discovery Integration', () => {
     });
 
     it('should respect custom conditions', async () => {
-      const app = createApp();
+      const app = createApp({ logger: { level: 'error' } });
 
       const shouldLoad = (app as any).shouldLoadModule({
         name: 'custom-module',
@@ -311,6 +314,7 @@ describe('Moro Auto-Discovery Integration', () => {
           paths: ['./modules'],
           failOnError: false,
         },
+        logger: { level: 'error' },
       });
 
       // Should not throw error
@@ -331,6 +335,7 @@ describe('Moro Auto-Discovery Integration', () => {
             paths: ['./modules'],
             failOnError: true,
           },
+          logger: { level: 'error' },
         });
       }).not.toThrow(); // Constructor doesn't throw, but async discovery will
 
@@ -345,7 +350,7 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
       });
 
-      const app = createApp({ autoDiscover: true });
+      const app = createApp({ autoDiscover: true, logger: { level: 'error' } });
 
       // Trigger auto-discovery manually (using the async method for tests)
       await app.initializeAutoDiscoveryNow();
@@ -360,7 +365,7 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
       });
 
-      const app = createApp({ modulesPath: './modules' });
+      const app = createApp({ modulesPath: './modules', logger: { level: 'error' } });
 
       // Trigger auto-discovery manually (using the async method for tests)
       await app.initializeAutoDiscoveryNow();
@@ -374,7 +379,7 @@ describe('Moro Auto-Discovery Integration', () => {
         version: '1.0.0',
       });
 
-      const app = createApp({ autoDiscover: false });
+      const app = createApp({ autoDiscover: false, logger: { level: 'error' } });
 
       await new Promise(resolve => setTimeout(resolve, 100));
 

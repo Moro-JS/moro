@@ -126,6 +126,7 @@ describe('Configuration System Validation', () => {
 
       const app = createApp({
         server: { port: 6000 }, // Should lose to env var
+        logger: { level: 'error' },
       });
       const config = (app as any).config;
 

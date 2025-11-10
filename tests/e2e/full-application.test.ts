@@ -9,7 +9,7 @@ describe('End-to-End Application Tests', () => {
   let port: number;
 
   beforeEach(() => {
-    app = createApp();
+    app = createApp({ logger: { level: 'error' } });
     port = createTestPort();
   });
 

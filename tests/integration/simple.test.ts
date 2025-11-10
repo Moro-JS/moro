@@ -9,7 +9,7 @@ describe('MoroJS Basic Integration', () => {
   let port: number;
 
   beforeEach(() => {
-    app = createApp();
+    app = createApp({ logger: { level: 'error' } });
     port = createTestPort();
   });
 

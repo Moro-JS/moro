@@ -4,15 +4,18 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
-import { Moro } from '../../src/moro';
+import { createApp } from '../../src/moro';
+import type { Moro } from '../../src/moro';
 
 describe('Queue Integration with Moro', () => {
   let app: Moro;
 
   beforeEach(() => {
-    app = new Moro({
-      port: 0,
-      logging: { level: 'error' } // Suppress logs during tests
+    app = createApp({
+      server: {
+        port: 0,
+      },
+      logger: { level: 'error' } // Suppress logs during tests
     });
   });
 
