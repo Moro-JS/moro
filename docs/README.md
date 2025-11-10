@@ -18,6 +18,15 @@ Complete documentation for the MoroJS framework (v1.5.3).
 - **[Performance Guide](./PERFORMANCE.md)** - Optimization, benchmarks, and monitoring
 - **[Testing Guide](./TESTING_GUIDE.md)** - Testing strategies and best practices
 
+### Features & Middleware
+- **[Middleware Guide](./MIDDLEWARE_GUIDE.md)** - Complete reference for all 18+ built-in middleware
+- **[HTTP/2 Guide](./HTTP2_GUIDE.md)** - HTTP/2 server push, stream prioritization, and multiplexing
+- **[Worker Threads Guide](./WORKERS_GUIDE.md)** - CPU-intensive task offloading with worker threads
+- **[Message Queue Guide](./QUEUE_GUIDE.md)** - Production-ready queue system with multiple adapters
+- **[gRPC Guide](./GRPC_GUIDE.md)** - High-performance microservices with gRPC
+- **[GraphQL Guide](./GRAPHQL_GUIDE.md)** - GraphQL API integration
+- **[Jobs Guide](./JOBS_GUIDE.md)** - Background job scheduling and execution
+
 ### Development
 - **[Contributing](./CONTRIBUTING.md)** - How to contribute to MoroJS
 - **[Testing & Documentation Summary](./TESTING_AND_DOCS_SUMMARY.md)** - Overview of testing approach
@@ -68,6 +77,11 @@ Complete documentation for the MoroJS framework (v1.5.3).
 - ✅ **WebSockets** - Real-time communication support
 - ✅ **Database Integration** - Multiple database adapters
 - ✅ **Events** - Enterprise-grade event system
+- ✅ **Worker Threads** - CPU-intensive task offloading to separate threads
+- ✅ **Message Queues** - Production-ready queue system (Memory, Bull, RabbitMQ, SQS, Kafka)
+- ✅ **gRPC** - Native gRPC support for microservices
+- ✅ **HTTP/2** - Server push, stream prioritization, and multiplexing
+- ✅ **Middleware** - 18+ built-in middleware for security, performance, and features
 
 ## External Resources
 
@@ -87,7 +101,12 @@ Complete documentation for the MoroJS framework (v1.5.3).
 
 **Developers:**
 - [API Reference](./API.md) - Complete technical reference
+- [Middleware Guide](./MIDDLEWARE_GUIDE.md) - All built-in middleware reference
 - [Authentication Guide](./AUTH_GUIDE.md) - Auth.js integration and security
+- [Message Queue Guide](./QUEUE_GUIDE.md) - Queue system with multiple adapters
+- [gRPC Guide](./GRPC_GUIDE.md) - Microservices with gRPC
+- [Worker Threads Guide](./WORKERS_GUIDE.md) - CPU-intensive task offloading
+- [HTTP/2 Guide](./HTTP2_GUIDE.md) - HTTP/2 features and optimization
 - [Performance Guide](./PERFORMANCE.md) - Optimization strategies
 - [Testing Guide](./TESTING_GUIDE.md) - Testing best practices
 

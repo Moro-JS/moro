@@ -41,8 +41,8 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
       }
     }
 
-    // Convert Headers to plain object
-    const headers: Record<string, string> = {};
+    // Convert Headers to plain object - pre-allocate size hint
+    const headers: Record<string, string> = Object.create(null);
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
@@ -80,11 +80,20 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
       status = moroResponse.statusCode;
     }
 
-    // Convert headers to Headers object
+    // Convert headers to Headers object - Avoid Object.entries
     const responseHeaders = new Headers();
-    Object.entries(headers).forEach(([key, value]) => {
-      responseHeaders.set(key, value);
-    });
+    for (const key in headers) {
+      if (Object.prototype.hasOwnProperty.call(headers, key)) {
+        const value = headers[key];
+        if (Array.isArray(value)) {
+          for (let i = 0; i < value.length; i++) {
+            responseHeaders.append(key, value[i]);
+          }
+        } else {
+          responseHeaders.set(key, value);
+        }
+      }
+    }
 
     // Handle different body types
     if (typeof body === 'object' && body !== null) {
@@ -139,14 +148,29 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
 
   private parseCookies(cookieHeader: string): Record<string, string> {
     const cookies: Record<string, string> = {};
-    if (cookieHeader) {
-      cookieHeader.split(';').forEach(cookie => {
-        const [name, ...rest] = cookie.trim().split('=');
-        if (name && rest.length > 0) {
-          cookies[name] = rest.join('=');
+    if (!cookieHeader) return cookies;
+
+    // Avoid split/forEach, use single pass
+    let start = 0;
+    const len = cookieHeader.length;
+
+    for (let i = 0; i <= len; i++) {
+      if (i === len || cookieHeader[i] === ';') {
+        if (i > start) {
+          const cookie = cookieHeader.substring(start, i).trim();
+          const equalIndex = cookie.indexOf('=');
+          if (equalIndex > 0) {
+            const name = cookie.substring(0, equalIndex);
+            const value = cookie.substring(equalIndex + 1);
+            if (name && value) {
+              cookies[name] = value;
+            }
+          }
         }
-      });
+        start = i + 1;
+      }
     }
+
     return cookies;
   }
 }

@@ -131,7 +131,15 @@ export class IntelligentRouteBuilder implements RouteBuilder {
   }
 
   validate(config: ValidationConfig): RouteBuilder {
-    this.schema.validation = { ...this.schema.validation, ...config };
+    // Avoid spread operator - manually merge properties
+    if (!this.schema.validation) {
+      this.schema.validation = config;
+    } else {
+      if (config.body !== undefined) this.schema.validation.body = config.body;
+      if (config.query !== undefined) this.schema.validation.query = config.query;
+      if (config.params !== undefined) this.schema.validation.params = config.params;
+      if (config.headers !== undefined) this.schema.validation.headers = config.headers;
+    }
     return this;
   }
 
@@ -177,21 +185,33 @@ export class IntelligentRouteBuilder implements RouteBuilder {
   before(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.before = [...(phases.before || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.before) phases.before = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.before.push(middleware[i]);
+    }
     return this;
   }
 
   after(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.after = [...(phases.after || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.after) phases.after = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.after.push(middleware[i]);
+    }
     return this;
   }
 
   transform(...middleware: Middleware[]): RouteBuilder {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.transform = [...(phases.transform || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.transform) phases.transform = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.transform.push(middleware[i]);
+    }
     return this;
   }
 
@@ -205,7 +225,11 @@ export class IntelligentRouteBuilder implements RouteBuilder {
   }
 
   tag(...tags: string[]): RouteBuilder {
-    this.schema.tags = [...(this.schema.tags || []), ...tags];
+    // Avoid spread, use push for better performance
+    if (!this.schema.tags) this.schema.tags = [];
+    for (let i = 0; i < tags.length; i++) {
+      this.schema.tags.push(tags[i]);
+    }
     return this;
   }
 
@@ -214,13 +238,11 @@ export class IntelligentRouteBuilder implements RouteBuilder {
       throw new Error('Handler is required');
     }
 
-    const completeSchema: RouteSchema = {
-      ...(this.schema as RouteSchema),
-      handler,
-    };
+    // Avoid spread operator - add handler directly
+    this.schema.handler = handler;
 
     // Delegate to UnifiedRouter
-    this.router.registerRoute(completeSchema);
+    this.router.registerRoute(this.schema as RouteSchema);
   }
 }
 

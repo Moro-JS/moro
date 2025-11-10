@@ -56,15 +56,44 @@
     "circuit-breaker",
     "rate-limiting",
     "dependency-injection",
-    "mysql",
     "enterprise",
     "high-performance",
     "native",
     "functional",
-    "zod",
-    "validation",
     "moro",
-    "api"
+    "morojs",
+    "api",
+    "email",
+    "gRP",
+    "message-queue",
+    "queue",
+    "kafka",
+    "rabbitmq",
+    "sqs",
+    "bullmq",
+    "amqplib",
+    "resend",
+    "ses",
+    "sendgrid",
+    "nodemailer",
+    "ejs",
+    "handlebars",
+    "mongodb",
+    "mysql",
+    "postgres",
+    "sqlite",
+    "redis",
+    "ioredis",
+    "validation",
+    "zod",
+    "joi",
+    "yup",
+    "class-validator",
+    "drizzle-orm",
+    "graphql",
+    "graphql-jit",
+    "http2",
+    "worker-threads"
   ],
   "author": "Moro Framework Team",
   "license": "MIT",
@@ -81,18 +110,30 @@
   },
   "peerDependencies": {
     "@auth/core": "^0.37.3",
+    "@aws-sdk/client-ses": "^3.927.0",
+    "@aws-sdk/client-sqs": "^3.927.0",
+    "@grpc/grpc-js": "^1.14.1",
+    "@grpc/proto-loader": "^0.8.0",
     "@pothos/core": "^4.10.0",
+    "@sendgrid/mail": "^8.1.6",
+    "amqplib": "^0.10.9",
     "better-sqlite3": "^12.2.0",
+    "bullmq": "^5.63.0",
     "class-validator": "^0.14.0",
     "dataloader": "^2.2.3",
     "drizzle-orm": "^0.44.5",
+    "ejs": "^3.1.10",
     "graphql": "^16.12.0",
     "graphql-jit": "^0.8.7",
+    "handlebars": "^4.7.8",
     "ioredis": "^5.7.0",
     "joi": "^17.0.0",
+    "kafkajs": "^2.2.4",
     "mongodb": "^6.19.0",
     "mysql2": "^3.14.5",
+    "nodemailer": "^7.0.10",
     "pg": "^8.16.3",
+    "resend": "^6.4.2",
     "socket.io": "^4.8.1",
     "swagger-ui-dist": "^5.28.1",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
@@ -103,49 +144,43 @@
     "@auth/core": {
       "optional": true
     },
+    "@aws-sdk/client-ses": {
+      "optional": true
+    },
+    "@aws-sdk/client-sqs": {
+      "optional": true
+    },
+    "@grpc/grpc-js": {
+      "optional": true
+    },
+    "@grpc/proto-loader": {
+      "optional": true
+    },
     "@pothos/core": {
       "optional": true
     },
-    "mysql2": {
+    "@sendgrid/mail": {
       "optional": true
     },
-    "swagger-ui-dist": {
-      "optional": true
-    },
-    "pg": {
+    "amqplib": {
       "optional": true
     },
     "better-sqlite3": {
       "optional": true
     },
-    "mongodb": {
+    "bullmq": {
       "optional": true
     },
-    "ioredis": {
+    "class-validator": {
+      "optional": true
+    },
+    "dataloader": {
       "optional": true
     },
     "drizzle-orm": {
       "optional": true
     },
-    "socket.io": {
-      "optional": true
-    },
-    "uWebSockets.js": {
-      "optional": true
-    },
-    "ws": {
-      "optional": true
-    },
-    "zod": {
-      "optional": true
-    },
-    "joi": {
-      "optional": true
-    },
-    "yup": {
-      "optional": true
-    },
-    "class-validator": {
+    "ejs": {
       "optional": true
     },
     "graphql": {
@@ -154,7 +189,46 @@
     "graphql-jit": {
       "optional": true
     },
-    "dataloader": {
+    "handlebars": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "joi": {
+      "optional": true
+    },
+    "kafkajs": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "nodemailer": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "resend": {
+      "optional": true
+    },
+    "socket.io": {
+      "optional": true
+    },
+    "swagger-ui-dist": {
+      "optional": true
+    },
+    "uWebSockets.js": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    },
+    "yup": {
       "optional": true
     }
   },

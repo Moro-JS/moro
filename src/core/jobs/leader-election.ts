@@ -351,7 +351,8 @@ export class LeaderElection extends EventEmitter {
         // Lost leadership
         await this.stepDown();
         // Try to reacquire
-        setTimeout(() => this.tryAcquireLeadership(), 1000);
+        const retryTimer = setTimeout(() => this.tryAcquireLeadership(), 1000);
+        retryTimer.unref(); // Don't keep process alive
       }
     }, this.heartbeatInterval);
 

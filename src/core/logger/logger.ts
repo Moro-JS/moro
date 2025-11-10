@@ -412,10 +412,19 @@ export class MoroLogger implements Logger {
       return;
     }
 
-    // Path for complex logs
-    if (metadata && Object.keys(metadata).length > 0) {
-      this.complexLog(level, message, context, metadata);
-      return;
+    // Path for complex logs - avoid Object.keys for empty check
+    if (metadata) {
+      // Fast empty check: iterate and return on first property
+      let hasKeys = false;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for (const _ in metadata) {
+        hasKeys = true;
+        break;
+      }
+      if (hasKeys) {
+        this.complexLog(level, message, context, metadata);
+        return;
+      }
     }
 
     // Full logging path for complex logs
@@ -719,23 +728,37 @@ export class MoroLogger implements Logger {
       }
     }
 
-    // Metadata with optimized JSON stringify
-    if (
-      entry.metadata &&
-      Object.keys(entry.metadata).length > 0 &&
-      this.options.enableMetadata !== false
-    ) {
-      const metaColor = colors ? MoroLogger.COLORS.metadata : '';
-      const cleanMetadata = this.cleanMetadata(entry.metadata);
+    // Metadata with optimized JSON stringify - fast empty check
+    if (entry.metadata && this.options.enableMetadata !== false) {
+      // Fast empty check
+      let hasMetadata = false;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for (const _ in entry.metadata) {
+        hasMetadata = true;
+        break;
+      }
 
-      if (Object.keys(cleanMetadata).length > 0) {
-        MoroLogger.appendToBuilder(' ');
-        if (colors) {
-          MoroLogger.appendToBuilder(metaColor);
-          MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
-          MoroLogger.appendToBuilder(levelReset);
-        } else {
-          MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
+      if (hasMetadata) {
+        const metaColor = colors ? MoroLogger.COLORS.metadata : '';
+        const cleanMetadata = this.cleanMetadata(entry.metadata);
+
+        // Check cleaned metadata is not empty
+        let hasCleanedData = false;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const _ in cleanMetadata) {
+          hasCleanedData = true;
+          break;
+        }
+
+        if (hasCleanedData) {
+          MoroLogger.appendToBuilder(' ');
+          if (colors) {
+            MoroLogger.appendToBuilder(metaColor);
+            MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
+            MoroLogger.appendToBuilder(levelReset);
+          } else {
+            MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
+          }
         }
       }
     }

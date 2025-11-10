@@ -18,6 +18,18 @@ export { session } from './session/index.js';
 export { cache } from './cache/index.js';
 export { cdn } from './cdn/index.js';
 
+// HTTP/2 Middleware
+export { http2 } from './http2/index.js';
+
+// HTTP Utilities Middleware
+export { helmet } from './helmet/index.js';
+export { compression } from './compression/index.js';
+export { bodySize } from './body-size/index.js';
+export { staticFiles } from './static/index.js';
+export { upload } from './upload/index.js';
+export { template } from './template/index.js';
+export { range } from './range/index.js';
+
 // Auth Helpers and Extended Providers
 export {
   requireAuth,
@@ -64,6 +76,14 @@ import { session } from './session/index.js';
 import { cache } from './cache/index.js';
 import { cdn } from './cdn/index.js';
 import { graphql } from './graphql/index.js';
+import { http2 } from './http2/index.js';
+import { helmet } from './helmet/index.js';
+import { compression } from './compression/index.js';
+import { bodySize } from './body-size/index.js';
+import { staticFiles } from './static/index.js';
+import { upload } from './upload/index.js';
+import { template } from './template/index.js';
+import { range } from './range/index.js';
 
 export const builtInMiddleware = {
   auth,
@@ -81,6 +101,16 @@ export const builtInMiddleware = {
   cdn,
   // GraphQL
   graphql,
+  // HTTP/2
+  http2,
+  // HTTP Utilities
+  helmet,
+  compression,
+  bodySize,
+  staticFiles,
+  upload,
+  template,
+  range,
 };
 
 export const simpleMiddleware = {

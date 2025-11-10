@@ -7,5 +7,5 @@ export { CacheCore, sharedCacheCore, type CacheConfig } from './core.js';
 // Middleware (for middleware chains)
 export { createCacheMiddleware } from './middleware.js';
 
-// Hook (for global registration)
+// Hook (for global registration with server-side + HTTP caching)
 export { cache } from './hook.js';

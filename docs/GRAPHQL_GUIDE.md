@@ -28,7 +28,7 @@ npm install graphql-jit
 npm install dataloader
 ```
 
-**Note:** If you try to use `app.graphql()` without having `graphql` installed, you'll get a helpful error message with installation instructions.
+**Note:** If you try to use `app.graphqlInit()` without having `graphql` installed, you'll get a helpful error message with installation instructions.
 
 ## Quick Start
 
@@ -39,7 +39,7 @@ import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
-app.graphql({
+app.graphqlInit({
   typeDefs: `
     type Query {
       hello(name: String): String!
@@ -169,7 +169,7 @@ builder.mutationType({
 });
 
 // Configure GraphQL with Pothos schema
-app.graphql({
+app.graphqlInit({
   pothosSchema: builder,
   context: async (req, res) => ({
     request: req,
@@ -209,7 +209,7 @@ builder.subscriptionType({
   }),
 });
 
-app.graphql({
+app.graphqlInit({
   pothosSchema: builder,
   enableSubscriptions: true, // Enable subscriptions
 });
@@ -225,7 +225,7 @@ app.listen(3000);
 GraphQL-JIT provides 5-10x performance boost by compiling queries to JavaScript functions:
 
 ```typescript
-app.graphql({
+app.graphqlInit({
   typeDefs: '...',
   resolvers: {},
   enableJIT: true, // Enabled by default if graphql-jit is installed
@@ -249,7 +249,7 @@ app.use(
 );
 
 // GraphQL with auth context
-app.graphql({
+app.graphqlInit({
   typeDefs: `
     type Query {
       me: User
@@ -330,7 +330,7 @@ Post.implement({
   }),
 });
 
-app.graphql({
+app.graphqlInit({
   pothosSchema: builder,
   context: async (req, res) => ({
     request: req,
@@ -345,7 +345,7 @@ app.graphql({
 ## Configuration Options
 
 ```typescript
-app.graphql({
+app.graphqlInit({
   // Schema definition (choose one)
   schema: myGraphQLSchema, // Pre-built GraphQL schema
   typeDefs: '...', // GraphQL SDL
@@ -395,7 +395,7 @@ app.graphql({
 
 ### Methods
 
-- `app.graphql(options)` - Configure GraphQL endpoint
+- `app.graphqlInit(options)` - Configure GraphQL endpoint
 - `app.getGraphQLSchema()` - Get the GraphQL schema
 - `app.getGraphQLStats()` - Get GraphQL performance stats
 

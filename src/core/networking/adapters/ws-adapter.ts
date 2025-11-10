@@ -157,8 +157,12 @@ class WSNamespaceWrapper implements WebSocketNamespace {
 
     // Run middlewares
     this.runMiddlewares(connection, () => {
-      // Notify connection handlers
-      this.connectionHandlers.forEach(handler => handler(connection));
+      // Notify connection handlers - optimized with for loop
+      const handlers = this.connectionHandlers;
+      const len = handlers.length;
+      for (let i = 0; i < len; i++) {
+        handlers[i](connection);
+      }
     });
 
     // Clean up on disconnect
@@ -295,7 +299,10 @@ class WSConnectionWrapper implements WebSocketConnection {
       // Internal events
       const handlers = this.eventHandlers.get(event);
       if (handlers) {
-        handlers.forEach(handler => handler(data));
+        const len = handlers.length;
+        for (let i = 0; i < len; i++) {
+          handlers[i](data);
+        }
       }
       return;
     }
@@ -313,7 +320,10 @@ class WSConnectionWrapper implements WebSocketConnection {
 
   join(room: string | string[]): void {
     if (Array.isArray(room)) {
-      room.forEach(r => this.rooms.add(r));
+      const len = room.length;
+      for (let i = 0; i < len; i++) {
+        this.rooms.add(room[i]);
+      }
     } else {
       this.rooms.add(room);
     }
@@ -321,7 +331,10 @@ class WSConnectionWrapper implements WebSocketConnection {
 
   leave(room: string | string[]): void {
     if (Array.isArray(room)) {
-      room.forEach(r => this.rooms.delete(r));
+      const len = room.length;
+      for (let i = 0; i < len; i++) {
+        this.rooms.delete(room[i]);
+      }
     } else {
       this.rooms.delete(room);
     }
@@ -356,13 +369,20 @@ class WSConnectionWrapper implements WebSocketConnection {
           }
         : undefined;
 
-      // Call any handlers
-      this.anyHandlers.forEach(handler => handler(event, messageData));
+      // Call any handlers - optimized with for loop
+      const anyHandlers = this.anyHandlers;
+      const anyLen = anyHandlers.length;
+      for (let i = 0; i < anyLen; i++) {
+        anyHandlers[i](event, messageData);
+      }
 
-      // Call specific event handlers
+      // Call specific event handlers - optimized with for loop
       const handlers = this.eventHandlers.get(event);
       if (handlers) {
-        handlers.forEach(handler => handler(messageData, callback));
+        const len = handlers.length;
+        for (let i = 0; i < len; i++) {
+          handlers[i](messageData, callback);
+        }
       }
     } catch {
       // Invalid message format - ignore
@@ -411,19 +431,32 @@ class WSEmitterWrapper implements WebSocketEmitter {
   private shouldIncludeConnection(connection: WSConnectionWrapper): boolean {
     const rooms = connection.getRooms();
 
-    // Check target rooms
+    // Check target rooms - avoid array wrapping and use efficient iteration
     if (this.targetRooms) {
-      const targets = Array.isArray(this.targetRooms) ? this.targetRooms : [this.targetRooms];
-      if (!targets.some(room => rooms.has(room))) {
-        return false;
+      if (Array.isArray(this.targetRooms)) {
+        let hasTargetRoom = false;
+        const len = this.targetRooms.length;
+        for (let i = 0; i < len; i++) {
+          if (rooms.has(this.targetRooms[i])) {
+            hasTargetRoom = true;
+            break;
+          }
+        }
+        if (!hasTargetRoom) return false;
+      } else {
+        if (!rooms.has(this.targetRooms)) return false;
       }
     }
 
-    // Check exclude rooms
+    // Check exclude rooms - avoid array wrapping and use efficient iteration
     if (this.excludeRooms) {
-      const excludes = Array.isArray(this.excludeRooms) ? this.excludeRooms : [this.excludeRooms];
-      if (excludes.some(room => rooms.has(room))) {
-        return false;
+      if (Array.isArray(this.excludeRooms)) {
+        const len = this.excludeRooms.length;
+        for (let i = 0; i < len; i++) {
+          if (rooms.has(this.excludeRooms[i])) return false;
+        }
+      } else {
+        if (rooms.has(this.excludeRooms)) return false;
       }
     }
 

@@ -25,6 +25,8 @@ Build high-performance APIs with intelligent routing that automatically orders m
 - **Intelligent Routing** - Automatic middleware ordering, no configuration needed
 - **Enterprise Auth** - Built-in Auth.js with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
+- **Message Queues** - Production-ready queues (Bull, RabbitMQ, SQS, Kafka)
+- **gRPC Support** - Native gRPC for high-performance microservices
 - **Multi-Runtime** - Deploy to Node.js, Edge, Lambda, or Workers
 - **Powerful CLI** - Scaffold projects, generate modules, deploy with one command
 - **Zero Dependencies** - Lightweight core with optional integrations
@@ -107,7 +109,7 @@ const app = createApp({
 });
 ```
 
-**NEW:** uWebSockets now supports worker thread clustering! See [UWS Clustering Guide](./docs/UWS_CLUSTERING_GUIDE.md)
+See [uWebSockets Guide](./docs/UWEBSOCKETS_GUIDE.md)
 
 ## Deploy Everywhere
 

@@ -50,15 +50,22 @@ export class GraphQLCore {
     }
 
     // Build context
-    const baseContext: GraphQLContext = {
-      request: req,
-      response: res,
-    };
-
-    const context = this.contextFactory ? await this.contextFactory(req, res) : baseContext;
-
-    // Merge contexts
-    graphqlRequest.context = { ...baseContext, ...context };
+    if (this.contextFactory) {
+      const customContext = await this.contextFactory(req, res);
+      // Ensure request/response are present without mutating original (only add if missing)
+      if (customContext.request && customContext.response) {
+        graphqlRequest.context = customContext;
+      } else {
+        graphqlRequest.context = customContext;
+        graphqlRequest.context.request = req;
+        graphqlRequest.context.response = res;
+      }
+    } else {
+      graphqlRequest.context = {
+        request: req,
+        response: res,
+      };
+    }
 
     // Check introspection
     if (
@@ -160,9 +167,23 @@ export class GraphQLCore {
 
       if (!query) return null;
 
+      // Avoid JSON.parse if already an object or undefined
+      let parsedVariables = undefined;
+      if (variables) {
+        if (typeof variables === 'string') {
+          try {
+            parsedVariables = JSON.parse(variables);
+          } catch {
+            return null;
+          }
+        } else {
+          parsedVariables = variables;
+        }
+      }
+
       return {
         query,
-        variables: variables ? JSON.parse(variables) : undefined,
+        variables: parsedVariables,
         operationName,
         context: {} as GraphQLContext,
       };

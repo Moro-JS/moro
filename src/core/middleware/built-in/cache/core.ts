@@ -6,7 +6,27 @@ const logger = createFrameworkLogger('CacheCore');
 
 // ===== Types =====
 
-export interface CacheConfig {
+/**
+ * HTTP Caching Options for Cache-Control, ETags, etc.
+ */
+export interface HttpCachingOptions {
+  /** Enable HTTP caching headers (default: true) */
+  httpCaching?: boolean;
+  /** Default max-age for Cache-Control header (seconds) */
+  maxAge?: number;
+  /** Cache-Control header (overrides maxAge if provided) */
+  cacheControl?: string;
+  /** Vary header for proper caching */
+  vary?: string[];
+  /** Enable ETag generation (default: true) */
+  etag?: boolean | 'strong' | 'weak';
+  /** Enable conditional request handling (default: true) */
+  conditionalRequests?: boolean;
+  /** Custom ETag generator function */
+  generateETag?: (content: string, type?: string) => string;
+}
+
+export interface CacheConfig extends HttpCachingOptions {
   ttl: number;
   key?: string;
   tags?: string[];

@@ -26,8 +26,8 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
       }
     }
 
-    // Convert Headers to plain object
-    const headers: Record<string, string> = {};
+    // Convert Headers to plain object - pre-allocate size hint
+    const headers: Record<string, string> = Object.create(null);
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
@@ -62,11 +62,20 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
       status = moroResponse.statusCode;
     }
 
-    // Convert headers to Headers object
+    // Convert headers to Headers object - Avoid Object.entries
     const responseHeaders = new Headers();
-    Object.entries(headers).forEach(([key, value]) => {
-      responseHeaders.set(key, value);
-    });
+    for (const key in headers) {
+      if (Object.prototype.hasOwnProperty.call(headers, key)) {
+        const value = headers[key];
+        if (Array.isArray(value)) {
+          for (let i = 0; i < value.length; i++) {
+            responseHeaders.append(key, value[i]);
+          }
+        } else {
+          responseHeaders.set(key, value);
+        }
+      }
+    }
 
     // Handle different body types
     if (typeof body === 'object' && body !== null) {

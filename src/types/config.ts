@@ -255,4 +255,48 @@ export interface AppConfig {
   performance: PerformanceConfig;
   websocket: WebSocketConfig;
   jobs?: JobsConfig;
+  queue?: QueueConfig;
+}
+
+// Queue Configuration
+export interface QueueConfig {
+  adapter?: 'bull' | 'rabbitmq' | 'sqs' | 'kafka' | 'memory';
+  connection?: {
+    host?: string;
+    port?: number;
+    username?: string;
+    password?: string;
+    database?: number;
+    brokers?: string[];
+    groupId?: string;
+    region?: string;
+    queueUrl?: string;
+    [key: string]: any;
+  };
+  concurrency?: number;
+  retry?: {
+    maxAttempts: number;
+    backoff: 'fixed' | 'exponential' | 'linear';
+    initialDelay: number;
+    maxDelay?: number;
+  };
+  deadLetterQueue?: {
+    enabled: boolean;
+    maxRetries: number;
+    queueName?: string;
+  };
+  defaultJobOptions?: {
+    removeOnComplete?: boolean | number;
+    removeOnFail?: boolean | number;
+    attempts?: number;
+    backoff?: {
+      type: 'fixed' | 'exponential' | 'linear';
+      delay: number;
+    };
+  };
+  prefix?: string;
+  limiter?: {
+    max: number;
+    duration: number;
+  };
 }

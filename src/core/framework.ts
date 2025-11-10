@@ -1,12 +1,9 @@
 // Core Moro Framework with Pluggable WebSocket Adapters
 import { Server } from 'http';
-import {
-  createSecureServer as createHttp2SecureServer,
-  createServer as createHttp2Server,
-} from 'http2';
 import { EventEmitter } from 'events';
-import { MoroHttpServer, HttpRequest, HttpResponse, middleware } from './http/index.js';
+import { MoroHttpServer, HttpRequest, HttpResponse, Middleware } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
+import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
 import { Container } from './utilities/container.js';
 import { ModuleLoader } from './modules/index.js';
@@ -18,10 +15,11 @@ import { createFrameworkLogger, logger as globalLogger } from './logger/index.js
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
 import { MoroOptions as CoreMoroOptions } from '../types/core.js';
 import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter.js';
+import { cors, helmet, compression, bodySize } from './middleware/built-in/index.js';
 
 // Extended MoroOptions that includes both core options and framework-specific options
 export interface MoroOptions extends CoreMoroOptions {
-  http2?: boolean;
+  http2?: boolean | Http2ServerOptions;
   https?: {
     key: string | Buffer;
     cert: string | Buffer;
@@ -40,7 +38,7 @@ export interface MoroOptions extends CoreMoroOptions {
 }
 
 export class Moro extends EventEmitter {
-  private httpServer: MoroHttpServer | UWebSocketsHttpServer;
+  private httpServer: MoroHttpServer | UWebSocketsHttpServer | MoroHttp2Server;
   private server: Server | any; // HTTP/2 server type or uWebSockets app
   private websocketAdapter?: WebSocketAdapter;
   private container: Container;
@@ -55,6 +53,7 @@ export class Moro extends EventEmitter {
   private options: MoroOptions;
   private config: any;
   private usingUWebSockets = false;
+  private usingHttp2 = false;
   // WebSocket initialization promise to handle async adapter detection
   private websocketSetupPromise: Promise<void> | null = null;
 
@@ -105,27 +104,27 @@ export class Moro extends EventEmitter {
         this.server = (this.httpServer as MoroHttpServer).getServer();
       }
     } else if (options.http2) {
-      // Use HTTP/2
-      this.httpServer = new MoroHttpServer();
+      // Use HTTP/2 with proper adapter
+      const http2Options: Http2ServerOptions = {};
 
-      if (options.https) {
-        this.server = createHttp2SecureServer(options.https);
-      } else {
-        this.server = createHttp2Server();
+      if (typeof options.http2 === 'object') {
+        // Advanced HTTP/2 configuration
+        Object.assign(http2Options, options.http2);
       }
 
-      // Handle HTTP/2 streams manually
-      this.server.on('stream', (stream: any, headers: any) => {
-        // Convert HTTP/2 stream to HTTP/1.1-like request/response
-        const req = stream as any;
-        const res = stream as any;
-        req.url = headers[':path'];
-        req.method = headers[':method'];
-        req.headers = headers;
-        (this.httpServer as MoroHttpServer)['handleRequest'](req, res);
-      });
+      // Add SSL configuration if provided
+      if (options.https) {
+        http2Options.key = options.https.key;
+        http2Options.cert = options.https.cert;
+        if (options.https.ca) {
+          http2Options.ca = options.https.ca;
+        }
+      }
 
-      this.logger.info('HTTP/2 server created', 'ServerInit');
+      this.httpServer = new MoroHttp2Server(http2Options);
+      this.server = (this.httpServer as MoroHttp2Server).getServer();
+      this.usingHttp2 = true;
+      this.logger.info('HTTP/2 server created with native adapter', 'ServerInit');
     } else {
       // Use standard HTTP/1.1
       this.httpServer = new MoroHttpServer();
@@ -166,9 +165,9 @@ export class Moro extends EventEmitter {
   private setupCore() {
     // PERFORMANCE FIX: Only apply middleware if enabled in config OR options
 
-    // Security middleware - check config enabled property OR options.security.*.enabled === true
+    // Security - check config enabled property OR options.security.*.enabled === true
     if (this.config.security.helmet.enabled || this.options.security?.helmet?.enabled === true) {
-      this.httpServer.use(middleware.helmet());
+      this.httpServer.use(helmet());
     }
 
     if (this.config.security.cors.enabled || this.options.security?.cors?.enabled === true) {
@@ -178,7 +177,7 @@ export class Moro extends EventEmitter {
           : this.config.security.cors
             ? this.config.security.cors
             : {};
-      this.httpServer.use(middleware.cors(corsOptions));
+      this.httpServer.use(cors(corsOptions) as unknown as Middleware);
     }
 
     // Performance middleware - check config enabled property OR options.performance.*.enabled === true
@@ -192,11 +191,11 @@ export class Moro extends EventEmitter {
           : this.config.performance.compression
             ? this.config.performance.compression
             : {};
-      this.httpServer.use(middleware.compression(compressionOptions));
+      this.httpServer.use(compression(compressionOptions));
     }
 
     // Body size middleware - always enabled with configurable limit
-    this.httpServer.use(middleware.bodySize({ limit: this.config.server.bodySizeLimit }));
+    this.httpServer.use(bodySize({ limit: this.config.server.bodySizeLimit }));
 
     // Configure request tracking (ID generation) in HTTP server
     if (this.httpServer.setRequestTracking) {

@@ -66,11 +66,7 @@ export type {
 export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-workers-adapter.js';
 
 // Core exports
-export {
-  MoroHttpServer,
-  UWebSocketsHttpServer,
-  middleware as httpMiddleware,
-} from './core/http/index.js';
+export { MoroHttpServer, UWebSocketsHttpServer } from './core/http/index.js';
 export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in/index.js';
 
 // Networking System
@@ -208,7 +204,7 @@ export {
 export type { AppConfig } from './core/config/index.js';
 
 // GraphQL System - Only export types and adapter
-// The core classes are lazy-loaded internally via app.graphql()
+// The core classes are lazy-loaded internally via app.graphqlInit()
 export type {
   GraphQLContext,
   GraphQLResolver,
@@ -299,3 +295,74 @@ export type { CacheAdapter, CacheOptions, CacheStrategy } from './types/cache.js
 export type { CDNAdapter, CDNOptions } from './types/cdn.js';
 export type { DatabaseAdapter, DatabaseTransaction, DatabaseConfig } from './types/database.js';
 export type { CookieOptions } from './types/http.js';
+
+// gRPC System - Lazy loaded, only types exported
+export type {
+  GrpcOptions,
+  GrpcCall,
+  GrpcCallback,
+  GrpcMetadata,
+  GrpcError,
+  GrpcStatusCode,
+  GrpcCredentials,
+  GrpcServer,
+  GrpcClient,
+  GrpcClientOptions,
+  GrpcInterceptor,
+  ServiceImplementation,
+  ServiceDefinition,
+  ServiceRegistration,
+  MethodDefinition,
+  UnaryHandler,
+  ServerStreamingHandler,
+  ClientStreamingHandler,
+  BidirectionalStreamingHandler,
+  GrpcHandler,
+  GrpcStats,
+  HealthCheckStatus,
+  HealthCheckResponse,
+  ProtoLoadOptions,
+} from './core/grpc/types.js';
+
+export type { GrpcAdapter } from './core/grpc/grpc-adapter.js';
+export { GrpcJsAdapter } from './core/grpc/adapters/index.js';
+
+// gRPC Middleware
+export {
+  grpcAuth,
+  grpcRequirePermission,
+  grpcRequireRole,
+  extractTokenFromMetadata,
+  grpcLogger,
+  grpcSimpleLogger,
+  grpcDetailedLogger,
+  grpcValidate,
+  grpcValidateHandler,
+} from './core/grpc/index.js';
+
+// Mail System - Lazy loaded, only types exported
+export type {
+  MailConfig,
+  MailOptions,
+  MailResult,
+  MailAdapter,
+  MailAdapterType,
+  EmailAddress,
+  EmailAttachment,
+  TemplateConfig,
+  TemplateEngine,
+  MailQueueConfig,
+  NodemailerConnection,
+  SendGridConnection,
+  SESConnection,
+  ResendConnection,
+} from './core/mail/types.js';
+
+export { BaseMailAdapter } from './core/mail/mail-adapter.js';
+export {
+  ConsoleAdapter,
+  NodemailerAdapter,
+  SendGridAdapter,
+  SESAdapter,
+  ResendAdapter,
+} from './core/mail/adapters/index.js';

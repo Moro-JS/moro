@@ -130,7 +130,7 @@ export class UWebSocketsHttpServer {
       // Parse body only if there's actually a body (check content-length)
       const method = req.getMethod().toUpperCase();
       const contentLength = req.getHeader('content-length');
-      // Optimized: Check first char for early exit (all body methods start with 'P')
+      // Check first char for early exit (all body methods start with 'P')
       const firstChar = method.charCodeAt(0);
       if (
         firstChar === 80 && // 'P' char code
@@ -180,7 +180,7 @@ export class UWebSocketsHttpServer {
         }
       }
     } finally {
-      // CRITICAL: Release pooled objects back to pool
+      // Release pooled objects back to pool
       if (httpReq) {
         const pooledQuery = (httpReq as any)._pooledQuery;
         const pooledHeaders = (httpReq as any)._pooledHeaders;
@@ -311,12 +311,16 @@ export class UWebSocketsHttpServer {
     }
 
     setHeader(name: string, value: string | string[]) {
-      this.responseHeaders[name.toLowerCase()] = value;
+      // Cache toLowerCase result to avoid repeated calls
+      const lowerName = name.toLowerCase();
+      this.responseHeaders[lowerName] = value;
       return this;
     }
 
     getHeader(name: string) {
-      return this.responseHeaders[name.toLowerCase()];
+      // Cache toLowerCase result
+      const lowerName = name.toLowerCase();
+      return this.responseHeaders[lowerName];
     }
 
     removeHeader(name: string) {
@@ -455,7 +459,7 @@ export class UWebSocketsHttpServer {
     }
 
     cookie(name: string, value: string, options?: any) {
-      // Optimized: Build cookie string with array join for better performance
+      // Build cookie string with array join for better performance
       const parts = [name, '=', value];
 
       if (options) {
@@ -519,17 +523,19 @@ export class UWebSocketsHttpServer {
 
   private async readBody(res: any, httpReq: HttpRequest): Promise<void> {
     return new Promise(resolve => {
-      let buffer: Buffer;
+      // Collect chunks in array, concat once at end (faster than repeated Buffer.concat)
+      let buffer: Buffer | null = null;
+      const chunks: Buffer[] = [];
+      let totalLength = 0;
 
       res.onData((chunk: ArrayBuffer, isLast: boolean) => {
         const chunkBuffer = Buffer.from(chunk);
+        chunks.push(chunkBuffer);
+        totalLength += chunkBuffer.length;
 
         if (isLast) {
-          if (buffer) {
-            buffer = Buffer.concat([buffer, chunkBuffer]);
-          } else {
-            buffer = chunkBuffer;
-          }
+          // Concat all chunks at once (much faster than incremental concat)
+          buffer = totalLength === 0 ? Buffer.alloc(0) : Buffer.concat(chunks, totalLength);
 
           try {
             const contentType = httpReq.headers['content-type'] || '';
@@ -552,12 +558,6 @@ export class UWebSocketsHttpServer {
             this.logger.error('Failed to parse request body', 'BodyParseError');
             httpReq.body = null;
             resolve();
-          }
-        } else {
-          if (buffer) {
-            buffer = Buffer.concat([buffer, chunkBuffer]);
-          } else {
-            buffer = chunkBuffer;
           }
         }
       });
@@ -639,13 +639,11 @@ export class UWebSocketsHttpServer {
         // Check if we're in a cluster environment
         const isClusterWorker = cluster.isWorker;
 
-        // ALWAYS use LIBUS_LISTEN_EXCLUSIVE_PORT when clustering
-        // This enables SO_REUSEPORT at the OS level, allowing multiple processes to bind to the same port
-        // NOTE: uWebSockets.js API doesn't have listen(host, port, options, cb)
-        // We must use listen(port, options, cb) which binds to 0.0.0.0
-        const listenOptions = 1; // ALWAYS use LIBUS_LISTEN_EXCLUSIVE_PORT for clustering support
+        // uWebSockets.js automatically enables SO_REUSEPORT when in cluster mode
+        // Do NOT pass listenOptions in cluster mode - let uWS handle it automatically
+        // In non-cluster mode, we don't need SO_REUSEPORT
 
-        this.app.listen(port, listenOptions, (token: any) => {
+        this.app.listen(port, (token: any) => {
           if (token) {
             this.listenSocket = token;
             this.isListening = true;

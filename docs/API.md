@@ -12,9 +12,12 @@ Complete API documentation for the MoroJS framework.
 - [Validation System](#validation-system)
 - [Middleware](#middleware)
 - [Database Integration](#database-integration)
+- [Message Queues](#message-queues)
+- [gRPC Support](#grpc-support)
 - [WebSocket Support](#websocket-support)
 - [Configuration](#configuration)
 - [Events](#events)
+- [Worker Threads](#worker-threads)
 - [Performance](#performance)
 - [Error Handling](#error-handling)
 
@@ -1184,9 +1187,11 @@ const UserRegistrationSchema = z.object({
 
 ### Built-in Middleware
 
-MoroJS includes several built-in middleware options:
+MoroJS includes 18+ built-in middleware options. For complete documentation, see the [Middleware Guide](./MIDDLEWARE_GUIDE.md).
 
-#### CORS
+#### Security Middleware
+
+**CORS** - Cross-origin resource sharing
 
 ```typescript
 app.use(middleware.cors({
@@ -1196,7 +1201,7 @@ app.use(middleware.cors({
 }));
 ```
 
-#### Helmet (Security Headers)
+**Helmet** - Security headers
 
 ```typescript
 app.use(middleware.helmet({
@@ -1209,22 +1214,242 @@ app.use(middleware.helmet({
 }));
 ```
 
-#### Compression
+**CSRF** - CSRF protection
+
+```typescript
+app.use(middleware.csrf({
+  cookie: { httpOnly: true, secure: true }
+}));
+```
+
+**CSP** - Content Security Policy
+
+```typescript
+app.use(middleware.csp({
+  directives: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'nonce-{NONCE}'"]
+  }
+}));
+```
+
+#### Performance Middleware
+
+**Compression** - Response compression
 
 ```typescript
 app.use(middleware.compression({
   level: 6,
-  threshold: 1024
+  threshold: 1024,
+  brotli: true
 }));
 ```
 
-#### Body Size Limiting
+**Cache** - Response caching
+
+```typescript
+app.use(middleware.cache({
+  ttl: 300,
+  strategy: 'memory' // 'memory' | 'redis' | 'file'
+}));
+```
+
+**Rate Limiting** - Request rate limiting
+
+```typescript
+app.use(middleware.rateLimit({
+  requests: 100,
+  window: 60000,
+  keyGenerator: (req) => req.ip
+}));
+```
+
+#### HTTP Features
+
+**Body Size Limiting**
 
 ```typescript
 app.use(middleware.bodySize({
   limit: '10mb'
 }));
 ```
+
+**Cookie Parser**
+
+```typescript
+app.use(middleware.cookie({
+  secret: 'your-secret-key',
+  signed: true
+}));
+```
+
+**Static Files** - Static file serving with caching
+
+```typescript
+app.use(middleware.staticFiles({
+  root: './public',
+  maxAge: 3600000,
+  etag: true
+}));
+```
+
+**File Upload** - Multipart file uploads
+
+```typescript
+app.post('/upload')
+  .upload({
+    dest: './uploads',
+    maxFileSize: 10 * 1024 * 1024,
+    allowedTypes: ['image/jpeg', 'image/png']
+  })
+  .handler((req, res) => {
+    return { files: req.files };
+  });
+```
+
+**Template Rendering** - Template engine support
+
+```typescript
+app.use(middleware.template({
+  views: './views',
+  engine: 'moro', // 'moro' | 'handlebars' | 'ejs'
+  cache: true
+}));
+
+app.get('/page', (req, res) => {
+  res.render('index', { title: 'Welcome' });
+});
+```
+
+**HTTP Range Requests** - Partial content for streaming
+
+```typescript
+app.get('/video/:id', async (req, res) => {
+  const videoPath = `./videos/${req.params.id}.mp4`;
+  const stats = await fs.stat(videoPath);
+  res.sendRange(videoPath, stats);
+});
+```
+
+**HTTP/2 Server Push** - Optimize with HTTP/2 push
+
+```typescript
+app.use(middleware.http2({
+  autoDetect: true,
+  resources: [
+    { path: '/styles/main.css', as: 'style', priority: 200 }
+  ]
+}));
+```
+
+See [HTTP/2 Guide](./HTTP2_GUIDE.md) for detailed documentation.
+
+#### Authentication & Sessions
+
+**Authentication** - Auth.js integration with RBAC
+
+```typescript
+app.use(middleware.auth({
+  providers: [
+    {
+      type: 'oauth',
+      provider: 'google',
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET
+    }
+  ]
+}));
+
+app.get('/api/profile')
+  .auth({ required: true, roles: ['admin'] })
+  .handler((req, res) => {
+    return { user: req.user };
+  });
+```
+
+See [Authentication Guide](./AUTH_GUIDE.md) for complete documentation.
+
+**Session Management**
+
+```typescript
+app.use(middleware.session({
+  secret: 'your-secret-key',
+  store: 'redis',
+  cookie: { maxAge: 24 * 60 * 60 * 1000 }
+}));
+```
+
+#### Real-time & Advanced
+
+**Server-Sent Events (SSE)**
+
+```typescript
+app.get('/events', (req, res) => {
+  res.sse();
+  const interval = setInterval(() => {
+    res.sse.send({ event: 'update', data: { time: Date.now() } });
+  }, 1000);
+
+  req.on('close', () => clearInterval(interval));
+});
+```
+
+**CDN Integration**
+
+```typescript
+app.use(middleware.cdn({
+  provider: 'cloudfront',
+  config: { distributionId: 'E1234567890ABC' }
+}));
+```
+
+**GraphQL**
+
+```typescript
+app.use('/graphql', middleware.graphql({
+  schema,
+  rootValue,
+  graphiql: true
+}));
+```
+
+See [GraphQL Guide](./GRAPHQL_GUIDE.md) for detailed documentation.
+
+#### Monitoring
+
+**Request Logger**
+
+```typescript
+app.use(middleware.requestLogger({
+  format: 'json',
+  fields: ['method', 'url', 'status', 'responseTime']
+}));
+```
+
+**Performance Monitor**
+
+```typescript
+app.use(middleware.performanceMonitor({
+  threshold: 1000,
+  onSlow: (req, duration) => {
+    console.warn(`Slow: ${req.path} - ${duration}ms`);
+  }
+}));
+```
+
+**Error Tracker**
+
+```typescript
+app.use(middleware.errorTracker({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV
+}));
+```
+
+### Middleware Reference
+
+For complete middleware documentation including all options and examples, see:
+- **[Middleware Guide](./MIDDLEWARE_GUIDE.md)** - Comprehensive reference for all built-in middleware
 
 ### Custom Middleware
 
@@ -1384,6 +1609,360 @@ app.post('/transfer')
     }
   });
 ```
+
+---
+
+## Message Queues
+
+MoroJS includes a production-ready message queue system with multiple backend adapters. For complete documentation, see the [Queue Guide](./QUEUE_GUIDE.md).
+
+### Overview
+
+The queue system supports:
+- Multiple adapters (Memory, Bull, RabbitMQ, AWS SQS, Kafka)
+- Job scheduling and delays
+- Retry logic with configurable backoff
+- Dead letter queues
+- Priority queues
+- Bulk operations
+- Monitoring and metrics
+
+### Quick Start
+
+```typescript
+import { QueueManager } from '@morojs/moro';
+
+const queueManager = new QueueManager();
+
+// Register a queue
+await queueManager.registerQueue('emails', {
+  adapter: 'bull',
+  connection: {
+    host: 'localhost',
+    port: 6379
+  },
+  concurrency: 10
+});
+
+// Add a job
+await queueManager.addToQueue('emails', {
+  to: 'user@example.com',
+  subject: 'Welcome',
+  body: 'Welcome to our platform!'
+});
+
+// Process jobs
+await queueManager.process('emails', async (job) => {
+  await sendEmail(job.data);
+  return { sent: true };
+});
+```
+
+### Queue Adapters
+
+#### Memory Adapter
+
+```typescript
+await queueManager.registerQueue('tasks', {
+  adapter: 'memory',
+  concurrency: 5
+});
+```
+
+#### Bull Adapter (Redis)
+
+```typescript
+await queueManager.registerQueue('tasks', {
+  adapter: 'bull',
+  connection: {
+    host: 'localhost',
+    port: 6379
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    }
+  }
+});
+```
+
+#### RabbitMQ Adapter
+
+```typescript
+await queueManager.registerQueue('tasks', {
+  adapter: 'rabbitmq',
+  connection: {
+    host: 'localhost',
+    port: 5672,
+    username: 'guest',
+    password: 'guest'
+  }
+});
+```
+
+#### AWS SQS Adapter
+
+```typescript
+await queueManager.registerQueue('tasks', {
+  adapter: 'sqs',
+  connection: {
+    region: 'us-east-1',
+    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue'
+  }
+});
+```
+
+#### Kafka Adapter
+
+```typescript
+await queueManager.registerQueue('events', {
+  adapter: 'kafka',
+  connection: {
+    brokers: ['localhost:9092'],
+    groupId: 'my-consumer-group'
+  }
+});
+```
+
+### Job Options
+
+```typescript
+await queueManager.addToQueue('reports',
+  { reportId: 123, format: 'pdf' },
+  {
+    priority: 10,
+    delay: 60000,           // 1 minute delay
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 5000
+    },
+    removeOnComplete: true,
+    timeout: 30000
+  }
+);
+```
+
+### Job Processing
+
+```typescript
+// Basic processor
+await queueManager.process('emails', async (job) => {
+  await sendEmail(job.data);
+  return { sent: true };
+});
+
+// With progress tracking
+await queueManager.process('video-encoding', async (job) => {
+  await job.updateProgress(0);
+  const video = await loadVideo(job.data.videoId);
+
+  await job.updateProgress(50);
+  const encoded = await encodeVideo(video);
+
+  await job.updateProgress(100);
+  return { encoded: true };
+});
+```
+
+### Queue Monitoring
+
+```typescript
+// Get metrics
+const metrics = await queueManager.getMetrics('emails');
+console.log(`Waiting: ${metrics.waiting}`);
+console.log(`Active: ${metrics.active}`);
+console.log(`Completed: ${metrics.completed}`);
+
+// Listen to events
+queueManager.on('queue:job:completed', (event) => {
+  console.log(`Job ${event.jobId} completed`);
+});
+
+queueManager.on('queue:job:failed', (event) => {
+  console.error(`Job ${event.jobId} failed:`, event.error);
+});
+```
+
+See [Queue Guide](./QUEUE_GUIDE.md) for complete documentation.
+
+---
+
+## gRPC Support
+
+MoroJS includes native gRPC support for building high-performance microservices. For complete documentation, see the [gRPC Guide](./GRPC_GUIDE.md).
+
+### Overview
+
+Features:
+- Proto-based service definitions
+- All call types (unary, streaming, bidirectional)
+- Middleware (auth, validation, logging)
+- Health checks
+- Server reflection
+- TLS/SSL support
+
+### Quick Start
+
+```typescript
+import { GrpcManager } from '@morojs/moro';
+
+const grpcManager = new GrpcManager({
+  port: 50051,
+  host: '0.0.0.0'
+});
+
+await grpcManager.initialize();
+
+// Register service
+await grpcManager.registerService(
+  './protos/user.proto',
+  'UserService',
+  {
+    GetUser: async (call, callback) => {
+      const user = await db.users.findById(call.request.id);
+      callback(null, user);
+    }
+  }
+);
+
+await grpcManager.start();
+```
+
+### Service Implementation
+
+#### Unary RPC
+
+```typescript
+{
+  GetUser: async (call, callback) => {
+    try {
+      const user = await db.users.findOne({ id: call.request.id });
+
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          message: 'User not found'
+        });
+      }
+
+      callback(null, user);
+    } catch (error) {
+      callback({
+        code: grpc.status.INTERNAL,
+        message: error.message
+      });
+    }
+  }
+}
+```
+
+#### Server Streaming
+
+```typescript
+{
+  ListUsers: async (call) => {
+    const users = await db.users.find().limit(100);
+
+    for (const user of users) {
+      call.write(user);
+    }
+
+    call.end();
+  }
+}
+```
+
+#### Client Streaming
+
+```typescript
+{
+  CreateUsers: async (call, callback) => {
+    const users = [];
+
+    call.on('data', (userData) => {
+      users.push(userData);
+    });
+
+    call.on('end', async () => {
+      const result = await db.users.insertMany(users);
+      callback(null, {
+        created: result.length,
+        ids: result.map(u => u.id)
+      });
+    });
+  }
+}
+```
+
+#### Bidirectional Streaming
+
+```typescript
+{
+  Chat: async (call) => {
+    call.on('data', (message) => {
+      // Broadcast message
+      broadcastToRoom(message);
+
+      // Echo confirmation
+      call.write({
+        user_id: 'system',
+        message: 'Received',
+        timestamp: Date.now()
+      });
+    });
+
+    call.on('end', () => {
+      call.end();
+    });
+  }
+}
+```
+
+### gRPC Middleware
+
+```typescript
+import { grpcAuth, grpcRequireRole, grpcValidate } from '@morojs/moro';
+
+await grpcManager.registerService(
+  './protos/user.proto',
+  'UserService',
+  {
+    GetUser: grpcAuth()(async (call, callback) => {
+      // Authenticated user available in call.user
+      const user = await db.users.findOne({ id: call.request.id });
+      callback(null, user);
+    }),
+
+    DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
+      await db.users.deleteOne({ id: call.request.id });
+      callback(null, { success: true });
+    })
+  }
+);
+```
+
+### gRPC Client
+
+```typescript
+const client = await grpcManager.createClient(
+  './protos/user.proto',
+  'UserService',
+  'localhost:50051'
+);
+
+// Make call
+const response = await new Promise((resolve, reject) => {
+  client.GetUser({ id: '123' }, (error, response) => {
+    if (error) return reject(error);
+    resolve(response);
+  });
+});
+```
+
+See [gRPC Guide](./GRPC_GUIDE.md) for complete documentation.
 
 ---
 
@@ -1939,6 +2518,203 @@ interface FrameworkEvents {
   'websocket:disconnect': { namespace: string; socket: Socket };
 }
 ```
+
+---
+
+## Worker Threads
+
+MoroJS includes built-in Worker Threads support for offloading CPU-intensive operations. For complete documentation, see the [Workers Guide](./WORKERS_GUIDE.md).
+
+### Overview
+
+Worker threads execute CPU-intensive operations in separate threads, preventing main thread blocking.
+
+**Suitable for:**
+- JWT signing/verification
+- Password hashing
+- Data encryption/decryption
+- Image/video processing
+- Large data transformations
+- Complex calculations
+
+**Not suitable for:**
+- Database queries (already async)
+- HTTP requests (already async)
+- File I/O (already async)
+
+### Quick Start
+
+```typescript
+import { getWorkerManager, workerTasks } from '@morojs/moro';
+
+const workers = getWorkerManager();
+
+// Verify JWT on worker thread
+app.post('/api/auth/verify', async (req, res) => {
+  const result = await workerTasks.verifyJWT(
+    req.body.token,
+    process.env.JWT_SECRET
+  );
+
+  if (result.valid) {
+    return { user: result.payload };
+  } else {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// Hash password on worker thread
+app.post('/api/register', async (req, res) => {
+  const hash = await workerTasks.hashData(
+    req.body.password,
+    'sha256'
+  );
+
+  const user = await createUser({
+    email: req.body.email,
+    password: hash
+  });
+
+  return user;
+});
+```
+
+### Built-in Worker Tasks
+
+#### JWT Operations
+
+```typescript
+import { workerTasks } from '@morojs/moro';
+
+// Sign JWT
+const token = await workerTasks.signJWT(
+  { userId: user.id, role: user.role },
+  process.env.JWT_SECRET,
+  { expiresIn: '7d' }
+);
+
+// Verify JWT
+const result = await workerTasks.verifyJWT(
+  token,
+  process.env.JWT_SECRET
+);
+```
+
+#### Cryptographic Operations
+
+```typescript
+// Hash data
+const hash = await workerTasks.hashData(data, 'sha256');
+
+// Encrypt data
+const encrypted = await workerTasks.encryptData(
+  sensitiveData,
+  process.env.ENCRYPTION_KEY
+);
+
+// Decrypt data
+const decrypted = await workerTasks.decryptData(
+  encryptedData,
+  process.env.ENCRYPTION_KEY
+);
+```
+
+#### Data Compression
+
+```typescript
+// Compress data
+const compressed = await workerTasks.compressData(
+  JSON.stringify(largeData)
+);
+
+// Decompress data
+const decompressed = await workerTasks.decompressData(
+  compressedData
+);
+```
+
+#### Heavy Computation
+
+```typescript
+// Process complex calculation
+const result = await workerTasks.heavyComputation(
+  operation,
+  params
+);
+
+// Transform large JSON
+const transformed = await workerTasks.transformJSON(
+  data,
+  (item) => ({ ...item, computed: expensiveTransform(item) })
+);
+```
+
+### Configuration
+
+```typescript
+import { WorkerManager } from '@morojs/moro';
+
+// Configure worker pool
+const workers = new WorkerManager({
+  workerCount: 4, // Number of worker threads
+  maxQueueSize: 1000 // Maximum queued tasks
+});
+
+// Or use with createApp
+const app = createApp({
+  workers: {
+    count: 4,
+    maxQueueSize: 1000
+  }
+});
+```
+
+### Task Priority
+
+```typescript
+import { getWorkerManager } from '@morojs/moro';
+
+const workers = getWorkerManager();
+
+// High priority task
+await workers.executeTask({
+  id: 'critical-task',
+  type: 'crypto:hash',
+  data: { input: 'critical-data' },
+  priority: 'high', // 'high' | 'normal' | 'low'
+  timeout: 10000 // Optional timeout
+});
+```
+
+### Execution Model
+
+Worker threads use message passing:
+
+1. Task is serialized and sent to worker thread
+2. Worker executes task in separate V8 isolate
+3. Result is serialized and returned to main thread
+4. Promise resolves with result
+
+**Overhead considerations:**
+- Data serialization cost
+- Thread communication overhead
+- Task complexity vs overhead tradeoff
+
+### Worker Stats
+
+```typescript
+const workers = getWorkerManager();
+const stats = workers.getStats();
+
+console.log(stats);
+// {
+//   workers: 4,
+//   queueSize: 23,
+//   activeTasks: 4
+// }
+```
+
+For complete documentation, examples, and best practices, see the [Workers Guide](./WORKERS_GUIDE.md).
 
 ---
 

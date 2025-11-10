@@ -625,12 +625,21 @@ export class ObjectPoolManager {
     const routeCacheTotal = stats.routeCache.hits + stats.routeCache.misses;
     const responseCacheTotal = stats.responseCache.hits + stats.responseCache.misses;
 
+    // Manually sum memory instead of Object.values().reduce()
+    let totalMemory = 0;
+    totalMemory += stats.totalMemory.params;
+    totalMemory += stats.totalMemory.headers;
+    totalMemory += stats.totalMemory.queries;
+    totalMemory += stats.totalMemory.buffers;
+    totalMemory += stats.totalMemory.routes;
+    totalMemory += stats.totalMemory.responses;
+
     return {
       routeCacheHitRate: routeCacheTotal > 0 ? (stats.routeCache.hits / routeCacheTotal) * 100 : 0,
       responseCacheHitRate:
         responseCacheTotal > 0 ? (stats.responseCache.hits / responseCacheTotal) * 100 : 0,
       paramPoolUtilization: stats.paramPool.utilization * 100,
-      totalMemoryKB: Object.values(stats.totalMemory).reduce((a, b) => a + b, 0) / 1024,
+      totalMemoryKB: totalMemory / 1024,
     };
   }
 

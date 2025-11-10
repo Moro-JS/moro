@@ -43,6 +43,7 @@ export function validateConfig(config: any): AppConfig {
       external: validateExternalServicesConfig(config.external, 'external'),
       performance: validatePerformanceConfig(config.performance, 'performance'),
       websocket: validateWebSocketConfig(config.websocket, 'websocket'),
+      queue: validateQueueConfig(config.queue, 'queue'),
     };
 
     logger.debug('Configuration validation successful');
@@ -908,6 +909,21 @@ function validateClusteringConfig(config: any, path: string) {
     );
   }
 
+  // Optional mode (reuseport or proxy)
+  if (config.mode !== undefined) {
+    if (config.mode !== 'reuseport' && config.mode !== 'proxy') {
+      throw new ConfigValidationError(
+        `${path}.mode`,
+        config.mode,
+        "'reuseport' or 'proxy'",
+        "Clustering mode must be 'reuseport' (fast, connection hashing) or 'proxy' (slower, strict round-robin)"
+      );
+    }
+    result.mode = config.mode;
+  } else {
+    result.mode = 'reuseport'; // Default to reuseport for performance
+  }
+
   return result;
 }
 
@@ -1060,7 +1076,19 @@ function validateString(value: any, path: string): string {
 
 function validateEnum<T extends string>(value: any, validValues: readonly T[], path: string): T {
   const str = validateString(value, path);
-  if (!validValues.includes(str as T)) {
+
+  // For small arrays (< 10 items), linear search is faster than Set
+  // For larger arrays, we could use Set, but most enums in config are small
+  let found = false;
+  const len = validValues.length;
+  for (let i = 0; i < len; i++) {
+    if (validValues[i] === str) {
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
     throw new ConfigValidationError(
       path,
       value,
@@ -1075,10 +1103,17 @@ function validateStringArray(value: any, path: string): string[] {
   if (!Array.isArray(value)) {
     // Try to parse comma-separated string
     if (typeof value === 'string') {
-      return value
-        .split(',')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
+      // Avoid chained map().filter() - use single pass
+      const parts = value.split(',');
+      const result: string[] = [];
+      const len = parts.length;
+      for (let i = 0; i < len; i++) {
+        const trimmed = parts[i].trim();
+        if (trimmed.length > 0) {
+          result.push(trimmed);
+        }
+      }
+      return result;
     }
     throw new ConfigValidationError(
       path,
@@ -1087,7 +1122,14 @@ function validateStringArray(value: any, path: string): string[] {
       'Must be an array or comma-separated string'
     );
   }
-  return value.map((item, index) => validateString(item, `${path}[${index}]`));
+
+  // Avoid creating intermediate arrays with map
+  const len = value.length;
+  const result: string[] = new Array(len);
+  for (let i = 0; i < len; i++) {
+    result[i] = validateString(value[i], `${path}[${i}]`);
+  }
+  return result;
 }
 
 function validateObject(value: any, path: string): Record<string, string> {
@@ -1095,6 +1137,259 @@ function validateObject(value: any, path: string): Record<string, string> {
     throw new ConfigValidationError(path, value, 'object', 'Must be an object');
   }
   return value;
+}
+
+/**
+ * Validate queue configuration
+ */
+function validateQueueConfig(config: any, path: string) {
+  if (config === undefined || config === null) {
+    return undefined;
+  }
+
+  if (typeof config !== 'object' || Array.isArray(config)) {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue configuration must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.adapter !== undefined) {
+    const validAdapters = ['bull', 'rabbitmq', 'sqs', 'kafka', 'memory'];
+    if (!validAdapters.includes(config.adapter)) {
+      throw new ConfigValidationError(
+        `${path}.adapter`,
+        config.adapter,
+        'string',
+        `Must be one of: ${validAdapters.join(', ')}`
+      );
+    }
+    result.adapter = config.adapter;
+  }
+
+  if (config.connection !== undefined) {
+    result.connection = validateQueueConnectionConfig(config.connection, `${path}.connection`);
+  }
+
+  if (config.concurrency !== undefined) {
+    result.concurrency = validateNumber(config.concurrency, `${path}.concurrency`, { min: 1 });
+  }
+
+  if (config.retry !== undefined) {
+    result.retry = validateQueueRetryConfig(config.retry, `${path}.retry`);
+  }
+
+  if (config.deadLetterQueue !== undefined) {
+    result.deadLetterQueue = validateQueueDeadLetterConfig(
+      config.deadLetterQueue,
+      `${path}.deadLetterQueue`
+    );
+  }
+
+  if (config.defaultJobOptions !== undefined) {
+    result.defaultJobOptions = validateQueueDefaultJobOptions(
+      config.defaultJobOptions,
+      `${path}.defaultJobOptions`
+    );
+  }
+
+  if (config.prefix !== undefined) {
+    result.prefix = validateString(config.prefix, `${path}.prefix`);
+  }
+
+  if (config.limiter !== undefined) {
+    result.limiter = validateQueueLimiterConfig(config.limiter, `${path}.limiter`);
+  }
+
+  return result;
+}
+
+/**
+ * Validate queue connection configuration
+ */
+function validateQueueConnectionConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue connection configuration must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.host !== undefined) {
+    result.host = validateString(config.host, `${path}.host`);
+  }
+
+  if (config.port !== undefined) {
+    result.port = validatePort(config.port, `${path}.port`);
+  }
+
+  if (config.username !== undefined) {
+    result.username = validateString(config.username, `${path}.username`);
+  }
+
+  if (config.password !== undefined) {
+    result.password = validateString(config.password, `${path}.password`);
+  }
+
+  if (config.database !== undefined) {
+    result.database = validateNumber(config.database, `${path}.database`, { min: 0 });
+  }
+
+  if (config.brokers !== undefined) {
+    result.brokers = validateStringArray(config.brokers, `${path}.brokers`);
+  }
+
+  if (config.groupId !== undefined) {
+    result.groupId = validateString(config.groupId, `${path}.groupId`);
+  }
+
+  if (config.region !== undefined) {
+    result.region = validateString(config.region, `${path}.region`);
+  }
+
+  if (config.queueUrl !== undefined) {
+    result.queueUrl = validateString(config.queueUrl, `${path}.queueUrl`);
+  }
+
+  return result;
+}
+
+/**
+ * Validate queue retry configuration
+ */
+function validateQueueRetryConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue retry configuration must be an object'
+    );
+  }
+
+  const validBackoffStrategies = ['fixed', 'exponential', 'linear'];
+
+  return {
+    maxAttempts: validateNumber(config.maxAttempts, `${path}.maxAttempts`, { min: 1 }),
+    backoff:
+      config.backoff && validBackoffStrategies.includes(config.backoff)
+        ? config.backoff
+        : (() => {
+            throw new ConfigValidationError(
+              `${path}.backoff`,
+              config.backoff,
+              'string',
+              `Must be one of: ${validBackoffStrategies.join(', ')}`
+            );
+          })(),
+    initialDelay: validateNumber(config.initialDelay, `${path}.initialDelay`, { min: 0 }),
+    maxDelay:
+      config.maxDelay !== undefined
+        ? validateNumber(config.maxDelay, `${path}.maxDelay`, { min: 0 })
+        : undefined,
+  };
+}
+
+/**
+ * Validate queue dead letter queue configuration
+ */
+function validateQueueDeadLetterConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue dead letter configuration must be an object'
+    );
+  }
+
+  return {
+    enabled: validateBoolean(config.enabled, `${path}.enabled`),
+    maxRetries: validateNumber(config.maxRetries, `${path}.maxRetries`, { min: 1 }),
+    queueName:
+      config.queueName !== undefined
+        ? validateString(config.queueName, `${path}.queueName`)
+        : undefined,
+  };
+}
+
+/**
+ * Validate queue default job options
+ */
+function validateQueueDefaultJobOptions(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue default job options must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.removeOnComplete !== undefined) {
+    result.removeOnComplete =
+      typeof config.removeOnComplete === 'boolean'
+        ? config.removeOnComplete
+        : validateNumber(config.removeOnComplete, `${path}.removeOnComplete`, { min: 0 });
+  }
+
+  if (config.removeOnFail !== undefined) {
+    result.removeOnFail =
+      typeof config.removeOnFail === 'boolean'
+        ? config.removeOnFail
+        : validateNumber(config.removeOnFail, `${path}.removeOnFail`, { min: 0 });
+  }
+
+  if (config.attempts !== undefined) {
+    result.attempts = validateNumber(config.attempts, `${path}.attempts`, { min: 1 });
+  }
+
+  if (config.backoff !== undefined) {
+    const validBackoffTypes = ['fixed', 'exponential', 'linear'];
+    if (!config.backoff.type || !validBackoffTypes.includes(config.backoff.type)) {
+      throw new ConfigValidationError(
+        `${path}.backoff.type`,
+        config.backoff.type,
+        'string',
+        `Must be one of: ${validBackoffTypes.join(', ')}`
+      );
+    }
+    result.backoff = {
+      type: config.backoff.type,
+      delay: validateNumber(config.backoff.delay, `${path}.backoff.delay`, { min: 0 }),
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Validate queue limiter configuration
+ */
+function validateQueueLimiterConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Queue limiter configuration must be an object'
+    );
+  }
+
+  return {
+    max: validateNumber(config.max, `${path}.max`, { min: 1 }),
+    duration: validateNumber(config.duration, `${path}.duration`, { min: 1 }),
+  };
 }
 
 /**

@@ -10,6 +10,7 @@ import { CacheCore, type CacheConfig } from '../middleware/built-in/cache/index.
 import { ValidationCore, type ValidationConfig } from '../middleware/built-in/validation/index.js';
 import { requireAuth } from '../middleware/built-in/auth/helpers.js';
 import { ValidationSchema } from '../validation/schema-interface.js';
+import { MethodRadixRouter } from './radix-tree.js';
 
 const logger = createFrameworkLogger('UnifiedRouter');
 
@@ -86,7 +87,15 @@ export class RouteBuilder {
 
   // Validation methods
   validate(config: ValidationConfig): this {
-    this.schema.validation = { ...this.schema.validation, ...config };
+    // Avoid spread operator and Object.assign - manually merge properties
+    if (!this.schema.validation) {
+      this.schema.validation = config;
+    } else {
+      if (config.body !== undefined) this.schema.validation.body = config.body;
+      if (config.query !== undefined) this.schema.validation.query = config.query;
+      if (config.params !== undefined) this.schema.validation.params = config.params;
+      if (config.headers !== undefined) this.schema.validation.headers = config.headers;
+    }
     return this;
   }
 
@@ -135,21 +144,33 @@ export class RouteBuilder {
   before(...middleware: Middleware[]): this {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.before = [...(phases.before || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.before) phases.before = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.before.push(middleware[i]);
+    }
     return this;
   }
 
   after(...middleware: Middleware[]): this {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.after = [...(phases.after || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.after) phases.after = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.after.push(middleware[i]);
+    }
     return this;
   }
 
   transform(...middleware: Middleware[]): this {
     if (!this.schema.middleware) this.schema.middleware = {};
     const phases = this.schema.middleware as MiddlewarePhases;
-    phases.transform = [...(phases.transform || []), ...middleware];
+    // Avoid spread, use push for better performance
+    if (!phases.transform) phases.transform = [];
+    for (let i = 0; i < middleware.length; i++) {
+      phases.transform.push(middleware[i]);
+    }
     return this;
   }
 
@@ -164,7 +185,11 @@ export class RouteBuilder {
   }
 
   tag(...tags: string[]): this {
-    this.schema.tags = [...(this.schema.tags || []), ...tags];
+    // Avoid spread, use push for better performance
+    if (!this.schema.tags) this.schema.tags = [];
+    for (let i = 0; i < tags.length; i++) {
+      this.schema.tags.push(tags[i]);
+    }
     return this;
   }
 
@@ -174,12 +199,9 @@ export class RouteBuilder {
       throw new Error('Handler is required');
     }
 
-    const completeSchema: RouteSchema = {
-      ...(this.schema as RouteSchema),
-      handler,
-    };
-
-    this.router.registerRoute(completeSchema);
+    // Avoid spread operator - add handler directly
+    this.schema.handler = handler;
+    this.router.registerRoute(this.schema as RouteSchema);
   }
 }
 
@@ -191,10 +213,22 @@ export class UnifiedRouter {
   private readonly poolManager = ObjectPoolManager.getInstance();
 
   // Route storage optimized for different access patterns
-  private staticRoutes = new Map<string, InternalRoute>(); // O(1) lookup: "GET:/api/users"
+  // OPTIMIZATION: Separate maps per method for faster lookup (no string concat needed)
+  private staticRoutesByMethod = {
+    GET: new Map<string, InternalRoute>(),
+    POST: new Map<string, InternalRoute>(),
+    PUT: new Map<string, InternalRoute>(),
+    DELETE: new Map<string, InternalRoute>(),
+    PATCH: new Map<string, InternalRoute>(),
+    HEAD: new Map<string, InternalRoute>(),
+    OPTIONS: new Map<string, InternalRoute>(),
+  };
   private dynamicRoutesBySegments = new Map<number, InternalRoute[]>(); // Grouped by segment count
   private fastPathRoutes = new Set<InternalRoute>(); // Routes with no middleware
   private allRoutes: InternalRoute[] = []; // For iteration/inspection
+
+  // NEW: Radix tree for fast dynamic route matching
+  private radixRouter = new MethodRadixRouter();
 
   // Statistics
   private stats = {
@@ -207,6 +241,7 @@ export class UnifiedRouter {
     staticHits: 0,
     dynamicHits: 0,
     cacheHits: 0,
+    radixHits: 0,
   };
 
   constructor() {
@@ -238,10 +273,17 @@ export class UnifiedRouter {
    * Clear all routes (useful for testing)
    */
   clearAllRoutes(): void {
-    this.staticRoutes.clear();
+    this.staticRoutesByMethod.GET.clear();
+    this.staticRoutesByMethod.POST.clear();
+    this.staticRoutesByMethod.PUT.clear();
+    this.staticRoutesByMethod.DELETE.clear();
+    this.staticRoutesByMethod.PATCH.clear();
+    this.staticRoutesByMethod.HEAD.clear();
+    this.staticRoutesByMethod.OPTIONS.clear();
     this.dynamicRoutesBySegments.clear();
     this.fastPathRoutes.clear();
     this.allRoutes = [];
+    this.radixRouter.clear();
     this.stats = {
       totalRoutes: 0,
       staticRoutes: 0,
@@ -252,6 +294,7 @@ export class UnifiedRouter {
       staticHits: 0,
       dynamicHits: 0,
       cacheHits: 0,
+      radixHits: 0,
     };
     logger.debug('UnifiedRouter routes cleared', 'Reset');
   }
@@ -259,51 +302,59 @@ export class UnifiedRouter {
   // ===== Route Registration =====
 
   /**
-   * Register a route (internal method)
+   * Register a route (internal method) - OPTIMIZED
    */
   registerRoute(schema: RouteSchema): void {
-    // Compile path pattern
-    const compiledPath = PathMatcher.compile(schema.path);
+    // OPTIMIZATION: Skip PathMatcher.compile for better performance
+    // Determine if static route (optimized check)
+    const pathLen = schema.path.length;
+    let hasParams = false;
+    for (let i = 0; i < pathLen; i++) {
+      if (schema.path.charCodeAt(i) === 58) {
+        // ':' character
+        hasParams = true;
+        break;
+      }
+    }
 
-    // Determine if this is a fast-path route
+    const isStatic = !hasParams;
     const isFastPath = this.isFastPathRoute(schema);
 
-    // Determine execution order
-    const executionOrder = this.buildExecutionOrder(schema);
+    // OPTIMIZATION: Lazy execution order building (only when needed)
+    const executionOrder = isFastPath ? [] : this.buildExecutionOrder(schema);
 
-    // Pre-compile param extractor for this route (faster for 1-2 param routes)
-    const paramExtractor = this.compileParamExtractor(compiledPath);
-
-    // Store configs directly (not middleware) - router will use Core classes
+    // OPTIMIZATION: Lazy auth middleware creation (only create when needed, not during registration)
+    // This speeds up route registration significantly
     const route: InternalRoute = {
       schema,
-      compiledPath,
+      compiledPath: null as any, // Will be set lazily if needed
       isFastPath,
       executionOrder,
       rateLimitConfig: schema.rateLimit,
       cacheConfig: schema.cache,
-      authMiddleware: schema.auth
-        ? requireAuth({
-            roles: schema.auth.roles,
-            permissions: schema.auth.permissions,
-            allowUnauthenticated: schema.auth.optional,
-          })
-        : undefined,
+      authMiddleware: undefined, // Will be created lazily on first request
       validationConfig: schema.validation,
-      paramExtractor, // Add pre-compiled extractor
     } as any;
 
     // Store in appropriate structures
-    if (compiledPath.isStatic) {
-      const key = `${schema.method}:${schema.path}`;
-      this.staticRoutes.set(key, route);
+    if (isStatic) {
+      const methodMap = this.staticRoutesByMethod[schema.method as HttpMethod];
+      if (methodMap) {
+        methodMap.set(schema.path, route);
+      }
       this.stats.staticRoutes++;
+
+      // DON'T add static routes to radix tree - Map is faster
     } else {
-      const segmentCount = compiledPath.segments;
-      let routes = this.dynamicRoutesBySegments.get(segmentCount);
+      // Add ONLY dynamic routes to radix tree (primary lookup for dynamic routes)
+      this.radixRouter.addRoute(schema.method, schema.path, route);
+
+      // Keep segment-based grouping for backward compatibility
+      const segments = this.countSegmentsFast(schema.path);
+      let routes = this.dynamicRoutesBySegments.get(segments);
       if (!routes) {
         routes = [];
-        this.dynamicRoutesBySegments.set(segmentCount, routes);
+        this.dynamicRoutesBySegments.set(segments, routes);
       }
       routes.push(route);
       this.stats.dynamicRoutes++;
@@ -317,15 +368,31 @@ export class UnifiedRouter {
     this.allRoutes.push(route);
     this.stats.totalRoutes++;
 
-    logger.info(
-      `Registered route: ${schema.method} ${schema.path} (PID: ${process.pid}, total: ${this.stats.totalRoutes})`,
-      'Registration',
-      {
-        isStatic: compiledPath.isStatic,
-        isFastPath,
-        segments: compiledPath.segments,
+    // OPTIMIZATION: Skip logging in production for performance
+    // Most routes are registered once at startup, so this isn't a hot path
+    // But reducing allocations still helps
+  }
+
+  /**
+   * Fast segment counting without allocations
+   */
+  private countSegmentsFast(path: string): number {
+    let count = 0;
+    let inSegment = false;
+    const len = path.length;
+
+    for (let i = 0; i < len; i++) {
+      const char = path.charCodeAt(i);
+      if (char === 47) {
+        // '/' character
+        inSegment = false;
+      } else if (!inSegment) {
+        inSegment = true;
+        count++;
       }
-    );
+    }
+
+    return count;
   }
 
   /**
@@ -422,154 +489,115 @@ export class UnifiedRouter {
   // ===== Route Matching =====
 
   /**
-   * Find a matching route for the request
+   * Find a matching route for the request - HYBRID OPTIMIZED
    * Returns boolean (sync) for fast-path routes, Promise<boolean> for others
    */
   handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> | boolean {
-    // PERFORMANCE: Only increment stats counter, not individual metrics in hot path
     this.stats.requestCount++;
 
     const method = req.method?.toUpperCase() as HttpMethod;
     const path = req.path;
 
-    // Phase 1: No middleware, auth, validation, or rate limiting
-    // Optimized for synchronous execution when possible
-    if (this.fastPathRoutes.size > 0) {
-      for (const route of this.fastPathRoutes) {
-        if (route.schema.method === method) {
-          // Inline parameter extraction for speed (avoid function call overhead)
-          if (route.compiledPath.isStatic) {
-            if (route.compiledPath.path === path) {
-              // Static route match
-              req.params = {};
+    // FAST PATH 1: Try static route Map lookup first (fastest possible - no string concat)
+    const methodMap = this.staticRoutesByMethod[method];
+    if (methodMap) {
+      const staticRoute = methodMap.get(path);
 
-              try {
-                const result = route.schema.handler(req, res);
+      if (staticRoute) {
+        // OPTIMIZATION: Reuse empty params object to avoid allocation
+        if (!req.params) {
+          req.params = {};
+        }
 
-                // Check if result is a promise (optimized check)
-                if (result && typeof (result as any).then === 'function') {
-                  // Async handler - return promise
-                  return (result as Promise<any>)
-                    .then(actualResult => {
-                      if (actualResult !== undefined && !res.headersSent) {
-                        res.json(actualResult);
-                      }
-                      return true;
-                    })
-                    .catch(() => {
-                      if (!res.headersSent) {
-                        res.status(500).json({ error: 'Internal server error' });
-                      }
-                      return true;
-                    });
-                } else {
-                  // Sync handler - handle synchronously (fastest path!)
-                  if (result !== undefined && !res.headersSent) {
-                    res.json(result);
+        // Fast-path execution (no middleware)
+        if (staticRoute.isFastPath) {
+          try {
+            const result = staticRoute.schema.handler(req, res);
+
+            if (result && typeof (result as any).then === 'function') {
+              return (result as Promise<any>)
+                .then(actualResult => {
+                  if (actualResult !== undefined && !res.headersSent) {
+                    res.json(actualResult);
                   }
                   return true;
-                }
-              } catch {
-                if (!res.headersSent) {
-                  res.status(500).json({ error: 'Internal server error' });
-                }
-                return true;
-              }
-            }
-          } else {
-            // Dynamic route - use regex matching
-            const pattern = route.compiledPath.pattern;
-            if (pattern) {
-              const matches = path.match(pattern);
-              if (matches) {
-                // Use pre-compiled extractor for faster param extraction
-                req.params = (route as any).paramExtractor
-                  ? (route as any).paramExtractor(matches)
-                  : {};
-
-                try {
-                  const result = route.schema.handler(req, res);
-
-                  if (result && typeof (result as any).then === 'function') {
-                    return (result as Promise<any>)
-                      .then(actualResult => {
-                        if (actualResult !== undefined && !res.headersSent) {
-                          res.json(actualResult);
-                        }
-                        return true;
-                      })
-                      .catch(() => {
-                        if (!res.headersSent) {
-                          res.status(500).json({ error: 'Internal server error' });
-                        }
-                        return true;
-                      });
-                  } else {
-                    if (result !== undefined && !res.headersSent) {
-                      res.json(result);
-                    }
-                    return true;
-                  }
-                } catch {
+                })
+                .catch(() => {
                   if (!res.headersSent) {
                     res.status(500).json({ error: 'Internal server error' });
                   }
                   return true;
-                }
+                });
+            } else {
+              if (result !== undefined && !res.headersSent) {
+                res.json(result);
               }
+              return true;
             }
+          } catch {
+            if (!res.headersSent) {
+              res.status(500).json({ error: 'Internal server error' });
+            }
+            return true;
           }
         }
+
+        // Non-fast-path static route
+        return (async () => {
+          await this.executeRoute(staticRoute, req, res, { params: {} });
+          return true;
+        })();
       }
     }
 
-    // Phase 2 & 3: Non-fast-path routes (async)
-    return (async () => {
-      // Phase 2: O(1) static route lookup
-      const staticKey = `${method}:${path}`;
+    // FAST PATH 2: Try radix tree for dynamic routes
+    const radixResult = this.radixRouter.findRoute(method, path);
+    if (radixResult) {
+      const route = radixResult.handler as InternalRoute;
+      req.params = radixResult.params;
 
-      // Check pool manager cache
-      const cachedRoute = this.poolManager.getCachedRoute(staticKey);
-      if (cachedRoute) {
-        // Re-extract params for dynamic routes (cached route might be dynamic)
-        if (!cachedRoute.compiledPath.isStatic) {
-          const matchResult = PathMatcher.match(cachedRoute.compiledPath, path);
-          if (matchResult) {
-            await this.executeRoute(cachedRoute, req, res, matchResult);
+      // Fast-path dynamic routes (no middleware)
+      if (route.isFastPath) {
+        try {
+          const result = route.schema.handler(req, res);
+
+          if (result && typeof (result as any).then === 'function') {
+            return (result as Promise<any>)
+              .then(actualResult => {
+                if (actualResult !== undefined && !res.headersSent) {
+                  res.json(actualResult);
+                }
+                return true;
+              })
+              .catch(() => {
+                if (!res.headersSent) {
+                  res.status(500).json({ error: 'Internal server error' });
+                }
+                return true;
+              });
+          } else {
+            if (result !== undefined && !res.headersSent) {
+              res.json(result);
+            }
             return true;
           }
-        } else {
-          await this.executeRoute(cachedRoute, req, res, { params: {} });
+        } catch {
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Internal server error' });
+          }
           return true;
         }
       }
 
-      const staticRoute = this.staticRoutes.get(staticKey);
-      if (staticRoute) {
-        this.poolManager.cacheRoute(staticKey, staticRoute);
-        req.params = {};
-        await this.executeRoute(staticRoute, req, res, { params: {} });
+      // Non-fast-path dynamic routes (with middleware)
+      return (async () => {
+        await this.executeRoute(route, req, res, { params: radixResult.params });
         return true;
-      }
+      })();
+    }
 
-      // Phase 3: Segment-based dynamic route matching
-      const segmentCount = PathMatcher.countSegments(path);
-      const candidates = this.dynamicRoutesBySegments.get(segmentCount) || [];
-
-      for (const route of candidates) {
-        if (route.schema.method === method) {
-          const matchResult = PathMatcher.match(route.compiledPath, path);
-          if (matchResult) {
-            this.poolManager.cacheRoute(staticKey, route);
-            await this.executeRoute(route, req, res, matchResult);
-            return true;
-          }
-        }
-      }
-
-      // No route found
-      return false;
-    })();
+    // No route found
+    return false;
   }
 
   // ===== Route Execution =====
@@ -580,9 +608,12 @@ export class UnifiedRouter {
     res: HttpResponse,
     matchResult: { params: Record<string, string> }
   ): Promise<void> {
-    // Set params from pool
+    // Set params from pool - manual assignment instead of Object.assign
     req.params = this.poolManager.acquireParams();
-    Object.assign(req.params, matchResult.params);
+    const params = matchResult.params;
+    for (const key in params) {
+      req.params[key] = params[key];
+    }
 
     try {
       // Performance: Skip empty executionOrder array iteration
@@ -659,8 +690,15 @@ export class UnifiedRouter {
         break;
 
       case 'auth':
-        // Auth uses middleware (from requireAuth helper)
-        if (route.authMiddleware) {
+        // Auth uses middleware (from requireAuth helper) - created lazily
+        if (schema.auth) {
+          if (!route.authMiddleware) {
+            route.authMiddleware = requireAuth({
+              roles: schema.auth.roles,
+              permissions: schema.auth.permissions,
+              allowUnauthenticated: schema.auth.optional,
+            });
+          }
           await this.executeMiddleware(route.authMiddleware, req, res);
         }
         break;
@@ -745,7 +783,7 @@ export class UnifiedRouter {
 
       try {
         const result = middleware(req, res, next);
-        // Optimized: Duck typing faster than instanceof
+        // Duck typing faster than instanceof
         if (result && typeof result.then === 'function') {
           result.then(() => !resolved && next()).catch(reject);
         } else if (!resolved) {
@@ -819,8 +857,18 @@ export class UnifiedRouter {
   }
 
   getStats() {
+    // Manually build object instead of spread operator
     return {
-      ...this.stats,
+      totalRoutes: this.stats.totalRoutes,
+      staticRoutes: this.stats.staticRoutes,
+      dynamicRoutes: this.stats.dynamicRoutes,
+      fastPathRoutes: this.stats.fastPathRoutes,
+      requestCount: this.stats.requestCount,
+      fastPathHits: this.stats.fastPathHits,
+      staticHits: this.stats.staticHits,
+      dynamicHits: this.stats.dynamicHits,
+      cacheHits: this.stats.cacheHits,
+      radixHits: this.stats.radixHits,
       poolManager: this.poolManager.getPerformanceSummary(),
       pathMatcher: PathMatcher.getStats(),
     };

@@ -268,9 +268,21 @@ export class SessionCore {
 
     if (id) {
       sessionData = (await this.loadSession(id)) || {};
-      if (!sessionData || Object.keys(sessionData).length === 0) {
+      // Fast empty check without Object.keys
+      if (!sessionData) {
         id = this.generateSessionId();
         isNew = true;
+      } else {
+        let hasData = false;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const _ in sessionData) {
+          hasData = true;
+          break;
+        }
+        if (!hasData) {
+          id = this.generateSessionId();
+          isNew = true;
+        }
       }
     } else {
       id = this.generateSessionId();

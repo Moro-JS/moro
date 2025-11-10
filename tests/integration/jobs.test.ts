@@ -10,6 +10,13 @@ describe('Jobs Integration', () => {
         enabled: true,
         maxConcurrentJobs: 5,
         enableLeaderElection: false,
+        gracefulShutdownTimeout: 1000, // Fast shutdown for tests
+      },
+      logger: {
+        level: 'error', // Reduce logging noise in tests
+      },
+      workers: {
+        enabled: false, // Disable workers for faster tests
       },
     });
   });
@@ -225,13 +232,14 @@ describe('Jobs Integration', () => {
 
         app.close().then(done);
       });
-    }, 10000);
+    }, 5000); // Reduced timeout from 10000
 
     it('should shutdown job scheduler on close', async () => {
       const handler = jest.fn().mockImplementation(
         () =>
           new Promise(resolve => {
-            setTimeout(() => resolve('done'), 500);
+            const timer = setTimeout(() => resolve('done'), 100); // Reduced from 500ms
+            timer.unref(); // Don't keep process alive
           })
       );
 
@@ -251,7 +259,7 @@ describe('Jobs Integration', () => {
       await jobPromise;
 
       expect(handler).toHaveBeenCalled();
-    }, 10000);
+    }, 5000); // Reduced timeout from 10000
   });
 
   describe('Error Handling', () => {

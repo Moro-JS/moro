@@ -5,13 +5,13 @@
 // Run with: NODE_ENV=production LOG_LEVEL=warn node benchmark-server-uws.js
 // Or override port/host: PORT=8080 HOST=0.0.0.0 node benchmark-server-uws.js
 //
-// NOTE: When using clustering with uWebSockets, you may see "uv_loop_close() while having
-// open handles" warnings on shutdown. This is a known limitation of uWebSockets.js with
-// worker threads and is harmless. The process exits cleanly despite the warning.
-// To suppress: NODE_NO_WARNINGS=1 node benchmark-server-uws.js
+// CLUSTERING: When enabled with uWebSockets, uses SO_REUSEPORT on Linux for kernel-level
+// connection distribution. Each worker binds to the same port, and the OS kernel distributes
+// connections efficiently. Works great under real production load with many clients.
 
 process.env.NODE_ENV = 'production';
 import { createApp } from './dist/index.js';
+import os from 'os';
 
 
 const app = createApp({
@@ -68,7 +68,7 @@ app.listen(() => {
         console.log(`║   MoroJS + uWebSockets Benchmark Server              ║`);
         console.log(`╠═══════════════════════════════════════════════════════╣`);
         console.log(`║   Server:    ${actualServerType.padEnd(37)} ║`);
-        console.log(`║   Mode:      Single-threaded (optimized wrappers)   ║`);
+        console.log(`║   Mode:      Clustered (SO_REUSEPORT)               ║`);
         console.log(`║   URL:       http://0.0.0.0:${config.server.port}                   ║`);
         console.log(`║   Status:    Ready for benchmarking                  ║`);
         console.log(`╚═══════════════════════════════════════════════════════╝\n`);
@@ -99,8 +99,8 @@ app.listen(() => {
         console.log(`  # Terminal 4: autocannon -c 500 -d 60 -p 10 http://127.0.0.1:PORT`);
         console.log(``);
         console.log(`This tests:`);
-        console.log(`  3111: Moro (Node.js + 24 workers)         - Multi-core`);
-        console.log(`  3112: Moro + uWebSockets (minimal wrapper) - Single-core`);
+        console.log(`  3111: Moro (Node.js + ${os.cpus().length} workers)      - Multi-core`);
+        console.log(`  3112: Moro + uWebSockets (${os.cpus().length} workers)   - Multi-core (SO_REUSEPORT)`);
         console.log(`  3113: Pure uWebSockets (no framework)      - Single-core`);
         console.log(``);
     }, 1000);

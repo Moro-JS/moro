@@ -582,13 +582,27 @@ class UWSEmitterWrapper implements WebSocketEmitter {
 
       // If target rooms specified, connection must be in at least one
       if (this.targetRooms.length > 0) {
-        const inTargetRoom = this.targetRooms.some(room => connectionRooms.has(room));
+        let inTargetRoom = false;
+        const targetLen = this.targetRooms.length;
+        for (let i = 0; i < targetLen; i++) {
+          if (connectionRooms.has(this.targetRooms[i])) {
+            inTargetRoom = true;
+            break;
+          }
+        }
         if (!inTargetRoom) continue;
       }
 
       // If excluded rooms specified, connection must not be in any
       if (this.excludedRooms.length > 0) {
-        const inExcludedRoom = this.excludedRooms.some(room => connectionRooms.has(room));
+        let inExcludedRoom = false;
+        const excludeLen = this.excludedRooms.length;
+        for (let i = 0; i < excludeLen; i++) {
+          if (connectionRooms.has(this.excludedRooms[i])) {
+            inExcludedRoom = true;
+            break;
+          }
+        }
         if (inExcludedRoom) continue;
       }
 
@@ -602,18 +616,46 @@ class UWSEmitterWrapper implements WebSocketEmitter {
   }
 
   to(room: string | string[]): WebSocketEmitter {
-    const rooms = Array.isArray(room) ? room : [room];
+    // Avoid unnecessary array wrapping and spreading
+    let newTargetRooms: string[];
+    if (Array.isArray(room)) {
+      if (this.targetRooms.length === 0) {
+        newTargetRooms = room;
+      } else {
+        newTargetRooms = this.targetRooms.concat(room);
+      }
+    } else {
+      if (this.targetRooms.length === 0) {
+        newTargetRooms = [room];
+      } else {
+        newTargetRooms = [...this.targetRooms, room];
+      }
+    }
     return new UWSEmitterWrapper(this.connections, {
-      rooms: [...this.targetRooms, ...rooms],
+      rooms: newTargetRooms,
       exceptRooms: this.excludedRooms,
     });
   }
 
   except(room: string | string[]): WebSocketEmitter {
-    const rooms = Array.isArray(room) ? room : [room];
+    // Avoid unnecessary array wrapping and spreading
+    let newExcludedRooms: string[];
+    if (Array.isArray(room)) {
+      if (this.excludedRooms.length === 0) {
+        newExcludedRooms = room;
+      } else {
+        newExcludedRooms = this.excludedRooms.concat(room);
+      }
+    } else {
+      if (this.excludedRooms.length === 0) {
+        newExcludedRooms = [room];
+      } else {
+        newExcludedRooms = [...this.excludedRooms, room];
+      }
+    }
     return new UWSEmitterWrapper(this.connections, {
       rooms: this.targetRooms,
-      exceptRooms: [...this.excludedRooms, ...rooms],
+      exceptRooms: newExcludedRooms,
     });
   }
 

@@ -520,32 +520,30 @@ export class OpenAPIGenerator {
   // Simple YAML converter (basic implementation)
   private objectToYAML(obj: any, indent: number = 0): string {
     const spaces = '  '.repeat(indent);
-    let yaml = '';
+    const lines: string[] = [];
 
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === undefined) continue;
 
-      yaml += `${spaces}${key}:`;
-
       if (typeof value === 'object' && !Array.isArray(value)) {
-        yaml += '\n' + this.objectToYAML(value, indent + 1);
+        lines.push(`${spaces}${key}:\n${this.objectToYAML(value, indent + 1)}`);
       } else if (Array.isArray(value)) {
-        yaml += '\n';
+        lines.push(`${spaces}${key}:`);
         for (const item of value) {
           if (typeof item === 'object') {
-            yaml += `${spaces}  -\n` + this.objectToYAML(item, indent + 2);
+            lines.push(`${spaces}  -\n${this.objectToYAML(item, indent + 2)}`);
           } else {
-            yaml += `${spaces}  - ${item}\n`;
+            lines.push(`${spaces}  - ${item}`);
           }
         }
       } else if (typeof value === 'string') {
-        yaml += ` "${value}"\n`;
+        lines.push(`${spaces}${key}: "${value}"`);
       } else {
-        yaml += ` ${value}\n`;
+        lines.push(`${spaces}${key}: ${value}`);
       }
     }
 
-    return yaml;
+    return lines.join('\n') + (lines.length > 0 ? '\n' : '');
   }
 }
 

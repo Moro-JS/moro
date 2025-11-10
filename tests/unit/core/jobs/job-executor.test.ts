@@ -268,14 +268,6 @@ describe('JobExecutor', () => {
     });
   });
 
-  describe('Memory Monitoring', () => {
-    it('should not execute if memory threshold exceeded', async () => {
-      // Skip this test - memory threshold is difficult to test reliably
-      // in different environments
-      expect(true).toBe(true);
-    });
-  });
-
   describe('Shutdown', () => {
     it('should wait for running jobs during shutdown', async () => {
       const jobFn = jest.fn().mockImplementation(

@@ -87,7 +87,9 @@ export class Router {
   }
 
   getRoutes(): RouteDefinition[] {
-    return [...this.routes];
+    // Return direct reference instead of creating defensive copy
+    // Routes array is not modified externally, so copy is unnecessary overhead
+    return this.routes;
   }
 
   // Performance statistics for monitoring (delegates to UnifiedRouter)

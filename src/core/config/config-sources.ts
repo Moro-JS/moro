@@ -536,23 +536,38 @@ function normalizeCreateAppOptions(options: MoroOptions): Partial<AppConfig> {
 /**
  * Check if a config field contains sensitive information
  */
-function isSensitiveField(path: string): boolean {
-  const sensitivePatterns = [
-    'password',
-    'secret',
-    'key',
-    'token',
-    'auth',
-    'stripe',
-    'paypal',
-    'smtp.password',
-    'smtp.username',
-    'database.url',
-    'redis.url',
-    'mysql.password',
-  ];
+// Cache sensitive patterns as a Set for O(1) lookups
+const SENSITIVE_PATTERNS = new Set([
+  'password',
+  'secret',
+  'key',
+  'token',
+  'auth',
+  'stripe',
+  'paypal',
+  'smtp.password',
+  'smtp.username',
+  'database.url',
+  'redis.url',
+  'mysql.password',
+]);
 
-  return sensitivePatterns.some(pattern => path.toLowerCase().includes(pattern.toLowerCase()));
+function isSensitiveField(path: string): boolean {
+  const lowerPath = path.toLowerCase();
+
+  // Fast path: direct lookup for exact matches
+  if (SENSITIVE_PATTERNS.has(lowerPath)) {
+    return true;
+  }
+
+  // Check if any pattern is included in the path
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (lowerPath.includes(pattern)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

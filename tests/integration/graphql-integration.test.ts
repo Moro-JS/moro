@@ -15,7 +15,7 @@ describe('GraphQL Integration with Moro', () => {
   it('should configure GraphQL endpoint', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `
         type Query {
           hello: String!
@@ -28,10 +28,7 @@ describe('GraphQL Integration with Moro', () => {
       },
     });
 
-    // Wait for GraphQL to initialize
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const schema = app.getGraphQLSchema();
+    const schema = await app.getGraphQLSchema();
     expect(schema).toBeDefined();
     expect(schema?.getQueryType()).toBeDefined();
   });
@@ -39,7 +36,7 @@ describe('GraphQL Integration with Moro', () => {
   it('should get GraphQL stats', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `
         type Query {
           hello: String!
@@ -59,10 +56,7 @@ describe('GraphQL Integration with Moro', () => {
       },
     });
 
-    // Wait for initialization
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const stats = app.getGraphQLStats();
+    const stats = await app.getGraphQLStats();
 
     expect(stats).toBeDefined();
     expect(stats?.schema).toBeDefined();
@@ -74,13 +68,13 @@ describe('GraphQL Integration with Moro', () => {
   it('should throw error when GraphQL configured twice', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,
       resolvers: { Query: { hello: () => 'World' } },
     });
 
     expect(() => {
-      app.graphql({
+      app.graphqlInit({
         typeDefs: `type Query { bye: String! }`,
         resolvers: { Query: { bye: () => 'Bye' } },
       });
@@ -90,7 +84,7 @@ describe('GraphQL Integration with Moro', () => {
   it('should work with custom context', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `
         type Query {
           currentUser: String!
@@ -110,42 +104,33 @@ describe('GraphQL Integration with Moro', () => {
       }),
     });
 
-    // Wait for initialization
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const schema = app.getGraphQLSchema();
+    const schema = await app.getGraphQLSchema();
     expect(schema).toBeDefined();
   });
 
   it('should enable JIT by default', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,
       resolvers: { Query: { hello: () => 'World' } },
       enableJIT: true,
     });
 
-    // Wait for initialization
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const stats = app.getGraphQLStats();
+    const stats = await app.getGraphQLStats();
     expect(stats?.jit).toBeDefined();
   });
 
   it('should support disabling JIT', async () => {
     app = createApp();
 
-    app.graphql({
+    app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,
       resolvers: { Query: { hello: () => 'World' } },
       enableJIT: false,
     });
 
-    // Wait for initialization
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const stats = app.getGraphQLStats();
+    const stats = await app.getGraphQLStats();
     expect(stats?.jit?.enabled).toBe(false);
   });
 });

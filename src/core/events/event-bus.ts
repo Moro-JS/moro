@@ -33,7 +33,7 @@ export class MoroEventBus implements GlobalEventBus {
 
   // Global event emission with full context and metrics
   async emit<T = any>(event: string, data: T, context?: Partial<EventContext>): Promise<boolean> {
-    // CRITICAL: Check listeners FIRST - most events have zero listeners
+    // Check listeners FIRST - most events have zero listeners
     // This early exit avoids ALL work below (timestamp, ID generation, metrics, etc.)
     const listenerCount = this.emitter.listenerCount(event);
     if (listenerCount === 0) {

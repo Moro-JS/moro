@@ -2,7 +2,7 @@
 // Built for developers who demand performance, elegance, and zero compromises
 // Event-driven • Modular • Enterprise-ready • Developer-first
 import { Moro as MoroCore } from './core/framework.js';
-import { HttpRequest, HttpResponse, middleware } from './core/http/index.js';
+import { HttpRequest, HttpResponse } from './core/http/index.js';
 import { ModuleConfig, InternalRouteDefinition } from './types/module.js';
 import { MoroOptions } from './types/core.js';
 import { ModuleDefaultsConfig } from './types/config.js';
@@ -26,9 +26,6 @@ import { normalizeValidationError } from './core/validation/schema-interface.js'
 import { initializeConfig, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
 import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime/index.js';
-// uWebSockets Worker Thread Clustering
-import { UWSWorkerClusterManager } from './core/http/utils/uws-worker-clustering.js';
-import { isMainThread } from 'worker_threads';
 // Job System Integration
 import {
   JobScheduler,
@@ -47,8 +44,21 @@ import type {
   JobHealth,
   LeaderElectionOptions,
 } from './core/jobs/index.js';
+// Worker Threads Integration (optional - lazy loaded when needed)
+import { WorkerThreadsFacade, type WorkerTask } from './core/workers/index.js';
 // GraphQL System Integration (lazy loaded)
 import type { GraphQLOptions } from './core/graphql/types.js';
+// gRPC System Integration (lazy loaded)
+import type {
+  GrpcOptions,
+  ServiceImplementation,
+  GrpcClient,
+  GrpcClientOptions,
+} from './core/grpc/types.js';
+// Built-in middleware integration
+import { cors, helmet, compression, bodySize } from './core/middleware/built-in/index.js';
+// Mail System Integration (lazy loaded)
+import type { MailConfig, MailOptions, MailResult } from './core/mail/types.js';
 
 // Lazy imports for GraphQL to avoid crashes when not installed
 let GraphQLCore: any;
@@ -100,6 +110,23 @@ export class Moro extends EventEmitter {
   private graphqlCore?: any; // Use any to avoid import dependency
   private graphqlSubscriptionManager?: any;
   private graphqlInitPromise?: Promise<void>;
+  private graphqlConfig?: any; // Store config for lazy initialization
+  // gRPC system (lazy loaded)
+  private grpcManager?: any; // Use any to avoid import dependency
+  private grpcInitPromise?: Promise<void>;
+  private grpcStarted = false;
+  private grpcConfig?: any; // Store config for lazy initialization
+  // Queue system (lazy loaded)
+  private queueManager?: any; // Use any to avoid import dependency
+  private queueInitialized = false;
+  private queueInitPromise?: Promise<void>; // Track initialization promise
+  private queueConfigs: Map<string, any> = new Map(); // Store queue configs for lazy initialization
+  // Worker threads system (lazy loaded facade)
+  private workerFacade: WorkerThreadsFacade;
+  // Mail system (lazy loaded)
+  private mailManager?: any; // Use any to avoid import dependency
+  private mailInitialized = false;
+  private mailConfig?: any; // Store config for lazy initialization
 
   constructor(options: MoroOptions = {}) {
     super(); // Call EventEmitter constructor
@@ -218,6 +245,9 @@ export class Moro extends EventEmitter {
         leaderElection: jobSchedulerOptions.enableLeaderElection,
       });
     }
+
+    // Initialize worker threads facade (optional - lazy loaded)
+    this.workerFacade = new WorkerThreadsFacade();
 
     // Setup default middleware if enabled - use config defaults with options override
     this.setupDefaultMiddleware({
@@ -618,22 +648,10 @@ export class Moro extends EventEmitter {
     }
 
     // Check if clustering is enabled for massive performance gains
-    const usingUWebSockets = this.config.server?.useUWebSockets || false;
-
     if (this.config.performance?.clustering?.enabled) {
-      if (usingUWebSockets) {
-        // Use worker thread clustering for uWebSockets
-        this.logger.info(
-          'uWebSockets clustering enabled - using worker threads with acceptor pattern',
-          'Cluster'
-        );
-        this.startWithUWSClustering(port, host as string, callback);
-        return;
-      } else {
-        // Use traditional Node.js cluster module for standard HTTP
-        this.startWithClustering(port, host as string, callback);
-        return;
-      }
+      this.logger.info('Clustering enabled - using Node.js cluster', 'Cluster');
+      this.startWithClustering(port, host as string, callback);
+      return;
     }
     this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
 
@@ -648,7 +666,7 @@ export class Moro extends EventEmitter {
     }
 
     // Add unified routing middleware (handles both chainable and direct routes)
-    // Optimized: call router without extra async wrapper when possible
+    // Call router without extra async wrapper when possible
     this.coreFramework.addMiddleware(
       async (req: HttpRequest, res: HttpResponse, next: () => void) => {
         // Try unified router first (handles all route types)
@@ -701,6 +719,18 @@ export class Moro extends EventEmitter {
         this.startJobScheduler().catch(err => {
           this.logger.error(`Failed to start job scheduler: ${String(err)}`);
         });
+
+        // Initialize GraphQL if configured
+        this.ensureGraphQLInitialized().catch(error => {
+          this.logger.error(`Failed to initialize GraphQL: ${error}`, 'GraphQL');
+        });
+
+        // Start gRPC server if initialized
+        if (this.grpcManager && !this.grpcStarted) {
+          this.startGrpc().catch(error => {
+            this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+          });
+        }
 
         if (callback) callback();
       };
@@ -957,7 +987,7 @@ export class Moro extends EventEmitter {
   private dynamicRoutesBySegments = new Map<number, any[]>();
 
   private findMatchingRoute(method: string, path: string) {
-    // Phase 1: O(1) static route lookup
+    // O(1) static route lookup
     const staticKey = `${method}:${path}`;
     const staticRoute = this.staticRouteMap.get(staticKey);
     if (staticRoute) {
@@ -968,7 +998,7 @@ export class Moro extends EventEmitter {
       };
     }
 
-    // Phase 2: Optimized dynamic route matching by segment count
+    // Dynamic route matching by segment count
     const segmentCount = PathMatcher.countSegments(path);
     const candidateRoutes = this.dynamicRoutesBySegments.get(segmentCount) || [];
 
@@ -1185,12 +1215,12 @@ export class Moro extends EventEmitter {
           : this.config.security.cors
             ? this.config.security.cors
             : {};
-      this.use(middleware.cors(corsOptions));
+      this.use(cors(corsOptions));
     }
 
     // Helmet - check config enabled property OR options.security.helmet.enabled === true
     if (this.config.security.helmet.enabled || options.security?.helmet?.enabled === true) {
-      this.use(middleware.helmet());
+      this.use(helmet());
     }
 
     // Compression - check config enabled property OR options.performance.compression.enabled === true
@@ -1204,11 +1234,11 @@ export class Moro extends EventEmitter {
           : this.config.performance.compression
             ? this.config.performance.compression
             : {};
-      this.use(middleware.compression(compressionOptions));
+      this.use(compression(compressionOptions));
     }
 
     // Body size limiting
-    this.use(middleware.bodySize({ limit: '10mb' }));
+    this.use(bodySize({ limit: '10mb' }));
   }
 
   // Enhanced auto-discovery initialization
@@ -1650,7 +1680,7 @@ export class Moro extends EventEmitter {
       }
 
       // Add unified routing middleware (handles both chainable and direct routes)
-      // Optimized: call router without extra async wrapper when possible
+      // Call router without extra async wrapper when possible
       this.coreFramework.addMiddleware(
         async (req: HttpRequest, res: HttpResponse, next: () => void) => {
           // Try unified router first (handles all route types)
@@ -1730,213 +1760,22 @@ export class Moro extends EventEmitter {
   }
 
   /**
-   * uWebSockets Worker Thread Clustering Implementation
-   * Uses worker threads with acceptor pattern for maximum performance
-   */
-  private async startWithUWSClustering(
-    port: number,
-    host?: string,
-    callback?: () => void
-  ): Promise<void> {
-    // Check if we're in a worker thread spawned by UWSWorkerClusterManager
-    if (UWSWorkerClusterManager.isUWSWorker()) {
-      // Worker thread mode - setup the app and send descriptor to acceptor
-      await this.startUWSWorker(port, host, callback);
-      return;
-    }
-
-    // Main thread mode - create acceptor and spawn workers
-    if (isMainThread) {
-      await this.startUWSAcceptor(port, host, callback);
-      return;
-    }
-  }
-
-  private async startUWSAcceptor(
-    port: number,
-    host?: string,
-    callback?: () => void
-  ): Promise<void> {
-    const clusterManager = new UWSWorkerClusterManager({
-      workers: this.config.performance?.clustering?.workers,
-      memoryPerWorkerGB: this.config.performance?.clustering?.memoryPerWorkerGB,
-      port,
-      host,
-      ssl: this.config.server?.ssl,
-    });
-
-    try {
-      await clusterManager.startAcceptorAndWorkers(() => {
-        // This factory function is not used in our implementation
-        // as we're using process.argv[1] to spawn workers
-        return null;
-      });
-
-      if (callback) {
-        callback();
-      }
-    } catch (error) {
-      this.logger.error('Failed to start uWebSockets cluster', 'UWSCluster', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-  }
-
-  private async startUWSWorker(port: number, host?: string, callback?: () => void): Promise<void> {
-    this.logger.info(`UWS Worker thread ${process.pid} initializing`, 'UWSWorker');
-
-    // Reduce logging contention in workers
-    if (!this.userSetLogger) {
-      applyLoggingConfiguration(undefined, { level: 'warn' });
-    }
-
-    // Worker-specific optimizations
-    process.env.UV_THREADPOOL_SIZE = '64';
-
-    // Setup graceful shutdown for worker
-    let isShuttingDown = false;
-    const shutdownWorker = async () => {
-      if (isShuttingDown) return;
-      isShuttingDown = true;
-
-      this.logger.info(`UWS Worker thread ${process.pid} shutting down...`, 'UWSWorker');
-
-      // Close the server to clean up handles
-      const httpServer = (this.coreFramework as any).httpServer;
-      if (httpServer && typeof httpServer.close === 'function') {
-        // Convert callback-based close to Promise
-        await new Promise<void>(resolve => {
-          httpServer.close(() => {
-            resolve();
-          });
-
-          // Timeout after 1.5 seconds
-          setTimeout(() => {
-            this.logger.warn('HTTP server close timeout', 'UWSWorker');
-            resolve();
-          }, 1500);
-        });
-      }
-
-      // Clean up ALL event listeners
-      try {
-        this.eventBus.removeAllListeners();
-      } catch {
-        // Ignore cleanup errors
-      }
-      try {
-        this.removeAllListeners();
-      } catch {
-        // Ignore cleanup errors
-      }
-
-      // Remove all signal handlers
-      process.removeAllListeners('SIGINT');
-      process.removeAllListeners('SIGTERM');
-
-      this.logger.info(`UWS Worker thread ${process.pid} cleanup complete`, 'UWSWorker');
-    };
-
-    // Handle shutdown messages from parent
-    UWSWorkerClusterManager.setupWorkerShutdownHandler(shutdownWorker);
-
-    // Also handle direct signals
-    process.once('SIGINT', shutdownWorker);
-    process.once('SIGTERM', shutdownWorker);
-
-    // Emit worker starting event
-    this.eventBus.emit('server:starting', {
-      port,
-      runtime: this.runtimeType,
-      worker: process.pid,
-      workerType: 'thread',
-    });
-
-    // Add documentation middleware first (if enabled)
-    try {
-      const docsMiddleware = this.documentation.getDocsMiddleware();
-      this.coreFramework.addMiddleware(docsMiddleware);
-    } catch {
-      // Documentation not enabled, that's fine
-    }
-
-    // Add unified routing middleware
-    this.coreFramework.addMiddleware(
-      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-        const handled = this.unifiedRouter.handleRequest(req, res);
-
-        if (handled && typeof (handled as any).then === 'function') {
-          const isHandled = await (handled as Promise<boolean>);
-          if (!isHandled) {
-            next();
-          }
-        } else {
-          if (!(handled as boolean)) {
-            next();
-          }
-        }
-      }
-    );
-
-    // Register legacy direct routes with the HTTP server
-    if (this.routes.length > 0) {
-      this.registerDirectRoutes();
-    }
-
-    const workerCallback = () => {
-      const displayHost = host || 'localhost';
-      this.logger.info(
-        `UWS Worker thread ${process.pid} ready on ${displayHost}:${port}`,
-        'UWSWorker'
-      );
-      this.eventBus.emit('server:started', {
-        port,
-        runtime: this.runtimeType,
-        worker: process.pid,
-        workerType: 'thread',
-      });
-
-      // Send descriptor to acceptor
-      const httpServer = (this.coreFramework as any).httpServer;
-      if (httpServer && typeof httpServer.getDescriptor === 'function') {
-        UWSWorkerClusterManager.sendDescriptorToAcceptor(httpServer.getApp())
-          .then(() => {
-            if (callback) {
-              callback();
-            }
-          })
-          .catch((error: Error) => {
-            this.logger.error('Failed to send descriptor to acceptor', 'UWSWorker', {
-              error: error.message,
-            });
-          });
-      } else {
-        this.logger.error('HTTP server does not support getDescriptor()', 'UWSWorker');
-      }
-    };
-
-    // Ensure WebSocket setup is complete before starting worker
-    await this.processQueuedWebSocketRegistrations();
-
-    // Start listening on worker-specific port (4000 range)
-    const workerPort = 4000 + parseInt(process.env.UWS_WORKER_INDEX || '0', 10);
-
-    if (host) {
-      this.coreFramework.listen(workerPort, host, workerCallback);
-    } else {
-      this.coreFramework.listen(workerPort, workerCallback);
-    }
-  }
-
-  /**
    * Gracefully close the application and clean up resources
    * This should be called in tests and during shutdown
    */
   async close(): Promise<void> {
     this.logger.debug('Closing Moro application...');
 
-    // Shutdown job scheduler first
+    // Shutdown worker threads first (fastest)
+    try {
+      this.logger.info('Shutting down worker threads...');
+      await this.workerFacade.shutdown();
+    } catch {
+      // Workers might not be initialized or available
+      this.logger.debug('Worker threads not available for shutdown');
+    }
+
+    // Shutdown job scheduler
     if (this.jobScheduler) {
       try {
         this.logger.info('Shutting down job scheduler...');
@@ -1944,6 +1783,16 @@ export class Moro extends EventEmitter {
         this.jobsStarted = false;
       } catch (err) {
         this.logger.error(`Error shutting down job scheduler: ${String(err)}`);
+      }
+    }
+
+    // Shutdown gRPC server
+    if (this.grpcManager && this.grpcStarted) {
+      try {
+        this.logger.info('Shutting down gRPC server...');
+        await this.stopGrpc();
+      } catch (err) {
+        this.logger.error(`Error shutting down gRPC server: ${String(err)}`);
       }
     }
 
@@ -1976,7 +1825,10 @@ export class Moro extends EventEmitter {
               resolve();
             });
           }),
-          new Promise<void>(resolve => setTimeout(resolve, 2000)), // 2 second timeout
+          new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 2000); // 2 second timeout
+            timer.unref(); // Don't keep process alive
+          }),
         ]);
       } catch {
         // Force close if graceful close fails
@@ -1990,6 +1842,31 @@ export class Moro extends EventEmitter {
         this.moduleDiscovery.cleanup();
       } catch {
         // Ignore cleanup errors
+      }
+    }
+
+    // Shutdown queue manager
+    if (this.queueManager) {
+      try {
+        await this.queueManager.shutdown();
+        this.logger.debug('Queue system shutdown complete');
+      } catch (error) {
+        this.logger.warn(`Error shutting down queue system: ${error}`);
+      }
+    }
+    // Clear queue state on close
+    this.queueConfigs.clear();
+    this.queueInitialized = false;
+    this.queueInitPromise = undefined;
+    this.queueManager = undefined;
+
+    // Shutdown mail system
+    if (this.mailManager) {
+      try {
+        await this.mailManager.close();
+        this.logger.debug('Mail system shutdown complete');
+      } catch (error) {
+        this.logger.warn(`Error shutting down mail system: ${error}`);
       }
     }
 
@@ -2203,14 +2080,14 @@ export class Moro extends EventEmitter {
   // ========================================
 
   /**
-   * Configure GraphQL endpoint with schema, resolvers, and options
+   * Configure GraphQL endpoint (synchronous, lazy initialization)
    *
    * @param options - GraphQL configuration options
    *
    * @example
    * ```ts
    * // Using type definitions and resolvers
-   * app.graphql({
+   * app.graphqlInit({
    *   typeDefs: `
    *     type Query {
    *       hello: String
@@ -2239,14 +2116,14 @@ export class Moro extends EventEmitter {
    *   })
    * });
    *
-   * app.graphql({
+   * app.graphqlInit({
    *   pothosSchema: builder
    * });
    * ```
    */
-  graphql(options: GraphQLOptions): this {
+  graphqlInit(options: GraphQLOptions): this {
     if (this.graphqlCore || this.graphqlInitPromise) {
-      throw new Error('GraphQL has already been configured. Call graphql() only once.');
+      throw new Error('GraphQL has already been configured. Call graphqlInit() only once.');
     }
 
     // Check if graphql package is available
@@ -2259,23 +2136,35 @@ export class Moro extends EventEmitter {
       );
     }
 
-    this.logger.info('Configuring GraphQL', 'GraphQL', {
+    this.logger.info('Configuring GraphQL (will initialize on server start)', 'GraphQL', {
       path: options.path || '/graphql',
       jit: options.enableJIT !== false,
       playground: options.enablePlayground !== false,
     });
 
-    // Initialize GraphQL asynchronously (like WebSocket registration pattern)
+    // Store config and trigger initialization immediately
+    this.graphqlConfig = options;
     this.graphqlInitPromise = this.initializeGraphQL(options);
-
-    // Add to initialization promises
-    const originalEnsure = this.ensureAutoDiscoveryComplete.bind(this);
-    this.ensureAutoDiscoveryComplete = async () => {
-      await originalEnsure();
-      await this.graphqlInitPromise;
-    };
+    this.eventBus.emit('graphql:configured', { options });
 
     return this;
+  }
+
+  /**
+   * Lazy initialize GraphQL system
+   */
+  private async ensureGraphQLInitialized(): Promise<void> {
+    if (this.graphqlCore || this.graphqlInitPromise) {
+      await this.graphqlInitPromise;
+      return;
+    }
+
+    if (!this.graphqlConfig) {
+      return; // GraphQL not configured, skip
+    }
+
+    this.graphqlInitPromise = this.initializeGraphQL(this.graphqlConfig);
+    await this.graphqlInitPromise;
   }
 
   /**
@@ -2368,14 +2257,83 @@ export class Moro extends EventEmitter {
   /**
    * Get GraphQL schema (if configured)
    */
-  getGraphQLSchema(): any | undefined {
+  async getGraphQLSchema(): Promise<any | undefined> {
+    await this.ensureGraphQLInitialized();
     return this.graphqlCore?.getSchema();
+  }
+
+  // ========================================
+  // Worker Threads API
+  // ========================================
+
+  /**
+   * Execute a task on worker threads (CPU-intensive operations)
+   * @param task - Task to execute
+   * @returns Promise resolving to task result
+   *
+   * @example
+   * ```ts
+   * // JWT verification (CPU-intensive)
+   * const payload = await app.executeOnWorker({
+   *   id: 'jwt-verify-123',
+   *   type: 'jwt:verify',
+   *   data: { token, secret }
+   * });
+   *
+   * // Heavy computation
+   * const result = await app.executeOnWorker({
+   *   id: 'compute-456',
+   *   type: 'computation:heavy',
+   *   data: { iterations: 1000000 }
+   * });
+   * ```
+   */
+  async executeOnWorker<T = any>(task: WorkerTask): Promise<T> {
+    return this.workerFacade.executeTask<T>(task);
+  }
+
+  /**
+   * Get worker manager instance for advanced usage
+   */
+  async getWorkerManager() {
+    await this.workerFacade.ensureInitialized?.(); // Trigger initialization if needed
+    return this.workerFacade;
+  }
+
+  /**
+   * Get worker thread statistics
+   */
+  async getWorkerStats() {
+    return this.workerFacade.getStats();
+  }
+
+  /**
+   * JWT operations using worker threads (prevents event loop blocking)
+   */
+  async getJwtWorker() {
+    return this.workerFacade.getJwtWorker();
+  }
+
+  /**
+   * Crypto operations using worker threads
+   */
+  async getCryptoWorker() {
+    return this.workerFacade.getCryptoWorker();
+  }
+
+  /**
+   * Heavy computation operations using worker threads
+   */
+  async getComputeWorker() {
+    return this.workerFacade.getComputeWorker();
   }
 
   /**
    * Get GraphQL stats
    */
-  getGraphQLStats() {
+  async getGraphQLStats() {
+    await this.ensureGraphQLInitialized();
+
     if (!this.graphqlCore) {
       return null;
     }
@@ -2384,6 +2342,757 @@ export class Moro extends EventEmitter {
       ...this.graphqlCore.getStats(),
       subscriptions: this.graphqlSubscriptionManager?.getSubscriptionCount() || 0,
     };
+  }
+
+  // =====================
+  // gRPC Methods
+  // =====================
+
+  /**
+   * Configure gRPC server (synchronous, lazy initialization)
+   *
+   * @example
+   * ```typescript
+   * app.grpcInit({
+   *   port: 50051,
+   *   host: '0.0.0.0',
+   *   adapter: 'grpc-js',
+   *   enableHealthCheck: true,
+   *   enableReflection: true
+   * });
+   * ```
+   */
+  grpcInit(options: GrpcOptions = {}): this {
+    if (this.grpcInitPromise) {
+      this.logger.warn('gRPC already configured', 'GRPC');
+      return this;
+    }
+
+    this.logger.info('Configuring gRPC (will initialize on server start)', 'GRPC');
+
+    // Store config for lazy initialization
+    this.grpcConfig = {
+      port: 50051,
+      host: '0.0.0.0',
+      adapter: 'grpc-js',
+      enableHealthCheck: true,
+      enableReflection: false,
+      ...options,
+    };
+
+    return this;
+  }
+
+  /**
+   * Lazy initialize gRPC system
+   */
+  private async ensureGrpcInitialized(): Promise<void> {
+    if (this.grpcManager || this.grpcInitPromise) {
+      await this.grpcInitPromise;
+      return;
+    }
+
+    if (!this.grpcConfig) {
+      return; // gRPC not configured, skip
+    }
+
+    this.grpcInitPromise = (async () => {
+      try {
+        this.logger.info('Initializing gRPC system', 'GRPC');
+
+        // Lazy load gRPC manager
+        const { GrpcManager } = await import('./core/grpc/grpc-manager.js');
+
+        // Create gRPC manager
+        this.grpcManager = new GrpcManager(this.grpcConfig);
+
+        // Initialize gRPC
+        await this.grpcManager.initialize();
+
+        this.logger.info('gRPC system initialized', 'GRPC');
+      } catch (error) {
+        this.logger.error(`Failed to initialize gRPC: ${error}`, 'GRPC');
+        throw error;
+      }
+    })();
+
+    await this.grpcInitPromise;
+  }
+
+  /**
+   * Register a gRPC service from a proto file
+   *
+   * @example
+   * ```typescript
+   * app.grpcService('./proto/users.proto', 'UserService', {
+   *   getUser: async (call, callback) => {
+   *     const user = await db.users.findById(call.request.id);
+   *     callback(null, user);
+   *   },
+   *   listUsers: async (call) => {
+   *     for (const user of users) {
+   *       call.write(user);
+   *     }
+   *     call.end();
+   *   }
+   * });
+   * ```
+   */
+  async grpcService(
+    protoPath: string,
+    serviceName: string,
+    implementation: ServiceImplementation,
+    packageName?: string
+  ): Promise<void> {
+    if (!this.grpcConfig && !this.grpcManager) {
+      throw new Error(
+        'gRPC not initialized. Call app.grpcInit() first.\n' +
+          'Example: app.grpcInit({ port: 50051 });'
+      );
+    }
+
+    // Lazy initialize gRPC if not already done
+    await this.ensureGrpcInitialized();
+
+    if (!this.grpcManager) {
+      throw new Error(
+        'gRPC not initialized. Call app.grpcInit() first.\n' +
+          'Example: app.grpcInit({ port: 50051 });'
+      );
+    }
+
+    try {
+      await this.grpcManager.registerService(protoPath, serviceName, implementation, packageName);
+
+      this.logger.info(`gRPC service registered: ${serviceName}`, 'GRPC');
+    } catch (error) {
+      this.logger.error(`Failed to register gRPC service ${serviceName}: ${error}`, 'GRPC');
+      throw error;
+    }
+  }
+
+  /**
+   * Start gRPC server
+   * Called automatically by listen() if gRPC is configured
+   */
+  async startGrpc(): Promise<void> {
+    // Lazy initialize if needed
+    await this.ensureGrpcInitialized();
+
+    if (!this.grpcManager) {
+      return;
+    }
+
+    if (this.grpcStarted) {
+      this.logger.warn('gRPC server already started', 'GRPC');
+      return;
+    }
+
+    try {
+      await this.grpcManager.start();
+      this.grpcStarted = true;
+
+      const stats = this.grpcManager.getStats();
+      if (stats) {
+        this.logger.info('gRPC server started successfully', 'GRPC');
+      }
+    } catch (error) {
+      this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+      throw error;
+    }
+  }
+
+  /**
+   * Stop gRPC server gracefully
+   */
+  async stopGrpc(): Promise<void> {
+    if (!this.grpcManager || !this.grpcStarted) {
+      return;
+    }
+
+    try {
+      await this.grpcManager.stop();
+      this.grpcStarted = false;
+      this.logger.info('gRPC server stopped', 'GRPC');
+    } catch (error) {
+      this.logger.error(`Error stopping gRPC server: ${error}`, 'GRPC');
+      throw error;
+    }
+  }
+
+  /**
+   * Create a gRPC client for calling remote services
+   *
+   * @example
+   * ```typescript
+   * const client = await app.createGrpcClient(
+   *   './proto/users.proto',
+   *   'UserService',
+   *   'localhost:50051'
+   * );
+   *
+   * const user = await client.getUser({ id: '123' });
+   * ```
+   */
+  async createGrpcClient(
+    protoPath: string,
+    serviceName: string,
+    address: string,
+    options?: Partial<GrpcClientOptions>
+  ): Promise<GrpcClient> {
+    if (!this.grpcConfig && !this.grpcManager) {
+      throw new Error(
+        'gRPC not initialized. Call app.grpcInit() first.\n' +
+          'Example: app.grpcInit({ port: 50051 });'
+      );
+    }
+
+    // Lazy initialize gRPC if not already done
+    await this.ensureGrpcInitialized();
+
+    if (!this.grpcManager) {
+      throw new Error(
+        'gRPC not initialized. Call app.grpcInit() first.\n' +
+          'Example: app.grpcInit({ port: 50051 });'
+      );
+    }
+
+    try {
+      const client = await this.grpcManager.createClient(protoPath, serviceName, address, options);
+
+      this.logger.info(`gRPC client created for ${serviceName} at ${address}`, 'GRPC');
+
+      return client;
+    } catch (error) {
+      this.logger.error(`Failed to create gRPC client: ${error}`, 'GRPC');
+      throw error;
+    }
+  }
+
+  /**
+   * Get gRPC statistics
+   */
+  getGrpcStats() {
+    if (!this.grpcManager) {
+      return null;
+    }
+
+    return this.grpcManager.getStats();
+  }
+
+  /**
+   * Get list of registered gRPC services
+   */
+  getGrpcServices() {
+    if (!this.grpcManager) {
+      return [];
+    }
+
+    return this.grpcManager.getServices();
+  }
+
+  /**
+   * Initialize queue system (synchronous for first queue, subsequent queues added immediately)
+   *
+   * @example
+   * ```typescript
+   * app.queueInit('emails', {
+   *   adapter: 'bull',
+   *   connection: {
+   *     host: 'localhost',
+   *     port: 6379
+   *   },
+   *   concurrency: 5
+   * });
+   * ```
+   */
+  queueInit(name: string, options: any): this {
+    // Initialize queue manager on first call
+    if (!this.queueInitialized && !this.queueInitPromise) {
+      this.queueInitPromise = (async () => {
+        try {
+          this.logger.info('Initializing queue system', 'QUEUE');
+          const { QueueManager } = await import('./core/queue/index.js');
+          this.queueManager = new QueueManager(this.eventBus as any);
+          this.queueInitialized = true;
+          this.logger.info('Queue system initialized', 'QUEUE');
+        } catch (error) {
+          this.logger.error(`Failed to initialize queue system: ${error}`, 'QUEUE');
+          throw error;
+        }
+      })();
+    }
+
+    // Store config to register after initialization
+    this.queueConfigs.set(name, options);
+    this.logger.debug(`Queue "${name}" configured`, 'QUEUE');
+
+    // Register queue async (manager will be ready)
+    if (this.queueInitPromise) {
+      this.queueInitPromise
+        .then(async () => {
+          if (this.queueManager) {
+            await this.queueManager.registerQueue(name, options);
+            this.logger.info(`Queue "${name}" registered with ${options.adapter} adapter`, 'QUEUE');
+          }
+        })
+        .catch(error => {
+          this.logger.error(`Failed to register queue "${name}": ${error}`, 'QUEUE');
+        });
+    }
+
+    return this;
+  }
+
+  /**
+   * Ensure queue system is initialized
+   */
+  private async ensureQueueInitialized(): Promise<void> {
+    if (this.queueInitPromise) {
+      await this.queueInitPromise;
+    }
+  }
+
+  /**
+   * @deprecated Use queueInit() instead
+   */
+  async queue(name: string, options: any): Promise<void> {
+    if (!this.queueInitialized) {
+      try {
+        this.logger.info('Initializing queue system', 'QUEUE');
+        const { QueueManager } = await import('./core/queue/index.js');
+        this.queueManager = new QueueManager(this.eventBus as any);
+        this.queueInitialized = true;
+        this.logger.info('Queue system initialized', 'QUEUE');
+      } catch (error) {
+        this.logger.error(`Failed to initialize queue system: ${error}`, 'QUEUE');
+        throw error;
+      }
+    }
+
+    try {
+      await this.queueManager.registerQueue(name, options);
+      this.logger.info(`Queue "${name}" registered with ${options.adapter} adapter`, 'QUEUE');
+    } catch (error) {
+      this.logger.error(`Failed to register queue "${name}": ${error}`, 'QUEUE');
+      throw error;
+    }
+  }
+
+  /**
+   * Add a job to a queue
+   *
+   * @example
+   * ```typescript
+   * await app.addToQueue('emails', {
+   *   to: 'user@example.com',
+   *   subject: 'Welcome'
+   * }, {
+   *   priority: 10,
+   *   delay: 5000
+   * });
+   * ```
+   */
+  async addToQueue<T = any>(queueName: string, data: T, options?: any): Promise<any> {
+    // Ensure queue system is initialized
+    await this.ensureQueueInitialized();
+
+    if (!this.queueManager) {
+      throw new Error(
+        `Queue "${queueName}" not initialized. Call app.queueInit('${queueName}', options) first.`
+      );
+    }
+
+    return await this.queueManager.addToQueue(queueName, data, options);
+  }
+
+  /**
+   * Add multiple jobs to a queue in bulk
+   *
+   * @example
+   * ```typescript
+   * await app.addBulkToQueue('emails', [
+   *   { data: { to: 'user1@example.com' }, options: { priority: 1 } },
+   *   { data: { to: 'user2@example.com' }, options: { priority: 2 } }
+   * ]);
+   * ```
+   */
+  async addBulkToQueue<T = any>(
+    queueName: string,
+    jobs: Array<{ data: T; options?: any }>
+  ): Promise<any[]> {
+    // Ensure queue system is initialized
+    await this.ensureQueueInitialized();
+
+    if (!this.queueManager) {
+      throw new Error(
+        `Queue "${queueName}" not initialized. Call app.queue('${queueName}', options) first.`
+      );
+    }
+
+    return await this.queueManager.addBulkToQueue(queueName, jobs);
+  }
+
+  /**
+   * Register a processor for a queue
+   *
+   * @example
+   * ```typescript
+   * // Simple processor
+   * app.processQueue('emails', async (job) => {
+   *   await sendEmail(job.data);
+   * });
+   *
+   * // With concurrency
+   * app.processQueue('images', 3, async (job) => {
+   *   await processImage(job.data);
+   * });
+   * ```
+   */
+  async processQueue<R = any>(
+    queueName: string,
+    concurrencyOrHandler: number | ((job: any) => Promise<R>),
+    handler?: (job: any) => Promise<R>
+  ): Promise<void> {
+    // Ensure queue system is initialized
+    await this.ensureQueueInitialized();
+
+    if (!this.queueManager) {
+      throw new Error(
+        `Queue "${queueName}" not initialized. Call app.queueInit('${queueName}', options) first.`
+      );
+    }
+
+    return await this.queueManager.processQueue(queueName, concurrencyOrHandler, handler);
+  }
+
+  /**
+   * Get queue status
+   */
+  async getQueueStatus(queueName: string): Promise<any> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.getQueueStatus(queueName);
+  }
+
+  /**
+   * Get a specific job from a queue
+   */
+  async getJob(queueName: string, jobId: string): Promise<any> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.getJob(queueName, jobId);
+  }
+
+  /**
+   * Get jobs from a queue by status
+   */
+  async getJobs(
+    queueName: string,
+    status?: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'paused',
+    start: number = 0,
+    end: number = -1
+  ): Promise<any[]> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.getJobs(queueName, status, start, end);
+  }
+
+  /**
+   * Remove a job from a queue
+   */
+  async removeJob(queueName: string, jobId: string): Promise<void> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.removeJob(queueName, jobId);
+  }
+
+  /**
+   * Retry a failed job
+   */
+  async retryJob(queueName: string, jobId: string): Promise<void> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.retryJob(queueName, jobId);
+  }
+
+  /**
+   * Pause a queue
+   */
+  async pauseQueue(queueName: string): Promise<void> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.pauseQueue(queueName);
+  }
+
+  /**
+   * Resume a paused queue
+   */
+  async resumeQueue(queueName: string): Promise<void> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.resumeQueue(queueName);
+  }
+
+  /**
+   * Clean old jobs from a queue
+   */
+  async cleanQueue(
+    queueName: string,
+    gracePeriod: number,
+    status?: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'paused'
+  ): Promise<void> {
+    if (!this.queueManager) {
+      throw new Error(`Queue system not initialized.`);
+    }
+
+    return await this.queueManager.cleanQueue(queueName, gracePeriod, status);
+  }
+
+  /**
+   * Get all registered queue names
+   */
+  getQueueNames(): string[] {
+    // Return configured queues (includes both initialized and pending)
+    const configuredQueues = Array.from(this.queueConfigs.keys());
+
+    if (!this.queueManager) {
+      return configuredQueues;
+    }
+
+    // Merge with manager's queues (in case some were added directly)
+    const managerQueues = this.queueManager.getQueueNames();
+    const allQueues = new Set([...configuredQueues, ...managerQueues]);
+    return Array.from(allQueues);
+  }
+
+  /**
+   * Check if a queue is registered
+   */
+  hasQueue(queueName: string): boolean {
+    // Check if it's configured (includes both initialized and pending)
+    if (this.queueConfigs.has(queueName)) {
+      return true;
+    }
+
+    if (!this.queueManager) {
+      return false;
+    }
+
+    return this.queueManager.hasQueue(queueName);
+  }
+
+  // =====================
+  // Mail System Methods
+  // =====================
+
+  /**
+   * Configure mail system (synchronous, lazy initialization)
+   *
+   * @example
+   * ```typescript
+   * // Using Nodemailer (SMTP) - chainable, no await needed!
+   * app.mailInit({
+   *   adapter: 'nodemailer',
+   *   from: { name: 'My App', email: 'noreply@myapp.com' },
+   *   connection: {
+   *     host: 'smtp.gmail.com',
+   *     port: 587,
+   *     secure: false,
+   *     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD }
+   *   },
+   *   templates: { path: './emails', engine: 'moro', cache: true }
+   * });
+   *
+   * // Using SendGrid
+   * app.mailInit({
+   *   adapter: 'sendgrid',
+   *   from: 'noreply@myapp.com',
+   *   connection: { apiKey: process.env.SENDGRID_API_KEY }
+   * });
+   * ```
+   */
+  mailInit(config: MailConfig): this {
+    if (this.mailInitialized) {
+      this.logger.warn('Mail system already configured', 'Mail');
+      return this;
+    }
+
+    // Store config for lazy initialization
+    this.mailConfig = config;
+    this.logger.debug('Mail system configured (will initialize on first use)', 'Mail');
+    this.eventBus.emit('mail:configured', { config });
+
+    return this;
+  }
+
+  /**
+   * Lazy initialize mail system on first use
+   */
+  private async ensureMailInitialized(): Promise<void> {
+    if (this.mailInitialized) {
+      return;
+    }
+
+    if (!this.mailConfig) {
+      throw new Error(
+        'Mail system not configured. Call app.mailInit(config) first.\n' +
+          "Example: app.mailInit({ adapter: 'console', from: 'noreply@myapp.com' });"
+      );
+    }
+
+    try {
+      this.logger.info('Initializing mail system', 'Mail');
+
+      const { MailManager } = await import('./core/mail/index.js');
+      this.mailManager = new MailManager(this.mailConfig);
+
+      await this.mailManager.initialize();
+
+      if (this.mailConfig.queue?.enabled && this.queueManager) {
+        this.mailManager.setQueueManager(this.queueManager);
+
+        const queueName = this.mailConfig.queue.name || 'emails';
+
+        if (!this.queueManager.hasQueue(queueName)) {
+          this.queueConfigs.set(queueName, {
+            adapter: 'memory',
+            concurrency: this.mailConfig.queue.attempts || 3,
+          });
+          await this.ensureQueueInitialized();
+
+          await this.processQueue(queueName, async (job: any) => {
+            if (this.mailManager) {
+              return await this.mailManager.send(job.data);
+            }
+            throw new Error('Mail manager not initialized');
+          });
+        }
+
+        this.logger.info(`Mail queue "${queueName}" configured`, 'Mail');
+      }
+
+      this.mailInitialized = true;
+      this.logger.info('Mail system initialized successfully', 'Mail');
+    } catch (error) {
+      this.logger.error(`Failed to initialize mail system: ${error}`, 'Mail');
+      throw error;
+    }
+  }
+
+  /**
+   * Send an email
+   *
+   * @example
+   * ```typescript
+   * // Simple email
+   * await app.sendMail({
+   *   to: 'user@example.com',
+   *   subject: 'Welcome',
+   *   text: 'Welcome to our app!'
+   * });
+   *
+   * // With template
+   * await app.sendMail({
+   *   to: 'user@example.com',
+   *   subject: 'Password Reset',
+   *   template: 'password-reset',
+   *   data: { name: 'John', resetUrl: 'https://myapp.com/reset/token123' }
+   * });
+   *
+   * // With attachments
+   * await app.sendMail({
+   *   to: 'user@example.com',
+   *   subject: 'Invoice',
+   *   template: 'invoice',
+   *   data: { invoice },
+   *   attachments: [{ filename: 'invoice.pdf', content: pdfBuffer }]
+   * });
+   * ```
+   */
+  async sendMail(options: MailOptions): Promise<MailResult> {
+    // Lazy initialize on first use
+    await this.ensureMailInitialized();
+
+    this.eventBus.emit('mail:sending', { options });
+
+    try {
+      const result = await this.mailManager.send(options);
+
+      if (result.success) {
+        this.eventBus.emit('mail:sent', { result, options });
+      } else {
+        this.eventBus.emit('mail:failed', { error: new Error(result.error), options });
+      }
+
+      return result;
+    } catch (error) {
+      this.eventBus.emit('mail:failed', { error, options });
+      throw error;
+    }
+  }
+
+  /**
+   * Send multiple emails in bulk
+   *
+   * @example
+   * ```typescript
+   * await app.sendBulkMail([
+   *   { to: 'user1@example.com', subject: 'Hello', text: 'Hi!' },
+   *   { to: 'user2@example.com', subject: 'Hello', text: 'Hi!' }
+   * ]);
+   * ```
+   */
+  async sendBulkMail(options: MailOptions[]): Promise<MailResult[]> {
+    // Lazy initialize on first use
+    await this.ensureMailInitialized();
+
+    return await this.mailManager.sendBulk(options);
+  }
+
+  /**
+   * Verify mail adapter connection
+   */
+  async verifyMail(): Promise<boolean> {
+    // Lazy initialize on first use
+    try {
+      await this.ensureMailInitialized();
+      return await this.mailManager.verify();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get mail template engine for advanced usage
+   */
+  getMailTemplateEngine(): any {
+    if (!this.mailManager) {
+      return undefined;
+    }
+
+    return this.mailManager.getTemplateEngine();
+  }
+
+  /**
+   * Check if mail system is configured
+   */
+  hasMailSystem(): boolean {
+    return !!this.mailConfig || this.mailInitialized;
   }
 }
 

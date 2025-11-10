@@ -25,7 +25,22 @@ export interface MoroOptions {
   runtime?: RuntimeConfig;
 
   // HTTP/WebSocket options
-  http2?: boolean;
+  http2?:
+    | boolean
+    | {
+        allowHTTP1?: boolean;
+        maxSessionMemory?: number;
+        settings?: {
+          headerTableSize?: number;
+          enablePush?: boolean;
+          initialWindowSize?: number;
+          maxFrameSize?: number;
+          maxConcurrentStreams?: number;
+          maxHeaderListSize?: number;
+          maxHeaderSize?: number;
+          enableConnectProtocol?: boolean;
+        };
+      };
   https?: {
     key: string | Buffer;
     cert: string | Buffer;
@@ -46,6 +61,12 @@ export interface MoroOptions {
   compression?: boolean | object;
   helmet?: boolean | object;
   logger?: LoggerOptions | boolean;
+
+  // Worker threads configuration
+  workers?: {
+    count?: number;
+    maxQueueSize?: number;
+  };
 
   // Direct config overrides (partial)
   server?: Partial<AppConfig['server']>;

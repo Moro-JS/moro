@@ -95,7 +95,9 @@ export const withCaching =
   (factory: ServiceFactory<T>): ServiceFactory<T> => {
     const cache = new Map<string, { value: T; expires: number }>();
     return async (deps, ctx) => {
-      const key = `${ctx?.requestId || 'global'}_${JSON.stringify(deps)}`;
+      // Use stable key without JSON.stringify
+      const depsKeys = Object.keys(deps).sort();
+      const key = `${ctx?.requestId || 'global'}_${depsKeys.join('_')}`;
       const cached = cache.get(key);
       if (cached && cached.expires > Date.now()) {
         return cached.value;

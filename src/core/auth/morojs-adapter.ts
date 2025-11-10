@@ -123,13 +123,22 @@ function toWebRequest(req: MoroJSRequest, basePath: string): Request {
     });
   }
 
-  // Add cookies to headers if not present
-  if (req.cookies && Object.keys(req.cookies).length > 0) {
-    const cookieHeader = Object.entries(req.cookies)
-      .map(([name, value]) => `${name}=${value}`)
-      .join('; ');
+  // Add cookies to headers if not present - check first key instead of length
+  if (req.cookies) {
+    let hasCookies = false;
+    let cookieHeader = '';
+    for (const name in req.cookies) {
+      if (Object.prototype.hasOwnProperty.call(req.cookies, name)) {
+        if (hasCookies) {
+          cookieHeader += `; ${name}=${req.cookies[name]}`;
+        } else {
+          cookieHeader = `${name}=${req.cookies[name]}`;
+          hasCookies = true;
+        }
+      }
+    }
 
-    if (!headers.has('cookie')) {
+    if (hasCookies && !headers.has('cookie')) {
       headers.set('cookie', cookieHeader);
     }
   }

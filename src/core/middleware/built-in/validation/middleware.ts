@@ -16,7 +16,8 @@ import { sharedValidationCore, type ValidationConfig } from './core.js';
  * ```
  */
 export function createValidationMiddleware(config: ValidationConfig): StandardMiddleware {
-  if (!config || Object.keys(config).length === 0) {
+  // Check if any validation config exists without Object.keys
+  if (!config || (!config.body && !config.query && !config.params && !config.headers)) {
     return (_req, _res, next) => next();
   }
 

@@ -25,12 +25,30 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
     return cookies;
   }
 
-  cookieHeader.split(';').forEach(cookie => {
-    const [name, value] = cookie.trim().split('=');
-    if (name && value) {
-      cookies[name] = decodeURIComponent(value);
+  // Avoid split/forEach, use single pass with indexOf
+  let start = 0;
+  const len = cookieHeader.length;
+
+  for (let i = 0; i <= len; i++) {
+    if (i === len || cookieHeader[i] === ';') {
+      if (i > start) {
+        const cookie = cookieHeader.substring(start, i).trim();
+        const equalIndex = cookie.indexOf('=');
+        if (equalIndex > 0) {
+          const name = cookie.substring(0, equalIndex);
+          const value = cookie.substring(equalIndex + 1);
+          if (name && value) {
+            try {
+              cookies[name] = decodeURIComponent(value);
+            } catch {
+              cookies[name] = value;
+            }
+          }
+        }
+      }
+      start = i + 1;
     }
-  });
+  }
 
   return cookies;
 }
@@ -98,9 +116,8 @@ export class CookieCore {
     const cookieString = buildCookieString(name, value, options);
 
     const existingCookies = res.getHeader('Set-Cookie') || [];
-    const cookies = Array.isArray(existingCookies)
-      ? [...existingCookies]
-      : [existingCookies as string];
+    // Avoid spread operator - direct array manipulation
+    const cookies = Array.isArray(existingCookies) ? existingCookies : [existingCookies as string];
     cookies.push(cookieString);
     res.setHeader('Set-Cookie', cookies);
   }
@@ -109,11 +126,17 @@ export class CookieCore {
    * Clear a cookie by setting its expiration to the past
    */
   clearCookie(res: HttpResponse, name: string, options: CookieOptions = {}): void {
+    // Avoid spread operator - manually set properties
     const clearOptions: CookieOptions = {
-      ...options,
       expires: new Date(0),
       maxAge: 0,
     };
+    // Copy other options manually
+    if (options.path !== undefined) clearOptions.path = options.path;
+    if (options.domain !== undefined) clearOptions.domain = options.domain;
+    if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
+    if (options.secure !== undefined) clearOptions.secure = options.secure;
+    if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
     this.setCookie(res, name, '', clearOptions);
   }
 }

@@ -303,6 +303,9 @@ export class JobExecutor extends EventEmitter {
         reject(error);
       }, this.options.timeout);
 
+      // Don't keep process alive for job execution timeout
+      timeoutId.unref();
+
       // Setup abort handler
       const abortHandler = () => {
         clearTimeout(timeoutId);
@@ -359,7 +362,10 @@ export class JobExecutor extends EventEmitter {
    * Sleep helper
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref(); // Don't keep process alive
+    });
   }
 
   /**

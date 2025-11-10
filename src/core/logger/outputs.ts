@@ -38,10 +38,16 @@ export class FileOutput implements LogOutput {
     const timestamp = entry.timestamp.toISOString();
     const level = entry.level.toUpperCase().padEnd(5);
     const context = entry.context ? `[${entry.context}] ` : '';
-    const metadata =
-      entry.metadata && Object.keys(entry.metadata).length > 0
-        ? ` ${JSON.stringify(entry.metadata)}`
-        : '';
+
+    // Fast empty check without Object.keys
+    let metadata = '';
+    if (entry.metadata) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for (const _ in entry.metadata) {
+        metadata = ` ${JSON.stringify(entry.metadata)}`;
+        break;
+      }
+    }
 
     return `${timestamp} ${level} ${context}${entry.message}${metadata}`;
   }

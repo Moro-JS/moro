@@ -349,3 +349,4 @@ describe('GraphQL Adapter', () => {
     });
   });
 });
+

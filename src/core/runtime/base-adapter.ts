@@ -13,11 +13,16 @@ export abstract class BaseRuntimeAdapter implements RuntimeAdapter {
   ): Promise<any>;
   abstract createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): any;
 
-  // Generate UUID without external dependency
+  // Generate UUID without external dependency - optimized version
   protected generateUUID(): string {
-    return randomBytes(16)
-      .toString('hex')
-      .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    const bytes = randomBytes(16);
+    // Set version (4) and variant bits
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    // Convert to hex string directly without intermediate operations
+    const hex = bytes.toString('hex');
+    return `${hex.substr(0, 8)}-${hex.substr(8, 4)}-${hex.substr(12, 4)}-${hex.substr(16, 4)}-${hex.substr(20, 12)}`;
   }
 
   // Common request enhancement
@@ -50,7 +55,12 @@ export abstract class BaseRuntimeAdapter implements RuntimeAdapter {
 
       json: function (data: any) {
         this.headers['Content-Type'] = 'application/json';
-        this.body = JSON.stringify(data);
+        // Avoid JSON.stringify if data is already a string
+        if (typeof data === 'string') {
+          this.body = data;
+        } else {
+          this.body = JSON.stringify(data);
+        }
         this.headersSent = true;
       },
 

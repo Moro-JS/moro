@@ -6,6 +6,7 @@ Complete guide to MoroJS performance optimization, benchmarks, and monitoring.
 
 - [Performance Overview](#performance-overview)
 - [Benchmarks](#benchmarks)
+- [Routing Performance](#routing-performance)
 - [Optimization Strategies](#optimization-strategies)
 - [Caching](#caching)
 - [Rate Limiting](#rate-limiting)
@@ -78,6 +79,152 @@ Performance across different deployment environments:
 | **Vercel Edge** | **48,200** | 15ms | 18MB | Auto |
 | **AWS Lambda** | **45,800** | 95ms | 22MB | Auto |
 | **Cloudflare Workers** | **51,100** | 8ms | 16MB | Auto |
+
+---
+
+## Routing Performance
+
+### Radix Tree Router
+
+MoroJS uses a hybrid radix tree implementation for route matching.
+
+#### Algorithm Characteristics
+
+- **Static routes:** O(1) complexity via hash-based Map lookup
+- **Dynamic routes:** O(log n) complexity via tree traversal
+- **Wildcard routes:** O(log n) complexity via tree traversal
+- **Memory:** Lazy node initialization (nodes created only when needed)
+
+#### Implementation Details
+
+The router uses:
+
+1. **FNV-1a Hashing** - Fast hash function for static path segments
+2. **Map-based Storage** - JavaScript Map for O(1) hash lookups
+3. **Tree Structure** - Radix tree nodes for dynamic segments
+4. **Lazy Initialization** - Child nodes are null until first route added
+
+#### Hash-Based Optimization
+
+MoroJS uses FNV-1a hashing for static path segments:
+
+```typescript
+// Traditional linear search (slow)
+for (const route of routes) {
+  if (route.path === requestPath) {
+    return route.handler;
+  }
+}
+
+// MoroJS hash-based lookup (fast)
+const hash = fastHash(pathSegment);
+const node = staticChildren.get(hash); // O(1) Map lookup
+```
+
+This provides near-instant lookups for static routes regardless of route count.
+
+#### Route Patterns
+
+**Static Routes** (fastest)
+```typescript
+app.get('/api/users', handler);
+app.get('/api/posts', handler);
+app.get('/api/comments', handler);
+// O(1) hash lookup
+```
+
+**Dynamic Routes** (fast)
+```typescript
+app.get('/api/users/:id', handler);
+app.get('/api/posts/:id/comments/:commentId', handler);
+// O(log n) tree traversal
+```
+
+**Mixed Routes** (optimized)
+```typescript
+app.get('/api/users', handler);           // Static (O(1))
+app.get('/api/users/:id', handler);       // Dynamic (O(log n))
+app.get('/api/users/:id/posts', handler); // Mixed (optimized)
+// Radix tree handles all patterns efficiently
+```
+
+#### Route Definition Patterns
+
+**Static Routes**
+
+```typescript
+app.get('/api/admin/users', handler);
+app.get('/api/admin/settings', handler);
+// Uses hash-based Map lookup (O(1))
+```
+
+**Dynamic Routes**
+
+```typescript
+app.get('/api/users/:id', getUser);
+app.get('/api/users/:id/posts', getUserPosts);
+app.get('/api/users/:id/comments', getUserComments);
+// Uses tree traversal (O(log n))
+// Routes with common prefixes share tree nodes
+```
+
+**Wildcard Routes**
+
+```typescript
+app.get('/files/*', handler);
+// Uses tree traversal (O(log n))
+// Matches any path under /files/
+```
+
+#### Scaling Behavior
+
+The radix tree scales logarithmically:
+
+- **Static routes:** O(1) regardless of total route count (hash lookup)
+- **Dynamic routes:** O(log n) where n is the number of routes at that tree level
+- **Memory:** O(n) where n is the number of unique route segments
+
+Tree depth is determined by the longest route path, not total route count.
+
+#### Internal Optimizations
+
+MoroJS radix tree includes several performance optimizations:
+
+1. **Lazy Node Initialization** - Nodes created only when needed
+2. **Hash-Based Static Children** - O(1) lookups for static segments
+3. **Optimized Parameter Extraction** - Zero-copy parameter parsing
+4. **Path Segment Caching** - Reuse parsed path segments
+
+```typescript
+// Lazy initialization example
+export interface RadixNode {
+  segment: string;
+  segmentHash: number;
+  staticChildren: Map<number, RadixNode> | null; // null until needed
+  paramChild: RadixNode | null;
+  handler: any;
+}
+```
+
+### Route Caching
+
+For highly-trafficked routes, consider caching at the application level:
+
+```typescript
+// Cache route results
+app.get('/api/popular-data')
+  .cache({
+    ttl: 300, // 5 minutes
+    key: (req) => `popular-data`,
+    strategy: 'memory'
+  })
+  .handler(async (req, res) => {
+    // Expensive operation
+    return await getPopularData();
+  });
+```
+
+See [Worker Threads Guide](./WORKERS_GUIDE.md) for CPU-intensive operations.
 
 ---
 

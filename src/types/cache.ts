@@ -23,10 +23,16 @@ export interface CacheOptions {
   };
   defaultTtl?: number;
   keyPrefix?: string;
+
+  // HTTP Caching Options
+  httpCaching?: boolean;
   maxAge?: number;
+  cacheControl?: string;
   staleWhileRevalidate?: number;
   vary?: string[];
   etag?: boolean | 'weak' | 'strong';
+  conditionalRequests?: boolean;
+  generateETag?: (content: string, type?: string) => string;
 }
 
 export interface CachedResponse {
