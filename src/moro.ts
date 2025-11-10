@@ -1796,13 +1796,10 @@ export class Moro extends EventEmitter {
       }
     }
 
-    // Cleanup GraphQL executor timers
+    // Cleanup GraphQL adapter resources
     if (this.graphqlCore) {
       try {
-        const executor = this.graphqlCore.getExecutor();
-        if (executor) {
-          executor.cleanup();
-        }
+        await this.graphqlCore.cleanup();
       } catch (err) {
         this.logger.error(`Error cleaning up GraphQL: ${String(err)}`);
       }
