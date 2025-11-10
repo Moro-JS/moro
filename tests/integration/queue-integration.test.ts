@@ -12,9 +12,6 @@ describe('Queue Integration with Moro', () => {
 
   beforeEach(() => {
     app = createApp({
-      server: {
-        port: 0,
-      },
       logger: { level: 'error' } // Suppress logs during tests
     });
   });
