@@ -1,4 +1,3 @@
- 
 // @ts-nocheck
 import { JobExecutor } from '../../../../src/core/jobs/job-executor.js';
 import { createFrameworkLogger } from '../../../../src/core/logger/index.js';

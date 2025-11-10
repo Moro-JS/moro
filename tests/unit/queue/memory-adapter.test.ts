@@ -163,7 +163,11 @@ describe('MemoryAdapter', () => {
         }
       });
 
-      await adapter.addJob('test-queue', { message: 'test' }, { attempts: 3, backoff: { type: 'fixed', delay: 10 } });
+      await adapter.addJob(
+        'test-queue',
+        { message: 'test' },
+        { attempts: 3, backoff: { type: 'fixed', delay: 10 } }
+      );
 
       // Wait for retries
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -296,4 +300,3 @@ describe('MemoryAdapter', () => {
     });
   });
 });
-

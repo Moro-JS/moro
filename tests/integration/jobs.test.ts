@@ -1,4 +1,3 @@
- 
 // @ts-nocheck
 import { createApp } from '../../src/index.js';
 

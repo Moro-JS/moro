@@ -1,4 +1,3 @@
- 
 // Mail System Tests
 // Comprehensive test suite for email functionality
 
@@ -195,10 +194,7 @@ describe('Mail System', () => {
   describe('Template System', () => {
     it('should render template with variables', async () => {
       const templatePath = path.join(testTemplatesPath, 'welcome.html');
-      await fs.writeFile(
-        templatePath,
-        '<h1>Welcome {{name}}!</h1><p>Email: {{email}}</p>'
-      );
+      await fs.writeFile(templatePath, '<h1>Welcome {{name}}!</h1><p>Email: {{email}}</p>');
 
       const config: MailConfig = {
         adapter: 'console',
@@ -403,10 +399,7 @@ describe('Mail System', () => {
         engine: 'moro',
       });
 
-      const result = await engine.renderString(
-        'Hello {{name}}!',
-        { name: 'World' }
-      );
+      const result = await engine.renderString('Hello {{name}}!', { name: 'World' });
 
       expect(result).toBe('Hello World!');
     });
@@ -416,15 +409,12 @@ describe('Mail System', () => {
         engine: 'moro',
       });
 
-      const result = await engine.renderString(
-        'Hello {{user.name}}! Email: {{user.email}}',
-        {
-          user: {
-            name: 'John Doe',
-            email: 'john@example.com',
-          },
-        }
-      );
+      const result = await engine.renderString('Hello {{user.name}}! Email: {{user.email}}', {
+        user: {
+          name: 'John Doe',
+          email: 'john@example.com',
+        },
+      });
 
       expect(result).toContain('John Doe');
       expect(result).toContain('john@example.com');
@@ -435,10 +425,9 @@ describe('Mail System', () => {
         engine: 'moro',
       });
 
-      const result = await engine.renderString(
-        'Hello {{name}}! Your email is {{email}}',
-        { name: 'John' }
-      );
+      const result = await engine.renderString('Hello {{name}}! Your email is {{email}}', {
+        name: 'John',
+      });
 
       expect(result).toContain('John');
       expect(result).not.toContain('undefined');
@@ -512,4 +501,3 @@ describe('Mail System', () => {
     });
   });
 });
-

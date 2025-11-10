@@ -1,4 +1,3 @@
- 
 // gRPC Integration Tests
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { createApp } from '../../src/index.js';
@@ -82,9 +81,9 @@ describe('gRPC Integration', () => {
     });
 
     it('should throw error when registering service without initialization', async () => {
-      await expect(
-        app.grpcService('./proto/test.proto', 'TestService', {})
-      ).rejects.toThrow('not initialized');
+      await expect(app.grpcService('./proto/test.proto', 'TestService', {})).rejects.toThrow(
+        'not initialized'
+      );
     });
 
     it('should throw error when creating client without initialization', async () => {
@@ -104,4 +103,3 @@ describe('gRPC Types Export', () => {
     expect(typeof exports.createApp).toBe('function');
   });
 });
-

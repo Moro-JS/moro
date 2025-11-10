@@ -1,4 +1,3 @@
-
 // gRPC Manager Unit Tests
 import { describe, it, expect } from '@jest/globals';
 
@@ -113,4 +112,3 @@ describe('GrpcJsAdapter', () => {
     });
   });
 });
-

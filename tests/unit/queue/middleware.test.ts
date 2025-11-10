@@ -278,4 +278,3 @@ function createMockJob(data: any, options: any = {}): JobContext {
     },
   };
 }
-

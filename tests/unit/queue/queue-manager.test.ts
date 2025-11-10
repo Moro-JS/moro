@@ -214,7 +214,7 @@ describe('QueueManager', () => {
 
     test('should emit job:added event', async () => {
       const events: any[] = [];
-      eventEmitter.on('queue:job:added', (event) => {
+      eventEmitter.on('queue:job:added', event => {
         events.push(event);
       });
 
@@ -227,7 +227,7 @@ describe('QueueManager', () => {
 
     test('should emit job:completed event', async () => {
       const events: any[] = [];
-      eventEmitter.on('queue:job:completed', (event) => {
+      eventEmitter.on('queue:job:completed', event => {
         events.push(event);
       });
 
@@ -247,7 +247,7 @@ describe('QueueManager', () => {
 
     test('should emit job:failed event', async () => {
       const events: any[] = [];
-      eventEmitter.on('queue:job:failed', (event) => {
+      eventEmitter.on('queue:job:failed', event => {
         events.push(event);
       });
 
@@ -267,7 +267,7 @@ describe('QueueManager', () => {
 
     test('should emit job:progress event', async () => {
       const events: any[] = [];
-      eventEmitter.on('queue:job:progress', (event) => {
+      eventEmitter.on('queue:job:progress', event => {
         events.push(event);
       });
 
@@ -302,4 +302,3 @@ describe('QueueManager', () => {
     });
   });
 });
-

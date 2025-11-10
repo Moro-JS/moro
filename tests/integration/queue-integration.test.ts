@@ -13,7 +13,7 @@ describe('Queue Integration with Moro', () => {
 
   beforeEach(() => {
     app = createApp({
-      logger: { level: 'error' } // Suppress logs during tests
+      logger: { level: 'error' }, // Suppress logs during tests
     });
   });
 
@@ -111,7 +111,7 @@ describe('Queue Integration with Moro', () => {
     test('should process jobs with simple handler', async () => {
       const processedJobs: any[] = [];
 
-      await app.processQueue('test-queue', async (job) => {
+      await app.processQueue('test-queue', async job => {
         processedJobs.push(job.data);
       });
 
@@ -127,7 +127,7 @@ describe('Queue Integration with Moro', () => {
     test('should process jobs with concurrency', async () => {
       const processedJobs: any[] = [];
 
-      await app.processQueue('test-queue', 2, async (job) => {
+      await app.processQueue('test-queue', 2, async job => {
         processedJobs.push(job.data);
       });
 
@@ -142,7 +142,7 @@ describe('Queue Integration with Moro', () => {
     });
 
     test('should handle job failures', async () => {
-      await app.processQueue('test-queue', async (job) => {
+      await app.processQueue('test-queue', async job => {
         if (job.data.shouldFail) {
           throw new Error('Job failed');
         }
@@ -223,17 +223,17 @@ describe('Queue Integration with Moro', () => {
     test('should emit events through Moro event bus', async () => {
       const events: any[] = [];
 
-      app.events.on('queue:job:added', (event) => {
+      app.events.on('queue:job:added', event => {
         events.push({ type: 'added', event });
       });
 
-      app.events.on('queue:job:completed', (event) => {
+      app.events.on('queue:job:completed', event => {
         events.push({ type: 'completed', event });
       });
 
       app.queueInit('test-queue', { adapter: 'memory' });
 
-      await app.processQueue('test-queue', async (job) => {
+      await app.processQueue('test-queue', async job => {
         return { success: true };
       });
 
@@ -277,7 +277,7 @@ describe('Queue Integration with Moro', () => {
 
       const sentEmails: any[] = [];
 
-      await app.processQueue('emails', async (job) => {
+      await app.processQueue('emails', async job => {
         // Simulate email sending
         sentEmails.push({
           to: job.data.to,
@@ -307,7 +307,7 @@ describe('Queue Integration with Moro', () => {
 
       const processedImages: any[] = [];
 
-      await app.processQueue('images', async (job) => {
+      await app.processQueue('images', async job => {
         // Simulate image processing
         await job.updateProgress(50);
         await new Promise(resolve => setTimeout(resolve, 10));
@@ -334,4 +334,3 @@ describe('Queue Integration with Moro', () => {
     });
   });
 });
-
