@@ -58,11 +58,7 @@ describe('Response Helpers', () => {
     });
 
     it('should create an error response with code and message', () => {
-      const result = response.error(
-        'Database error',
-        'DB_ERROR',
-        'Unable to connect to database'
-      );
+      const result = response.error('Database error', 'DB_ERROR', 'Unable to connect to database');
 
       expect(result).toEqual({
         success: false,
@@ -207,9 +203,7 @@ describe('Response Helpers', () => {
 
     it('should build a success response with message', () => {
       const data = { id: 1, name: 'Test' };
-      const result = ResponseBuilder.success(data)
-        .message('Created successfully')
-        .build();
+      const result = ResponseBuilder.success(data).message('Created successfully').build();
 
       expect(result).toEqual({
         success: true,
@@ -340,4 +334,3 @@ describe('Response Helpers', () => {
     });
   });
 });
-
