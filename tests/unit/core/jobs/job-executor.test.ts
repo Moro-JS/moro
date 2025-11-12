@@ -114,7 +114,8 @@ describe('JobExecutor', () => {
       const duration = Date.now() - startTime;
 
       // With exponential backoff: ~100ms + ~200ms = ~300ms+ (with jitter)
-      expect(duration).toBeGreaterThan(250);
+      // Use >= instead of > to handle exact timing in CI environments
+      expect(duration).toBeGreaterThanOrEqual(250);
       expect(duration).toBeLessThan(500);
     });
   });
