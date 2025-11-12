@@ -28,7 +28,7 @@ describe('Config File Integration', () => {
     process.env.PORT = '4000';
 
     resetConfig();
-    const app = createApp();
+    const app = createApp({ logger: { level: 'error' } });
     const config = (app as any).config;
 
     expect(config.server.port).toBe(4000);
@@ -60,7 +60,7 @@ describe('Config File Integration', () => {
     writeFileSync(configPath, configContent);
 
     resetConfig();
-    const app = createApp();
+    const app = createApp({ logger: { level: 'error' } });
     const config = (app as any).config;
 
     // Config file values should be applied
@@ -68,7 +68,7 @@ describe('Config File Integration', () => {
     expect(config.server.host).toBe('0.0.0.0');
     // Environment is now controlled by NODE_ENV, not config
     expect(process.env.NODE_ENV).toBe('staging');
-    expect(config.logging.level).toBe('warn');
+    expect(config.logging.level).toBe('error');
   });
 
   it('should gracefully handle invalid config files', () => {

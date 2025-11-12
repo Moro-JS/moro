@@ -1816,17 +1816,28 @@ export class Moro extends EventEmitter {
     // Close the core framework with timeout
     if (this.coreFramework && (this.coreFramework as any).httpServer) {
       try {
-        await Promise.race([
-          new Promise<void>(resolve => {
-            (this.coreFramework as any).httpServer.close(() => {
-              resolve();
-            });
-          }),
-          new Promise<void>(resolve => {
-            const timer = setTimeout(resolve, 2000); // 2 second timeout
-            timer.unref(); // Don't keep process alive
-          }),
-        ]);
+        const httpServer = (this.coreFramework as any).httpServer;
+        const server = httpServer.getServer?.() || httpServer.getApp?.();
+
+        // Only wait for close if the server is actually listening
+        const isListening = server?.listening || server?.address?.() !== null;
+
+        if (isListening) {
+          await Promise.race([
+            new Promise<void>(resolve => {
+              httpServer.close(() => {
+                resolve();
+              });
+            }),
+            new Promise<void>(resolve => {
+              const timer = setTimeout(resolve, 2000); // 2 second timeout
+              timer.unref(); // Don't keep process alive
+            }),
+          ]);
+        } else {
+          // Server was never started, just skip close
+          this.logger.debug('HTTP server was never started, skipping close');
+        }
       } catch {
         // Force close if graceful close fails
         this.logger.warn('Force closing HTTP server due to timeout');

@@ -567,6 +567,157 @@ export class MoroHttp2Server {
       return httpRes;
     };
 
+    // Standardized response helpers
+    httpRes.success = <T = any>(data: T, message?: string) => {
+      const response: any = {
+        success: true,
+        data,
+      };
+      if (message !== undefined) {
+        response.message = message;
+      }
+      httpRes.json(response);
+    };
+
+    httpRes.error = (error: string, code?: string, message?: string) => {
+      const response: any = {
+        success: false,
+        error,
+      };
+      if (code !== undefined) {
+        response.code = code;
+      }
+      if (message !== undefined) {
+        response.message = message;
+      }
+      httpRes.json(response);
+    };
+
+    // Common HTTP error helpers (automatically set status code)
+    httpRes.unauthorized = (message: string = 'Authentication required') => {
+      httpRes.statusCode = 401;
+      httpRes.json({
+        success: false,
+        error: 'Unauthorized',
+        code: 'UNAUTHORIZED',
+        message,
+      });
+    };
+
+    httpRes.forbidden = (message: string = 'Insufficient permissions') => {
+      httpRes.statusCode = 403;
+      httpRes.json({
+        success: false,
+        error: 'Forbidden',
+        code: 'FORBIDDEN',
+        message,
+      });
+    };
+
+    httpRes.notFound = (resource: string = 'Resource') => {
+      httpRes.statusCode = 404;
+      httpRes.json({
+        success: false,
+        error: 'Not Found',
+        code: 'NOT_FOUND',
+        message: `${resource} not found`,
+      });
+    };
+
+    httpRes.badRequest = (message: string = 'Invalid request') => {
+      httpRes.statusCode = 400;
+      httpRes.json({
+        success: false,
+        error: 'Bad Request',
+        code: 'BAD_REQUEST',
+        message,
+      });
+    };
+
+    httpRes.conflict = (message: string) => {
+      httpRes.statusCode = 409;
+      httpRes.json({
+        success: false,
+        error: 'Conflict',
+        code: 'CONFLICT',
+        message,
+      });
+    };
+
+    httpRes.internalError = (message: string = 'Internal server error') => {
+      httpRes.statusCode = 500;
+      httpRes.json({
+        success: false,
+        error: 'Internal Server Error',
+        code: 'INTERNAL_ERROR',
+        message,
+      });
+    };
+
+    httpRes.validationError = (
+      errors: Array<{ field: string; message: string; code?: string }>
+    ) => {
+      httpRes.statusCode = 422;
+      httpRes.json({
+        success: false,
+        error: 'Validation Failed',
+        code: 'VALIDATION_ERROR',
+        errors,
+      });
+    };
+
+    httpRes.rateLimited = (retryAfter?: number) => {
+      httpRes.statusCode = 429;
+      if (retryAfter) {
+        httpRes.setHeader('Retry-After', retryAfter.toString());
+      }
+      httpRes.json({
+        success: false,
+        error: 'Rate Limit Exceeded',
+        code: 'RATE_LIMITED',
+        message: retryAfter
+          ? `Too many requests. Retry after ${retryAfter} seconds.`
+          : 'Too many requests',
+        retryAfter,
+      });
+    };
+
+    // Common success patterns
+    httpRes.created = <T = any>(data: T, location?: string) => {
+      httpRes.statusCode = 201;
+      if (location) {
+        httpRes.setHeader('Location', location);
+      }
+      httpRes.json({
+        success: true,
+        data,
+      });
+    };
+
+    httpRes.noContent = () => {
+      httpRes.statusCode = 204;
+      httpRes.end();
+    };
+
+    httpRes.paginated = <T = any>(
+      data: T[],
+      pagination: { page: number; limit: number; total: number }
+    ) => {
+      const totalPages = Math.ceil(pagination.total / pagination.limit);
+      httpRes.json({
+        success: true,
+        data,
+        pagination: {
+          page: pagination.page,
+          limit: pagination.limit,
+          total: pagination.total,
+          totalPages,
+          hasNext: pagination.page < totalPages,
+          hasPrev: pagination.page > 1,
+        },
+      });
+    };
+
     // Cookie handling
     httpRes.cookie = (name: string, value: string, options: any = {}) => {
       if (httpRes.headersSent) {

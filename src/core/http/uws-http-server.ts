@@ -441,6 +441,152 @@ export class UWebSocketsHttpServer {
       }
     }
 
+    // Standardized response helpers
+    success<T = any>(data: T, message?: string) {
+      const response: any = {
+        success: true,
+        data,
+      };
+      if (message !== undefined) {
+        response.message = message;
+      }
+      this.json(response);
+    }
+
+    error(error: string, code?: string, message?: string) {
+      const response: any = {
+        success: false,
+        error,
+      };
+      if (code !== undefined) {
+        response.code = code;
+      }
+      if (message !== undefined) {
+        response.message = message;
+      }
+      this.json(response);
+    }
+
+    // Common HTTP error helpers (automatically set status code)
+    unauthorized(message: string = 'Authentication required') {
+      this.statusCode = 401;
+      this.json({
+        success: false,
+        error: 'Unauthorized',
+        code: 'UNAUTHORIZED',
+        message,
+      });
+    }
+
+    forbidden(message: string = 'Insufficient permissions') {
+      this.statusCode = 403;
+      this.json({
+        success: false,
+        error: 'Forbidden',
+        code: 'FORBIDDEN',
+        message,
+      });
+    }
+
+    notFound(resource: string = 'Resource') {
+      this.statusCode = 404;
+      this.json({
+        success: false,
+        error: 'Not Found',
+        code: 'NOT_FOUND',
+        message: `${resource} not found`,
+      });
+    }
+
+    badRequest(message: string = 'Invalid request') {
+      this.statusCode = 400;
+      this.json({
+        success: false,
+        error: 'Bad Request',
+        code: 'BAD_REQUEST',
+        message,
+      });
+    }
+
+    conflict(message: string) {
+      this.statusCode = 409;
+      this.json({
+        success: false,
+        error: 'Conflict',
+        code: 'CONFLICT',
+        message,
+      });
+    }
+
+    internalError(message: string = 'Internal server error') {
+      this.statusCode = 500;
+      this.json({
+        success: false,
+        error: 'Internal Server Error',
+        code: 'INTERNAL_ERROR',
+        message,
+      });
+    }
+
+    validationError(errors: Array<{ field: string; message: string; code?: string }>) {
+      this.statusCode = 422;
+      this.json({
+        success: false,
+        error: 'Validation Failed',
+        code: 'VALIDATION_ERROR',
+        errors,
+      });
+    }
+
+    rateLimited(retryAfter?: number) {
+      this.statusCode = 429;
+      if (retryAfter) {
+        this.setHeader('Retry-After', retryAfter.toString());
+      }
+      this.json({
+        success: false,
+        error: 'Rate Limit Exceeded',
+        code: 'RATE_LIMITED',
+        message: retryAfter
+          ? `Too many requests. Retry after ${retryAfter} seconds.`
+          : 'Too many requests',
+        retryAfter,
+      });
+    }
+
+    // Common success patterns
+    created<T = any>(data: T, location?: string) {
+      this.statusCode = 201;
+      if (location) {
+        this.setHeader('Location', location);
+      }
+      this.json({
+        success: true,
+        data,
+      });
+    }
+
+    noContent() {
+      this.statusCode = 204;
+      this.end();
+    }
+
+    paginated<T = any>(data: T[], pagination: { page: number; limit: number; total: number }) {
+      const totalPages = Math.ceil(pagination.total / pagination.limit);
+      this.json({
+        success: true,
+        data,
+        pagination: {
+          page: pagination.page,
+          limit: pagination.limit,
+          total: pagination.total,
+          totalPages,
+          hasNext: pagination.page < totalPages,
+          hasPrev: pagination.page > 1,
+        },
+      });
+    }
+
     // EventEmitter stubs for middleware compatibility
     on(_event: string, _callback: (...args: any[]) => void) {
       return this;

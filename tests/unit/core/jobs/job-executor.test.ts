@@ -8,6 +8,7 @@ describe('JobExecutor', () => {
 
   beforeEach(() => {
     logger = createFrameworkLogger('TestJobExecutor');
+    logger.setLevel('error');
     executor = new JobExecutor(logger, {
       maxRetries: 3,
       retryDelay: 100,

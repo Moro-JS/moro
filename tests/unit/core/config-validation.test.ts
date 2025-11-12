@@ -84,6 +84,7 @@ describe('Configuration System Validation', () => {
       const options: MoroOptions = {
         cors: false,
         server: { port: 7000 },
+        logger: { level: 'error' },
       };
 
       const config = loadConfigWithOptions(options);
@@ -97,6 +98,7 @@ describe('Configuration System Validation', () => {
     it('FIXED: MORO_ prefixed environment variables working correctly', () => {
       process.env.MORO_PORT = '9000';
       process.env.MORO_HOST = '127.0.0.1';
+      process.env.LOG_LEVEL = 'error';
 
       const config = loadConfig();
 
@@ -202,6 +204,7 @@ describe('Configuration System Validation', () => {
             threshold: 1024,
           },
         },
+        logger: { level: 'error' },
       };
 
       const iterations = 30;

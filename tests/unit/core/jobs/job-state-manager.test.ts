@@ -12,6 +12,7 @@ describe('JobStateManager', () => {
 
   beforeEach(() => {
     logger = createFrameworkLogger('TestJobStateManager');
+    logger.setLevel('error');
     tempFile = path.join(os.tmpdir(), `test-job-state-${Date.now()}.json`);
 
     stateManager = new JobStateManager(logger, {

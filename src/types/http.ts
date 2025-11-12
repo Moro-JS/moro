@@ -53,6 +53,32 @@ export interface MoroResponseMethods {
   // Response state utilities
   canSetHeaders(): boolean;
   getResponseState(): ResponseState;
+
+  // Standardized response helpers
+  success<T = any>(data: T, message?: string): void;
+  error(error: string, code?: string, message?: string): void;
+
+  // Common HTTP error helpers (automatically set status code)
+  unauthorized(message?: string): void;
+  forbidden(message?: string): void;
+  notFound(resource?: string): void;
+  badRequest(message?: string): void;
+  conflict(message: string): void;
+  internalError(message?: string): void;
+  validationError(errors: Array<{ field: string; message: string; code?: string }>): void;
+  rateLimited(retryAfter?: number): void;
+
+  // Common success patterns
+  created<T = any>(data: T, location?: string): void;
+  noContent(): void;
+  paginated<T = any>(
+    data: T[],
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+    }
+  ): void;
 }
 
 export type HttpResponse = ServerResponse & MoroResponseMethods;

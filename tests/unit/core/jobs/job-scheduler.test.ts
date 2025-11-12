@@ -8,6 +8,7 @@ describe('JobScheduler', () => {
 
   beforeEach(() => {
     logger = createFrameworkLogger('TestJobScheduler');
+    logger.setLevel('error');
     scheduler = new JobScheduler(logger, {
       maxConcurrentJobs: 2,
       enableLeaderElection: false, // Disable for testing

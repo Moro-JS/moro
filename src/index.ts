@@ -90,6 +90,17 @@ export {
   isPackageAvailable,
   resolveUserPackage,
   createUserRequire,
+  // Standardized Response Helpers (namespace object only)
+  response,
+  ResponseBuilder,
+} from './core/utilities/index.js';
+
+// Response helper types
+export type {
+  ApiSuccessResponse,
+  ApiErrorResponse,
+  ApiResponse,
+  ResponseValidationErrorDetail,
 } from './core/utilities/index.js';
 
 // Event System

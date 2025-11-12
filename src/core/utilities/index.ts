@@ -15,3 +15,13 @@ export { isPackageAvailable, resolveUserPackage, createUserRequire } from './pac
 
 // Re-export middleware from hooks
 export { middleware } from './hooks.js';
+
+// Standardized Response Helpers (namespace object only to avoid polluting global exports)
+export { response, ResponseBuilder } from './response-helpers.js';
+
+export type {
+  ApiSuccessResponse,
+  ApiErrorResponse,
+  ApiResponse,
+  ValidationErrorDetail as ResponseValidationErrorDetail,
+} from './response-helpers.js';

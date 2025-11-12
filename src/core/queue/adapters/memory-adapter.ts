@@ -79,6 +79,8 @@ export class MemoryAdapter extends QueueAdapter {
       job.timeoutId = setTimeout(() => {
         this.processJob(queueName, jobId);
       }, options.delay);
+      // Don't keep process alive for delayed job timers
+      job.timeoutId.unref();
     }
 
     queue.jobs.set(jobId, job);
@@ -520,6 +522,9 @@ export class MemoryAdapter extends QueueAdapter {
         }
       }
     }, 100); // Check every 100ms
+
+    // Don't keep process alive for processing intervals
+    interval.unref();
 
     this.processingIntervals.set(queueName, interval);
   }
