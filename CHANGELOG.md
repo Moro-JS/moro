@@ -1,3 +1,8 @@
+## [1.7.1] - 2025-11-12
+
+### Added
+- feat: add standardized response methods with performance optimization
+
 ## [1.8.0] - 2025-11-10
 
 ### Maintenance
