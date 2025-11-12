@@ -41,10 +41,10 @@
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
-    "prerelease": "npm run build && npm test && npm run test:package && node scripts/release.js",
-    "prerelease:patch": "npm run build && npm test && npm run test:package && node scripts/release.js patch",
-    "prerelease:minor": "npm run build && npm test && npm run test:package && node scripts/release.js minor",
-    "prerelease:major": "npm run build && npm test && npm run test:package && node scripts/release.js major"
+    "prerelease": "npm run build && npm test && npm run test:package && node scripts/release.js --skip-tests",
+    "prerelease:patch": "npm run build && npm test && npm run test:package && node scripts/release.js patch --skip-tests",
+    "prerelease:minor": "npm run build && npm test && npm run test:package && node scripts/release.js minor --skip-tests",
+    "prerelease:major": "npm run build && npm test && npm run test:package && node scripts/release.js major --skip-tests"
   },
   "keywords": [
     "nodejs",
