@@ -1,5 +1,6 @@
 // Auth Functional Tests - Testing the core functionality
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+
 import { auth, providers } from '../../src/core/middleware/built-in/auth.js';
 import { AuthProvider, AuthOptions } from '../../src/types/auth.js';
 
@@ -132,7 +133,7 @@ describe('Auth Middleware Functional Tests', () => {
       expect(middleware.name).toBe('auth');
       expect(middleware.version).toBe('2.0.0');
       expect(middleware.metadata?.name).toBe('auth');
-      expect(middleware.metadata?.description).toContain('Auth.js authentication middleware');
+      expect(middleware.metadata?.description).toContain('Better Auth authentication middleware');
       expect(middleware.metadata?.dependencies).toEqual([]); // Auth middleware is now self-contained
       expect(typeof middleware.install).toBe('function');
     });

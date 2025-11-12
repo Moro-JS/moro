@@ -75,6 +75,11 @@ export class MySQLAdapter implements DatabaseAdapter {
     await this.pool.end();
   }
 
+  async getPool() {
+    await this.initPromise;
+    return this.pool;
+  }
+
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     await this.initPromise;
     const [rows] = await this.pool.execute(sql, params);

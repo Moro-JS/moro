@@ -377,6 +377,19 @@ export class Moro extends EventEmitter {
 
   // Public API for adding middleware
   addMiddleware(middleware: any) {
+    // Check if it's a MiddlewareInterface object - don't add to globalMiddleware
+    // MiddlewareInterface objects should be handled by MiddlewareManager
+    if (middleware && typeof middleware === 'object' && middleware.install && middleware.metadata) {
+      // This is a MiddlewareInterface - log warning and skip
+      this.logger.warn(
+        `MiddlewareInterface "${middleware.metadata.name}" passed to addMiddleware. ` +
+          `This should be handled by MiddlewareManager.install() instead.`,
+        'Middleware'
+      );
+      return this;
+    }
+
+    // Standard middleware function - add to HTTP server
     this.httpServer.use(middleware);
     this.emit('middleware:added', { middleware });
     return this;

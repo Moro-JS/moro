@@ -40,7 +40,7 @@ export function createAuthMiddleware(options: AuthOptions): StandardMiddleware {
 
     const reqAny = req as any;
 
-    // Handle Auth.js API routes first
+    // Handle Better Auth API routes first
     if (authCore.isAuthRoute(reqAny.url)) {
       const response = await authCore.handleAuthRoute(req, res);
       if (response) {

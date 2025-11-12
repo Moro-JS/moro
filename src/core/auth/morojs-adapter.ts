@@ -1,18 +1,42 @@
 /**
- * Auth.js Adapter for MoroJS
+ * Better Auth Adapter for MoroJS
  *
- * This adapter allows Auth.js to work seamlessly with MoroJS framework.
- * It can be contributed to the Auth.js project as @auth/morojs
+ * This adapter allows Better Auth to work seamlessly with MoroJS framework.
+ * Maintains compatibility with the original Auth.js API.
  *
- * @see https://authjs.dev/guides/adapters/creating-a-custom-adapter
- * @see https://github.com/nextauthjs/next-auth/tree/main/packages
+ * @see https://better-auth.com/
  */
 
 import { createFrameworkLogger } from '../logger/index.js';
+import { resolveUserPackage } from '../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('AuthAdapter');
 
-// Auth.js types
+// Lazy load Better Auth (optional dependency)
+let betterAuthModule: any = null;
+
+/**
+ * Dynamically load Better Auth from user's node_modules
+ * This ensures it's only required when actually used
+ */
+async function loadBetterAuth() {
+  if (betterAuthModule) {
+    return betterAuthModule;
+  }
+
+  try {
+    const betterAuthPath = resolveUserPackage('better-auth');
+    betterAuthModule = await import(betterAuthPath);
+    return betterAuthModule;
+  } catch {
+    throw new Error(
+      'Better Auth package not found. Install it with: npm install better-auth\n' +
+        'See: https://better-auth.com/ for setup instructions'
+    );
+  }
+}
+
+// Auth types (compatible with Auth.js)
 export interface AuthConfig {
   providers: any[];
   secret?: string;
@@ -39,23 +63,6 @@ export interface Session {
 }
 
 export type AuthAction = 'signin' | 'signout' | 'callback' | 'session' | 'providers' | 'csrf';
-
-/**
- * Placeholder Auth function
- *
- * NOTE: This is a stub implementation. To use Auth.js with MoroJS:
- * 1. Install @auth/core: npm install @auth/core
- * 2. Import the real Auth function: import { Auth } from '@auth/core';
- * 3. Replace this stub with the actual Auth function
- *
- * This stub allows the adapter to compile without @auth/core installed.
- */
-const Auth = async (_request: Request, _config: any): Promise<Response> => {
-  throw new Error(
-    'Auth.js is not configured. Please install @auth/core and configure it properly. ' +
-      'See docs/AUTH_GUIDE.md for setup instructions.'
-  );
-};
 
 // MoroJS-specific types
 export interface MoroJSAuthConfig extends Omit<AuthConfig, 'raw'> {
@@ -224,15 +231,54 @@ async function fromWebResponse(webResponse: Response, moroResponse: MoroJSRespon
 }
 
 /**
- * Main MoroJS Auth.js handler
+ * Main MoroJS Better Auth handler
  *
- * This is the core function that integrates Auth.js with MoroJS
+ * This is the core function that integrates Better Auth with MoroJS
+ * Maintains API compatibility with the original Auth.js implementation
  */
 export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
   handler: (req: MoroJSRequest, res: MoroJSResponse) => Promise<void>;
   auth: (req: MoroJSRequest) => Promise<Session | null>;
 }> {
   const basePath = config.basePath || '/api/auth';
+
+  // Lazy load Better Auth
+  const betterAuthModule = await loadBetterAuth();
+  const { betterAuth } = betterAuthModule;
+
+  // Convert providers to Better Auth format
+  const socialProviders: Record<string, any> = {};
+  for (const provider of config.providers || []) {
+    if (provider.id === 'google' && provider.clientId && provider.clientSecret) {
+      socialProviders.google = {
+        clientId: provider.clientId,
+        clientSecret: provider.clientSecret,
+      };
+    } else if (provider.id === 'github' && provider.clientId && provider.clientSecret) {
+      socialProviders.github = {
+        clientId: provider.clientId,
+        clientSecret: provider.clientSecret,
+      };
+    } else if (provider.id === 'discord' && provider.clientId && provider.clientSecret) {
+      socialProviders.discord = {
+        clientId: provider.clientId,
+        clientSecret: provider.clientSecret,
+      };
+    }
+  }
+
+  // Initialize Better Auth
+  const betterAuthInstance = betterAuth({
+    secret: config.secret || process.env.AUTH_SECRET || '',
+    baseURL: process.env.BASE_URL || process.env.AUTH_URL || 'http://localhost:3000',
+    basePath,
+    trustedOrigins: ['*'],
+    session: {
+      expiresIn: config.session?.maxAge || 30 * 24 * 60 * 60,
+      updateAge: config.session?.updateAge || 24 * 60 * 60,
+    },
+    socialProviders,
+  });
 
   return {
     /**
@@ -243,27 +289,14 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
         // Convert MoroJS request to Web API request
         const webRequest = toWebRequest(req, basePath);
 
-        // Determine the auth action from the URL
-        const url = new URL(webRequest.url);
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const action = (url.pathname.split('/')[1] as AuthAction) || 'session';
-
         // Apply request transformer if provided
         let transformedRequest = webRequest;
         if (config.morojs?.transformers?.request) {
           transformedRequest = config.morojs.transformers.request(webRequest);
         }
 
-        // Call Auth.js core
-        const authResponse = await Auth(transformedRequest, {
-          ...config,
-          basePath,
-          raw: (code: any, ...message: any[]) => {
-            if (config.morojs?.debug) {
-              logger.debug(`[MoroJS Auth] ${code}:`, 'AuthAdapter', { message });
-            }
-          },
-        });
+        // Call Better Auth handler
+        const authResponse = await betterAuthInstance.handler(transformedRequest);
 
         // Apply response transformer if provided
         let finalResponse = authResponse;
@@ -302,22 +335,26 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
      */
     auth: async (req: MoroJSRequest): Promise<Session | null> => {
       try {
-        // Create a session request
-        const sessionUrl = new URL('/session', 'http://localhost:3000');
-        const sessionRequest = new Request(sessionUrl.toString(), {
-          method: 'GET',
-          headers: req.headers ? new Headers(req.headers) : new Headers(),
+        // Convert MoroJS request to Web API request
+        const webRequest = toWebRequest(req, basePath);
+
+        // Get session from Better Auth
+        const session = await betterAuthInstance.api.getSession({
+          headers: webRequest.headers,
         });
 
-        // Get session from Auth.js
-        const response = await Auth(sessionRequest, {
-          ...config,
-          basePath,
-        });
-
-        if (response.status === 200) {
-          const session = await response.json();
-          return session as Session;
+        if (session?.user) {
+          return {
+            user: {
+              id: session.user.id,
+              name: session.user.name || null,
+              email: session.user.email || null,
+              image: session.user.image || null,
+            },
+            expires: new Date(
+              session.session?.expiresAt || Date.now() + 30 * 24 * 60 * 60 * 1000
+            ).toISOString(),
+          };
         }
 
         return null;
@@ -337,12 +374,13 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
  * MoroJS Auth middleware factory
  *
  * This creates a MoroJS-compatible middleware for authentication
+ * Uses Better Auth internally while maintaining the same API
  */
 export function createAuthMiddleware(config: MoroJSAuthConfig) {
   logger.info('createAuthMiddleware called - creating middleware function', 'AuthAdapter');
   // Return a function that MoroJS can call directly
   return async (app: any) => {
-    logger.info('Installing Auth.js middleware...', 'AuthAdapter');
+    logger.info('Installing Better Auth middleware...', 'AuthAdapter');
     logger.debug('App object received', 'AuthAdapter', {
       appType: typeof app,
       appConstructor: app.constructor.name,
@@ -359,9 +397,7 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
 
     const options = {};
     const mergedConfig = { ...config, ...options };
-    await MoroJSAuth(mergedConfig);
-    // Note: The auth handler would need to be registered as routes in a complete implementation
-    // For now, we just use the basePath for generating URLs
+    const authHandlers = await MoroJSAuth(mergedConfig);
     const basePath = mergedConfig.basePath || '/api/auth';
 
     // Register request hook
@@ -371,15 +407,18 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
       logger.debug('Request path', 'AuthAdapter', { path: req.path || req.url });
 
       try {
-        // Just add auth object to request - don't touch response
+        // Get session from Better Auth
+        const session = await authHandlers.auth(req);
+
+        // Add auth object to request
         req.auth = {
-          session: null,
-          user: null,
-          isAuthenticated: false,
+          session: session,
+          user: session?.user || null,
+          isAuthenticated: !!session?.user,
 
           // Helper methods
-          getSession: () => Promise.resolve(null),
-          getUser: () => null,
+          getSession: async () => session,
+          getUser: () => session?.user || null,
 
           // Sign in/out helpers (redirect to auth routes)
           signIn: (provider?: string, options?: any) => {
@@ -414,7 +453,7 @@ export function createAuthMiddleware(config: MoroJSAuthConfig) {
       }
     });
 
-    logger.info('Auth.js middleware installed successfully!', 'AuthAdapter');
+    logger.info('Better Auth middleware installed successfully!', 'AuthAdapter');
   };
 }
 

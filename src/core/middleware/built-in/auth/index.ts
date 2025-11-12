@@ -2,7 +2,22 @@
 // Re-exports all public APIs for the Auth built-in
 
 // Core (for direct use by router and custom implementations)
-export { AuthCore, providers } from './core.js';
+export {
+  AuthCore,
+  providers,
+  twoFactor,
+  organization,
+  anonymous,
+  accountLinking,
+  rateLimit,
+  bearerToken,
+  type TwoFactorAuthOptions,
+  type OrganizationOptions,
+  type AnonymousOptions,
+  type AccountLinkingOptions,
+  type RateLimitOptions,
+  type BearerTokenOptions,
+} from './core.js';
 
 // Middleware (for middleware chains)
 export { createAuthMiddleware } from './middleware.js';

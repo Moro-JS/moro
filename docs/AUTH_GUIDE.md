@@ -1,10 +1,13 @@
 # Authentication Guide for MoroJS
 
-MoroJS includes comprehensive authentication support powered by [Auth.js](https://authjs.dev/), providing secure, production-ready authentication with support for multiple providers, JWT tokens, sessions, and more.
+MoroJS includes comprehensive authentication support powered by [Better Auth](https://better-auth.com/), providing secure, production-ready authentication with support for multiple providers, JWT tokens, sessions, and more.
+
+> **Note:** MoroJS has migrated from Auth.js to Better Auth (v1.3.34), the actively maintained successor. The API remains compatible with your existing code.
 
 ## Overview
 
 The authentication middleware supports:
+
 - **OAuth Providers** (Google, GitHub, Discord, Microsoft, LinkedIn, and more)
 - **Enterprise SSO** (Okta, Auth0, AWS Cognito)
 - **OIDC (OpenID Connect)** providers
@@ -28,15 +31,17 @@ import { auth, providers } from '../src/core/middleware/built-in';
 
 const app = new Moro();
 
-app.use(auth({
-  providers: [
-    providers.github({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    }),
-  ],
-  secret: process.env.AUTH_SECRET,
-}));
+app.use(
+  auth({
+    providers: [
+      providers.github({
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      }),
+    ],
+    secret: process.env.AUTH_SECRET,
+  })
+);
 
 app.get('/protected', (req, res) => {
   if (!req.auth.isAuthenticated) {
@@ -45,7 +50,7 @@ app.get('/protected', (req, res) => {
 
   res.json({
     message: 'Protected resource',
-    user: req.auth.user
+    user: req.auth.user,
   });
 });
 
@@ -69,41 +74,50 @@ AUTH_URL=http://localhost:3000 # Base URL for your app
 ### Basic OAuth Providers
 
 #### Google
+
 ```typescript
 import { auth, providers } from '../src/core/middleware/built-in';
 
-app.use(auth({
-  providers: [
-    providers.google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
-}));
+app.use(
+  auth({
+    providers: [
+      providers.google({
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      }),
+    ],
+  })
+);
 ```
 
 #### GitHub
+
 ```typescript
-app.use(auth({
-  providers: [
-    providers.github({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    }),
-  ],
-}));
+app.use(
+  auth({
+    providers: [
+      providers.github({
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      }),
+    ],
+  })
+);
 ```
 
 #### Discord
+
 ```typescript
-app.use(auth({
-  providers: [
-    providers.discord({
-      clientId: process.env.DISCORD_CLIENT_ID!,
-      clientSecret: process.env.DISCORD_CLIENT_SECRET!,
-    }),
-  ],
-}));
+app.use(
+  auth({
+    providers: [
+      providers.discord({
+        clientId: process.env.DISCORD_CLIENT_ID!,
+        clientSecret: process.env.DISCORD_CLIENT_SECRET!,
+      }),
+    ],
+  })
+);
 ```
 
 ### Extended OAuth Providers
@@ -111,37 +125,39 @@ app.use(auth({
 ```typescript
 import { auth, extendedProviders } from '../src/core/middleware/built-in';
 
-app.use(auth({
-  providers: [
-    // Enhanced GitHub with additional options
-    extendedProviders.github({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-      scope: 'read:user user:email public_repo',
-      allowSignup: true,
-    }),
+app.use(
+  auth({
+    providers: [
+      // Enhanced GitHub with additional options
+      extendedProviders.github({
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+        scope: 'read:user user:email public_repo',
+        allowSignup: true,
+      }),
 
-    // Google with hosted domain restriction
-    extendedProviders.google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      hostedDomain: 'yourcompany.com',
-    }),
+      // Google with hosted domain restriction
+      extendedProviders.google({
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        hostedDomain: 'yourcompany.com',
+      }),
 
-    // Microsoft/Azure AD
-    extendedProviders.microsoft({
-      clientId: process.env.MICROSOFT_CLIENT_ID!,
-      clientSecret: process.env.MICROSOFT_CLIENT_SECRET!,
-      tenant: process.env.MICROSOFT_TENANT_ID,
-    }),
+      // Microsoft/Azure AD
+      extendedProviders.microsoft({
+        clientId: process.env.MICROSOFT_CLIENT_ID!,
+        clientSecret: process.env.MICROSOFT_CLIENT_SECRET!,
+        tenant: process.env.MICROSOFT_TENANT_ID,
+      }),
 
-    // LinkedIn
-    extendedProviders.linkedin({
-      clientId: process.env.LINKEDIN_CLIENT_ID!,
-      clientSecret: process.env.LINKEDIN_CLIENT_SECRET!,
-    }),
-  ],
-}));
+      // LinkedIn
+      extendedProviders.linkedin({
+        clientId: process.env.LINKEDIN_CLIENT_ID!,
+        clientSecret: process.env.LINKEDIN_CLIENT_SECRET!,
+      }),
+    ],
+  })
+);
 ```
 
 ### Enterprise SSO Providers
@@ -149,80 +165,86 @@ app.use(auth({
 ```typescript
 import { auth, enterpriseProviders } from '../src/core/middleware/built-in';
 
-app.use(auth({
-  providers: [
-    // Okta
-    enterpriseProviders.okta({
-      clientId: process.env.OKTA_CLIENT_ID!,
-      clientSecret: process.env.OKTA_CLIENT_SECRET!,
-      domain: process.env.OKTA_DOMAIN!,
-    }),
+app.use(
+  auth({
+    providers: [
+      // Okta
+      enterpriseProviders.okta({
+        clientId: process.env.OKTA_CLIENT_ID!,
+        clientSecret: process.env.OKTA_CLIENT_SECRET!,
+        domain: process.env.OKTA_DOMAIN!,
+      }),
 
-    // Auth0
-    enterpriseProviders.auth0({
-      clientId: process.env.AUTH0_CLIENT_ID!,
-      clientSecret: process.env.AUTH0_CLIENT_SECRET!,
-      domain: process.env.AUTH0_DOMAIN!,
-    }),
+      // Auth0
+      enterpriseProviders.auth0({
+        clientId: process.env.AUTH0_CLIENT_ID!,
+        clientSecret: process.env.AUTH0_CLIENT_SECRET!,
+        domain: process.env.AUTH0_DOMAIN!,
+      }),
 
-    // AWS Cognito
-    enterpriseProviders.cognito({
-      clientId: process.env.COGNITO_CLIENT_ID!,
-      clientSecret: process.env.COGNITO_CLIENT_SECRET!,
-      domain: process.env.COGNITO_DOMAIN!,
-      region: 'us-east-1',
-    }),
-  ],
-}));
+      // AWS Cognito
+      enterpriseProviders.cognito({
+        clientId: process.env.COGNITO_CLIENT_ID!,
+        clientSecret: process.env.COGNITO_CLIENT_SECRET!,
+        domain: process.env.COGNITO_DOMAIN!,
+        region: 'us-east-1',
+      }),
+    ],
+  })
+);
 ```
 
 ### Credentials Provider
 
 ```typescript
-app.use(auth({
-  providers: [
-    providers.credentials({
-      name: 'credentials',
-      credentials: {
-        username: { label: 'Username', type: 'text' },
-        password: { label: 'Password', type: 'password' }
-      },
-      authorize: async (credentials) => {
-        // Implement your credential validation logic
-        const user = await validateUser(credentials.username, credentials.password);
+app.use(
+  auth({
+    providers: [
+      providers.credentials({
+        name: 'credentials',
+        credentials: {
+          username: { label: 'Username', type: 'text' },
+          password: { label: 'Password', type: 'password' },
+        },
+        authorize: async credentials => {
+          // Implement your credential validation logic
+          const user = await validateUser(credentials.username, credentials.password);
 
-        if (user) {
-          return {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-          };
-        }
-        return null;
-      },
-    }),
-  ],
-}));
+          if (user) {
+            return {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+            };
+          }
+          return null;
+        },
+      }),
+    ],
+  })
+);
 ```
 
 ### Email Provider
 
 ```typescript
-app.use(auth({
-  providers: [
-    providers.email({
-      server: {
-        host: process.env.EMAIL_SERVER_HOST,
-        port: parseInt(process.env.EMAIL_SERVER_PORT!),
-        auth: {
-          user: process.env.EMAIL_SERVER_USER,
-          pass: process.env.EMAIL_SERVER_PASSWORD,
+app.use(
+  auth({
+    providers: [
+      providers.email({
+        server: {
+          host: process.env.EMAIL_SERVER_HOST,
+          port: parseInt(process.env.EMAIL_SERVER_PORT!),
+          auth: {
+            user: process.env.EMAIL_SERVER_USER,
+            pass: process.env.EMAIL_SERVER_PASSWORD,
+          },
         },
-      },
-      from: process.env.EMAIL_FROM,
-    }),
-  ],
-}));
+        from: process.env.EMAIL_FROM,
+      }),
+    ],
+  })
+);
 ```
 
 ## Authentication Middleware and Helpers
@@ -235,7 +257,7 @@ import {
   requireRole,
   requireAdmin,
   requirePermission,
-  authUtils
+  authUtils,
 } from '../src/core/middleware/built-in';
 
 // Helper function to compose middleware with route handlers
@@ -254,48 +276,69 @@ function withMiddleware(middleware: any, handler: any) {
 }
 
 // Require authentication
-app.get('/dashboard', withMiddleware(requireAuth(), (req, res) => {
-  res.json({
-    message: 'Welcome to your dashboard',
-    user: authUtils.getUser(req),
-  });
-}));
+app.get(
+  '/dashboard',
+  withMiddleware(requireAuth(), (req, res) => {
+    res.json({
+      message: 'Welcome to your dashboard',
+      user: authUtils.getUser(req),
+    });
+  })
+);
 
 // Require specific role
-app.get('/admin', withMiddleware(requireRole(['admin']), (req, res) => {
-  res.json({ message: 'Admin panel' });
-}));
+app.get(
+  '/admin',
+  withMiddleware(requireRole(['admin']), (req, res) => {
+    res.json({ message: 'Admin panel' });
+  })
+);
 
 // Require admin role (shorthand)
-app.get('/admin/users', withMiddleware(requireAdmin(), (req, res) => {
-  res.json({ users: getUserList() });
-}));
+app.get(
+  '/admin/users',
+  withMiddleware(requireAdmin(), (req, res) => {
+    res.json({ users: getUserList() });
+  })
+);
 
 // Require specific permissions
-app.get('/api/users', withMiddleware(requireAuth({
-  permissions: ['users:read'],
-  onForbidden: (req, res) => {
-    res.status(403).json({ error: 'Insufficient permissions' });
-  },
-}), (req, res) => {
-  res.json({ users: getUsers() });
-}));
+app.get(
+  '/api/users',
+  withMiddleware(
+    requireAuth({
+      permissions: ['users:read'],
+      onForbidden: (req, res) => {
+        res.status(403).json({ error: 'Insufficient permissions' });
+      },
+    }),
+    (req, res) => {
+      res.json({ users: getUsers() });
+    }
+  )
+);
 
 // Custom authorization logic
-app.get('/organization/:orgId/data', withMiddleware(requireAuth({
-  authorize: async (user) => {
-    // Custom logic - user can only access their organization's data
-    return user.organizationId === req.params.orgId;
-  },
-  onForbidden: (req, res) => {
-    res.status(403).json({ error: 'Access denied to this organization' });
-  },
-}), (req, res) => {
-  res.json({
-    organizationId: req.params.orgId,
-    data: getOrganizationData(req.params.orgId),
-  });
-}));
+app.get(
+  '/organization/:orgId/data',
+  withMiddleware(
+    requireAuth({
+      authorize: async user => {
+        // Custom logic - user can only access their organization's data
+        return user.organizationId === req.params.orgId;
+      },
+      onForbidden: (req, res) => {
+        res.status(403).json({ error: 'Access denied to this organization' });
+      },
+    }),
+    (req, res) => {
+      res.json({
+        organizationId: req.params.orgId,
+        data: getOrganizationData(req.params.orgId),
+      });
+    }
+  )
+);
 ```
 
 ### Manual Authentication Checks
@@ -335,15 +378,15 @@ app.get('/profile/settings', (req, res) => {
 import { authUtils } from '../src/core/middleware/built-in';
 
 // Available utility functions:
-authUtils.isAuthenticated(req)           // Check if user is authenticated
-authUtils.getUser(req)                   // Get current user object
-authUtils.getUserId(req)                 // Get current user ID
-authUtils.hasRole(req, 'admin')          // Check if user has specific role
-authUtils.hasRole(req, ['admin', 'mod']) // Check if user has any of the roles
-authUtils.hasPermission(req, 'users:read') // Check specific permission
-authUtils.isAdmin(req)                   // Check if user is admin
-authUtils.createAuthResponse(req)        // Create standardized auth response
-authUtils.ensureAuth(req, res)           // Force auth check with redirect
+authUtils.isAuthenticated(req); // Check if user is authenticated
+authUtils.getUser(req); // Get current user object
+authUtils.getUserId(req); // Get current user ID
+authUtils.hasRole(req, 'admin'); // Check if user has specific role
+authUtils.hasRole(req, ['admin', 'mod']); // Check if user has any of the roles
+authUtils.hasPermission(req, 'users:read'); // Check specific permission
+authUtils.isAdmin(req); // Check if user is admin
+authUtils.createAuthResponse(req); // Create standardized auth response
+authUtils.ensureAuth(req, res); // Force auth check with redirect
 ```
 
 ### Auth Response Helpers
@@ -352,10 +395,10 @@ authUtils.ensureAuth(req, res)           // Force auth check with redirect
 import { authResponses } from '../src/core/middleware/built-in';
 
 // Standardized auth responses:
-authResponses.unauthorized(res, 'Custom message')
-authResponses.forbidden(res, 'Access denied')
-authResponses.authSuccess(res, data)
-authResponses.authError(res, 'error_code', 'Error message')
+authResponses.unauthorized(res, 'Custom message');
+authResponses.forbidden(res, 'Access denied');
+authResponses.authSuccess(res, data);
+authResponses.authError(res, 'error_code', 'Error message');
 ```
 
 ## Advanced Configuration
@@ -363,95 +406,107 @@ authResponses.authError(res, 'error_code', 'Error message')
 ### Custom Callbacks
 
 ```typescript
-app.use(auth({
-  providers: [/* your providers */],
-  callbacks: {
-    signIn: async ({ user, account, profile }: any) => {
-      // Custom sign-in logic
-      console.log(`User ${user.email} signed in with ${account?.provider}`);
+app.use(
+  auth({
+    providers: [
+      /* your providers */
+    ],
+    callbacks: {
+      signIn: async ({ user, account, profile }: any) => {
+        // Custom sign-in logic
+        console.log(`User ${user.email} signed in with ${account?.provider}`);
 
-      // Business logic - block certain domains
-      if (user.email?.endsWith('@blockedcompany.com')) {
-        return false;
-      }
+        // Business logic - block certain domains
+        if (user.email?.endsWith('@blockedcompany.com')) {
+          return false;
+        }
 
-      // Log for audit
-      await logSecurityEvent('user_signin', {
-        userId: user.id,
-        email: user.email,
-        provider: account?.provider,
-      });
+        // Log for audit
+        await logSecurityEvent('user_signin', {
+          userId: user.id,
+          email: user.email,
+          provider: account?.provider,
+        });
 
-      return true;
+        return true;
+      },
+
+      jwt: async ({ token, user, account }: any) => {
+        // Add custom claims to JWT
+        if (user) {
+          token.userId = user.id;
+          token.provider = account?.provider;
+
+          // Fetch user roles and permissions from database
+          token.roles = await getUserRoles(user.id);
+          token.permissions = await getUserPermissions(user.id);
+          token.organizationId = await getUserOrganization(user.id);
+        }
+        return token;
+      },
+
+      session: async ({ session, token }: any) => {
+        // Add custom fields to session
+        session.user.roles = token.roles as string[];
+        session.user.permissions = token.permissions as string[];
+        session.user.organizationId = token.organizationId as string;
+        session.customData = {
+          lastActivity: new Date(),
+          sessionId: token.jti,
+        };
+        return session;
+      },
     },
-
-    jwt: async ({ token, user, account }: any) => {
-      // Add custom claims to JWT
-      if (user) {
-        token.userId = user.id;
-        token.provider = account?.provider;
-
-        // Fetch user roles and permissions from database
-        token.roles = await getUserRoles(user.id);
-        token.permissions = await getUserPermissions(user.id);
-        token.organizationId = await getUserOrganization(user.id);
-      }
-      return token;
-    },
-
-    session: async ({ session, token }: any) => {
-      // Add custom fields to session
-      session.user.roles = token.roles as string[];
-      session.user.permissions = token.permissions as string[];
-      session.user.organizationId = token.organizationId as string;
-      session.customData = {
-        lastActivity: new Date(),
-        sessionId: token.jti,
-      };
-      return session;
-    },
-  },
-}));
+  })
+);
 ```
 
 ### Security Events
 
 ```typescript
-app.use(auth({
-  providers: [/* your providers */],
-  events: {
-    signIn: async ({ user, account, isNewUser }: any) => {
-      await logSecurityEvent('signin_success', {
-        userId: user.id,
-        provider: account?.provider,
-        isNewUser,
-      });
-    },
+app.use(
+  auth({
+    providers: [
+      /* your providers */
+    ],
+    events: {
+      signIn: async ({ user, account, isNewUser }: any) => {
+        await logSecurityEvent('signin_success', {
+          userId: user.id,
+          provider: account?.provider,
+          isNewUser,
+        });
+      },
 
-    signOut: async ({ session }: any) => {
-      await logSecurityEvent('signout', {
-        userId: session.user.id,
-        sessionDuration: Date.now() - new Date(session.customData.lastActivity).getTime(),
-      });
+      signOut: async ({ session }: any) => {
+        await logSecurityEvent('signout', {
+          userId: session.user.id,
+          sessionDuration: Date.now() - new Date(session.customData.lastActivity).getTime(),
+        });
+      },
     },
-  },
-}));
+  })
+);
 ```
 
 ### Session Configuration
 
 ```typescript
-app.use(auth({
-  providers: [/* your providers */],
-  session: {
-    strategy: 'jwt', // or 'database'
-    maxAge: 8 * 60 * 60, // 8 hours
-    updateAge: 2 * 60 * 60, // Update every 2 hours
-  },
-  useSecureCookies: process.env.NODE_ENV === 'production',
-  trustHost: true,
-  debug: process.env.NODE_ENV === 'development',
-}));
+app.use(
+  auth({
+    providers: [
+      /* your providers */
+    ],
+    session: {
+      strategy: 'jwt', // or 'database'
+      maxAge: 8 * 60 * 60, // 8 hours
+      updateAge: 2 * 60 * 60, // Update every 2 hours
+    },
+    useSecureCookies: process.env.NODE_ENV === 'production',
+    trustHost: true,
+    debug: process.env.NODE_ENV === 'development',
+  })
+);
 ```
 
 ## Native Auth.js Adapter
@@ -461,27 +516,29 @@ MoroJS includes a native Auth.js adapter for maximum compatibility and zero exte
 ```typescript
 import { createAuthMiddleware } from '../src/core/auth/morojs-adapter';
 
-app.use(createAuthMiddleware({
-  providers: [
-    {
-      id: 'github',
-      name: 'GitHub',
-      type: 'oauth',
-      authorization: 'https://github.com/login/oauth/authorize',
-      token: 'https://github.com/login/oauth/access_token',
-      userinfo: 'https://api.github.com/user',
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+app.use(
+  createAuthMiddleware({
+    providers: [
+      {
+        id: 'github',
+        name: 'GitHub',
+        type: 'oauth',
+        authorization: 'https://github.com/login/oauth/authorize',
+        token: 'https://github.com/login/oauth/access_token',
+        userinfo: 'https://api.github.com/user',
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      },
+    ],
+    secret: process.env.AUTH_SECRET!,
+    callbacks: {
+      async signIn({ user, account }: any) {
+        console.log(`🔐 User ${user.email} signing in via ${account?.provider}`);
+        return true;
+      },
     },
-  ],
-  secret: process.env.AUTH_SECRET!,
-  callbacks: {
-    async signIn({ user, account }: any) {
-      console.log(`🔐 User ${user.email} signing in via ${account?.provider}`);
-      return true;
-    },
-  },
-}));
+  })
+);
 ```
 
 ## API Reference
@@ -545,19 +602,21 @@ interface CustomUser extends AuthUser {
 }
 
 // Use in your callbacks
-app.use(auth({
-  callbacks: {
-    session: async ({ session, token }: any) => {
-      session.user = {
-        ...session.user,
-        role: token.role as 'admin' | 'user' | 'manager',
-        permissions: token.permissions as string[],
-        organizationId: token.organizationId as string,
-      };
-      return session;
+app.use(
+  auth({
+    callbacks: {
+      session: async ({ session, token }: any) => {
+        session.user = {
+          ...session.user,
+          role: token.role as 'admin' | 'user' | 'manager',
+          permissions: token.permissions as string[],
+          organizationId: token.organizationId as string,
+        };
+        return session;
+      },
     },
-  },
-}));
+  })
+);
 ```
 
 ## Best Practices
@@ -599,10 +658,12 @@ See the `examples/` directory for complete working examples:
 Enable debug logging in development:
 
 ```typescript
-app.use(auth({
-  debug: process.env.NODE_ENV === 'development',
-  // ... other options
-}));
+app.use(
+  auth({
+    debug: process.env.NODE_ENV === 'development',
+    // ... other options
+  })
+);
 ```
 
 ## Custom JWT Middleware
@@ -612,27 +673,23 @@ If you're implementing custom JWT authentication middleware, MoroJS provides uti
 ### JWT Error Handling Utilities
 
 ```typescript
-import { 
-  safeVerifyJWT, 
-  extractJWTFromHeader, 
-  createAuthErrorResponse 
-} from '@morojs/moro';
+import { safeVerifyJWT, extractJWTFromHeader, createAuthErrorResponse } from '@morojs/moro';
 
 const customAuthMiddleware = async (req: any, res: any, next: any) => {
   // Extract token from Authorization header
   const token = extractJWTFromHeader(req.headers.authorization);
-  
+
   if (!token) {
     return res.status(401).json({
       success: false,
       error: 'Missing token',
-      message: 'Authorization header with Bearer token is required'
+      message: 'Authorization header with Bearer token is required',
     });
   }
 
   // Safely verify JWT with proper error handling
   const result = safeVerifyJWT(token, process.env.JWT_SECRET!);
-  
+
   if (!result.success) {
     // Create standardized error response
     const errorResponse = createAuthErrorResponse(result.error);
@@ -644,7 +701,7 @@ const customAuthMiddleware = async (req: any, res: any, next: any) => {
   req.auth = {
     user: result.payload,
     isAuthenticated: true,
-    token
+    token,
   };
 
   next();
@@ -658,7 +715,7 @@ app.use(customAuthMiddleware);
 The `safeVerifyJWT` utility handles all JWT error types gracefully:
 
 - **TokenExpiredError**: Returns structured error with expiration date
-- **JsonWebTokenError**: Returns error for invalid token format/signature  
+- **JsonWebTokenError**: Returns error for invalid token format/signature
 - **NotBeforeError**: Returns error for tokens not yet active
 - **Missing Dependencies**: Returns helpful installation instructions
 - **Missing Secret**: Returns configuration error message
@@ -703,19 +760,19 @@ if (!result.success) {
         error: 'session_expired',
         message: 'Please sign in again',
         expiredAt: result.error.expiredAt,
-        refreshUrl: '/auth/refresh'
+        refreshUrl: '/auth/refresh',
       });
-      
+
     case 'invalid':
       return res.status(401).json({
         error: 'invalid_token',
-        message: 'Authentication failed'
+        message: 'Authentication failed',
       });
-      
+
     default:
       return res.status(401).json({
         error: 'auth_failed',
-        message: result.error?.message || 'Authentication required'
+        message: result.error?.message || 'Authentication required',
       });
   }
 }

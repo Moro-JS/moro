@@ -58,6 +58,11 @@ export class SQLiteAdapter implements DatabaseAdapter {
     this.db.close();
   }
 
+  async getDatabase() {
+    await this.initPromise;
+    return this.db;
+  }
+
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     await this.initPromise;
     try {

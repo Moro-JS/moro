@@ -1,4 +1,4 @@
-// Auth Core - Reusable Auth.js authentication logic
+// Auth Core - Reusable authentication logic with Better Auth
 import crypto from 'crypto';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import { AuthOptions, AuthProvider, AuthSession, AuthRequest } from '../../../../types/auth.js';
@@ -10,7 +10,8 @@ const logger = createFrameworkLogger('AuthCore');
 // ===== Auth.js Provider Factory Functions =====
 
 export const providers = {
-  google: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+  // OAuth Providers - Better Auth native support
+  google: (options: { clientId: string; clientSecret: string; scope?: string }): AuthProvider => ({
     id: 'google',
     name: 'Google',
     type: 'oauth' as const,
@@ -20,7 +21,7 @@ export const providers = {
     ...options,
   }),
 
-  github: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+  github: (options: { clientId: string; clientSecret: string; scope?: string }): AuthProvider => ({
     id: 'github',
     name: 'GitHub',
     type: 'oauth' as const,
@@ -30,7 +31,7 @@ export const providers = {
     ...options,
   }),
 
-  discord: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+  discord: (options: { clientId: string; clientSecret: string; scope?: string }): AuthProvider => ({
     id: 'discord',
     name: 'Discord',
     type: 'oauth' as const,
@@ -40,6 +41,61 @@ export const providers = {
     ...options,
   }),
 
+  twitter: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+    id: 'twitter',
+    name: 'Twitter',
+    type: 'oauth' as const,
+    authorization: 'https://twitter.com/i/oauth2/authorize',
+    token: 'https://api.twitter.com/2/oauth2/token',
+    userinfo: 'https://api.twitter.com/2/users/me',
+    ...options,
+  }),
+
+  microsoft: (options: {
+    clientId: string;
+    clientSecret: string;
+    tenant?: string;
+  }): AuthProvider => ({
+    id: 'microsoft',
+    name: 'Microsoft',
+    type: 'oauth' as const,
+    authorization: `https://login.microsoftonline.com/${options.tenant || 'common'}/oauth2/v2.0/authorize`,
+    token: `https://login.microsoftonline.com/${options.tenant || 'common'}/oauth2/v2.0/token`,
+    userinfo: 'https://graph.microsoft.com/oidc/userinfo',
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+  }),
+
+  apple: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+    id: 'apple',
+    name: 'Apple',
+    type: 'oauth' as const,
+    authorization: 'https://appleid.apple.com/auth/authorize',
+    token: 'https://appleid.apple.com/auth/token',
+    ...options,
+  }),
+
+  facebook: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+    id: 'facebook',
+    name: 'Facebook',
+    type: 'oauth' as const,
+    authorization: 'https://www.facebook.com/v18.0/dialog/oauth',
+    token: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    userinfo: 'https://graph.facebook.com/me?fields=id,name,email,picture',
+    ...options,
+  }),
+
+  linkedin: (options: { clientId: string; clientSecret: string }): AuthProvider => ({
+    id: 'linkedin',
+    name: 'LinkedIn',
+    type: 'oauth' as const,
+    authorization: 'https://www.linkedin.com/oauth/v2/authorization',
+    token: 'https://www.linkedin.com/oauth/v2/accessToken',
+    userinfo: 'https://api.linkedin.com/v2/me',
+    ...options,
+  }),
+
+  // Traditional Providers
   credentials: (options: {
     name?: string;
     credentials: Record<string, any>;
@@ -60,7 +116,262 @@ export const providers = {
     type: 'email' as const,
     ...options,
   }),
+
+  // Modern Passwordless Authentication
+  magicLink: (options: {
+    from: string;
+    sendMagicLink?: (email: string, url: string) => Promise<void>;
+    expiresIn?: number; // in seconds, default 300 (5 minutes)
+  }): AuthProvider => ({
+    id: 'magic-link',
+    name: 'Magic Link',
+    type: 'email' as const,
+    from: options.from,
+    sendMagicLink: options.sendMagicLink,
+    expiresIn: options.expiresIn || 300,
+  }),
+
+  otp: (options: {
+    from?: string;
+    sendOTP?: (contact: string, code: string) => Promise<void>;
+    expiresIn?: number; // in seconds, default 300 (5 minutes)
+    length?: number; // OTP code length, default 6
+  }): AuthProvider => ({
+    id: 'otp',
+    name: 'One-Time Password',
+    type: 'email' as const,
+    from: options.from || '',
+    sendOTP: options.sendOTP,
+    expiresIn: options.expiresIn || 300,
+    length: options.length || 6,
+  }),
+
+  passkey: (options: {
+    rpName?: string; // Relying Party name
+    rpId?: string; // Relying Party ID (usually your domain)
+    origin?: string; // Origin URL
+  }): AuthProvider => ({
+    id: 'passkey',
+    name: 'Passkey (WebAuthn)',
+    type: 'credentials' as const,
+    rpName: options.rpName || 'MoroJS App',
+    rpId: options.rpId,
+    origin: options.origin,
+  }),
 };
+
+// ===== Two-Factor Authentication (2FA) Options =====
+// 2FA in Better Auth is configured as a plugin, not a provider
+// These helper types define 2FA configuration options
+
+export interface TwoFactorAuthOptions {
+  /**
+   * Enable TOTP (Time-based One-Time Password) via authenticator apps
+   * @default true
+   */
+  totp?: boolean;
+
+  /**
+   * Enable backup codes for account recovery
+   * @default true
+   */
+  backupCodes?: boolean;
+
+  /**
+   * Number of backup codes to generate
+   * @default 10
+   */
+  backupCodesCount?: number;
+
+  /**
+   * Trust device after successful 2FA verification
+   * @default true
+   */
+  trustDevice?: boolean;
+
+  /**
+   * Duration to trust a device (in seconds)
+   * @default 2592000 (30 days)
+   */
+  trustDeviceDuration?: number;
+
+  /**
+   * Issuer name for TOTP (shown in authenticator apps)
+   */
+  issuer?: string;
+}
+
+/**
+ * Helper to create 2FA configuration
+ * Usage in auth config:
+ * ```ts
+ * auth({
+ *   plugins: [twoFactor({ issuer: 'MyApp' })],
+ *   ...
+ * })
+ * ```
+ */
+export function twoFactor(options: TwoFactorAuthOptions = {}) {
+  return {
+    type: '2fa' as const,
+    totp: options.totp !== false,
+    backupCodes: options.backupCodes !== false,
+    backupCodesCount: options.backupCodesCount || 10,
+    trustDevice: options.trustDevice !== false,
+    trustDeviceDuration: options.trustDeviceDuration || 2592000,
+    issuer: options.issuer || 'MoroJS App',
+  };
+}
+
+// ===== Additional Plugin Helpers =====
+
+/**
+ * Organization/Multi-tenant plugin configuration
+ * Enables support for organizations, teams, and multi-tenant applications
+ */
+export interface OrganizationOptions {
+  /**
+   * Allow users to create organizations
+   * @default true
+   */
+  allowUserCreate?: boolean;
+
+  /**
+   * Maximum number of organizations per user
+   * @default 10
+   */
+  maxOrganizationsPerUser?: number;
+
+  /**
+   * Enable role-based access within organizations
+   * @default true
+   */
+  organizationRoles?: boolean;
+}
+
+export function organization(options: OrganizationOptions = {}) {
+  return {
+    type: 'organization' as const,
+    allowUserCreate: options.allowUserCreate !== false,
+    maxOrganizationsPerUser: options.maxOrganizationsPerUser || 10,
+    organizationRoles: options.organizationRoles !== false,
+  };
+}
+
+/**
+ * Anonymous user support
+ * Allows users to interact with your app before signing up
+ */
+export interface AnonymousOptions {
+  /**
+   * Automatically link anonymous accounts when user signs up
+   * @default true
+   */
+  linkOnSignUp?: boolean;
+
+  /**
+   * Anonymous session duration (in seconds)
+   * @default 2592000 (30 days)
+   */
+  sessionDuration?: number;
+}
+
+export function anonymous(options: AnonymousOptions = {}) {
+  return {
+    type: 'anonymous' as const,
+    linkOnSignUp: options.linkOnSignUp !== false,
+    sessionDuration: options.sessionDuration || 2592000,
+  };
+}
+
+/**
+ * Account linking - allows users to link multiple auth providers to one account
+ */
+export interface AccountLinkingOptions {
+  /**
+   * Automatically link accounts with same email
+   * @default false (requires user confirmation for security)
+   */
+  autoLinkSameEmail?: boolean;
+
+  /**
+   * Allow users to manually link additional providers
+   * @default true
+   */
+  allowManualLink?: boolean;
+}
+
+export function accountLinking(options: AccountLinkingOptions = {}) {
+  return {
+    type: 'account-linking' as const,
+    autoLinkSameEmail: options.autoLinkSameEmail || false,
+    allowManualLink: options.allowManualLink !== false,
+  };
+}
+
+/**
+ * Rate limiting configuration for authentication endpoints
+ */
+export interface RateLimitOptions {
+  /**
+   * Maximum failed login attempts before lockout
+   * @default 5
+   */
+  maxAttempts?: number;
+
+  /**
+   * Lockout duration in seconds
+   * @default 900 (15 minutes)
+   */
+  lockoutDuration?: number;
+
+  /**
+   * Window to track attempts (in seconds)
+   * @default 300 (5 minutes)
+   */
+  window?: number;
+}
+
+export function rateLimit(options: RateLimitOptions = {}) {
+  return {
+    type: 'rate-limit' as const,
+    maxAttempts: options.maxAttempts || 5,
+    lockoutDuration: options.lockoutDuration || 900,
+    window: options.window || 300,
+  };
+}
+
+/**
+ * Bearer token support for API authentication
+ */
+export interface BearerTokenOptions {
+  /**
+   * Token expiration time (in seconds)
+   * @default 3600 (1 hour)
+   */
+  expiresIn?: number;
+
+  /**
+   * Allow refresh tokens
+   * @default true
+   */
+  refreshTokens?: boolean;
+
+  /**
+   * Refresh token expiration (in seconds)
+   * @default 2592000 (30 days)
+   */
+  refreshTokenExpiresIn?: number;
+}
+
+export function bearerToken(options: BearerTokenOptions = {}) {
+  return {
+    type: 'bearer-token' as const,
+    expiresIn: options.expiresIn || 3600,
+    refreshTokens: options.refreshTokens !== false,
+    refreshTokenExpiresIn: options.refreshTokenExpiresIn || 2592000,
+  };
+}
 
 // ===== Auth.js Implementation =====
 
@@ -177,8 +488,9 @@ async function initializeAuthJS(config: AuthOptions): Promise<AuthInstance> {
 // ===== Core Logic =====
 
 /**
- * AuthCore - Core Auth.js authentication logic
+ * AuthCore - Core authentication logic with Better Auth
  * Used directly by the router for route-based authentication
+ * Now delegates to the main morojs-adapter for Better Auth integration
  */
 export class AuthCore {
   private config: AuthOptions;
@@ -200,7 +512,7 @@ export class AuthCore {
   }
 
   /**
-   * Initialize Auth.js instance
+   * Initialize Better Auth instance
    */
   async initialize(): Promise<void> {
     if (!this.config.providers || this.config.providers.length === 0) {
@@ -209,15 +521,15 @@ export class AuthCore {
 
     try {
       this.authInstance = await initializeAuthJS(this.config);
-      logger.info('Auth.js initialized successfully', 'Initialization');
+      logger.info('Better Auth initialized successfully', 'Initialization');
     } catch (error) {
-      logger.error('Failed to initialize Auth.js', 'InitializationError', { error });
+      logger.error('Failed to initialize Better Auth', 'InitializationError', { error });
       throw error;
     }
   }
 
   /**
-   * Check if request is for Auth.js API routes
+   * Check if request is for Better Auth API routes
    */
   isAuthRoute(url?: string): boolean {
     if (!url) {
@@ -228,7 +540,7 @@ export class AuthCore {
   }
 
   /**
-   * Handle Auth.js API routes
+   * Handle Better Auth API routes
    */
   async handleAuthRoute(req: HttpRequest, res: HttpResponse): Promise<any> {
     if (!this.authInstance) {
@@ -239,7 +551,7 @@ export class AuthCore {
       const response = await this.authInstance.handler(req, res);
       return response;
     } catch (error) {
-      logger.error('Auth.js handler error', 'HandlerError', { error });
+      logger.error('Better Auth handler error', 'HandlerError', { error });
       throw error;
     }
   }

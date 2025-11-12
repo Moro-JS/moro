@@ -41,10 +41,10 @@
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
-    "prerelease": "npm run format && npm run build && npm test && npm run test:package && node scripts/release.js --skip-tests",
-    "prerelease:patch": "npm run format && npm run build && npm test && npm run test:package && node scripts/release.js patch --skip-tests",
-    "prerelease:minor": "npm run format && npm run build && npm test && npm run test:package && node scripts/release.js minor --skip-tests",
-    "prerelease:major": "npm run format && npm run build && npm test && npm run test:package && node scripts/release.js major --skip-tests"
+    "prerelease": "npm run lint:fix && npm run format && npm run build && node scripts/release.js",
+    "prerelease:patch": "npm run lint:fix && npm run format && npm run build && node scripts/release.js patch",
+    "prerelease:minor": "npm run lint:fix && npm run format && npm run build && node scripts/release.js minor",
+    "prerelease:major": "npm run lint:fix && npm run format && npm run build && node scripts/release.js major"
   },
   "keywords": [
     "nodejs",
@@ -109,7 +109,6 @@
     "node": ">=18.0.0"
   },
   "peerDependencies": {
-    "@auth/core": "^0.37.3",
     "@aws-sdk/client-ses": "^3.927.0",
     "@aws-sdk/client-sqs": "^3.927.0",
     "@grpc/grpc-js": "^1.14.1",
@@ -117,6 +116,7 @@
     "@pothos/core": "^4.10.0",
     "@sendgrid/mail": "^8.1.6",
     "amqplib": "^0.10.9",
+    "better-auth": "^1.3.34",
     "better-sqlite3": "^12.2.0",
     "bullmq": "^5.63.0",
     "class-validator": "^0.14.0",
@@ -141,9 +141,6 @@
     "yup": "^1.7.1"
   },
   "peerDependenciesMeta": {
-    "@auth/core": {
-      "optional": true
-    },
     "@aws-sdk/client-ses": {
       "optional": true
     },
@@ -163,6 +160,9 @@
       "optional": true
     },
     "amqplib": {
+      "optional": true
+    },
+    "better-auth": {
       "optional": true
     },
     "better-sqlite3": {
@@ -275,11 +275,11 @@
     "LICENSE"
   ],
   "lint-staged": {
-    "src/**/*.ts": [
+    "**/*.ts": [
       "prettier --write",
       "eslint --fix"
     ],
-    "src/**/*.{json,md}": [
+    "**/*.{js,mjs,json,md}": [
       "prettier --write"
     ]
   }

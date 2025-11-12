@@ -1,12 +1,13 @@
 /* eslint-disable */
-// Auth Integration Tests
+// Auth Integration Tests - Better Auth Compatible
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+
 import { createApp } from '../../src/index.js';
 import { auth, providers } from '../../src/core/middleware/built-in/auth.js';
 import request from 'supertest';
 import { createTestPort, delay } from '../setup.js';
 
-describe('Auth Integration Tests', () => {
+describe('Auth Integration Tests (Better Auth)', () => {
   let app: any;
   let port: number;
 

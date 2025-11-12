@@ -15,288 +15,329 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 
-
 // Colors for console output
 const colors = {
-    reset: '\x1b[0m',
-    bright: '\x1b[1m',
-    red: '\x1b[31m',
-    green: '\x1b[32m',
-    yellow: '\x1b[33m',
-    blue: '\x1b[34m',
-    magenta: '\x1b[35m',
-    cyan: '\x1b[36m',
+  reset: '\x1b[0m',
+  bright: '\x1b[1m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
 };
 
 function log(message, color = 'reset') {
-    console.log(`${colors[color]}${message}${colors.reset}`);
+  console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
 function exec(command, options = {}) {
-    try {
-        return execSync(command, {
-            stdio: 'inherit',
-            encoding: 'utf8',
-            ...options
-        });
-    } catch (error) {
-        log(`❌ Command failed: ${command}`, 'red');
-        log(`Error: ${error.message}`, 'red');
-        process.exit(1);
-    }
+  try {
+    return execSync(command, {
+      stdio: 'inherit',
+      encoding: 'utf8',
+      ...options,
+    });
+  } catch (error) {
+    log(`❌ Command failed: ${command}`, 'red');
+    log(`Error: ${error.message}`, 'red');
+    process.exit(1);
+  }
 }
 
 function getCurrentVersion() {
-    const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    return packageJson.version;
+  const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  return packageJson.version;
 }
 
 function updateVersion(versionType) {
-    const currentVersion = getCurrentVersion();
-    const [major, minor, patch] = currentVersion.split('.').map(Number);
+  const currentVersion = getCurrentVersion();
+  const [major, minor, patch] = currentVersion.split('.').map(Number);
 
-    let newVersion;
-    switch (versionType) {
-        case 'major':
-            newVersion = `${major + 1}.0.0`;
-            break;
-        case 'minor':
-            newVersion = `${major}.${minor + 1}.0`;
-            break;
-        case 'patch':
-            newVersion = `${major}.${minor}.${patch + 1}`;
-            break;
-        default:
-            throw new Error(`Invalid version type: ${versionType}`);
-    }
+  let newVersion;
+  switch (versionType) {
+    case 'major':
+      newVersion = `${major + 1}.0.0`;
+      break;
+    case 'minor':
+      newVersion = `${major}.${minor + 1}.0`;
+      break;
+    case 'patch':
+      newVersion = `${major}.${minor}.${patch + 1}`;
+      break;
+    default:
+      throw new Error(`Invalid version type: ${versionType}`);
+  }
 
-    return { currentVersion, newVersion };
+  return { currentVersion, newVersion };
 }
 
 function updatePackageJson(newVersion) {
-    const packagePath = 'package.json';
-    const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-    packageJson.version = newVersion;
-    fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
+  const packagePath = 'package.json';
+  const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  packageJson.version = newVersion;
+  fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
+}
+
+function updatePackageLockJson(newVersion) {
+  const packageLockPath = 'package-lock.json';
+
+  if (!fs.existsSync(packageLockPath)) {
+    return;
+  }
+
+  const packageLock = JSON.parse(fs.readFileSync(packageLockPath, 'utf8'));
+  packageLock.version = newVersion;
+
+  if (packageLock.packages && packageLock.packages['']) {
+    packageLock.packages[''].version = newVersion;
+  }
+
+  fs.writeFileSync(packageLockPath, JSON.stringify(packageLock, null, 2) + '\n');
 }
 
 function getCommitsSinceLastRelease() {
-    try {
-        // Get the last release tag
-        const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-        // Get commits since last tag
-        const commits = execSync(`git log ${lastTag}..HEAD --oneline --no-merges`, { encoding: 'utf8' });
-        return commits.trim().split('\n').filter(line => line.trim());
-    } catch {
-        // If no tags exist, get all commits
-        const commits = execSync('git log --oneline --no-merges', { encoding: 'utf8' });
-        return commits.trim().split('\n').filter(line => line.trim()).slice(0, 10); // Limit to last 10 commits
-    }
+  try {
+    // Get the last release tag
+    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    // Get commits since last tag
+    const commits = execSync(`git log ${lastTag}..HEAD --oneline --no-merges`, {
+      encoding: 'utf8',
+    });
+    return commits
+      .trim()
+      .split('\n')
+      .filter(line => line.trim());
+  } catch {
+    // If no tags exist, get all commits
+    const commits = execSync('git log --oneline --no-merges', { encoding: 'utf8' });
+    return commits
+      .trim()
+      .split('\n')
+      .filter(line => line.trim())
+      .slice(0, 10); // Limit to last 10 commits
+  }
 }
 
 function categorizeCommits(commits) {
-    const added = [];
-    const changed = [];
-    const fixed = [];
-    const other = [];
+  const added = [];
+  const changed = [];
+  const fixed = [];
+  const other = [];
 
-    commits.forEach(commit => {
-        const message = commit.toLowerCase();
-        if (message.includes('feat:') || message.includes('add')) {
-            added.push(commit);
-        } else if (message.includes('fix:') || message.includes('bug') || message.includes('error')) {
-            fixed.push(commit);
-        } else if (message.includes('chore:') || message.includes('refactor:') || message.includes('update') || message.includes('change')) {
-            changed.push(commit);
-        } else {
-            other.push(commit);
-        }
-    });
+  commits.forEach(commit => {
+    const message = commit.toLowerCase();
+    if (message.includes('feat:') || message.includes('add')) {
+      added.push(commit);
+    } else if (message.includes('fix:') || message.includes('bug') || message.includes('error')) {
+      fixed.push(commit);
+    } else if (
+      message.includes('chore:') ||
+      message.includes('refactor:') ||
+      message.includes('update') ||
+      message.includes('change')
+    ) {
+      changed.push(commit);
+    } else {
+      other.push(commit);
+    }
+  });
 
-    return { added, changed, fixed, other };
+  return { added, changed, fixed, other };
 }
 
 function updateChangelog(newVersion, versionType) {
-    const changelogPath = 'CHANGELOG.md';
-    const today = new Date().toISOString().split('T')[0];
+  const changelogPath = 'CHANGELOG.md';
+  const today = new Date().toISOString().split('T')[0];
 
-    log(`Updating CHANGELOG.md for ${newVersion} (${versionType})`, 'cyan');
+  log(`Updating CHANGELOG.md for ${newVersion} (${versionType})`, 'cyan');
 
-    let changelog = '';
-    if (fs.existsSync(changelogPath)) {
-        changelog = fs.readFileSync(changelogPath, 'utf8');
-    }
+  let changelog = '';
+  if (fs.existsSync(changelogPath)) {
+    changelog = fs.readFileSync(changelogPath, 'utf8');
+  }
 
-    // Get commits since last release
-    const commits = getCommitsSinceLastRelease();
-    const { added, changed, fixed, other } = categorizeCommits(commits);
+  // Get commits since last release
+  const commits = getCommitsSinceLastRelease();
+  const { added, changed, fixed, other } = categorizeCommits(commits);
 
-    // Build changelog entry
-    let newEntry = `## [${newVersion}] - ${today}\n\n`;
+  // Build changelog entry
+  let newEntry = `## [${newVersion}] - ${today}\n\n`;
 
-    if (added.length > 0) {
-        newEntry += '### Added\n';
-        added.forEach(commit => {
-            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-            newEntry += `- ${message}\n`;
-        });
-        newEntry += '\n';
-    }
+  if (added.length > 0) {
+    newEntry += '### Added\n';
+    added.forEach(commit => {
+      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+      newEntry += `- ${message}\n`;
+    });
+    newEntry += '\n';
+  }
 
-    if (changed.length > 0) {
-        newEntry += '### Changed\n';
-        changed.forEach(commit => {
-            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-            newEntry += `- ${message}\n`;
-        });
-        newEntry += '\n';
-    }
+  if (changed.length > 0) {
+    newEntry += '### Changed\n';
+    changed.forEach(commit => {
+      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+      newEntry += `- ${message}\n`;
+    });
+    newEntry += '\n';
+  }
 
-    if (fixed.length > 0) {
-        newEntry += '### Fixed\n';
-        fixed.forEach(commit => {
-            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-            newEntry += `- ${message}\n`;
-        });
-        newEntry += '\n';
-    }
+  if (fixed.length > 0) {
+    newEntry += '### Fixed\n';
+    fixed.forEach(commit => {
+      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+      newEntry += `- ${message}\n`;
+    });
+    newEntry += '\n';
+  }
 
-    if (other.length > 0) {
-        newEntry += '### Other\n';
-        other.forEach(commit => {
-            const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-            newEntry += `- ${message}\n`;
-        });
-        newEntry += '\n';
-    }
+  if (other.length > 0) {
+    newEntry += '### Other\n';
+    other.forEach(commit => {
+      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
+      newEntry += `- ${message}\n`;
+    });
+    newEntry += '\n';
+  }
 
-    // If no commits found, add a generic entry
-    if (commits.length === 0) {
-        newEntry += '### Maintenance\n';
-        newEntry += `- Version bump to ${newVersion}\n\n`;
-    }
+  // If no commits found, add a generic entry
+  if (commits.length === 0) {
+    newEntry += '### Maintenance\n';
+    newEntry += `- Version bump to ${newVersion}\n\n`;
+  }
 
-    const updatedChangelog = newEntry + changelog;
-    fs.writeFileSync(changelogPath, updatedChangelog);
+  const updatedChangelog = newEntry + changelog;
+  fs.writeFileSync(changelogPath, updatedChangelog);
 }
 
 function main() {
-    const args = process.argv.slice(2);
-    const skipTests = args.includes('--skip-tests');
+  const args = process.argv.slice(2);
+  const skipTests = args.includes('--skip-tests');
 
-    // Check for custom version
-    const versionArgIndex = args.findIndex(arg => arg.startsWith('--version='));
-    let customVersion = null;
-    let versionType = 'patch';
+  // Check for custom version
+  const versionArgIndex = args.findIndex(arg => arg.startsWith('--version='));
+  let customVersion = null;
+  let versionType = 'patch';
 
-    if (versionArgIndex !== -1) {
-        customVersion = args[versionArgIndex].split('=')[1];
-        if (!customVersion || !/^\d+\.\d+\.\d+$/.test(customVersion)) {
-            log('❌ Invalid version format. Use: --version=1.2.3', 'red');
-            process.exit(1);
-        }
-    } else {
-        versionType = args.find(arg => ['major', 'minor', 'patch'].includes(arg)) || 'patch';
-        if (!['major', 'minor', 'patch'].includes(versionType)) {
-            log('❌ Invalid version type. Use: major, minor, patch, or --version=X.Y.Z', 'red');
-            process.exit(1);
-        }
+  if (versionArgIndex !== -1) {
+    customVersion = args[versionArgIndex].split('=')[1];
+    if (!customVersion || !/^\d+\.\d+\.\d+$/.test(customVersion)) {
+      log('❌ Invalid version format. Use: --version=1.2.3', 'red');
+      process.exit(1);
     }
-
-    log('🚀 MoroJS Pre-Release Process', 'bright');
-    log('=============================', 'bright');
-
-    // Step 1: Check for uncommitted changes
-    log('\n🔍 Step 1: Checking for uncommitted changes', 'blue');
-    try {
-        const status = execSync('git status --porcelain', { encoding: 'utf8' });
-        if (status.trim()) {
-            log('❌ You have uncommitted changes. Please commit or stash them first.', 'red');
-            log('Uncommitted files:', 'yellow');
-            console.log(status);
-            process.exit(1);
-        }
-    } catch {
-        // Git not available or not a git repo
+  } else {
+    versionType = args.find(arg => ['major', 'minor', 'patch'].includes(arg)) || 'patch';
+    if (!['major', 'minor', 'patch'].includes(versionType)) {
+      log('❌ Invalid version type. Use: major, minor, patch, or --version=X.Y.Z', 'red');
+      process.exit(1);
     }
-    log('✅ No uncommitted changes', 'green');
+  }
 
-    // Step 2: Run tests
-    if (skipTests) {
-        log('\n🧪 Step 2: Skipping tests (--skip-tests)', 'yellow');
-    } else {
-        log('\n🧪 Step 2: Running tests', 'blue');
-        exec('npm test');
-        log('✅ All tests passed', 'green');
+  log('🚀 MoroJS Pre-Release Process', 'bright');
+  log('=============================', 'bright');
+
+  // Step 1: Check for uncommitted changes
+  log('\n🔍 Step 1: Checking for uncommitted changes', 'blue');
+  try {
+    const status = execSync('git status --porcelain', { encoding: 'utf8' });
+    if (status.trim()) {
+      log('❌ You have uncommitted changes. Please commit or stash them first.', 'red');
+      log('Uncommitted files:', 'yellow');
+      console.log(status);
+      process.exit(1);
     }
+  } catch {
+    // Git not available or not a git repo
+  }
+  log('✅ No uncommitted changes', 'green');
 
-    // Step 3: Run linting
-    if (skipTests) {
-        log('\n🔍 Step 3: Skipping linting (--skip-tests)', 'yellow');
-    } else {
-        log('\n🔍 Step 3: Running linting', 'blue');
-        exec('npm run lint');
-        log('✅ Linting passed', 'green');
-    }
+  // Step 2: Run tests
+  if (skipTests) {
+    log('\n🧪 Step 2: Skipping tests (--skip-tests)', 'yellow');
+  } else {
+    log('\n🧪 Step 2: Running tests', 'blue');
+    exec('npm test');
+    log('✅ All tests passed', 'green');
+  }
 
-    // Step 4: Update version
-    log('\n📝 Step 4: Updating version', 'blue');
-    let currentVersion, newVersion;
+  // Step 3: Run package validation tests
+  if (skipTests) {
+    log('\n📦 Step 3: Skipping package validation (--skip-tests)', 'yellow');
+  } else {
+    log('\n📦 Step 3: Running package validation', 'blue');
+    exec('npm run test:package');
+    log('✅ Package validation passed', 'green');
+  }
 
-    if (customVersion) {
-        currentVersion = getCurrentVersion();
-        newVersion = customVersion;
-        log(`Version: ${currentVersion} → ${newVersion} (custom)`, 'cyan');
-        updatePackageJson(newVersion);
-    } else {
-        const versions = updateVersion(versionType);
-        currentVersion = versions.currentVersion;
-        newVersion = versions.newVersion;
-        log(`Version: ${currentVersion} → ${newVersion}`, 'cyan');
-        updatePackageJson(newVersion);
-    }
-    log('✅ Version updated', 'green');
+  // Step 4: Run linting
+  if (skipTests) {
+    log('\n🔍 Step 4: Skipping linting (--skip-tests)', 'yellow');
+  } else {
+    log('\n🔍 Step 4: Running linting', 'blue');
+    exec('npm run lint');
+    log('✅ Linting passed', 'green');
+  }
 
-    // Step 5: Update CHANGELOG
-    log('\n📋 Step 5: Updating CHANGELOG.md', 'blue');
-    updateChangelog(newVersion, versionType);
-    log('✅ CHANGELOG updated', 'green');
+  // Step 5: Update version
+  log('\n📝 Step 5: Updating version', 'blue');
+  let currentVersion, newVersion;
 
-    // Step 6: Build project
-    log('\n🔨 Step 6: Building project', 'blue');
-    exec('npm run build');
-    log('✅ Project built successfully', 'green');
+  if (customVersion) {
+    currentVersion = getCurrentVersion();
+    newVersion = customVersion;
+    log(`Version: ${currentVersion} → ${newVersion} (custom)`, 'cyan');
+    updatePackageJson(newVersion);
+    updatePackageLockJson(newVersion);
+  } else {
+    const versions = updateVersion(versionType);
+    currentVersion = versions.currentVersion;
+    newVersion = versions.newVersion;
+    log(`Version: ${currentVersion} → ${newVersion}`, 'cyan');
+    updatePackageJson(newVersion);
+    updatePackageLockJson(newVersion);
+  }
+  log('✅ Version updated', 'green');
 
-    // Step 7: Commit changes
-    log('\n💾 Step 7: Committing changes', 'blue');
-    exec(`git add .`);
-    exec(`git commit -m "chore: release v${newVersion}"`);
-    log('✅ Changes committed', 'green');
+  // Step 6: Update CHANGELOG
+  log('\n📋 Step 6: Updating CHANGELOG.md', 'blue');
+  updateChangelog(newVersion, versionType);
+  log('✅ CHANGELOG updated', 'green');
 
-    // Step 8: Create git tag
-    log('\n🏷️  Step 8: Creating git tag', 'blue');
-    exec(`git tag v${newVersion}`);
-    log('✅ Git tag created', 'green');
+  // Step 7: Build project
+  log('\n🔨 Step 7: Building project', 'blue');
+  exec('npm run build');
+  log('✅ Project built successfully', 'green');
 
-    // Step 9: Push to GitHub
-    log('\n📤 Step 9: Pushing to GitHub', 'blue');
-    exec('git push origin main');
-    exec(`git push origin v${newVersion}`);
-    log('✅ Pushed to GitHub', 'green');
+  // Step 8: Commit changes
+  log('\n💾 Step 8: Committing changes', 'blue');
+  exec(`git add .`);
+  exec(`git commit -m "chore: release v${newVersion}"`);
+  log('✅ Changes committed', 'green');
 
-    // Step 10: Summary
-    log('\n🎉 Pre-Release Complete!', 'green');
-    log('========================', 'green');
-    log(`Version: ${newVersion}`, 'cyan');
-    log(`Type: ${versionType}`, 'cyan');
-    log(`Git tag: v${newVersion}`, 'cyan');
-    log(`GitHub: https://github.com/morojs/moro/releases/tag/v${newVersion}`, 'cyan');
+  // Step 9: Create git tag
+  log('\n🏷️  Step 9: Creating git tag', 'blue');
+  exec(`git tag v${newVersion}`);
+  log('✅ Git tag created', 'green');
 
-    log('\n📋 Next steps:', 'yellow');
-    log('1. Create GitHub release at the URL above', 'yellow');
-    log('2. Publish to npm: npm publish', 'yellow');
-    log('3. Verify the release on npm and GitHub', 'yellow');
-    log('4. Announce the release on social media/community channels', 'yellow');
+  // Step 10: Push to GitHub
+  log('\n📤 Step 10: Pushing to GitHub', 'blue');
+  exec('git push origin main');
+  exec(`git push origin v${newVersion}`);
+  log('✅ Pushed to GitHub', 'green');
+
+  // Step 11: Summary
+  log('\n🎉 Pre-Release Complete!', 'green');
+  log('========================', 'green');
+  log(`Version: ${newVersion}`, 'cyan');
+  log(`Type: ${versionType}`, 'cyan');
+  log(`Git tag: v${newVersion}`, 'cyan');
+  log(`GitHub: https://github.com/morojs/moro/releases/tag/v${newVersion}`, 'cyan');
+
+  log('\n📋 Next steps:', 'yellow');
+  log('1. Create GitHub release at the URL above', 'yellow');
+  log('2. Publish to npm: npm publish', 'yellow');
+  log('3. Verify the release on npm and GitHub', 'yellow');
+  log('4. Announce the release on social media/community channels', 'yellow');
 }
 
 main();

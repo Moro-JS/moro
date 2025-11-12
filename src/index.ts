@@ -35,7 +35,24 @@ export type {
 export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter.js';
 
 // Export Auth.js middleware and providers
-export { auth, providers } from './core/middleware/built-in/auth/index.js';
+export {
+  auth,
+  providers,
+  twoFactor,
+  organization,
+  anonymous,
+  accountLinking,
+  rateLimit,
+  bearerToken,
+} from './core/middleware/built-in/auth/index.js';
+export type {
+  TwoFactorAuthOptions,
+  OrganizationOptions,
+  AnonymousOptions,
+  AccountLinkingOptions,
+  RateLimitOptions,
+  BearerTokenOptions,
+} from './core/middleware/built-in/auth/index.js';
 
 // Runtime system exports
 export type {

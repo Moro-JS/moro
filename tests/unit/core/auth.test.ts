@@ -168,7 +168,9 @@ describe('Auth Middleware', () => {
       expect(authMiddleware.name).toBe('auth');
       expect(authMiddleware.version).toBe('2.0.0');
       expect(authMiddleware.metadata?.name).toBe('auth');
-      expect(authMiddleware.metadata?.description).toContain('Auth.js authentication middleware');
+      expect(authMiddleware.metadata?.description).toContain(
+        'Better Auth authentication middleware'
+      );
       expect(authMiddleware.metadata?.dependencies).toEqual([]);
     });
 

@@ -744,6 +744,22 @@ export class UWebSocketsHttpServer {
   // Public API - matches MoroHttpServer interface
 
   use(middleware: Middleware): void {
+    // Defensive check: Don't add MiddlewareInterface objects to globalMiddleware
+    // MiddlewareInterface objects should only be handled by MiddlewareManager
+    if (
+      middleware &&
+      typeof middleware === 'object' &&
+      (middleware as any).install &&
+      (middleware as any).metadata
+    ) {
+      this.logger?.warn?.(
+        `Attempted to add MiddlewareInterface "${(middleware as any).metadata?.name}" to HTTP server globalMiddleware. ` +
+          `This should be handled by MiddlewareManager instead. Skipping.`,
+        'Middleware'
+      );
+      return;
+    }
+
     this.globalMiddleware.push(middleware);
   }
 

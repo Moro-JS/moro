@@ -8,7 +8,7 @@ const logger = createFrameworkLogger('AuthMiddleware');
 
 /**
  * Auth hook for global usage
- * Registers with the hooks system for application-wide Auth.js authentication
+ * Registers with the hooks system for application-wide Better Auth authentication
  *
  * @example
  * ```ts
@@ -39,19 +39,21 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
   metadata: {
     name: 'auth',
     version: '2.0.0',
-    description: 'Auth.js authentication middleware with OAuth, JWT, and session support',
+    description: 'Better Auth authentication middleware with OAuth, JWT, and session support',
     author: 'MoroJS Team',
     dependencies: [],
-    tags: ['authentication', 'oauth', 'jwt', 'security'],
+    tags: ['authentication', 'oauth', 'jwt', 'security', 'better-auth'],
   },
 
   install: async (hooks: any, middlewareOptions: Partial<AuthOptions> = {}) => {
-    logger.debug('Installing Auth.js middleware', 'Installation', { options: middlewareOptions });
+    logger.debug('Installing Better Auth middleware', 'Installation', {
+      options: middlewareOptions,
+    });
 
     const config = { ...options, ...middlewareOptions };
     const authCore = new AuthCore(config);
 
-    // Initialize Auth.js
+    // Initialize Better Auth
     await authCore.initialize();
 
     // Register hooks for request processing
@@ -59,7 +61,7 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
       const req = context.request as any;
       const res = context.response as any;
 
-      // Handle Auth.js API routes first
+      // Handle Better Auth API routes first
       if (authCore.isAuthRoute(req.url)) {
         try {
           const response = await authCore.handleAuthRoute(req, res);
@@ -67,7 +69,7 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
             return response;
           }
         } catch (error) {
-          logger.error('Auth.js handler error', 'HandlerError', { error });
+          logger.error('Better Auth handler error', 'HandlerError', { error });
           throw error;
         }
       }
@@ -115,7 +117,7 @@ export const auth = (options: AuthOptions): MiddlewareInterface => ({
     });
 
     logger.info(
-      `Auth.js middleware installed with ${authCore.getProviderCount()} providers`,
+      `Better Auth middleware installed with ${authCore.getProviderCount()} providers`,
       'Installation'
     );
   },

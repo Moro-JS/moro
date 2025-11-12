@@ -80,6 +80,11 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     await this.pool.end();
   }
 
+  async getPool() {
+    await this.initPromise;
+    return this.pool;
+  }
+
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     await this.initPromise;
     const result = await this.pool.query(sql, params);
