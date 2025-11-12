@@ -1,5 +1,11 @@
 ## [1.7.2] - 2025-11-12
 
+### Added
+
+- feat: migrate auth from Auth.js to Better Auth with enhanced features
+
+## [1.7.2] - 2025-11-12
+
 ### Changed
 
 - **BREAKING**: Migrated authentication system from Auth.js to Better Auth (v1.3.34)
