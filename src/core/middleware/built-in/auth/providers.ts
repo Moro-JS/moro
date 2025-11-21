@@ -1,8 +1,8 @@
-// Extended Auth.js Provider Configurations
+// Extended Auth Provider Configurations
 import { AuthProvider } from '../../../../types/auth.js';
 
 /**
- * Popular OAuth Providers for Auth.js
+ * Popular OAuth Providers for Better Auth
  * These extend the basic providers with more options and popular services
  */
 export const extendedProviders = {

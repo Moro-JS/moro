@@ -50,8 +50,19 @@ export class RadixTree {
     let i = 0;
     const len = path.length;
 
+    // Skip leading slash
+    if (len > 0 && path.charCodeAt(0) === 47) {
+      i = 1;
+    }
+
     while (i < len) {
       const charCode = path.charCodeAt(i);
+
+      // Skip any additional slashes
+      if (charCode === 47) {
+        i++;
+        continue;
+      }
 
       // Check for parameter (58 = ':')
       if (charCode === 58) {
@@ -78,9 +89,11 @@ export class RadixTree {
         continue;
       }
 
-      // Find end of static segment
+      // Find end of static segment (up to next '/' or ':')
       let segEnd = i + 1;
-      while (segEnd < len && path.charCodeAt(segEnd) !== 58) {
+      while (segEnd < len) {
+        const code = path.charCodeAt(segEnd);
+        if (code === 47 || code === 58) break; // '/' or ':'
         segEnd++;
       }
       const segment = path.slice(i, segEnd);
@@ -151,6 +164,11 @@ export class RadixTree {
   ): any {
     const len = path.length;
 
+    // Skip slashes
+    while (idx < len && path.charCodeAt(idx) === 47) {
+      idx++;
+    }
+
     // End of path - return handler if exists
     if (idx === len) {
       return node.handler;
@@ -158,9 +176,10 @@ export class RadixTree {
 
     // Try static children first (fastest) - hash-based lookup
     if (node.staticChildren) {
-      // Extract current segment and compute hash
+      // Extract current segment and compute hash (until next '/' or end)
       let segEnd = idx;
-      while (segEnd < len && path.charCodeAt(segEnd) !== 58 && path.charCodeAt(segEnd) !== 47) {
+      const slashCode = 47; // '/'
+      while (segEnd < len && path.charCodeAt(segEnd) !== slashCode) {
         segEnd++;
       }
       const segment = path.slice(idx, segEnd);

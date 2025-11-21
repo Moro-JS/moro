@@ -1,4 +1,4 @@
-// Auth.js Types for MoroJS (Better Auth Compatible)
+// Auth Types for MoroJS (Better Auth Compatible)
 export interface AuthProvider {
   id: string;
   name: string;

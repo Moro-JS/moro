@@ -34,7 +34,7 @@ export type {
 // Export native @auth/morojs adapter
 export { createAuthMiddleware, MoroJSAuth } from './core/auth/morojs-adapter.js';
 
-// Export Auth.js middleware and providers
+// Export Auth middleware and providers
 export {
   auth,
   providers,

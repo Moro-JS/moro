@@ -274,7 +274,7 @@ describe('Auth Middleware', () => {
       // this would properly decode and validate the token
     });
 
-    it('should handle Auth.js API routes', async () => {
+    it('should handle Better Auth API routes', async () => {
       mockRequest.url = '/api/auth/signin';
 
       const context = {
@@ -284,7 +284,7 @@ describe('Auth Middleware', () => {
 
       const result = await beforeRequestHandler(context);
 
-      // The mock implementation returns undefined, but in real Auth.js
+      // The mock implementation returns undefined, but in real Better Auth
       // this would handle the signin request
       expect(result).toBeUndefined();
     });

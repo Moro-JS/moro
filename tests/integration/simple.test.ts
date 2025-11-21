@@ -261,4 +261,102 @@ describe('MoroJS Basic Integration', () => {
         expect(res.body.message).toBe('User 123 found');
       });
   });
+
+  it('should support chainable handler syntax with route parameters', async () => {
+    // Test chainable handler with single route parameter
+    app.get('/products/:id').handler((req: any) => ({
+      success: true,
+      productId: req.params.id,
+      message: `Product ${req.params.id} retrieved`,
+    }));
+
+    // Test chainable handler with multiple params
+    app.get('/categories/:category/items/:itemId').handler((req: any) => ({
+      success: true,
+      category: req.params.category,
+      itemId: req.params.itemId,
+    }));
+
+    // Test POST with chainable handler
+    app.post('/orders/:orderId').handler((req: any) => ({
+      success: true,
+      orderId: req.params.orderId,
+      action: 'created',
+    }));
+
+    // Test PUT with chainable handler
+    app.put('/users/:userId').handler((req: any) => ({
+      success: true,
+      userId: req.params.userId,
+      action: 'updated',
+    }));
+
+    // Test DELETE with chainable handler
+    app.delete('/items/:itemId').handler((req: any) => ({
+      success: true,
+      itemId: req.params.itemId,
+      action: 'deleted',
+    }));
+
+    // Start server
+    await new Promise<void>(resolve => {
+      app.listen(port, () => {
+        resolve();
+      });
+    });
+
+    await delay(100);
+
+    const baseUrl = `http://localhost:${port}`;
+
+    // Test GET with single param
+    await request(baseUrl)
+      .get('/products/456')
+      .expect(200)
+      .expect(res => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.productId).toBe('456');
+        expect(res.body.message).toBe('Product 456 retrieved');
+      });
+
+    // Test GET with multiple params
+    await request(baseUrl)
+      .get('/categories/electronics/items/789')
+      .expect(200)
+      .expect(res => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.category).toBe('electronics');
+        expect(res.body.itemId).toBe('789');
+      });
+
+    // Test POST with param
+    await request(baseUrl)
+      .post('/orders/123')
+      .expect(200)
+      .expect(res => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.orderId).toBe('123');
+        expect(res.body.action).toBe('created');
+      });
+
+    // Test PUT with param
+    await request(baseUrl)
+      .put('/users/999')
+      .expect(200)
+      .expect(res => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.userId).toBe('999');
+        expect(res.body.action).toBe('updated');
+      });
+
+    // Test DELETE with param
+    await request(baseUrl)
+      .delete('/items/555')
+      .expect(200)
+      .expect(res => {
+        expect(res.body.success).toBe(true);
+        expect(res.body.itemId).toBe('555');
+        expect(res.body.action).toBe('deleted');
+      });
+  });
 });

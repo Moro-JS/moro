@@ -7,7 +7,7 @@ import { createFrameworkLogger } from '../../../logger/index.js';
 
 const logger = createFrameworkLogger('AuthCore');
 
-// ===== Auth.js Provider Factory Functions =====
+// ===== Better Auth Provider Factory Functions =====
 
 export const providers = {
   // OAuth Providers - Better Auth native support
@@ -373,7 +373,7 @@ export function bearerToken(options: BearerTokenOptions = {}) {
   };
 }
 
-// ===== Auth.js Implementation =====
+// ===== Auth Implementation =====
 
 interface AuthInstance {
   handler: (req: any, res: any) => Promise<any>;
