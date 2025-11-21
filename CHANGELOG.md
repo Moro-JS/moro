@@ -1,3 +1,9 @@
+## [1.7.3] - 2025-11-21
+
+### Added
+
+- Bug Fixed: Chainable .handler() method was broken for routes with parameters. Root Cause: The radix tree implementation in /src/core/routing/radix-tree.ts had a critical bug in how it parsed paths: It wasn't skipping the leading / in paths like /users/:id The insert() method would try to parse from index 0, hitting the / immediately The searchNode() method would also fail to properly extract segments because it started at the wrong position Changes Made: Fixed radix-tree.ts - insert() method: Added logic to skip the leading slash before parsing segments Added logic to skip additional slashes during traversal Fixed segment extraction to stop at both / and : characters Fixed radix-tree.ts - searchNode() method: Added logic to skip slashes at each recursion level Fixed segment extraction to properly handle path boundaries Added comprehensive test coverage in tests/integration/simple.test.ts: Test name: "should support chainable handler syntax with route parameters" Tests GET, POST, PUT, DELETE with chainable handlers Tests single parameter routes (e.g., /products/:id) Tests multiple parameter routes (e.g., /categories/:category/items/:itemId)
+
 ## [1.7.2] - 2025-11-12
 
 ### Added
