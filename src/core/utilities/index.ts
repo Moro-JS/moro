@@ -2,6 +2,7 @@
 export {
   Container,
   FunctionalContainer,
+  TypedServiceReference,
   ServiceScope,
   ServiceLifecycle,
   withLogging,

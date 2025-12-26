@@ -17,7 +17,7 @@ MoroJS now includes full native HTTP/2 support with advanced features including 
 ### Basic HTTP/2 Server
 
 ```typescript
-import { Moro } from 'moro';
+import { Moro } from '@morojs/moro';
 import * as fs from 'fs';
 
 const app = new Moro({
@@ -31,7 +31,7 @@ const app = new Moro({
 app.get('/', (req, res) => {
   res.json({
     message: 'Hello HTTP/2!',
-    version: req.httpVersion // '2.0'
+    version: req.httpVersion, // '2.0'
   });
 });
 
@@ -65,26 +65,28 @@ const app = new Moro({
 Use the `http2Push` middleware with auto-detection:
 
 ```typescript
-import { middleware } from 'moro';
+import { middleware } from '@morojs/moro';
 
-app.use(middleware.http2Push({
-  autoDetect: true, // Auto-detect CSS/JS from HTML
-  resources: [
-    {
-      path: '/styles/main.css',
-      as: 'style',
-      type: 'text/css',
-      priority: 200 // High priority
-    },
-    {
-      path: '/scripts/app.js',
-      as: 'script',
-      type: 'application/javascript',
-      priority: 150
-    },
-  ],
-  condition: (req) => req.path === '/' || req.path.endsWith('.html'),
-}));
+app.use(
+  middleware.http2Push({
+    autoDetect: true, // Auto-detect CSS/JS from HTML
+    resources: [
+      {
+        path: '/styles/main.css',
+        as: 'style',
+        type: 'text/css',
+        priority: 200, // High priority
+      },
+      {
+        path: '/scripts/app.js',
+        as: 'script',
+        type: 'application/javascript',
+        priority: 150,
+      },
+    ],
+    condition: req => req.path === '/' || req.path.endsWith('.html'),
+  })
+);
 ```
 
 ### Manual Push
@@ -125,8 +127,8 @@ Control the priority of your responses:
 app.get('/api/critical', (req, res) => {
   if (res.setPriority) {
     res.setPriority({
-      weight: 256,      // 1-256, higher = more important
-      exclusive: true   // Exclusively process this stream
+      weight: 256, // 1-256, higher = more important
+      exclusive: true, // Exclusively process this stream
     });
   }
 
@@ -188,18 +190,21 @@ For production, use certificates from a trusted CA like Let's Encrypt.
 ### 1. Use Server Push Wisely
 
 Only push resources that are:
+
 - Critical for initial render
 - Small in size (< 100KB)
 - Used by most users
 
 ```typescript
-app.use(middleware.http2Push({
-  autoDetect: true, // Let MoroJS detect from HTML
-  resources: [
-    // Only push critical resources
-    { path: '/critical.css', type: 'text/css', priority: 200 },
-  ],
-}));
+app.use(
+  middleware.http2Push({
+    autoDetect: true, // Let MoroJS detect from HTML
+    resources: [
+      // Only push critical resources
+      { path: '/critical.css', type: 'text/css', priority: 200 },
+    ],
+  })
+);
 ```
 
 ### 2. Set Appropriate Priorities
@@ -222,7 +227,9 @@ const app = new Moro({
   http2: {
     allowHTTP1: true, // Clients without HTTP/2 support
   },
-  https: { /* ... */ },
+  https: {
+    /* ... */
+  },
 });
 ```
 
@@ -233,7 +240,7 @@ app.get('/', (req, res) => {
   const pushStream = res.push('/asset.css');
 
   if (pushStream) {
-    pushStream.on('error', (err) => {
+    pushStream.on('error', err => {
       console.log('Push failed:', err.message);
     });
   }
@@ -249,8 +256,8 @@ const app = new Moro({
   http2: {
     settings: {
       maxConcurrentStreams: 100, // Default: 100
-      initialWindowSize: 65535,   // 64KB
-      maxFrameSize: 16384,        // 16KB
+      initialWindowSize: 65535, // 64KB
+      maxFrameSize: 16384, // 16KB
     },
   },
 });
@@ -263,8 +270,8 @@ const app = new Moro({
   http2: {
     maxSessionMemory: 10, // MB per session
     settings: {
-      headerTableSize: 4096,      // HPACK table size
-      maxHeaderListSize: 8192,    // Max header size
+      headerTableSize: 4096, // HPACK table size
+      maxHeaderListSize: 8192, // Max header size
     },
   },
 });
@@ -275,7 +282,7 @@ const app = new Moro({
 All MoroJS middleware works with HTTP/2:
 
 ```typescript
-import { middleware } from 'moro';
+import { middleware } from '@morojs/moro';
 
 app.use(middleware.cors());
 app.use(middleware.helmet());
@@ -306,11 +313,11 @@ const client = http2.connect('https://localhost:3000', {
 
 const req = client.request({ ':path': '/' });
 
-req.on('response', (headers) => {
+req.on('response', headers => {
   console.log('Status:', headers[':status']);
 });
 
-req.on('data', (chunk) => {
+req.on('data', chunk => {
   console.log('Data:', chunk.toString());
 });
 
@@ -365,6 +372,7 @@ app.listen(3000);
 ### Server Push Not Working
 
 1. Check if client supports HTTP/2:
+
    ```typescript
    if (req.httpVersion === '2.0' && res.push) {
      // Push is available
@@ -372,6 +380,7 @@ app.listen(3000);
    ```
 
 2. Ensure SSL is configured:
+
    ```typescript
    // HTTP/2 requires HTTPS
    https: {
@@ -405,6 +414,7 @@ app.listen(3000);
 ## Examples
 
 See `/examples/http2-server.ts` for a complete working example with:
+
 - Server push configuration
 - Stream prioritization
 - Auto-detection of resources
@@ -416,6 +426,7 @@ See `/examples/http2-server.ts` for a complete working example with:
 ### Response Methods (HTTP/2)
 
 #### `res.push(path, options)`
+
 Push a resource to the client.
 
 ```typescript
@@ -426,6 +437,7 @@ res.push(path: string, options?: {
 ```
 
 #### `res.setPriority(options)`
+
 Set stream priority for current response.
 
 ```typescript
@@ -439,6 +451,7 @@ res.setPriority(options?: {
 ### Middleware
 
 #### `middleware.http2Push(options)`
+
 Configure server push behavior.
 
 ```typescript
@@ -459,4 +472,3 @@ middleware.http2Push({
 - [HTTP/2 Specification (RFC 7540)](https://tools.ietf.org/html/rfc7540)
 - [Server Push Guide](https://www.smashingmagazine.com/2017/04/guide-http2-server-push/)
 - [HTTP/2 Best Practices](https://developers.google.com/web/fundamentals/performance/http2)
-

@@ -141,6 +141,29 @@ export const withTimeout =
     ]);
   };
 
+// Typed service reference - holds the service name and type information
+export class TypedServiceReference<T> {
+  constructor(
+    private container: FunctionalContainer,
+    private serviceName: string
+  ) {}
+
+  // Resolve the service with full type safety
+  async resolve(context?: ServiceContext): Promise<T> {
+    return this.container.resolve<T>(this.serviceName, context);
+  }
+
+  // Synchronous resolution
+  resolveSync(context?: ServiceContext): T {
+    return this.container.resolveSync<T>(this.serviceName, context);
+  }
+
+  // Get the service name
+  getName(): string {
+    return this.serviceName;
+  }
+}
+
 // Enhanced Functional Container
 export class FunctionalContainer extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
@@ -155,20 +178,20 @@ export class FunctionalContainer extends EventEmitter {
     this.setupCleanup();
   }
 
-  // Fluent registration API
-  register<T>(name: string): ServiceRegistrationBuilder<T> {
+  // Fluent registration API - returns a builder that captures the type
+  register<T = any>(name: string): ServiceRegistrationBuilder<T> {
     return new ServiceRegistrationBuilder<T>(this, name);
   }
 
   // Direct registration for simple cases
-  singleton<T>(name: string, factory: ServiceFactory<T>): this {
+  singleton<T>(name: string, factory: ServiceFactory<T>): TypedServiceReference<T> {
     this.register<T>(name).singleton().factory(factory).build();
-    return this;
+    return new TypedServiceReference<T>(this, name);
   }
 
-  transient<T>(name: string, factory: ServiceFactory<T>): this {
+  transient<T>(name: string, factory: ServiceFactory<T>): TypedServiceReference<T> {
     this.register<T>(name).transient().factory(factory).build();
-    return this;
+    return new TypedServiceReference<T>(this, name);
   }
 
   // Functional service registration with HOFs
@@ -181,7 +204,7 @@ export class FunctionalContainer extends EventEmitter {
   }
 
   // Enhanced resolution with context
-  async resolve<T>(name: string, context?: ServiceContext): Promise<T> {
+  async resolve<T = any>(name: string, context?: ServiceContext): Promise<T> {
     const service = this.services.get(name);
     if (!service) {
       throw new Error(`Service '${name}' not registered`);
@@ -193,8 +216,7 @@ export class FunctionalContainer extends EventEmitter {
     let instance = instanceMap.get(scopeKey);
 
     if (!instance || this.shouldRecreate(instance, service.metadata)) {
-      instance = await this.createInstance(name, service, context);
-      instanceMap.set(scopeKey, instance);
+      instance = await this.createInstance(name, service, context, instanceMap, scopeKey);
     }
 
     instance.lastAccessed = Date.now();
@@ -204,7 +226,7 @@ export class FunctionalContainer extends EventEmitter {
   }
 
   // Synchronous resolution for non-async services
-  resolveSync<T>(name: string, context?: ServiceContext): T {
+  resolveSync<T = any>(name: string, context?: ServiceContext): T {
     const service = this.services.get(name);
     if (!service) {
       throw new Error(`Service '${name}' not registered`);
@@ -325,7 +347,9 @@ export class FunctionalContainer extends EventEmitter {
   private async createInstance<T>(
     name: string,
     service: ServiceDefinition<T>,
-    context?: ServiceContext
+    context?: ServiceContext,
+    instanceMap?: Map<string, ServiceInstance>,
+    scopeKey?: string
   ): Promise<ServiceInstance<T>> {
     const instance: ServiceInstance<T> = {
       value: undefined as any,
@@ -354,12 +378,19 @@ export class FunctionalContainer extends EventEmitter {
       // Apply decorators
       instance.value = await this.applyDecorators(instance.value, service.decorators, context);
 
+      // Mark as initialized and store in map BEFORE running lifecycle hooks
+      // This prevents infinite loops when init callbacks resolve the same service
+      instance.lifecycle = ServiceLifecycle.INITIALIZED;
+
+      if (instanceMap && scopeKey) {
+        instanceMap.set(scopeKey, instance);
+      }
+
       // Run initialization lifecycle
       if (service.metadata.lifecycle?.init) {
         await service.metadata.lifecycle.init();
       }
 
-      instance.lifecycle = ServiceLifecycle.INITIALIZED;
       this.emit('serviceCreated', { name, instance });
     } catch (error) {
       instance.lifecycle = ServiceLifecycle.ERROR;
@@ -561,7 +592,7 @@ export class FunctionalContainer extends EventEmitter {
   }
 }
 
-// Fluent registration builder
+// Fluent registration builder with type safety
 export class ServiceRegistrationBuilder<T> {
   private metadata: Partial<ServiceMetadata> = {
     scope: ServiceScope.SINGLETON,
@@ -674,16 +705,16 @@ export class ServiceRegistrationBuilder<T> {
     return this;
   }
 
-  // Build and register
-  build(): FunctionalContainer {
+  // Build and register - returns a typed reference
+  build(): TypedServiceReference<T> {
     if (!this._factory) {
-      throw new Error(`Factory not provided for service '${this.name}'`);
+      throw new Error(`Factory not provided for service '${String(this.name)}'`);
     }
 
     const definition: ServiceDefinition<T> = {
       factory: this._factory,
       metadata: {
-        name: this.name,
+        name: this.name as string,
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         scope: this.metadata.scope!,
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -700,7 +731,8 @@ export class ServiceRegistrationBuilder<T> {
       decorators: this.decorators,
     };
 
-    return this.container._registerService(this.name, definition);
+    this.container._registerService(this.name as string, definition);
+    return new TypedServiceReference<T>(this.container, this.name);
   }
 }
 

@@ -5,5 +5,19 @@ if [ -f ~/.nvm/nvm.sh ]; then
   . ~/.nvm/nvm.sh
 fi
 
+# Check uWebSockets.js version
+echo "Checking uWebSockets.js version..."
+node scripts/check-uws-version.mjs --silent || {
+  echo ""
+  echo "⚠️  uWebSockets.js has a newer version available"
+  echo "Run 'npm run update:uws' to update"
+  echo ""
+  read -p "Continue with commit anyway? (y/N) " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    exit 1
+  fi
+}
+
 # Use npx which is more reliable in git hooks
 npx lint-staged

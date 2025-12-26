@@ -60,7 +60,7 @@ MoroJS automatically provides circuit breakers for:
 Jobs automatically use circuit breakers to prevent repeated failures:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
@@ -106,7 +106,7 @@ const chatModule = defineModule({
 For HTTP routes, integrate circuit breakers manually:
 
 ```typescript
-import { CircuitBreaker } from 'moro';
+import { CircuitBreaker } from '@morojs/moro';
 
 const externalApiBreaker = new CircuitBreaker({
   failureThreshold: 5, // Open after 5 failures
@@ -139,7 +139,7 @@ app.get('/external-data', async (req, res) => {
 ### Basic Usage
 
 ```typescript
-import { CircuitBreaker } from 'moro';
+import { CircuitBreaker } from '@morojs/moro';
 
 const breaker = new CircuitBreaker({
   failureThreshold: 3,
@@ -513,7 +513,7 @@ app.post('/admin/circuit-breaker/:name/reset', (req, res) => {
 ## Complete Example
 
 ```typescript
-import { createApp, CircuitBreaker } from 'moro';
+import { createApp, CircuitBreaker } from '@morojs/moro';
 
 const app = createApp();
 

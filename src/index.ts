@@ -94,6 +94,7 @@ export type { ServiceInfo, ServiceDiscoveryOptions } from './core/networking/ser
 export {
   Container,
   FunctionalContainer,
+  TypedServiceReference,
   ServiceScope,
   ServiceLifecycle,
   withLogging,

@@ -24,7 +24,7 @@ MoroJS provides a powerful module system that allows you to organize your applic
 ### Simple Module
 
 ```typescript
-import { defineModule } from 'moro';
+import { defineModule } from '@morojs/moro';
 
 export const userModule = defineModule({
   name: 'user',
@@ -45,7 +45,7 @@ export const userModule = defineModule({
 ### Loading a Module
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 import { userModule } from './modules/user';
 
 const app = createApp();
@@ -125,7 +125,7 @@ export class UserService {
 
 ```typescript
 // modules/user/handlers.ts
-import type { Request, Response } from 'moro';
+import type { Request, Response } from '@morojs/moro';
 
 export async function listUsers(req: Request, res: Response) {
   const userService = req.app.getContainer().resolve('userService');
@@ -159,7 +159,7 @@ export async function deleteUser(req: Request, res: Response) {
 
 ```typescript
 // modules/user/index.ts
-import { defineModule } from 'moro';
+import { defineModule } from '@morojs/moro';
 import { UserService } from './services';
 import * as handlers from './handlers';
 
@@ -435,7 +435,7 @@ export const authModule = defineModule({
 Automatically discover and load modules from a directory:
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp({
   modules: {
@@ -451,7 +451,7 @@ await app.listen(3000);
 ### Manual Discovery
 
 ```typescript
-import { autoDiscoverModuleDirectories } from 'moro';
+import { autoDiscoverModuleDirectories } from '@morojs/moro';
 
 const modules = await autoDiscoverModuleDirectories(process.cwd(), './src/modules');
 
@@ -464,7 +464,7 @@ for (const module of modules) {
 ### Module Registry
 
 ```typescript
-import { ModuleRegistry } from 'moro';
+import { ModuleRegistry } from '@morojs/moro';
 
 const registry = new ModuleRegistry();
 
@@ -775,7 +775,7 @@ app.get('/admin/*', async (req, res, next) => {
 ### 5. Test Modules in Isolation
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 import { userModule } from './modules/user';
 
 describe('User Module', () => {

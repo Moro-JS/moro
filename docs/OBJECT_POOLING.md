@@ -97,7 +97,7 @@ app.get('/data', (req, res) => {
 Reuses buffers for various sizes (64, 256, 1024, 4096, 16384 bytes).
 
 ```typescript
-import { ObjectPoolManager } from 'moro';
+import { ObjectPoolManager } from '@morojs/moro';
 
 const poolManager = ObjectPoolManager.getInstance();
 
@@ -150,7 +150,7 @@ if (cached) {
 ### Accessing the Manager
 
 ```typescript
-import { ObjectPoolManager } from 'moro';
+import { ObjectPoolManager } from '@morojs/moro';
 
 const poolManager = ObjectPoolManager.getInstance();
 ```
@@ -223,7 +223,7 @@ poolManager.setRouteCache('GET:/users/123', route);
 ### Creating Custom Pools
 
 ```typescript
-import { ObjectPool } from 'moro';
+import { ObjectPool } from '@morojs/moro';
 
 // Create a custom object pool
 class RequestContext {
@@ -275,7 +275,7 @@ console.log({
 ### LRU Cache
 
 ```typescript
-import { LRUCache } from 'moro';
+import { LRUCache } from '@morojs/moro';
 
 // Create LRU cache
 const cache = new LRUCache<string, any>(1000); // Max 1000 items
@@ -325,8 +325,8 @@ With Pooling:
 ### Real-World Example
 
 ```typescript
-import { createApp } from 'moro';
-import { ObjectPoolManager } from 'moro';
+import { createApp } from '@morojs/moro';
+import { ObjectPoolManager } from '@morojs/moro';
 
 const app = createApp();
 const poolManager = ObjectPoolManager.getInstance();
@@ -587,8 +587,8 @@ app.post('/admin/maintenance/clear-pools', async (req, res) => {
 ## Complete Example
 
 ```typescript
-import { createApp } from 'moro';
-import { ObjectPoolManager, ObjectPool } from 'moro';
+import { createApp } from '@morojs/moro';
+import { ObjectPoolManager, ObjectPool } from '@morojs/moro';
 
 const app = createApp();
 const poolManager = ObjectPoolManager.getInstance();

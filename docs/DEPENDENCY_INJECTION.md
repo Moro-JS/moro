@@ -4,10 +4,16 @@ Comprehensive guide to MoroJS's built-in dependency injection container and serv
 
 ## Overview
 
-MoroJS includes a sophisticated dependency injection (DI) system for managing services, dependencies, and application architecture. The DI container supports multiple scopes, lifecycle hooks, interceptors, and advanced features like service decorators and fallback mechanisms.
+MoroJS includes a sophisticated dependency injection (DI) system for managing services, dependencies, and application architecture. The DI container supports:
+
+- **Automatic Type Safety** - No manual type annotations or interface extensions needed
+- **Multiple Scopes** - Singleton, Transient, Request, and Module scopes
+- **Lifecycle Hooks** - Initialize, dispose, and health check hooks
+- **Advanced Features** - Interceptors, decorators, and fallback mechanisms
 
 ## Table of Contents
 
+- [Type-Safe DI (Recommended)](#type-safe-di-recommended)
 - [Basic Usage](#basic-usage)
 - [Service Scopes](#service-scopes)
 - [Service Registration](#service-registration)
@@ -16,12 +22,162 @@ MoroJS includes a sophisticated dependency injection (DI) system for managing se
 - [Advanced Features](#advanced-features)
 - [Best Practices](#best-practices)
 
+## Type-Safe DI (Recommended)
+
+The recommended approach is to use typed service references. This provides automatic type safety without any manual configuration.
+
+### Pattern: Define, Register, Store Reference
+
+```typescript
+import { createApp } from '@morojs/moro';
+
+// 1. Define your service interface
+interface UserService {
+  findById(id: string): Promise<{ id: string; name: string }>;
+  create(data: { name: string }): Promise<{ id: string; name: string }>;
+}
+
+// 2. Register and store the typed reference
+const app = createApp();
+const container = app.getContainer().getEnhanced();
+
+const userServiceRef = container
+  .register<UserService>('userService')
+  .factory(() => {
+    return {
+      async findById(id: string) {
+        // Implementation
+        return { id, name: 'John Doe' };
+      },
+      async create(data: { name: string }) {
+        // Implementation
+        return { id: '123', name: data.name };
+      },
+    };
+  })
+  .singleton()
+  .build();
+
+// 3. Resolve anywhere with automatic type safety
+const userService = await userServiceRef.resolve();
+
+// TypeScript knows all methods and their signatures
+const user = await userService.findById('123'); // ✓ Fully typed
+console.log(user.name); // ✓ Fully typed
+
+// userService.nonExistent(); // ✗ Compile error
+```
+
+### Why This Approach?
+
+**Before (Not Type Safe):**
+
+```typescript
+// Had to manually specify type
+container
+  .register('authService')
+  .factory(() => ({ signIn() {} }))
+  .build();
+
+const authService = await container.resolve('authService'); // unknown
+authService.signIn; // Error - authService is unknown
+
+// Workaround - manual type annotation
+const authService = await container.resolve<AuthService>('authService');
+```
+
+**After (Automatic Type Safety):**
+
+```typescript
+// Type is captured automatically
+const authServiceRef = container
+  .register<AuthService>('authService')
+  .factory(() => ({ signIn() {} }))
+  .build();
+
+const authService = await authServiceRef.resolve(); // AuthService
+authService.signIn(); // ✓ Fully typed, no manual annotation needed
+```
+
+### Organizing Service References
+
+For larger applications, organize your service references in a central location:
+
+```typescript
+// services.ts
+import { createApp } from '@morojs/moro';
+
+const app = createApp();
+const container = app.getContainer().getEnhanced();
+
+// Define all service types
+interface UserService {
+  findById(id: string): Promise<User>;
+  create(data: CreateUserDto): Promise<User>;
+}
+
+interface AuthService {
+  signIn(username: string, password: string): Promise<{ token: string }>;
+  signOut(): void;
+}
+
+interface EmailService {
+  send(to: string, subject: string, body: string): Promise<void>;
+}
+
+// Register and export typed references
+export const services = {
+  user: container
+    .register<UserService>('userService')
+    .factory(() => new UserServiceImpl())
+    .singleton()
+    .build(),
+
+  auth: container
+    .register<AuthService>('authService')
+    .factory(deps => {
+      const userService = deps.userService as UserService;
+      return new AuthServiceImpl(userService);
+    })
+    .dependsOn('userService')
+    .singleton()
+    .build(),
+
+  email: container
+    .register<EmailService>('emailService')
+    .factory(() => new EmailServiceImpl())
+    .singleton()
+    .build(),
+};
+
+export { app };
+```
+
+Then use in routes:
+
+```typescript
+// routes/users.ts
+import { services } from '../services';
+
+app.get('/users/:id', async (req, res) => {
+  const userService = await services.user.resolve();
+  const user = await userService.findById(req.params.id);
+  res.json(user);
+});
+
+app.post('/auth/signin', async (req, res) => {
+  const authService = await services.auth.resolve();
+  const result = await authService.signIn(req.body.username, req.body.password);
+  res.json(result);
+});
+```
+
 ## Basic Usage
 
 ### Simple Service Registration
 
 ```typescript
-import { createApp } from 'moro';
+import { createApp } from '@morojs/moro';
 
 const app = createApp();
 
@@ -292,7 +448,7 @@ enhanced
 Services can be registered within modules for better organization:
 
 ```typescript
-import { defineModule } from 'moro';
+import { defineModule } from '@morojs/moro';
 
 class UserService {
   constructor(private db: any) {}
@@ -626,7 +782,7 @@ class ServiceB {
 Here's a complete example showing DI in a real application:
 
 ```typescript
-import { createApp, defineModule } from 'moro';
+import { createApp, defineModule } from '@morojs/moro';
 
 // Services
 class ConfigService {
