@@ -6,10 +6,28 @@ import { UnifiedRouter } from '../src/core/routing/unified-router.js';
 import { ObjectPoolManager } from '../src/core/pooling/object-pool-manager.js';
 
 // Set up minimal test environment configuration for MoroJS
-process.env.NODE_ENV = 'development';
+process.env.NODE_ENV = 'test';
 process.env.MORO_SERVER_PORT = '0'; // Use dynamic port
 process.env.MORO_SERVER_HOST = 'localhost';
-process.env.MORO_LOGGER_LEVEL = 'error'; // Reduce noise in tests
+
+// In CI or when running coverage, use fatal level to minimize logging and save memory
+// Otherwise use error level for minimal output
+if (process.env.CI === 'true' || process.argv.includes('--coverage')) {
+  process.env.MORO_LOGGER_LEVEL = 'fatal';
+  // Also disable the logger outputs completely to save memory
+  process.env.MORO_LOGGER_ENABLED = 'false';
+
+  // Completely disable the global logger to prevent memory accumulation
+  // This won't affect tests because they don't assert on logger behavior
+  // (tests that need logging create their own mock loggers)
+  logger.debug = jest.fn();
+  logger.info = jest.fn();
+  logger.warn = jest.fn();
+  logger.error = jest.fn();
+  logger.fatal = jest.fn();
+} else {
+  process.env.MORO_LOGGER_LEVEL = 'error';
+}
 
 // Extend Jest timeout for integration tests
 jest.setTimeout(10000);
