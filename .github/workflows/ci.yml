@@ -51,18 +51,28 @@ jobs:
           
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         
       - name: Run unit tests
         run: npm run test:unit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         
       - name: Run integration tests
         run: npm run test:integration
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         
       - name: Run e2e tests
         run: npm run test:e2e
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         
       - name: Generate coverage report
         run: npm run test:coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
