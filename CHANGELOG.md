@@ -1,3 +1,9 @@
+## [1.7.4] - 2025-12-26
+
+### Added
+
+- feat: enhance dependency injection with advanced type-safe container features
+
 ## [1.7.3] - 2025-11-21
 
 ### Added
