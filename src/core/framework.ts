@@ -694,8 +694,20 @@ export class Moro extends EventEmitter {
         let requestToUse: any = req;
         if (useEnhancedReq) {
           // Use the pre-created module event bus
+          // IMPORTANT: Spread operator doesn't copy getters from IncomingMessage
+          // so we need to explicitly pass critical properties like headers
           requestToUse = {
             ...req,
+            headers: req.headers, // Explicitly preserve headers
+            params: req.params,
+            query: req.query,
+            body: req.body,
+            path: req.path,
+            method: req.method,
+            url: req.url,
+            ip: req.ip,
+            requestId: req.requestId,
+            cookies: req.cookies,
             database: this.container.has('database')
               ? this.container.resolve('database')
               : undefined,
