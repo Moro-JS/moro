@@ -1,3 +1,9 @@
+## [1.7.6] - 2025-12-27
+
+### Fixed
+
+- fix: preserve headers and request properties in module request objects
+
 ## [1.7.5] - 2025-12-27
 
 ### Added
