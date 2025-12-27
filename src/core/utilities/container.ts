@@ -50,12 +50,22 @@ export type ServiceFactory<T> = (
 ) => T | Promise<T>;
 
 // Service interceptor for AOP patterns
-export type ServiceInterceptor = (
-  serviceName: string,
-  dependencies: Record<string, any>,
-  context: ServiceContext,
-  next: () => any
-) => any | Promise<any>;
+// Interceptor can return either a wrapped factory or call next()
+export type ServiceInterceptor =
+  // Pattern 1: Return a wrapped factory (as shown in docs)
+  | ((
+      serviceName: string,
+      factory: () => any | Promise<any>,
+      dependencies: Record<string, any>,
+      context: ServiceContext
+    ) => () => any | Promise<any>)
+  // Pattern 2: Use next() callback pattern (middleware-style)
+  | ((
+      serviceName: string,
+      dependencies: Record<string, any>,
+      context: ServiceContext,
+      next: () => any | Promise<any>
+    ) => any | Promise<any>);
 
 // Service decorator for functional composition
 export type ServiceDecorator<T> = (instance: T, context: ServiceContext) => T | Promise<T>;
@@ -149,13 +159,13 @@ export class TypedServiceReference<T> {
   ) {}
 
   // Resolve the service with full type safety
-  async resolve(context?: ServiceContext): Promise<T> {
-    return this.container.resolve<T>(this.serviceName, context);
+  async resolve(contextOrOptions?: ServiceContext | { context?: ServiceContext }): Promise<T> {
+    return this.container.resolve<T>(this.serviceName, contextOrOptions);
   }
 
   // Synchronous resolution
-  resolveSync(context?: ServiceContext): T {
-    return this.container.resolveSync<T>(this.serviceName, context);
+  resolveSync(contextOrOptions?: ServiceContext | { context?: ServiceContext }): T {
+    return this.container.resolveSync<T>(this.serviceName, contextOrOptions);
   }
 
   // Get the service name
@@ -204,11 +214,20 @@ export class FunctionalContainer extends EventEmitter {
   }
 
   // Enhanced resolution with context
-  async resolve<T = any>(name: string, context?: ServiceContext): Promise<T> {
+  async resolve<T = any>(
+    name: string,
+    optionsOrContext?: ServiceContext | { context?: ServiceContext }
+  ): Promise<T> {
     const service = this.services.get(name);
     if (!service) {
       throw new Error(`Service '${name}' not registered`);
     }
+
+    // Support both direct context and options object with context
+    const context: ServiceContext | undefined =
+      optionsOrContext && typeof optionsOrContext === 'object' && 'context' in optionsOrContext
+        ? optionsOrContext.context
+        : (optionsOrContext as ServiceContext | undefined);
 
     const scopeKey = this.getScopeKey(name, service.metadata.scope, context);
     const instanceMap = this.getInstanceMap(service.metadata.scope, context);
@@ -226,11 +245,20 @@ export class FunctionalContainer extends EventEmitter {
   }
 
   // Synchronous resolution for non-async services
-  resolveSync<T = any>(name: string, context?: ServiceContext): T {
+  resolveSync<T = any>(
+    name: string,
+    optionsOrContext?: ServiceContext | { context?: ServiceContext }
+  ): T {
     const service = this.services.get(name);
     if (!service) {
       throw new Error(`Service '${name}' not registered`);
     }
+
+    // Support both direct context and options object with context
+    const context: ServiceContext | undefined =
+      optionsOrContext && typeof optionsOrContext === 'object' && 'context' in optionsOrContext
+        ? optionsOrContext.context
+        : (optionsOrContext as ServiceContext | undefined);
 
     const scopeKey = this.getScopeKey(name, service.metadata.scope, context);
     const instanceMap = this.getInstanceMap(service.metadata.scope, context);
@@ -254,6 +282,20 @@ export class FunctionalContainer extends EventEmitter {
     instance.accessCount++;
 
     return instance.value;
+  }
+
+  // Resolve all services with a specific tag
+  async resolveByTag(tag: string): Promise<any[]> {
+    const services: any[] = [];
+
+    for (const [name, service] of this.services) {
+      if (service.metadata.tags?.includes(tag)) {
+        const resolved = await this.resolve(name);
+        services.push(resolved);
+      }
+    }
+
+    return services;
   }
 
   // Add global interceptors
@@ -364,15 +406,16 @@ export class FunctionalContainer extends EventEmitter {
       // Resolve dependencies
       const dependencies = await this.resolveDependencies(service.metadata, context);
 
-      // Apply interceptors
+      // Apply interceptors (global + service-specific)
       const interceptedFactory = this.applyInterceptors(
         name,
         service.factory,
+        service.interceptors || [],
         dependencies,
         context
       );
 
-      // Create instance
+      // Create instance by calling the intercepted factory (no params needed, already bound)
       instance.value = await interceptedFactory();
 
       // Apply decorators
@@ -413,9 +456,34 @@ export class FunctionalContainer extends EventEmitter {
     service: ServiceDefinition<T>,
     context?: ServiceContext
   ): T {
-    // Simplified sync version - no async dependencies or lifecycle
+    // Resolve dependencies synchronously
     const dependencies = this.resolveDependenciesSync(service.metadata, context);
-    return service.factory(dependencies, context) as T;
+
+    // Apply interceptors (global + service-specific)
+    const interceptedFactory = this.applyInterceptors(
+      name,
+      service.factory,
+      service.interceptors || [],
+      dependencies,
+      context
+    );
+
+    // Create instance (note: interceptors must be sync or this will fail)
+    let instance = interceptedFactory() as T;
+
+    // Apply decorators synchronously
+    for (const decorator of service.decorators) {
+      const result = decorator(instance, context || this.createDefaultContext());
+      // If decorator returns a promise, we can't handle it in sync mode
+      if (result && typeof (result as any).then === 'function') {
+        throw new Error(
+          `Cannot use async decorator with synchronous resolution for service '${name}'`
+        );
+      }
+      instance = result as T;
+    }
+
+    return instance;
   }
 
   private async resolveDependencies(
@@ -463,14 +531,53 @@ export class FunctionalContainer extends EventEmitter {
   private applyInterceptors(
     name: string,
     factory: ServiceFactory<any>,
+    serviceInterceptors: ServiceInterceptor[],
     dependencies: Record<string, any>,
     context?: ServiceContext
-  ): () => any {
-    return [...this.globalInterceptors].reduceRight(
-      (next: () => any, interceptor: ServiceInterceptor) => () =>
-        interceptor(name, dependencies, context || this.createDefaultContext(), next),
-      () => factory(dependencies, context)
-    );
+  ): () => any | Promise<any> {
+    // Combine global interceptors with service-specific interceptors
+    const allInterceptors = [...this.globalInterceptors, ...serviceInterceptors];
+
+    // Create a parameterless factory by binding deps and context
+    const boundFactory = () => factory(dependencies, context);
+
+    // Apply interceptors in order, each wrapping the previous factory
+    return allInterceptors.reduce((wrappedFactory: () => any, interceptor: ServiceInterceptor) => {
+      // Check the number of parameters to determine pattern
+      // Pattern 1: (name, factory, deps, context) - 4 params, expects factory returned
+      // Pattern 2: (name, deps, context, next) - 4 params, calls next and returns result
+      // We check if the 2nd parameter name suggests it's a factory or not
+      const paramNames =
+        interceptor
+          .toString()
+          .match(/\(([^)]*)\)/)?.[1]
+          .split(',')
+          .map(p => p.trim()) || [];
+      const isFactoryPattern =
+        paramNames.length >= 2 &&
+        (paramNames[1].includes('factory') ||
+          paramNames[1].includes('fn') ||
+          paramNames[1] === 'f');
+
+      if (isFactoryPattern || paramNames.length !== 4) {
+        // Pattern 1: (name, factory, deps, context) => wrappedFactory
+        return (interceptor as any)(
+          name,
+          wrappedFactory,
+          dependencies,
+          context || this.createDefaultContext()
+        );
+      } else {
+        // Pattern 2: (name, deps, context, next) => result (middleware-style)
+        return () =>
+          (interceptor as any)(
+            name,
+            dependencies,
+            context || this.createDefaultContext(),
+            wrappedFactory
+          );
+      }
+    }, boundFactory);
   }
 
   private async applyDecorators<T>(
@@ -700,9 +807,19 @@ export class ServiceRegistrationBuilder<T> {
     return this;
   }
 
+  // Alias for intercept() to match documentation
+  interceptor(interceptor: ServiceInterceptor): this {
+    return this.intercept(interceptor);
+  }
+
   decorate(decorator: ServiceDecorator<T>): this {
     this.decorators.push(decorator);
     return this;
+  }
+
+  // Alias for decorate() to match documentation
+  decorator(decorator: ServiceDecorator<T>): this {
+    return this.decorate(decorator);
   }
 
   // Build and register - returns a typed reference

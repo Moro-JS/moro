@@ -498,13 +498,16 @@ await app.loadModule(userModule);
 
 ### Service Interceptors
 
-Intercept service creation and add cross-cutting concerns:
+Intercept service creation and add cross-cutting concerns. Two patterns are supported:
+
+**Pattern 1: Factory Wrapping (Recommended)**
 
 ```typescript
 enhanced
   .register('userService')
   .factory(() => new UserService())
   .interceptor((name, factory, deps, context) => {
+    // Return a new factory that wraps the original
     return async () => {
       console.log(`Creating service: ${name}`);
       const startTime = Date.now();
@@ -516,6 +519,30 @@ enhanced
   .singleton()
   .build();
 ```
+
+**Pattern 2: Middleware-Style with next() Callback**
+
+```typescript
+enhanced
+  .register('userService')
+  .factory(() => new UserService())
+  .interceptor((name, deps, context, next) => {
+    // Call next() to continue the chain
+    console.log(`Before creating: ${name}`);
+    const service = next();
+    console.log(`After creating: ${name}`);
+    return service;
+  })
+  .singleton()
+  .build();
+```
+
+Both patterns allow you to:
+
+- Log service creation
+- Measure initialization time
+- Add custom initialization logic
+- Modify dependencies before creation
 
 ### Service Decorators
 

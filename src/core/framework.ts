@@ -402,6 +402,11 @@ export class Moro extends EventEmitter {
     return this;
   }
 
+  // Public API for accessing the DI container
+  getContainer(): Container {
+    return this.container;
+  }
+
   // Public API for accessing HTTP server
   getHttpServer() {
     return this.httpServer;

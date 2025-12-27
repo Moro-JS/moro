@@ -1049,6 +1049,11 @@ export class Moro extends EventEmitter {
     return this.coreFramework;
   }
 
+  // Public API for accessing the DI container
+  getContainer() {
+    return this.coreFramework.getContainer();
+  }
+
   // Force cleanup of pooled objects
   forceCleanup(): void {
     const httpServer = (this.coreFramework as any).httpServer;
