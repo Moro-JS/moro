@@ -1,3 +1,9 @@
+## [1.7.5] - 2025-12-27
+
+### Added
+
+- feat: enhance DI container with advanced type-safe features
+
 ## [1.7.4] - 2025-12-26
 
 ### Added
