@@ -1,3 +1,9 @@
+## [1.7.8] - 2025-12-28
+
+### Fixed
+
+- fix: prevent release script from creating releases without meaningful commits
+
 ## [1.7.7] - 2025-12-28
 
 ### Changed
