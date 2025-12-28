@@ -158,7 +158,14 @@ function updateChangelog(newVersion, versionType) {
   }
 
   // Get commits since last release
-  const commits = getCommitsSinceLastRelease();
+  const allCommits = getCommitsSinceLastRelease();
+
+  // Filter out release commits
+  const commits = allCommits.filter(commit => {
+    const lowerCommit = commit.toLowerCase();
+    return !lowerCommit.includes('chore: release v');
+  });
+
   const { added, changed, fixed, other } = categorizeCommits(commits);
 
   // Build changelog entry
@@ -251,35 +258,60 @@ function main() {
   }
   log('✅ No uncommitted changes', 'green');
 
-  // Step 2: Run tests
+  // Step 2: Check for commits since last release
+  log('\n🔍 Step 2: Checking for commits since last release', 'blue');
+  const commitsSinceRelease = getCommitsSinceLastRelease();
+
+  // Filter out release commits (commits that are just version bumps)
+  const meaningfulCommits = commitsSinceRelease.filter(commit => {
+    const lowerCommit = commit.toLowerCase();
+    return !lowerCommit.includes('chore: release v');
+  });
+
+  if (meaningfulCommits.length === 0) {
+    log('❌ No commits since last release. Nothing to release.', 'red');
+    log('Last release tag was already created for the current state.', 'yellow');
+    log('Make some changes first before creating a new release.', 'yellow');
+    process.exit(1);
+  }
+
+  log(`✅ Found ${meaningfulCommits.length} commit(s) since last release`, 'green');
+  meaningfulCommits.slice(0, 5).forEach(commit => {
+    log(`   - ${commit}`, 'cyan');
+  });
+  if (meaningfulCommits.length > 5) {
+    log(`   ... and ${meaningfulCommits.length - 5} more`, 'cyan');
+  }
+
+  // Step 3: Run tests
   if (skipTests) {
-    log('\n🧪 Step 2: Skipping tests (--skip-tests)', 'yellow');
+    log('\n🧪 Step 3: Skipping tests (--skip-tests)', 'yellow');
   } else {
-    log('\n🧪 Step 2: Running tests', 'blue');
+    log('\n🧪 Step 3: Running tests', 'blue');
     exec('npm test');
     log('✅ All tests passed', 'green');
   }
 
-  // Step 3: Run package validation tests
+  // Step 4: Run package validation tests
   if (skipTests) {
-    log('\n📦 Step 3: Skipping package validation (--skip-tests)', 'yellow');
+    log('\n📦 Step 4: Skipping package validation (--skip-tests)', 'yellow');
   } else {
-    log('\n📦 Step 3: Running package validation', 'blue');
+    log('\n📦 Step 4: Running package validation', 'blue');
     exec('npm run test:package');
     log('✅ Package validation passed', 'green');
   }
 
-  // Step 4: Run linting
+  // Step 5: Run linting
   if (skipTests) {
-    log('\n🔍 Step 4: Skipping linting (--skip-tests)', 'yellow');
+    log('\n🔍 Step 5: Skipping linting (--skip-tests)', 'yellow');
   } else {
-    log('\n🔍 Step 4: Running linting', 'blue');
+    log('\n🔍 Step 5: Running linting', 'blue');
     exec('npm run lint');
     log('✅ Linting passed', 'green');
   }
 
-  // Step 5: Update version
-  log('\n📝 Step 5: Updating version', 'blue');
+  // Step 6: Update version
+  log('\n📝 Step 6: Updating version', 'blue');
   let currentVersion, newVersion;
 
   if (customVersion) {
@@ -298,34 +330,34 @@ function main() {
   }
   log('✅ Version updated', 'green');
 
-  // Step 6: Update CHANGELOG
-  log('\n📋 Step 6: Updating CHANGELOG.md', 'blue');
+  // Step 7: Update CHANGELOG
+  log('\n📋 Step 7: Updating CHANGELOG.md', 'blue');
   updateChangelog(newVersion, versionType);
   log('✅ CHANGELOG updated', 'green');
 
-  // Step 7: Build project
-  log('\n🔨 Step 7: Building project', 'blue');
+  // Step 8: Build project
+  log('\n🔨 Step 8: Building project', 'blue');
   exec('npm run build');
   log('✅ Project built successfully', 'green');
 
-  // Step 8: Commit changes
-  log('\n💾 Step 8: Committing changes', 'blue');
+  // Step 9: Commit changes
+  log('\n💾 Step 9: Committing changes', 'blue');
   exec(`git add .`);
   exec(`git commit -m "chore: release v${newVersion}"`);
   log('✅ Changes committed', 'green');
 
-  // Step 9: Create git tag
-  log('\n🏷️  Step 9: Creating git tag', 'blue');
+  // Step 10: Create git tag
+  log('\n🏷️  Step 10: Creating git tag', 'blue');
   exec(`git tag v${newVersion}`);
   log('✅ Git tag created', 'green');
 
-  // Step 10: Push to GitHub
-  log('\n📤 Step 10: Pushing to GitHub', 'blue');
+  // Step 11: Push to GitHub
+  log('\n📤 Step 11: Pushing to GitHub', 'blue');
   exec('git push origin main');
   exec(`git push origin v${newVersion}`);
   log('✅ Pushed to GitHub', 'green');
 
-  // Step 11: Summary
+  // Step 12: Summary
   log('\n🎉 Pre-Release Complete!', 'green');
   log('========================', 'green');
   log(`Version: ${newVersion}`, 'cyan');
