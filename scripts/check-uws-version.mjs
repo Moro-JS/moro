@@ -8,6 +8,7 @@ import https from 'https';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PACKAGE_JSON_PATH = join(__dirname, '..', 'package.json');
+const MAX_ALLOWED_VERSION = 'v20.52.0';
 
 async function fetchLatestVersion() {
   return new Promise((resolve, reject) => {
@@ -64,12 +65,12 @@ async function getCurrentVersion() {
       throw new Error('uWebSockets.js not found in dependencies');
     }
 
-    const versionMatch = (peerDep || devDep).match(/#(v[\d.]+)$/);
+    const versionMatch = (peerDep || devDep).match(/#semver:\^?(v[\d.]+)$|#(v[\d.]+)$/);
     if (!versionMatch) {
       throw new Error('Could not parse version from dependency string');
     }
 
-    return versionMatch[1];
+    return versionMatch[1] || versionMatch[2];
   } catch (error) {
     console.error('Failed to read current version:', error.message);
     return null;
@@ -79,7 +80,7 @@ async function getCurrentVersion() {
 async function updateVersion(newVersion) {
   try {
     const packageJson = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf-8'));
-    const newDependencyString = `github:uNetworking/uWebSockets.js#${newVersion}`;
+    const newDependencyString = `github:uNetworking/uWebSockets.js#semver:^${newVersion}`;
 
     if (packageJson.peerDependencies?.['uWebSockets.js']) {
       packageJson.peerDependencies['uWebSockets.js'] = newDependencyString;
@@ -96,6 +97,35 @@ async function updateVersion(newVersion) {
     console.error('Failed to update package.json:', error.message);
     return false;
   }
+}
+
+function parseVersion(versionString) {
+  const match = versionString.match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10),
+  };
+}
+
+function compareVersions(v1, v2) {
+  const version1 = parseVersion(v1);
+  const version2 = parseVersion(v2);
+
+  if (!version1 || !version2) {
+    return 0;
+  }
+
+  if (version1.major !== version2.major) {
+    return version1.major - version2.major;
+  }
+  if (version1.minor !== version2.minor) {
+    return version1.minor - version2.minor;
+  }
+  return version1.patch - version2.patch;
 }
 
 async function main() {
@@ -120,12 +150,36 @@ async function main() {
   if (!silent) {
     console.log(`Current version: ${currentVersion}`);
     console.log(`Latest version:  ${latestVersion}`);
+    console.log(`Max allowed:     ${MAX_ALLOWED_VERSION}`);
+  }
+
+  const currentVsMax = compareVersions(currentVersion, MAX_ALLOWED_VERSION);
+  if (currentVsMax > 0) {
+    console.error(
+      `\n✗ Current version ${currentVersion} is higher than the maximum allowed version ${MAX_ALLOWED_VERSION}`
+    );
+    console.error(
+      'Versions higher than v20.52.0 have known issues with Node.js support and threading.'
+    );
+    console.error(`Please downgrade to ${MAX_ALLOWED_VERSION} or lower.`);
+    process.exit(1);
   }
 
   if (currentVersion === latestVersion) {
     if (!silent) {
       console.log('\n✓ uWebSockets.js is up to date');
     }
+    process.exit(0);
+  }
+
+  const latestVsMax = compareVersions(latestVersion, MAX_ALLOWED_VERSION);
+
+  if (latestVsMax > 0) {
+    console.log(`\n⚠ New version available: ${latestVersion}`);
+    console.log(
+      `However, versions higher than ${MAX_ALLOWED_VERSION} have known issues with Node.js support and threading.`
+    );
+    console.log(`Current version ${currentVersion} is recommended. Skipping update.`);
     process.exit(0);
   }
 
