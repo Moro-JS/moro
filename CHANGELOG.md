@@ -1,3 +1,9 @@
+## [1.7.7] - 2025-12-28
+
+### Changed
+
+- chore: update husky pre-commit, package versions, and uws version check script
+
 ## [1.7.6] - 2025-12-27
 
 ### Fixed
