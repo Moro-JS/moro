@@ -787,13 +787,23 @@ export class Moro extends EventEmitter {
     req: HttpRequest,
     res: HttpResponse
   ): Promise<boolean> {
+    // Get middleware manager from container (may not exist in all contexts)
+    let middlewareManager: any = null;
+    try {
+      middlewareManager = this.container.resolve('middlewareManager');
+    } catch {
+      // Middleware manager not registered, will fall back to built-in only
+    }
+
     for (const mw of middleware) {
       // If middleware is a string, resolve it from built-in or installed middleware
       let resolvedMiddleware: any;
 
       if (typeof mw === 'string') {
         // Try to resolve from middleware manager
-        resolvedMiddleware = this.middlewareManager.get(mw);
+        if (middlewareManager) {
+          resolvedMiddleware = middlewareManager.get(mw);
+        }
 
         if (!resolvedMiddleware) {
           // Try to resolve from built-in middleware
@@ -816,6 +826,21 @@ export class Moro extends EventEmitter {
       // Execute the middleware
       try {
         let middlewareContinue = true;
+
+        // Check if it's a MiddlewareInterface (needs to be converted to standard middleware)
+        if (
+          resolvedMiddleware &&
+          typeof resolvedMiddleware === 'object' &&
+          typeof resolvedMiddleware.install === 'function'
+        ) {
+          // This is a MiddlewareInterface, we can't execute it directly
+          // These should be installed globally via app.use() or via the middleware manager
+          this.logger.warn(
+            `Middleware '${typeof mw === 'string' ? mw : 'unknown'}' is a MiddlewareInterface and cannot be used directly in module middleware. Use app.use() to install it globally instead.`,
+            'ModuleMiddleware'
+          );
+          continue;
+        }
 
         await new Promise<void>((resolve, reject) => {
           const next = () => {

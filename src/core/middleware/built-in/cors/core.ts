@@ -44,11 +44,13 @@ export class CORSCore {
    */
   async applyCORS(res: HttpResponse, req: HttpRequest): Promise<boolean> {
     // Origin - handle function, array, string, or boolean
-    let resolvedOrigin: string | string[] | boolean = this.options.origin || '*';
+    let resolvedOrigin: string | string[] | boolean = '*';
 
     if (typeof this.options.origin === 'function') {
       const requestOrigin = (req.headers as any).origin || (req.headers as any).Origin;
       resolvedOrigin = await this.options.origin(requestOrigin, req);
+    } else if (this.options.origin !== undefined) {
+      resolvedOrigin = this.options.origin;
     }
 
     // If origin function returned false, deny the request
