@@ -1,3 +1,10 @@
+## [1.7.9] - 2025-12-30
+
+### Added
+
+- fix: TypeScript compilation errors and add integration tests for module middleware
+- feat: Add comprehensive CORS preflight handling and module middleware support
+
 ## [1.7.8] - 2025-12-28
 
 ### Fixed
