@@ -22,28 +22,28 @@ MoroJS provides 18+ built-in middleware solutions that integrate seamlessly with
 
 ### Quick Reference
 
-| Middleware | Purpose | Phase |
-|------------|---------|-------|
-| `cors` | Cross-origin resource sharing | Security |
-| `helmet` | Security headers | Security |
-| `csrf` | CSRF protection | Security |
-| `csp` | Content Security Policy | Security |
-| `compression` | Response compression | Performance |
-| `cache` | Response caching | Performance |
-| `rateLimit` | Request rate limiting | Rate Limiting |
-| `auth` | Authentication & RBAC | Authentication |
-| `session` | Session management | Authentication |
-| `validation` | Request validation | Validation |
-| `bodySize` | Body size limiting | Parsing |
-| `cookie` | Cookie parsing | Parsing |
-| `staticFiles` | Static file serving | Handler |
-| `upload` | File upload handling | Handler |
-| `template` | Template rendering | Handler |
-| `range` | HTTP range requests | Handler |
-| `http2` | HTTP/2 server push | Handler |
-| `cdn` | CDN integration | Content Delivery |
-| `sse` | Server-Sent Events | Real-time |
-| `graphql` | GraphQL support | Handler |
+| Middleware    | Purpose                       | Phase            |
+| ------------- | ----------------------------- | ---------------- |
+| `cors`        | Cross-origin resource sharing | Security         |
+| `helmet`      | Security headers              | Security         |
+| `csrf`        | CSRF protection               | Security         |
+| `csp`         | Content Security Policy       | Security         |
+| `compression` | Response compression          | Performance      |
+| `cache`       | Response caching              | Performance      |
+| `rateLimit`   | Request rate limiting         | Rate Limiting    |
+| `auth`        | Authentication & RBAC         | Authentication   |
+| `session`     | Session management            | Authentication   |
+| `validation`  | Request validation            | Validation       |
+| `bodySize`    | Body size limiting            | Parsing          |
+| `cookie`      | Cookie parsing                | Parsing          |
+| `staticFiles` | Static file serving           | Handler          |
+| `upload`      | File upload handling          | Handler          |
+| `template`    | Template rendering            | Handler          |
+| `range`       | HTTP range requests           | Handler          |
+| `http2`       | HTTP/2 server push            | Handler          |
+| `cdn`         | CDN integration               | Content Delivery |
+| `sse`         | Server-Sent Events            | Real-time        |
+| `graphql`     | GraphQL support               | Handler          |
 
 ---
 
@@ -51,44 +51,166 @@ MoroJS provides 18+ built-in middleware solutions that integrate seamlessly with
 
 ### CORS (Cross-Origin Resource Sharing)
 
-Enable cross-origin requests with fine-grained control.
+Enable cross-origin requests with fine-grained control. MoroJS automatically handles OPTIONS preflight requests.
 
 ```typescript
 import { middleware } from '@morojs/moro';
 
-// Global CORS
-app.use(middleware.cors({
-  origin: ['https://example.com', 'https://app.example.com'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['X-Total-Count'],
-  credentials: true,
-  maxAge: 86400 // 24 hours
-}));
+// Global CORS with static origins
+app.use(
+  middleware.cors({
+    origin: ['https://example.com', 'https://app.example.com'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['X-Total-Count'],
+    credentials: true,
+    maxAge: 86400, // 24 hours
+  })
+);
 
 // Per-route CORS
-app.get('/api/public')
+app
+  .get('/api/public')
   .cors({ origin: '*' })
   .handler((req, res) => {
     return { public: true };
   });
 
-// Dynamic origin validation
-app.use(middleware.cors({
-  origin: (origin) => {
-    return origin?.endsWith('.example.com') || origin === 'https://example.com';
-  },
-  credentials: true
-}));
+// Dynamic origin validation (function)
+app.use(
+  middleware.cors({
+    origin: (requestOrigin, req) => {
+      // Return the origin to allow, or false to deny
+      if (requestOrigin?.endsWith('.example.com')) {
+        return requestOrigin;
+      }
+      if (requestOrigin === 'https://example.com') {
+        return requestOrigin;
+      }
+      return false; // Deny all other origins
+    },
+    credentials: true,
+  })
+);
+
+// Async origin validation (e.g., database lookup)
+app.use(
+  middleware.cors({
+    origin: async (requestOrigin, req) => {
+      // Check database for allowed origin
+      const isAllowed = await db.origins.findOne({ origin: requestOrigin });
+      return isAllowed ? requestOrigin : false;
+    },
+    credentials: true,
+  })
+);
+
+// Wildcard subdomain matching
+app.use(
+  middleware.cors({
+    origin: origin => {
+      const allowed = [
+        'https://example.com',
+        /^https:\/\/[\w-]+\.example\.com$/, // Regex support
+      ];
+
+      if (!origin) return false;
+
+      return allowed.some(pattern => {
+        if (typeof pattern === 'string') {
+          return origin === pattern;
+        }
+        return pattern.test(origin);
+      })
+        ? origin
+        : false;
+    },
+  })
+);
 ```
 
 **Options:**
-- `origin` - String, array, function, or `true`/`false`
+
+- `origin` - String, array, boolean, or function `(origin, req) => string | string[] | boolean | Promise<...>`
+  - String: Single allowed origin
+  - Array: Multiple allowed origins
+  - Boolean: `true` for wildcard, `false` to deny all
+  - Function: Dynamic validation with access to request origin and req object
 - `methods` - Allowed HTTP methods
 - `allowedHeaders` - Headers clients can send
 - `exposedHeaders` - Headers exposed to clients
 - `credentials` - Allow credentials
 - `maxAge` - Preflight cache duration (seconds)
+- `preflightContinue` - If `true`, pass OPTIONS requests to next handler instead of responding automatically (default: `false`)
+
+**Preflight Handling:**
+
+MoroJS automatically responds to OPTIONS preflight requests with:
+
+- `204 No Content` status
+- All appropriate CORS headers
+- Early termination (no route handler execution)
+
+This behavior can be disabled by setting `preflightContinue: true`:
+
+```typescript
+app.use(
+  middleware.cors({
+    origin: 'https://example.com',
+    preflightContinue: true, // Handle OPTIONS in your routes
+  })
+);
+
+// Now you can handle OPTIONS manually
+app.options('/api/data', (req, res) => {
+  // Custom preflight logic
+  res.status(200).json({ preflight: 'ok' });
+});
+```
+
+**Origin Function Examples:**
+
+```typescript
+// Environment-based validation
+app.use(
+  middleware.cors({
+    origin: origin => {
+      if (process.env.NODE_ENV === 'production') {
+        return origin === 'https://myapp.com' ? origin : false;
+      }
+      // Allow all in development
+      return true;
+    },
+  })
+);
+
+// User authentication-based CORS
+app.use(
+  middleware.cors({
+    origin: async (origin, req) => {
+      // Check if request has valid API key
+      const apiKey = req.headers['x-api-key'];
+      const client = await db.clients.findOne({ apiKey, origin });
+      return client ? origin : false;
+    },
+  })
+);
+
+// Multi-tenant origin validation
+app.use(
+  middleware.cors({
+    origin: async (origin, req) => {
+      const tenantId = req.headers['x-tenant-id'];
+      const tenant = await db.tenants.findById(tenantId);
+
+      if (tenant?.allowedOrigins.includes(origin)) {
+        return origin;
+      }
+      return false;
+    },
+  })
+);
+```
 
 ### Helmet (Security Headers)
 
@@ -99,39 +221,44 @@ Add security headers to protect against common vulnerabilities.
 app.use(middleware.helmet());
 
 // Custom configuration
-app.use(middleware.helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'cdn.example.com'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", 'api.example.com'],
-      fontSrc: ["'self'", 'fonts.gstatic.com'],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"]
-    }
-  },
-  hsts: {
-    maxAge: 31536000, // 1 year
-    includeSubDomains: true,
-    preload: true
-  },
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-  noSniff: true,
-  xssFilter: true,
-  hidePoweredBy: true
-}));
+app.use(
+  middleware.helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", 'cdn.example.com'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'", 'api.example.com'],
+        fontSrc: ["'self'", 'fonts.gstatic.com'],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+      },
+    },
+    hsts: {
+      maxAge: 31536000, // 1 year
+      includeSubDomains: true,
+      preload: true,
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    noSniff: true,
+    xssFilter: true,
+    hidePoweredBy: true,
+  })
+);
 
 // Disable specific headers
-app.use(middleware.helmet({
-  contentSecurityPolicy: false, // Disable CSP
-  hsts: true
-}));
+app.use(
+  middleware.helmet({
+    contentSecurityPolicy: false, // Disable CSP
+    hsts: true,
+  })
+);
 ```
 
 **Headers Added:**
+
 - Content-Security-Policy
 - Strict-Transport-Security (HSTS)
 - X-Frame-Options
@@ -146,16 +273,18 @@ Protect against Cross-Site Request Forgery attacks.
 
 ```typescript
 // Enable CSRF protection
-app.use(middleware.csrf({
-  cookie: {
-    name: '_csrf',
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict'
-  },
-  ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
-  headerName: 'X-CSRF-Token'
-}));
+app.use(
+  middleware.csrf({
+    cookie: {
+      name: '_csrf',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    },
+    ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
+    headerName: 'X-CSRF-Token',
+  })
+);
 
 // Get CSRF token endpoint
 app.get('/api/csrf-token', (req, res) => {
@@ -163,7 +292,8 @@ app.get('/api/csrf-token', (req, res) => {
 });
 
 // Protected endpoint
-app.post('/api/transfer')
+app
+  .post('/api/transfer')
   .csrf() // Validate CSRF token
   .handler((req, res) => {
     // Process transfer
@@ -176,16 +306,18 @@ app.post('/api/transfer')
 Advanced CSP configuration with nonce and hash support.
 
 ```typescript
-app.use(middleware.csp({
-  directives: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'nonce-{NONCE}'"],
-    styleSrc: ["'self'", "'nonce-{NONCE}'"],
-    imgSrc: ["'self'", 'data:', 'https:']
-  },
-  reportOnly: false,
-  reportUri: '/api/csp-violations'
-}));
+app.use(
+  middleware.csp({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'nonce-{NONCE}'"],
+      styleSrc: ["'self'", "'nonce-{NONCE}'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+    },
+    reportOnly: false,
+    reportUri: '/api/csp-violations',
+  })
+);
 
 // Access nonce in templates
 app.get('/page', (req, res) => {
@@ -207,26 +339,29 @@ Compress responses with gzip, deflate, or brotli.
 app.use(middleware.compression());
 
 // Advanced configuration
-app.use(middleware.compression({
-  level: 6, // Compression level (0-9)
-  threshold: 1024, // Minimum size to compress (bytes)
-  filter: (req, res) => {
-    // Custom filter
-    if (req.headers['x-no-compression']) {
-      return false;
-    }
-    return /json|text|javascript|css/.test(res.getHeader('Content-Type') || '');
-  },
-  brotli: true, // Enable brotli for modern browsers
-  brotliOptions: {
-    params: {
-      [require('zlib').constants.BROTLI_PARAM_QUALITY]: 4
-    }
-  }
-}));
+app.use(
+  middleware.compression({
+    level: 6, // Compression level (0-9)
+    threshold: 1024, // Minimum size to compress (bytes)
+    filter: (req, res) => {
+      // Custom filter
+      if (req.headers['x-no-compression']) {
+        return false;
+      }
+      return /json|text|javascript|css/.test(res.getHeader('Content-Type') || '');
+    },
+    brotli: true, // Enable brotli for modern browsers
+    brotliOptions: {
+      params: {
+        [require('zlib').constants.BROTLI_PARAM_QUALITY]: 4,
+      },
+    },
+  })
+);
 
 // Per-route compression
-app.get('/api/large-data')
+app
+  .get('/api/large-data')
   .compression({ level: 9 })
   .handler((req, res) => {
     return largeDataset;
@@ -239,30 +374,35 @@ Response caching with multiple backend support.
 
 ```typescript
 // Memory cache (default)
-app.use(middleware.cache({
-  ttl: 300, // 5 minutes
-  strategy: 'memory',
-  maxSize: 100 // Maximum cache entries
-}));
+app.use(
+  middleware.cache({
+    ttl: 300, // 5 minutes
+    strategy: 'memory',
+    maxSize: 100, // Maximum cache entries
+  })
+);
 
 // Redis cache
-app.use(middleware.cache({
-  ttl: 3600,
-  strategy: 'redis',
-  redis: {
-    host: 'localhost',
-    port: 6379,
-    password: 'secret'
-  }
-}));
+app.use(
+  middleware.cache({
+    ttl: 3600,
+    strategy: 'redis',
+    redis: {
+      host: 'localhost',
+      port: 6379,
+      password: 'secret',
+    },
+  })
+);
 
 // Per-route caching
-app.get('/api/users')
+app
+  .get('/api/users')
   .cache({
     ttl: 60,
-    key: (req) => `users:${req.query.page || 1}`,
+    key: req => `users:${req.query.page || 1}`,
     tags: ['users', 'public'],
-    vary: ['Authorization'] // Vary cache by header
+    vary: ['Authorization'], // Vary cache by header
   })
   .handler(async (req, res) => {
     const users = await getUsers(req.query.page);
@@ -270,15 +410,14 @@ app.get('/api/users')
   });
 
 // Cache invalidation
-app.post('/api/users')
-  .handler(async (req, res) => {
-    const user = await createUser(req.body);
+app.post('/api/users').handler(async (req, res) => {
+  const user = await createUser(req.body);
 
-    // Invalidate cache
-    await req.cache.invalidate(['users']);
+  // Invalidate cache
+  await req.cache.invalidate(['users']);
 
-    return user;
-  });
+  return user;
+});
 ```
 
 ### Rate Limiting
@@ -287,44 +426,49 @@ Protect endpoints from abuse with rate limiting.
 
 ```typescript
 // Global rate limiting
-app.use(middleware.rateLimit({
-  requests: 100,
-  window: 60000, // 1 minute
-  message: 'Too many requests',
-  statusCode: 429
-}));
+app.use(
+  middleware.rateLimit({
+    requests: 100,
+    window: 60000, // 1 minute
+    message: 'Too many requests',
+    statusCode: 429,
+  })
+);
 
 // Per-route rate limiting
-app.post('/api/login')
+app
+  .post('/api/login')
   .rateLimit({
     requests: 5,
     window: 900000, // 15 minutes
-    keyGenerator: (req) => req.ip,
+    keyGenerator: req => req.ip,
     skipSuccessfulRequests: false,
-    skipFailedRequests: true
+    skipFailedRequests: true,
   })
   .handler((req, res) => {
     return login(req.body);
   });
 
 // Advanced rate limiting with Redis
-app.use(middleware.rateLimit({
-  requests: 1000,
-  window: 60000,
-  store: 'redis',
-  redis: {
-    host: 'localhost',
-    port: 6379
-  },
-  keyGenerator: (req) => {
-    // Rate limit by user or IP
-    return req.user?.id || req.ip;
-  },
-  skip: (req) => {
-    // Skip rate limiting for admins
-    return req.user?.role === 'admin';
-  }
-}));
+app.use(
+  middleware.rateLimit({
+    requests: 1000,
+    window: 60000,
+    store: 'redis',
+    redis: {
+      host: 'localhost',
+      port: 6379,
+    },
+    keyGenerator: req => {
+      // Rate limit by user or IP
+      return req.user?.id || req.ip;
+    },
+    skip: req => {
+      // Skip rate limiting for admins
+      return req.user?.role === 'admin';
+    },
+  })
+);
 ```
 
 ---
@@ -337,13 +481,16 @@ Limit request body size to prevent memory issues.
 
 ```typescript
 // Global body size limit
-app.use(middleware.bodySize({
-  limit: '10mb',
-  message: 'Request body too large'
-}));
+app.use(
+  middleware.bodySize({
+    limit: '10mb',
+    message: 'Request body too large',
+  })
+);
 
 // Per-route limits
-app.post('/api/upload')
+app
+  .post('/api/upload')
   .bodySize({ limit: '50mb' })
   .handler((req, res) => {
     // Handle large upload
@@ -351,10 +498,12 @@ app.post('/api/upload')
   });
 
 // JSON-specific limit
-app.use(middleware.bodySize({
-  limit: '1mb',
-  jsonLimit: '100kb'
-}));
+app.use(
+  middleware.bodySize({
+    limit: '1mb',
+    jsonLimit: '100kb',
+  })
+);
 ```
 
 ### Cookie Parser
@@ -363,10 +512,12 @@ Parse and manage cookies easily.
 
 ```typescript
 // Enable cookie parsing
-app.use(middleware.cookie({
-  secret: 'your-secret-key',
-  signed: true
-}));
+app.use(
+  middleware.cookie({
+    secret: 'your-secret-key',
+    signed: true,
+  })
+);
 
 // Access cookies
 app.get('/api/preferences', (req, res) => {
@@ -382,7 +533,7 @@ app.post('/api/preferences', (req, res) => {
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     httpOnly: true,
     secure: true,
-    sameSite: 'strict'
+    sameSite: 'strict',
   });
 
   return { success: true };
@@ -395,28 +546,32 @@ Serve static files with caching and ETags.
 
 ```typescript
 // Basic static file serving
-app.use(middleware.staticFiles({
-  root: './public',
-  maxAge: 3600000, // 1 hour
-  index: ['index.html', 'index.htm']
-}));
+app.use(
+  middleware.staticFiles({
+    root: './public',
+    maxAge: 3600000, // 1 hour
+    index: ['index.html', 'index.htm'],
+  })
+);
 
 // Advanced configuration
-app.use(middleware.staticFiles({
-  root: './public',
-  maxAge: 86400000, // 24 hours
-  etag: true,
-  lastModified: true,
-  dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
-  extensions: ['html', 'htm'],
-  fallthrough: true,
-  redirect: true, // Redirect to trailing slash for directories
-  setHeaders: (res, path, stat) => {
-    if (path.endsWith('.html')) {
-      res.setHeader('Cache-Control', 'no-cache');
-    }
-  }
-}));
+app.use(
+  middleware.staticFiles({
+    root: './public',
+    maxAge: 86400000, // 24 hours
+    etag: true,
+    lastModified: true,
+    dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
+    extensions: ['html', 'htm'],
+    fallthrough: true,
+    redirect: true, // Redirect to trailing slash for directories
+    setHeaders: (res, path, stat) => {
+      if (path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  })
+);
 
 // Multiple static directories
 app.use('/assets', middleware.staticFiles({ root: './assets' }));
@@ -429,19 +584,22 @@ Handle multipart file uploads.
 
 ```typescript
 // Basic file upload
-app.use(middleware.upload({
-  dest: './uploads',
-  maxFileSize: 10 * 1024 * 1024, // 10MB
-  maxFiles: 5
-}));
+app.use(
+  middleware.upload({
+    dest: './uploads',
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+    maxFiles: 5,
+  })
+);
 
 // Advanced upload with validation
-app.post('/api/upload')
+app
+  .post('/api/upload')
   .upload({
     dest: './uploads',
     maxFileSize: 5 * 1024 * 1024,
     maxFiles: 1,
-    allowedTypes: ['image/jpeg', 'image/png', 'image/gif']
+    allowedTypes: ['image/jpeg', 'image/png', 'image/gif'],
   })
   .handler((req, res) => {
     const files = req.files;
@@ -455,24 +613,25 @@ app.post('/api/upload')
       files: Object.values(files).map((f: any) => ({
         filename: f.filename,
         size: f.size,
-        mimetype: f.mimetype
-      }))
+        mimetype: f.mimetype,
+      })),
     };
   });
 
 // Multiple file fields
-app.post('/api/profile')
+app
+  .post('/api/profile')
   .upload({
     dest: './uploads',
     fields: {
       avatar: { maxFiles: 1, maxFileSize: 1024 * 1024 },
-      documents: { maxFiles: 5, maxFileSize: 5 * 1024 * 1024 }
-    }
+      documents: { maxFiles: 5, maxFileSize: 5 * 1024 * 1024 },
+    },
   })
   .handler((req, res) => {
     return {
       avatar: req.files.avatar,
-      documents: req.files.documents
+      documents: req.files.documents,
     };
   });
 ```
@@ -483,38 +642,44 @@ Render templates with built-in or external engines.
 
 ```typescript
 // Configure template engine
-app.use(middleware.template({
-  views: './views',
-  engine: 'moro', // 'moro' | 'handlebars' | 'ejs'
-  cache: true,
-  defaultLayout: 'layout'
-}));
+app.use(
+  middleware.template({
+    views: './views',
+    engine: 'moro', // 'moro' | 'handlebars' | 'ejs'
+    cache: true,
+    defaultLayout: 'layout',
+  })
+);
 
 // Render a template
 app.get('/page', (req, res) => {
   res.render('index', {
     title: 'Welcome',
-    user: req.user
+    user: req.user,
   });
 });
 
 // Using Handlebars
-app.use(middleware.template({
-  views: './views',
-  engine: 'handlebars',
-  cache: process.env.NODE_ENV === 'production',
-  helpers: {
-    uppercase: (str: string) => str.toUpperCase(),
-    formatDate: (date: Date) => date.toLocaleDateString()
-  }
-}));
+app.use(
+  middleware.template({
+    views: './views',
+    engine: 'handlebars',
+    cache: process.env.NODE_ENV === 'production',
+    helpers: {
+      uppercase: (str: string) => str.toUpperCase(),
+      formatDate: (date: Date) => date.toLocaleDateString(),
+    },
+  })
+);
 
 // EJS templates
-app.use(middleware.template({
-  views: './views',
-  engine: 'ejs',
-  cache: true
-}));
+app.use(
+  middleware.template({
+    views: './views',
+    engine: 'ejs',
+    cache: true,
+  })
+);
 ```
 
 **Template Syntax (Moro Engine):**
@@ -526,14 +691,14 @@ app.use(middleware.template({
 
 <!-- loops -->
 {{#each items}}
-  <li>{{name}}</li>
+<li>{{name}}</li>
 {{/each}}
 
 <!-- conditionals -->
 {{#if user}}
-  <p>Welcome, {{user.name}}</p>
+<p>Welcome, {{user.name}}</p>
 {{else}}
-  <p>Please log in</p>
+<p>Please log in</p>
 {{/if}}
 ```
 
@@ -543,10 +708,12 @@ Support partial content requests for streaming.
 
 ```typescript
 // Enable range requests
-app.use(middleware.range({
-  acceptRanges: 'bytes',
-  maxRanges: 5
-}));
+app.use(
+  middleware.range({
+    acceptRanges: 'bytes',
+    maxRanges: 5,
+  })
+);
 
 // Serve video with range support
 app.get('/videos/:id', async (req, res) => {
@@ -578,31 +745,33 @@ Optimize loading with HTTP/2 server push.
 
 ```typescript
 // Auto-detect and push resources
-app.use(middleware.http2({
-  autoDetect: true, // Detect CSS/JS from HTML
-  resources: [
-    {
-      path: '/styles/main.css',
-      as: 'style',
-      type: 'text/css',
-      priority: 200
-    },
-    {
-      path: '/scripts/app.js',
-      as: 'script',
-      type: 'application/javascript',
-      priority: 150
-    }
-  ],
-  condition: (req) => req.path === '/' || req.path.endsWith('.html')
-}));
+app.use(
+  middleware.http2({
+    autoDetect: true, // Detect CSS/JS from HTML
+    resources: [
+      {
+        path: '/styles/main.css',
+        as: 'style',
+        type: 'text/css',
+        priority: 200,
+      },
+      {
+        path: '/scripts/app.js',
+        as: 'script',
+        type: 'application/javascript',
+        priority: 150,
+      },
+    ],
+    condition: req => req.path === '/' || req.path.endsWith('.html'),
+  })
+);
 
 // Manual push in route
 app.get('/', (req, res) => {
   if (res.push) {
     res.push('/critical.css', {
       headers: { 'content-type': 'text/css' },
-      priority: 200
+      priority: 200,
     });
   }
 
@@ -624,60 +793,65 @@ Complete authentication with Auth.js integration.
 import { middleware } from '@morojs/moro';
 
 // Configure authentication
-app.use(middleware.auth({
-  providers: [
-    {
-      type: 'oauth',
-      provider: 'google',
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: '/auth/google/callback'
+app.use(
+  middleware.auth({
+    providers: [
+      {
+        type: 'oauth',
+        provider: 'google',
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: '/auth/google/callback',
+      },
+      {
+        type: 'credentials',
+        authorize: async credentials => {
+          const user = await validateCredentials(credentials);
+          return user;
+        },
+      },
+    ],
+    session: {
+      strategy: 'jwt',
+      maxAge: 30 * 24 * 60 * 60, // 30 days
     },
-    {
-      type: 'credentials',
-      authorize: async (credentials) => {
-        const user = await validateCredentials(credentials);
-        return user;
-      }
-    }
-  ],
-  session: {
-    strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60 // 30 days
-  },
-  callbacks: {
-    jwt: async ({ token, user }) => {
-      if (user) {
-        token.userId = user.id;
-        token.role = user.role;
-      }
-      return token;
-    }
-  }
-}));
+    callbacks: {
+      jwt: async ({ token, user }) => {
+        if (user) {
+          token.userId = user.id;
+          token.role = user.role;
+        }
+        return token;
+      },
+    },
+  })
+);
 
 // Protected route
-app.get('/api/profile')
+app
+  .get('/api/profile')
   .auth({ required: true })
   .handler((req, res) => {
     return { user: req.user };
   });
 
 // Role-based access
-app.get('/api/admin')
+app
+  .get('/api/admin')
   .auth({
     required: true,
-    roles: ['admin']
+    roles: ['admin'],
   })
   .handler((req, res) => {
     return { admin: true };
   });
 
 // Permission-based access
-app.delete('/api/users/:id')
+app
+  .delete('/api/users/:id')
   .auth({
     required: true,
-    permissions: ['users:delete']
+    permissions: ['users:delete'],
   })
   .handler((req, res) => {
     return deleteUser(req.params.id);
@@ -687,12 +861,7 @@ app.delete('/api/users/:id')
 **Auth Helpers:**
 
 ```typescript
-import {
-  requireAuth,
-  requireRole,
-  requirePermission,
-  optionalAuth
-} from '@morojs/moro';
+import { requireAuth, requireRole, requirePermission, optionalAuth } from '@morojs/moro';
 
 // Helper functions
 app.get('/api/profile', requireAuth(), (req, res) => {
@@ -721,30 +890,34 @@ Server-side session storage.
 
 ```typescript
 // Memory-based sessions
-app.use(middleware.session({
-  secret: 'your-secret-key',
-  store: 'memory',
-  cookie: {
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    httpOnly: true,
-    secure: true,
-    sameSite: 'strict'
-  }
-}));
+app.use(
+  middleware.session({
+    secret: 'your-secret-key',
+    store: 'memory',
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+    },
+  })
+);
 
 // Redis sessions
-app.use(middleware.session({
-  secret: process.env.SESSION_SECRET,
-  store: 'redis',
-  redis: {
-    host: 'localhost',
-    port: 6379,
-    password: process.env.REDIS_PASSWORD
-  },
-  cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-  }
-}));
+app.use(
+  middleware.session({
+    secret: process.env.SESSION_SECRET,
+    store: 'redis',
+    redis: {
+      host: 'localhost',
+      port: 6379,
+      password: process.env.REDIS_PASSWORD,
+    },
+    cookie: {
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    },
+  })
+);
 
 // Using sessions
 app.post('/login', (req, res) => {
@@ -777,27 +950,31 @@ Integrate with CDN providers for asset delivery.
 
 ```typescript
 // CloudFront integration
-app.use(middleware.cdn({
-  provider: 'cloudfront',
-  config: {
-    distributionId: 'E1234567890ABC',
-    region: 'us-east-1',
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  },
-  pathPrefix: '/assets',
-  invalidateOnChange: true
-}));
+app.use(
+  middleware.cdn({
+    provider: 'cloudfront',
+    config: {
+      distributionId: 'E1234567890ABC',
+      region: 'us-east-1',
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+    pathPrefix: '/assets',
+    invalidateOnChange: true,
+  })
+);
 
 // Cloudflare integration
-app.use(middleware.cdn({
-  provider: 'cloudflare',
-  config: {
-    zoneId: process.env.CLOUDFLARE_ZONE_ID,
-    apiKey: process.env.CLOUDFLARE_API_KEY,
-    email: process.env.CLOUDFLARE_EMAIL
-  }
-}));
+app.use(
+  middleware.cdn({
+    provider: 'cloudflare',
+    config: {
+      zoneId: process.env.CLOUDFLARE_ZONE_ID,
+      apiKey: process.env.CLOUDFLARE_API_KEY,
+      email: process.env.CLOUDFLARE_EMAIL,
+    },
+  })
+);
 
 // Purge cache
 app.post('/api/deploy', async (req, res) => {
@@ -818,14 +995,14 @@ app.use(middleware.sse());
 app.get('/events', (req, res) => {
   res.sse({
     retry: 10000, // Reconnect after 10s
-    keepAlive: 30000 // Keep-alive every 30s
+    keepAlive: 30000, // Keep-alive every 30s
   });
 
   // Send events
   const interval = setInterval(() => {
     res.sse.send({
       event: 'update',
-      data: { timestamp: Date.now() }
+      data: { timestamp: Date.now() },
     });
   }, 5000);
 
@@ -851,7 +1028,7 @@ app.post('/broadcast', (req, res) => {
   clients.forEach(client => {
     client.sse.send({
       event: 'notification',
-      data: req.body
+      data: req.body,
     });
   });
 
@@ -872,17 +1049,21 @@ Log all requests with configurable output.
 app.use(middleware.requestLogger());
 
 // Custom format
-app.use(middleware.requestLogger({
-  format: ':method :url :status :response-time ms',
-  skip: (req) => req.path === '/health',
-  stream: process.stdout
-}));
+app.use(
+  middleware.requestLogger({
+    format: ':method :url :status :response-time ms',
+    skip: req => req.path === '/health',
+    stream: process.stdout,
+  })
+);
 
 // JSON logging
-app.use(middleware.requestLogger({
-  format: 'json',
-  fields: ['method', 'url', 'status', 'responseTime', 'userAgent']
-}));
+app.use(
+  middleware.requestLogger({
+    format: 'json',
+    fields: ['method', 'url', 'status', 'responseTime', 'userAgent'],
+  })
+);
 ```
 
 ### Performance Monitor
@@ -891,13 +1072,15 @@ Monitor endpoint performance and detect slow requests.
 
 ```typescript
 // Enable performance monitoring
-app.use(middleware.performanceMonitor({
-  threshold: 1000, // Warn if request takes > 1s
-  sampleRate: 1.0, // Monitor 100% of requests
-  onSlow: (req, duration) => {
-    console.warn(`Slow request: ${req.method} ${req.path} - ${duration}ms`);
-  }
-}));
+app.use(
+  middleware.performanceMonitor({
+    threshold: 1000, // Warn if request takes > 1s
+    sampleRate: 1.0, // Monitor 100% of requests
+    onSlow: (req, duration) => {
+      console.warn(`Slow request: ${req.method} ${req.path} - ${duration}ms`);
+    },
+  })
+);
 
 // Access metrics
 app.get('/api/metrics', (req, res) => {
@@ -911,30 +1094,34 @@ Track and report errors to monitoring services.
 
 ```typescript
 // Sentry integration
-app.use(middleware.errorTracker({
-  dsn: process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-  release: process.env.APP_VERSION,
-  beforeSend: (event) => {
-    // Filter sensitive data
-    delete event.request?.cookies;
-    return event;
-  }
-}));
+app.use(
+  middleware.errorTracker({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    release: process.env.APP_VERSION,
+    beforeSend: event => {
+      // Filter sensitive data
+      delete event.request?.cookies;
+      return event;
+    },
+  })
+);
 
 // Custom error handler
-app.use(middleware.errorTracker({
-  handler: (error, req) => {
-    // Send to custom service
-    logService.error({
-      error: error.message,
-      stack: error.stack,
-      url: req.url,
-      method: req.method,
-      user: req.user?.id
-    });
-  }
-}));
+app.use(
+  middleware.errorTracker({
+    handler: (error, req) => {
+      // Send to custom service
+      logService.error({
+        error: error.message,
+        stack: error.stack,
+        url: req.url,
+        method: req.method,
+        user: req.user?.id,
+      });
+    },
+  })
+);
 ```
 
 ---
@@ -962,18 +1149,21 @@ const schema = buildSchema(`
   }
 `);
 
-app.use('/graphql', middleware.graphql({
-  schema,
-  rootValue: {
-    hello: () => 'Hello world!',
-    user: ({ id }) => getUser(id)
-  },
-  graphiql: true, // Enable GraphiQL interface
-  context: (req) => ({
-    user: req.user,
-    db: req.db
+app.use(
+  '/graphql',
+  middleware.graphql({
+    schema,
+    rootValue: {
+      hello: () => 'Hello world!',
+      user: ({ id }) => getUser(id),
+    },
+    graphiql: true, // Enable GraphiQL interface
+    context: req => ({
+      user: req.user,
+      db: req.db,
+    }),
   })
-}));
+);
 ```
 
 See [GraphQL Guide](./GRAPHQL_GUIDE.md) for detailed documentation.
@@ -986,26 +1176,34 @@ Request validation with multiple libraries.
 import { z } from 'zod';
 
 // Zod validation
-app.post('/api/users')
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email(),
-    age: z.number().min(18)
-  }))
+app
+  .post('/api/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+      age: z.number().min(18),
+    })
+  )
   .handler((req, res) => {
     // req.body is fully typed and validated
     return createUser(req.body);
   });
 
 // Multiple validations
-app.post('/api/search')
-  .query(z.object({
-    q: z.string().min(1),
-    page: z.coerce.number().default(1)
-  }))
-  .body(z.object({
-    filters: z.array(z.string()).optional()
-  }))
+app
+  .post('/api/search')
+  .query(
+    z.object({
+      q: z.string().min(1),
+      page: z.coerce.number().default(1),
+    })
+  )
+  .body(
+    z.object({
+      filters: z.array(z.string()).optional(),
+    })
+  )
   .handler((req, res) => {
     return search(req.query.q, req.query.page, req.body.filters);
   });
@@ -1037,7 +1235,7 @@ const loadUser = async (req, res, next) => {
 app.use(loadUser);
 
 // Middleware with options
-const createRateLimiter = (options) => {
+const createRateLimiter = options => {
   const requests = new Map();
 
   return (req, res, next) => {
@@ -1068,7 +1266,7 @@ const errorHandler = (err, req, res, next) => {
   res.status(err.statusCode || 500).json({
     success: false,
     error: err.message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };
 
@@ -1090,12 +1288,13 @@ MoroJS automatically orders middleware in the following phases:
 
 ```typescript
 // Middleware executes in this order regardless of definition order
-app.post('/api/users')
-  .handler(createUser)           // 7. Handler
+app
+  .post('/api/users')
+  .handler(createUser) // 7. Handler
   .validate({ body: UserSchema }) // 5. Validation
-  .auth({ required: true })       // 4. Authentication
-  .rateLimit({ requests: 10 })    // 3. Rate limiting
-  .cors({ origin: '*' });         // 1. Security
+  .auth({ required: true }) // 4. Authentication
+  .rateLimit({ requests: 10 }) // 3. Rate limiting
+  .cors({ origin: '*' }); // 1. Security
 ```
 
 ---
@@ -1116,11 +1315,13 @@ app.use(middleware.requestLogger());
 
 ```typescript
 // Only for specific routes
-app.post('/api/upload')
+app
+  .post('/api/upload')
   .upload({ maxFileSize: 10 * 1024 * 1024 })
   .handler(handleUpload);
 
-app.get('/api/admin')
+app
+  .get('/api/admin')
   .auth({ required: true, roles: ['admin'] })
   .handler(getAdminData);
 ```
@@ -1129,13 +1330,14 @@ app.get('/api/admin')
 
 ```typescript
 const app = createApp({
-  cors: process.env.NODE_ENV === 'production'
-    ? { origin: process.env.ALLOWED_ORIGINS }
-    : { origin: '*' },
+  cors:
+    process.env.NODE_ENV === 'production'
+      ? { origin: process.env.ALLOWED_ORIGINS }
+      : { origin: '*' },
 
   compression: process.env.NODE_ENV === 'production',
 
-  helmet: process.env.NODE_ENV === 'production'
+  helmet: process.env.NODE_ENV === 'production',
 });
 ```
 
@@ -1143,23 +1345,24 @@ const app = createApp({
 
 ```typescript
 // Cache expensive queries
-app.get('/api/reports/:id')
-  .cache({ ttl: 3600, key: (req) => `report:${req.params.id}` })
+app
+  .get('/api/reports/:id')
+  .cache({ ttl: 3600, key: req => `report:${req.params.id}` })
   .handler(generateReport);
 
 // Invalidate on updates
-app.put('/api/reports/:id')
-  .handler(async (req, res) => {
-    const report = await updateReport(req.params.id, req.body);
-    await req.cache.invalidate([`report:${req.params.id}`]);
-    return report;
-  });
+app.put('/api/reports/:id').handler(async (req, res) => {
+  const report = await updateReport(req.params.id, req.body);
+  await req.cache.invalidate([`report:${req.params.id}`]);
+  return report;
+});
 ```
 
 ### 5. Combine Middleware for Complete Protection
 
 ```typescript
-app.post('/api/payment')
+app
+  .post('/api/payment')
   .auth({ required: true })
   .rateLimit({ requests: 5, window: 60000 })
   .validation({ body: PaymentSchema })
@@ -1173,16 +1376,16 @@ app.post('/api/payment')
 
 ### Middleware Impact on Performance
 
-| Middleware | Overhead | When to Use |
-|------------|----------|-------------|
-| `cors` | Minimal | Always for public APIs |
-| `helmet` | Minimal | Always for security |
-| `compression` | Medium | For large responses |
-| `cache` | Low | For expensive operations |
-| `rateLimit` | Low | For abuse prevention |
-| `auth` | Medium | For protected routes |
-| `validation` | Low-Medium | For data validation |
-| `upload` | High | Only when needed |
+| Middleware    | Overhead   | When to Use              |
+| ------------- | ---------- | ------------------------ |
+| `cors`        | Minimal    | Always for public APIs   |
+| `helmet`      | Minimal    | Always for security      |
+| `compression` | Medium     | For large responses      |
+| `cache`       | Low        | For expensive operations |
+| `rateLimit`   | Low        | For abuse prevention     |
+| `auth`        | Medium     | For protected routes     |
+| `validation`  | Low-Medium | For data validation      |
+| `upload`      | High       | Only when needed         |
 
 ### Optimization Tips
 
@@ -1207,4 +1410,3 @@ For more information, see:
 ---
 
 **Need help?** Join our [Discord community](https://morojs.com/discord) or [open an issue](https://github.com/Moro-JS/moro/issues).
-

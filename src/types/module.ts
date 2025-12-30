@@ -1,4 +1,10 @@
 // Module Definition Types
+
+// Middleware can be a string name (resolved from built-in) or actual function
+export type ModuleMiddleware =
+  | string
+  | ((req: any, res: any, next: () => void) => void | Promise<void>);
+
 export interface ModuleRoute {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   path: string;
@@ -6,7 +12,7 @@ export interface ModuleRoute {
   validation?: any;
   cache?: { ttl: number; key?: string };
   rateLimit?: { requests: number; window: number };
-  middleware?: string[];
+  middleware?: ModuleMiddleware[]; // Support both strings and functions
   auth?: {
     roles?: string[];
     permissions?: string[];
@@ -37,6 +43,7 @@ export interface ModuleDefinition {
   routes?: ModuleRoute[];
   sockets?: ModuleSocket[];
   dependencies?: string[];
+  middleware?: ModuleMiddleware[]; // Module-level middleware (applied to all routes)
 }
 
 // Internal Module Configuration (used by framework)
@@ -58,7 +65,7 @@ export interface InternalRouteDefinition {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   path: string;
   handler: string;
-  middleware?: string[];
+  middleware?: ModuleMiddleware[]; // Support both strings and functions
   validation?: any;
   cache?: CacheConfig;
   rateLimit?: RateLimitConfig;

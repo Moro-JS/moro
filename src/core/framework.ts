@@ -541,6 +541,32 @@ export class Moro extends EventEmitter {
       const requestId = req.headers['x-request-id'] || Math.random().toString(36);
 
       try {
+        // Apply module-level middleware first
+        if (config.middleware && config.middleware.length > 0) {
+          const moduleMiddlewareExecuted = await this.executeModuleMiddleware(
+            config.middleware,
+            req,
+            res
+          );
+          if (!moduleMiddlewareExecuted) {
+            // Middleware handled response or stopped execution
+            return;
+          }
+        }
+
+        // Apply route-level middleware
+        if (route.middleware && route.middleware.length > 0) {
+          const routeMiddlewareExecuted = await this.executeModuleMiddleware(
+            route.middleware,
+            req,
+            res
+          );
+          if (!routeMiddlewareExecuted) {
+            // Middleware handled response or stopped execution
+            return;
+          }
+        }
+
         // Try to get functional handler first, then fall back to service-based
         let handler;
         let useEnhancedReq = false;
@@ -750,6 +776,82 @@ export class Moro extends EventEmitter {
         throw error;
       }
     };
+  }
+
+  /**
+   * Execute module middleware (resolve strings or use functions directly)
+   * Returns false if middleware stopped execution, true to continue
+   */
+  private async executeModuleMiddleware(
+    middleware: any[],
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<boolean> {
+    for (const mw of middleware) {
+      // If middleware is a string, resolve it from built-in or installed middleware
+      let resolvedMiddleware: any;
+
+      if (typeof mw === 'string') {
+        // Try to resolve from middleware manager
+        resolvedMiddleware = this.middlewareManager.get(mw);
+
+        if (!resolvedMiddleware) {
+          // Try to resolve from built-in middleware
+          const { builtInMiddleware } = await import('./middleware/built-in/index.js');
+          resolvedMiddleware = (builtInMiddleware as any)[mw];
+        }
+
+        if (!resolvedMiddleware) {
+          this.logger.warn(`Middleware '${mw}' not found, skipping`, 'ModuleMiddleware');
+          continue;
+        }
+      } else if (typeof mw === 'function') {
+        // Middleware is already a function
+        resolvedMiddleware = mw;
+      } else {
+        this.logger.warn(`Invalid middleware type: ${typeof mw}, skipping`, 'ModuleMiddleware');
+        continue;
+      }
+
+      // Execute the middleware
+      try {
+        let middlewareContinue = true;
+
+        await new Promise<void>((resolve, reject) => {
+          const next = () => {
+            middlewareContinue = true;
+            resolve();
+          };
+
+          const result = resolvedMiddleware(req, res, next);
+
+          // Handle async middleware
+          if (result && typeof result.then === 'function') {
+            result
+              .then(() => {
+                if (middlewareContinue) {
+                  resolve();
+                }
+              })
+              .catch(reject);
+          }
+        });
+
+        // Check if response was sent
+        if (res.headersSent) {
+          return false; // Stop execution
+        }
+      } catch (error: any) {
+        this.logger.error(`Module middleware error: ${error.message}`, 'ModuleMiddleware', {
+          middleware: typeof mw === 'string' ? mw : mw.name || 'anonymous',
+          stack: error.stack,
+        });
+        // Let error propagate
+        throw error;
+      }
+    }
+
+    return true; // Continue to handler
   }
 
   private mountRouter(basePath: string, router: Router): void {

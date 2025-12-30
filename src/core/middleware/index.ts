@@ -115,6 +115,21 @@ export class MiddlewareManager extends EventEmitter {
     return this.middleware.has(name);
   }
 
+  // Get middleware by name (safe getter for module usage)
+  get(name: string): MiddlewareInterface | SimpleMiddlewareFunction | undefined {
+    // Check installed middleware first
+    if (this.middleware.has(name)) {
+      return this.middleware.get(name);
+    }
+
+    // Check simple middleware
+    if (this.simpleMiddleware.has(name)) {
+      return this.simpleMiddleware.get(name);
+    }
+
+    return undefined;
+  }
+
   // List all registered middleware
   list(): MiddlewareInterface[] {
     return Array.from(this.middleware.values());

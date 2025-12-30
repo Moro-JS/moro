@@ -36,8 +36,30 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
     const corsCore = new CORSCore(config);
 
     hooks.before('request', async (context: HookContext) => {
+      const request = context.request as any;
       const response = context.response as any;
-      corsCore.applyCORS(response);
+
+      // Apply CORS headers to all requests (now async to support origin functions)
+      const isAllowed = await corsCore.applyCORS(response, request);
+
+      // If origin validation failed, deny the request
+      if (!isAllowed) {
+        logger.debug('CORS origin validation failed', 'Validation', {
+          origin: request.headers?.origin,
+          path: request.path,
+        });
+        response.status(403).end();
+        response.headersSent = true;
+        return;
+      }
+
+      // Handle OPTIONS preflight automatically unless preflightContinue is true
+      if (request.method === 'OPTIONS' && !config.preflightContinue) {
+        logger.debug('Handling OPTIONS preflight request', 'Preflight', { path: request.path });
+        response.status(204).end();
+        // Mark headers as sent to prevent further processing
+        response.headersSent = true;
+      }
     });
   },
 });

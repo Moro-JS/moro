@@ -39,36 +39,36 @@ module.exports = {
   server: {
     port: 3001,
     host: 'localhost',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
-    url: 'postgresql://user:pass@localhost:5432/mydb'
+    url: 'postgresql://user:pass@localhost:5432/mydb',
   },
   logging: {
     level: 'info',
-    format: 'pretty'
-  }
-}
+    format: 'pretty',
+  },
+};
 ```
 
 ```typescript
 // moro.config.ts
-import { AppConfig } from '@morojs/core'
+import { AppConfig } from '@morojs/core';
 
 export default {
   server: {
     port: 3001,
     host: 'localhost',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
-    url: 'postgresql://user:pass@localhost:5432/mydb'
+    url: 'postgresql://user:pass@localhost:5432/mydb',
   },
   logging: {
     level: 'info',
-    format: 'pretty'
-  }
-} as Partial<AppConfig>
+    format: 'pretty',
+  },
+} as Partial<AppConfig>;
 ```
 
 ## Server Configuration
@@ -77,12 +77,12 @@ export default {
 
 Configure the HTTP server settings.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `port` | `number` | `3001` | Server port to listen on (1-65535) |
-| `host` | `string` | `'localhost'` | Server host to bind to |
-| `maxConnections` | `number` | `1000` | Maximum concurrent connections |
-| `timeout` | `number` | `30000` | Request timeout in milliseconds |
+| Property         | Type     | Default       | Description                        |
+| ---------------- | -------- | ------------- | ---------------------------------- |
+| `port`           | `number` | `3001`        | Server port to listen on (1-65535) |
+| `host`           | `string` | `'localhost'` | Server host to bind to             |
+| `maxConnections` | `number` | `1000`        | Maximum concurrent connections     |
+| `timeout`        | `number` | `30000`       | Request timeout in milliseconds    |
 
 **Note**: Environment detection now uses `NODE_ENV` directly for consistency with the Node.js ecosystem. Use `isDevelopment()`, `isProduction()`, and `isStaging()` utility functions to check the current environment.
 
@@ -116,14 +116,14 @@ Configure the HTTP server settings.
 
 Configure service discovery for microservices architecture.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable service discovery |
-| `type` | `'memory' \| 'consul' \| 'kubernetes'` | `'memory'` | Service discovery backend type |
-| `consulUrl` | `string` | `'http://localhost:8500'` | Consul server URL |
-| `kubernetesNamespace` | `string` | `'default'` | Kubernetes namespace |
-| `healthCheckInterval` | `number` | `30000` | Health check interval in milliseconds |
-| `retryAttempts` | `number` | `3` | Number of retry attempts for failed health checks |
+| Property              | Type                                   | Default                   | Description                                       |
+| --------------------- | -------------------------------------- | ------------------------- | ------------------------------------------------- |
+| `enabled`             | `boolean`                              | `false`                   | Enable service discovery                          |
+| `type`                | `'memory' \| 'consul' \| 'kubernetes'` | `'memory'`                | Service discovery backend type                    |
+| `consulUrl`           | `string`                               | `'http://localhost:8500'` | Consul server URL                                 |
+| `kubernetesNamespace` | `string`                               | `'default'`               | Kubernetes namespace                              |
+| `healthCheckInterval` | `number`                               | `30000`                   | Health check interval in milliseconds             |
+| `retryAttempts`       | `number`                               | `3`                       | Number of retry attempts for failed health checks |
 
 #### Example
 
@@ -154,33 +154,33 @@ Configure service discovery for microservices architecture.
 
 Configure database connections and adapters.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `url` | `string` | - | Primary database connection URL |
-| `redis` | `object` | - | Redis configuration |
-| `mysql` | `object` | - | MySQL configuration |
+| Property | Type     | Default | Description                     |
+| -------- | -------- | ------- | ------------------------------- |
+| `url`    | `string` | -       | Primary database connection URL |
+| `redis`  | `object` | -       | Redis configuration             |
+| `mysql`  | `object` | -       | MySQL configuration             |
 
 #### Redis Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `url` | `string` | `'redis://localhost:6379'` | Redis connection URL |
-| `maxRetries` | `number` | `3` | Maximum Redis connection retry attempts |
-| `retryDelay` | `number` | `1000` | Redis retry delay in milliseconds |
-| `keyPrefix` | `string` | `'moro:'` | Redis key prefix |
+| Property     | Type     | Default                    | Description                             |
+| ------------ | -------- | -------------------------- | --------------------------------------- |
+| `url`        | `string` | `'redis://localhost:6379'` | Redis connection URL                    |
+| `maxRetries` | `number` | `3`                        | Maximum Redis connection retry attempts |
+| `retryDelay` | `number` | `1000`                     | Redis retry delay in milliseconds       |
+| `keyPrefix`  | `string` | `'moro:'`                  | Redis key prefix                        |
 
 #### MySQL Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `host` | `string` | `'localhost'` | MySQL host |
-| `port` | `number` | `3306` | MySQL port |
-| `database` | `string` | - | Database name |
-| `username` | `string` | - | Database username |
-| `password` | `string` | - | Database password |
-| `connectionLimit` | `number` | `10` | Connection pool limit |
-| `acquireTimeout` | `number` | `60000` | Connection acquire timeout |
-| `timeout` | `number` | `60000` | Query timeout |
+| Property          | Type     | Default       | Description                |
+| ----------------- | -------- | ------------- | -------------------------- |
+| `host`            | `string` | `'localhost'` | MySQL host                 |
+| `port`            | `number` | `3306`        | MySQL port                 |
+| `database`        | `string` | -             | Database name              |
+| `username`        | `string` | -             | Database username          |
+| `password`        | `string` | -             | Database password          |
+| `connectionLimit` | `number` | `10`          | Connection pool limit      |
+| `acquireTimeout`  | `number` | `60000`       | Connection acquire timeout |
+| `timeout`         | `number` | `60000`       | Query timeout              |
 
 #### Example
 
@@ -228,52 +228,54 @@ Configure default behaviors for modules.
 
 #### Cache Defaults
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable caching by default |
-| `defaultTtl` | `number` | `300` | Default cache TTL in seconds |
-| `maxSize` | `number` | `1000` | Maximum cache entries |
-| `strategy` | `'lru' \| 'lfu' \| 'fifo'` | `'lru'` | Cache eviction strategy |
+| Property     | Type                       | Default | Description                  |
+| ------------ | -------------------------- | ------- | ---------------------------- |
+| `enabled`    | `boolean`                  | `true`  | Enable caching by default    |
+| `defaultTtl` | `number`                   | `300`   | Default cache TTL in seconds |
+| `maxSize`    | `number`                   | `1000`  | Maximum cache entries        |
+| `strategy`   | `'lru' \| 'lfu' \| 'fifo'` | `'lru'` | Cache eviction strategy      |
 
 #### Rate Limit Defaults
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable rate limiting by default |
-| `defaultRequests` | `number` | `100` | Default requests per window |
-| `defaultWindow` | `number` | `60000` | Default rate limit window in milliseconds |
+| Property                 | Type      | Default | Description                                     |
+| ------------------------ | --------- | ------- | ----------------------------------------------- |
+| `enabled`                | `boolean` | `true`  | Enable rate limiting by default                 |
+| `defaultRequests`        | `number`  | `100`   | Default requests per window                     |
+| `defaultWindow`          | `number`  | `60000` | Default rate limit window in milliseconds       |
 | `skipSuccessfulRequests` | `boolean` | `false` | Skip successful requests in rate limit counting |
-| `skipFailedRequests` | `boolean` | `false` | Skip failed requests in rate limit counting |
+| `skipFailedRequests`     | `boolean` | `false` | Skip failed requests in rate limit counting     |
 
 #### Validation Defaults
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable validation by default |
-| `stripUnknown` | `boolean` | `true` | Strip unknown properties from validated data |
-| `abortEarly` | `boolean` | `false` | Stop validation on first error |
+| Property       | Type      | Default | Description                                  |
+| -------------- | --------- | ------- | -------------------------------------------- |
+| `enabled`      | `boolean` | `true`  | Enable validation by default                 |
+| `stripUnknown` | `boolean` | `true`  | Strip unknown properties from validated data |
+| `abortEarly`   | `boolean` | `false` | Stop validation on first error               |
 
 #### Auto-Discovery Defaults
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable automatic module discovery |
-| `paths` | `string[]` | `['./modules', './src/modules']` | Directories to search for modules |
-| `patterns` | `string[]` | `['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}']` | File patterns to match |
-| `recursive` | `boolean` | `true` | Search directories recursively |
-| `loadingStrategy` | `'eager' \| 'lazy' \| 'conditional'` | `'eager'` | Module loading strategy |
-| `watchForChanges` | `boolean` | `false` | Enable file watching for hot reloading (development) |
-| `ignorePatterns` | `string[]` | `['**/*.test.{ts,js}', '**/*.spec.{ts,js}', '**/node_modules/**']` | Patterns to ignore during discovery |
-| `loadOrder` | `'alphabetical' \| 'dependency' \| 'custom'` | `'dependency'` | Module loading order strategy |
-| `failOnError` | `boolean` | `false` | Throw error if module discovery fails |
-| `maxDepth` | `number` | `5` | Maximum directory depth to search |
+| Property          | Type                                         | Default                                                              | Description                                          |
+| ----------------- | -------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| `enabled`         | `boolean`                                    | `true`                                                               | Enable automatic module discovery                    |
+| `paths`           | `string[]`                                   | `['./modules', './src/modules']`                                     | Directories to search for modules                    |
+| `patterns`        | `string[]`                                   | `['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}']` | File patterns to match                               |
+| `recursive`       | `boolean`                                    | `true`                                                               | Search directories recursively                       |
+| `loadingStrategy` | `'eager' \| 'lazy' \| 'conditional'`         | `'eager'`                                                            | Module loading strategy                              |
+| `watchForChanges` | `boolean`                                    | `false`                                                              | Enable file watching for hot reloading (development) |
+| `ignorePatterns`  | `string[]`                                   | `['**/*.test.{ts,js}', '**/*.spec.{ts,js}', '**/node_modules/**']`   | Patterns to ignore during discovery                  |
+| `loadOrder`       | `'alphabetical' \| 'dependency' \| 'custom'` | `'dependency'`                                                       | Module loading order strategy                        |
+| `failOnError`     | `boolean`                                    | `false`                                                              | Throw error if module discovery fails                |
+| `maxDepth`        | `number`                                     | `5`                                                                  | Maximum directory depth to search                    |
 
 **Loading Strategies:**
+
 - **`eager`**: Load all modules immediately during app startup
 - **`lazy`**: Load modules on first request to their routes
 - **`conditional`**: Load modules based on environment or feature flags
 
 **Load Order Strategies:**
+
 - **`alphabetical`**: Load modules in alphabetical order by name
 - **`dependency`**: Analyze and resolve module dependencies using topological sort
 - **`custom`**: Use custom order specified in module configurations
@@ -348,14 +350,14 @@ const app = createApp({
       enabled: true,
       paths: ['./modules', './src/modules'],
       loadingStrategy: 'lazy',
-      watchForChanges: true  // Development only
-    }
-  }
+      watchForChanges: true, // Development only
+    },
+  },
 });
 
 // Shorthand convenience method
 const app = createApp({
-  autoDiscover: true  // Use defaults
+  autoDiscover: true, // Use defaults
 });
 
 // Shorthand with options
@@ -363,8 +365,8 @@ const app = createApp({
   autoDiscover: {
     enabled: true,
     paths: ['./modules', './src/modules'],
-    loadingStrategy: 'lazy'
-  }
+    loadingStrategy: 'lazy',
+  },
 });
 ```
 
@@ -373,41 +375,44 @@ const app = createApp({
 ```javascript
 // Legacy modulesPath (still supported)
 const app = createApp({
-  modulesPath: './modules'  // Equivalent to autoDiscover.paths: ['./modules']
+  modulesPath: './modules', // Equivalent to autoDiscover.paths: ['./modules']
 });
 ```
 
 ### Loading Strategies
 
 #### Eager Loading (Default)
+
 All modules are loaded immediately during application startup.
 
 ```javascript
 {
   autoDiscover: {
-    loadingStrategy: 'eager'
+    loadingStrategy: 'eager';
   }
 }
 ```
 
 #### Lazy Loading
+
 Modules are loaded on first request to their routes.
 
 ```javascript
 {
   autoDiscover: {
-    loadingStrategy: 'lazy'
+    loadingStrategy: 'lazy';
   }
 }
 ```
 
 #### Conditional Loading
+
 Modules are loaded based on environment or feature flags.
 
 ```javascript
 {
   autoDiscover: {
-    loadingStrategy: 'conditional'
+    loadingStrategy: 'conditional';
   }
 }
 ```
@@ -415,6 +420,7 @@ Modules are loaded based on environment or feature flags.
 ### Development Features
 
 #### Hot Reloading
+
 Enable file watching for automatic module reloading during development:
 
 ```javascript
@@ -422,32 +428,29 @@ const app = createApp({
   modules: {
     autoDiscovery: {
       watchForChanges: process.env.NODE_ENV === 'development',
-      loadingStrategy: 'eager'
-    }
-  }
+      loadingStrategy: 'eager',
+    },
+  },
 });
 ```
 
 #### Custom Patterns
+
 Configure custom file patterns for different project structures:
 
 ```javascript
 const app = createApp({
   modules: {
     autoDiscovery: {
-      patterns: [
-        '**/*.module.{ts,js}',
-        '**/modules/*.{ts,js}',
-        '**/*-module.{ts,js}'
-      ],
+      patterns: ['**/*.module.{ts,js}', '**/modules/*.{ts,js}', '**/*-module.{ts,js}'],
       ignorePatterns: [
         '**/*.test.{ts,js}',
         '**/*.spec.{ts,js}',
         '**/node_modules/**',
-        '**/dist/**'
-      ]
-    }
-  }
+        '**/dist/**',
+      ],
+    },
+  },
 });
 ```
 
@@ -459,10 +462,10 @@ The auto-discovery system can automatically resolve and order module dependencie
 const app = createApp({
   modules: {
     autoDiscovery: {
-      loadOrder: 'dependency',  // Automatic topological sort
-      failOnError: false        // Graceful degradation
-    }
-  }
+      loadOrder: 'dependency', // Automatic topological sort
+      failOnError: false, // Graceful degradation
+    },
+  },
 });
 ```
 
@@ -481,9 +484,9 @@ const app = createApp({
       watchForChanges: false,
       loadOrder: 'dependency',
       failOnError: true,
-      maxDepth: 3
-    }
-  }
+      maxDepth: 3,
+    },
+  },
 });
 ```
 
@@ -493,39 +496,39 @@ const app = createApp({
 
 Configure the logging system.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `level` | `'debug' \| 'info' \| 'warn' \| 'error' \| 'fatal'` | `'info'` | Minimum log level |
-| `format` | `'pretty' \| 'json' \| 'compact'` | `'pretty'` | Log output format |
-| `enableColors` | `boolean` | `true` | Enable colored log output |
-| `enableTimestamp` | `boolean` | `true` | Include timestamp in logs |
-| `enableContext` | `boolean` | `true` | Include context information in logs |
-| `outputs` | `object` | - | Output configuration |
+| Property          | Type                                                | Default    | Description                         |
+| ----------------- | --------------------------------------------------- | ---------- | ----------------------------------- |
+| `level`           | `'debug' \| 'info' \| 'warn' \| 'error' \| 'fatal'` | `'info'`   | Minimum log level                   |
+| `format`          | `'pretty' \| 'json' \| 'compact'`                   | `'pretty'` | Log output format                   |
+| `enableColors`    | `boolean`                                           | `true`     | Enable colored log output           |
+| `enableTimestamp` | `boolean`                                           | `true`     | Include timestamp in logs           |
+| `enableContext`   | `boolean`                                           | `true`     | Include context information in logs |
+| `outputs`         | `object`                                            | -          | Output configuration                |
 
 #### Output Configuration
 
 ##### Console Output
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `console` | `boolean` | `true` | Enable console output |
+| Property  | Type      | Default | Description           |
+| --------- | --------- | ------- | --------------------- |
+| `console` | `boolean` | `true`  | Enable console output |
 
 ##### File Output
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable file logging |
-| `path` | `string` | `'./logs/moro.log'` | Log file path |
-| `maxSize` | `string` | `'10MB'` | Maximum file size |
-| `maxFiles` | `number` | `5` | Maximum number of log files |
+| Property   | Type      | Default             | Description                 |
+| ---------- | --------- | ------------------- | --------------------------- |
+| `enabled`  | `boolean` | `false`             | Enable file logging         |
+| `path`     | `string`  | `'./logs/moro.log'` | Log file path               |
+| `maxSize`  | `string`  | `'10MB'`            | Maximum file size           |
+| `maxFiles` | `number`  | `5`                 | Maximum number of log files |
 
 ##### Webhook Output
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable webhook logging |
-| `url` | `string` | - | Webhook URL |
-| `headers` | `Record<string, string>` | `{}` | HTTP headers for webhook |
+| Property  | Type                     | Default | Description              |
+| --------- | ------------------------ | ------- | ------------------------ |
+| `enabled` | `boolean`                | `false` | Enable webhook logging   |
+| `url`     | `string`                 | -       | Webhook URL              |
+| `headers` | `Record<string, string>` | `{}`    | HTTP headers for webhook |
 
 #### Example
 
@@ -579,31 +582,38 @@ Configure security features.
 
 #### CORS Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable CORS |
-| `origin` | `string \| string[] \| boolean` | `'*'` | Allowed origins |
-| `methods` | `string[]` | `['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']` | Allowed methods |
-| `allowedHeaders` | `string[]` | `['Content-Type', 'Authorization']` | Allowed headers |
-| `credentials` | `boolean` | `false` | Allow credentials |
+| Property            | Type                            | Default                                                | Description                                               |
+| ------------------- | ------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
+| `enabled`           | `boolean`                       | `true`                                                 | Enable CORS                                               |
+| `origin`            | `string \| string[] \| boolean` | `'*'`                                                  | Allowed origins                                           |
+| `methods`           | `string[]`                      | `['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']` | Allowed methods                                           |
+| `allowedHeaders`    | `string[]`                      | `['Content-Type', 'Authorization']`                    | Allowed headers                                           |
+| `credentials`       | `boolean`                       | `false`                                                | Allow credentials                                         |
+| `maxAge`            | `number`                        | -                                                      | Preflight cache duration (seconds)                        |
+| `exposedHeaders`    | `string[]`                      | -                                                      | Headers exposed to client                                 |
+| `preflightContinue` | `boolean`                       | `false`                                                | Pass OPTIONS to route handlers instead of auto-responding |
+
+**Automatic Preflight Handling:**
+
+MoroJS automatically handles OPTIONS preflight requests by responding with `204 No Content` and appropriate CORS headers. Set `preflightContinue: true` to handle OPTIONS in your route handlers instead.
 
 #### Helmet Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable Helmet security headers |
-| `contentSecurityPolicy` | `boolean` | `true` | Enable CSP |
-| `hsts` | `boolean` | `true` | Enable HSTS |
-| `noSniff` | `boolean` | `true` | Enable X-Content-Type-Options |
-| `frameguard` | `boolean` | `true` | Enable X-Frame-Options |
+| Property                | Type      | Default | Description                    |
+| ----------------------- | --------- | ------- | ------------------------------ |
+| `enabled`               | `boolean` | `true`  | Enable Helmet security headers |
+| `contentSecurityPolicy` | `boolean` | `true`  | Enable CSP                     |
+| `hsts`                  | `boolean` | `true`  | Enable HSTS                    |
+| `noSniff`               | `boolean` | `true`  | Enable X-Content-Type-Options  |
+| `frameguard`            | `boolean` | `true`  | Enable X-Frame-Options         |
 
 #### Global Rate Limiting
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable global rate limiting |
-| `requests` | `number` | `1000` | Requests per window |
-| `window` | `number` | `60000` | Window duration in milliseconds |
+| Property   | Type      | Default | Description                     |
+| ---------- | --------- | ------- | ------------------------------- |
+| `enabled`  | `boolean` | `false` | Enable global rate limiting     |
+| `requests` | `number`  | `1000`  | Requests per window             |
+| `window`   | `number`  | `60000` | Window duration in milliseconds |
 
 #### Example
 
@@ -615,7 +625,8 @@ Configure security features.
       origin: ['https://myapp.com', 'https://admin.myapp.com'],
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
-      credentials: true
+      credentials: true,
+      maxAge: 86400 // 24 hours
     },
     helmet: {
       enabled: true,
@@ -633,6 +644,24 @@ Configure security features.
     }
   }
 }
+```
+
+**Dynamic Origin Validation:**
+
+The `origin` option also supports functions for dynamic validation (programmatic only, not in config files):
+
+```javascript
+// In your application code (not config file)
+app.use(
+  middleware.cors({
+    origin: async (requestOrigin, req) => {
+      // Check database or perform custom validation
+      const allowed = await db.origins.isAllowed(requestOrigin);
+      return allowed ? requestOrigin : false;
+    },
+    credentials: true,
+  })
+);
 ```
 
 #### Environment Variables
@@ -654,31 +683,31 @@ Configure third-party service integrations.
 
 #### Stripe Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `secretKey` | `string` | - | Stripe secret key |
-| `publishableKey` | `string` | - | Stripe publishable key |
-| `webhookSecret` | `string` | - | Stripe webhook secret |
-| `apiVersion` | `string` | `'2023-10-16'` | Stripe API version |
+| Property         | Type     | Default        | Description            |
+| ---------------- | -------- | -------------- | ---------------------- |
+| `secretKey`      | `string` | -              | Stripe secret key      |
+| `publishableKey` | `string` | -              | Stripe publishable key |
+| `webhookSecret`  | `string` | -              | Stripe webhook secret  |
+| `apiVersion`     | `string` | `'2023-10-16'` | Stripe API version     |
 
 #### PayPal Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `clientId` | `string` | - | PayPal client ID |
-| `clientSecret` | `string` | - | PayPal client secret |
-| `webhookId` | `string` | - | PayPal webhook ID |
-| `environment` | `'sandbox' \| 'production'` | `'sandbox'` | PayPal environment |
+| Property       | Type                        | Default     | Description          |
+| -------------- | --------------------------- | ----------- | -------------------- |
+| `clientId`     | `string`                    | -           | PayPal client ID     |
+| `clientSecret` | `string`                    | -           | PayPal client secret |
+| `webhookId`    | `string`                    | -           | PayPal webhook ID    |
+| `environment`  | `'sandbox' \| 'production'` | `'sandbox'` | PayPal environment   |
 
 #### SMTP Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `host` | `string` | - | SMTP server host |
-| `port` | `number` | `587` | SMTP server port |
-| `secure` | `boolean` | `false` | Use SSL/TLS |
-| `username` | `string` | - | SMTP username |
-| `password` | `string` | - | SMTP password |
+| Property   | Type      | Default | Description      |
+| ---------- | --------- | ------- | ---------------- |
+| `host`     | `string`  | -       | SMTP server host |
+| `port`     | `number`  | `587`   | SMTP server port |
+| `secure`   | `boolean` | `false` | Use SSL/TLS      |
+| `username` | `string`  | -       | SMTP username    |
+| `password` | `string`  | -       | SMTP password    |
 
 #### Example
 
@@ -730,28 +759,28 @@ Configure performance optimizations.
 
 #### Compression
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable response compression |
-| `level` | `number` | `6` | Compression level (1-9) |
-| `threshold` | `number` | `1024` | Minimum bytes to compress |
+| Property    | Type      | Default | Description                 |
+| ----------- | --------- | ------- | --------------------------- |
+| `enabled`   | `boolean` | `true`  | Enable response compression |
+| `level`     | `number`  | `6`     | Compression level (1-9)     |
+| `threshold` | `number`  | `1024`  | Minimum bytes to compress   |
 
 #### Circuit Breaker
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable circuit breaker |
-| `failureThreshold` | `number` | `5` | Number of failures before opening |
-| `resetTimeout` | `number` | `60000` | Time before attempting reset |
-| `monitoringPeriod` | `number` | `10000` | Monitoring period in milliseconds |
+| Property           | Type      | Default | Description                       |
+| ------------------ | --------- | ------- | --------------------------------- |
+| `enabled`          | `boolean` | `true`  | Enable circuit breaker            |
+| `failureThreshold` | `number`  | `5`     | Number of failures before opening |
+| `resetTimeout`     | `number`  | `60000` | Time before attempting reset      |
+| `monitoringPeriod` | `number`  | `10000` | Monitoring period in milliseconds |
 
 #### Clustering
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable clustering |
-| `workers` | `number` | `1` | Number of worker processes |
-| `memoryPerWorkerGB` | `number` | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified) |
+| Property            | Type      | Default     | Description                                                           |
+| ------------------- | --------- | ----------- | --------------------------------------------------------------------- |
+| `enabled`           | `boolean` | `false`     | Enable clustering                                                     |
+| `workers`           | `number`  | `1`         | Number of worker processes                                            |
+| `memoryPerWorkerGB` | `number`  | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified) |
 
 **Note:** When `memoryPerWorkerGB` is not specified, MoroJS automatically calculates the optimal memory allocation per worker based on available system memory and CPU count, leaving headroom for the main process.
 
@@ -800,7 +829,7 @@ MoroJS includes built-in Auth.js integration for comprehensive authentication.
 #### Basic Configuration
 
 ```javascript
-import { auth, providers } from '@morojs/auth'
+import { auth, providers } from '@morojs/auth';
 
 // In your moro.config.js
 export default {
@@ -809,11 +838,11 @@ export default {
       providers: [
         providers.google({
           clientId: process.env.GOOGLE_CLIENT_ID,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
         }),
         providers.github({
           clientId: process.env.GITHUB_CLIENT_ID,
-          clientSecret: process.env.GITHUB_CLIENT_SECRET
+          clientSecret: process.env.GITHUB_CLIENT_SECRET,
         }),
         providers.email({
           server: {
@@ -821,58 +850,58 @@ export default {
             port: process.env.SMTP_PORT,
             auth: {
               user: process.env.SMTP_USER,
-              pass: process.env.SMTP_PASS
-            }
+              pass: process.env.SMTP_PASS,
+            },
           },
-          from: process.env.EMAIL_FROM
-        })
+          from: process.env.EMAIL_FROM,
+        }),
       ],
       secret: process.env.AUTH_SECRET,
       session: {
         strategy: 'jwt',
-        maxAge: 30 * 24 * 60 * 60 // 30 days
-      }
-    })
-  ]
-}
+        maxAge: 30 * 24 * 60 * 60, // 30 days
+      },
+    }),
+  ],
+};
 ```
 
 #### OAuth Provider Configuration
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id` | `string` | Provider identifier |
-| `name` | `string` | Display name |
-| `type` | `'oauth' \| 'oidc' \| 'credentials' \| 'email'` | Provider type |
-| `clientId` | `string` | OAuth client ID |
-| `clientSecret` | `string` | OAuth client secret |
-| `authorization` | `string \| object` | Authorization endpoint |
-| `token` | `string \| object` | Token endpoint |
-| `userinfo` | `string \| object` | User info endpoint |
-| `scope` | `string` | OAuth scopes |
+| Property        | Type                                            | Description            |
+| --------------- | ----------------------------------------------- | ---------------------- |
+| `id`            | `string`                                        | Provider identifier    |
+| `name`          | `string`                                        | Display name           |
+| `type`          | `'oauth' \| 'oidc' \| 'credentials' \| 'email'` | Provider type          |
+| `clientId`      | `string`                                        | OAuth client ID        |
+| `clientSecret`  | `string`                                        | OAuth client secret    |
+| `authorization` | `string \| object`                              | Authorization endpoint |
+| `token`         | `string \| object`                              | Token endpoint         |
+| `userinfo`      | `string \| object`                              | User info endpoint     |
+| `scope`         | `string`                                        | OAuth scopes           |
 
 #### Session Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `strategy` | `'jwt' \| 'database'` | `'jwt'` | Session strategy |
-| `maxAge` | `number` | `2592000` | Session max age in seconds |
-| `updateAge` | `number` | `86400` | Session update age in seconds |
+| Property    | Type                  | Default   | Description                   |
+| ----------- | --------------------- | --------- | ----------------------------- |
+| `strategy`  | `'jwt' \| 'database'` | `'jwt'`   | Session strategy              |
+| `maxAge`    | `number`              | `2592000` | Session max age in seconds    |
+| `updateAge` | `number`              | `86400`   | Session update age in seconds |
 
 #### JWT Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `secret` | `string` | - | JWT signing secret |
+| Property | Type     | Default   | Description            |
+| -------- | -------- | --------- | ---------------------- |
+| `secret` | `string` | -         | JWT signing secret     |
 | `maxAge` | `number` | `2592000` | JWT max age in seconds |
 
 #### Pages Configuration
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `signIn` | `string` | Custom sign-in page path |
-| `signOut` | `string` | Custom sign-out page path |
-| `error` | `string` | Custom error page path |
+| Property        | Type     | Description                |
+| --------------- | -------- | -------------------------- |
+| `signIn`        | `string` | Custom sign-in page path   |
+| `signOut`       | `string` | Custom sign-out page path  |
+| `error`         | `string` | Custom error page path     |
 | `verifyRequest` | `string` | Custom verify request page |
 
 #### Environment Variables
@@ -889,7 +918,7 @@ export default {
 Configure session management with various storage backends.
 
 ```javascript
-import { session } from '@morojs/session'
+import { session } from '@morojs/session';
 
 // In your middleware array
 session({
@@ -897,7 +926,7 @@ session({
   storeOptions: {
     host: 'localhost',
     port: 6379,
-    keyPrefix: 'sess:'
+    keyPrefix: 'sess:',
   },
   secret: 'your-session-secret',
   name: 'sessionId',
@@ -905,35 +934,35 @@ session({
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax'
+    sameSite: 'lax',
   },
   rolling: false,
   resave: false,
-  saveUninitialized: false
-})
+  saveUninitialized: false,
+});
 ```
 
 #### Session Options
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `store` | `'memory' \| 'redis' \| 'file' \| CacheAdapter` | `'memory'` | Session store type |
-| `secret` | `string` | `'moro-session-secret'` | Session signing secret |
-| `name` | `string` | `'connect.sid'` | Session cookie name |
-| `rolling` | `boolean` | `false` | Reset expiry on each request |
-| `resave` | `boolean` | `false` | Save session even if not modified |
-| `saveUninitialized` | `boolean` | `false` | Save new but not modified sessions |
+| Property            | Type                                            | Default                 | Description                        |
+| ------------------- | ----------------------------------------------- | ----------------------- | ---------------------------------- |
+| `store`             | `'memory' \| 'redis' \| 'file' \| CacheAdapter` | `'memory'`              | Session store type                 |
+| `secret`            | `string`                                        | `'moro-session-secret'` | Session signing secret             |
+| `name`              | `string`                                        | `'connect.sid'`         | Session cookie name                |
+| `rolling`           | `boolean`                                       | `false`                 | Reset expiry on each request       |
+| `resave`            | `boolean`                                       | `false`                 | Save session even if not modified  |
+| `saveUninitialized` | `boolean`                                       | `false`                 | Save new but not modified sessions |
 
 #### Cookie Configuration
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `maxAge` | `number` | `86400000` | Session timeout in milliseconds |
-| `httpOnly` | `boolean` | `true` | Prevent XSS access |
-| `secure` | `boolean` | `false` | HTTPS only |
-| `sameSite` | `'strict' \| 'lax' \| 'none'` | `'lax'` | SameSite policy |
-| `domain` | `string` | - | Cookie domain |
-| `path` | `string` | `'/'` | Cookie path |
+| Property   | Type                          | Default    | Description                     |
+| ---------- | ----------------------------- | ---------- | ------------------------------- |
+| `maxAge`   | `number`                      | `86400000` | Session timeout in milliseconds |
+| `httpOnly` | `boolean`                     | `true`     | Prevent XSS access              |
+| `secure`   | `boolean`                     | `false`    | HTTPS only                      |
+| `sameSite` | `'strict' \| 'lax' \| 'none'` | `'lax'`    | SameSite policy                 |
+| `domain`   | `string`                      | -          | Cookie domain                   |
+| `path`     | `string`                      | `'/'`      | Cookie path                     |
 
 ## Cache Configuration
 
@@ -942,53 +971,53 @@ session({
 Configure caching with multiple adapters and strategies.
 
 ```javascript
-import { cache } from '@morojs/cache'
+import { cache } from '@morojs/cache';
 
 // In your middleware array
 cache({
   adapter: 'redis', // 'memory', 'redis', 'file'
   adapterOptions: {
     host: 'localhost',
-    port: 6379
+    port: 6379,
   },
   defaultTtl: 300,
   keyPrefix: 'cache:',
   strategies: {
     '/api/users/*': {
-      key: (req) => `users:${req.params.id}`,
+      key: req => `users:${req.params.id}`,
       ttl: 600,
-      condition: (req, res) => res.statusCode === 200
+      condition: (req, res) => res.statusCode === 200,
     },
     '/api/posts': {
       key: 'posts:list',
       ttl: 300,
-      invalidateOn: ['POST:/api/posts', 'PUT:/api/posts/*']
-    }
+      invalidateOn: ['POST:/api/posts', 'PUT:/api/posts/*'],
+    },
   },
   vary: ['Accept-Encoding', 'Accept-Language'],
-  etag: 'strong'
-})
+  etag: 'strong',
+});
 ```
 
 #### Cache Options
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `adapter` | `string \| CacheAdapter` | `'memory'` | Cache adapter |
-| `defaultTtl` | `number` | `300` | Default TTL in seconds |
-| `keyPrefix` | `string` | `''` | Key prefix for all cache entries |
-| `maxAge` | `number` | - | HTTP Cache-Control max-age |
-| `staleWhileRevalidate` | `number` | - | Stale-while-revalidate seconds |
-| `vary` | `string[]` | - | HTTP Vary headers |
-| `etag` | `boolean \| 'weak' \| 'strong'` | - | ETag generation |
+| Property               | Type                            | Default    | Description                      |
+| ---------------------- | ------------------------------- | ---------- | -------------------------------- |
+| `adapter`              | `string \| CacheAdapter`        | `'memory'` | Cache adapter                    |
+| `defaultTtl`           | `number`                        | `300`      | Default TTL in seconds           |
+| `keyPrefix`            | `string`                        | `''`       | Key prefix for all cache entries |
+| `maxAge`               | `number`                        | -          | HTTP Cache-Control max-age       |
+| `staleWhileRevalidate` | `number`                        | -          | Stale-while-revalidate seconds   |
+| `vary`                 | `string[]`                      | -          | HTTP Vary headers                |
+| `etag`                 | `boolean \| 'weak' \| 'strong'` | -          | ETag generation                  |
 
 #### Cache Strategies
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `key` | `function` | Function to generate cache key |
-| `ttl` | `number` | TTL for this strategy |
-| `condition` | `function` | Condition for caching |
+| Property       | Type       | Description                         |
+| -------------- | ---------- | ----------------------------------- |
+| `key`          | `function` | Function to generate cache key      |
+| `ttl`          | `number`   | TTL for this strategy               |
+| `condition`    | `function` | Condition for caching               |
 | `invalidateOn` | `string[]` | Patterns that invalidate this cache |
 
 ## CDN Configuration
@@ -998,31 +1027,28 @@ cache({
 Configure CDN integration for asset delivery and cache invalidation.
 
 ```javascript
-import { cdn } from '@morojs/cdn'
+import { cdn } from '@morojs/cdn';
 
 // In your middleware array
 cdn({
   adapter: 'cloudflare', // 'cloudflare', 'aws', 'custom'
   adapterOptions: {
     zoneId: 'your-zone-id',
-    apiToken: 'your-api-token'
+    apiToken: 'your-api-token',
   },
   autoInvalidate: true,
-  invalidationPatterns: [
-    '/static/*',
-    '/api/v*/data'
-  ]
-})
+  invalidationPatterns: ['/static/*', '/api/v*/data'],
+});
 ```
 
 #### CDN Options
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `adapter` | `string \| CDNAdapter` | CDN adapter |
-| `adapterOptions` | `object` | Adapter-specific options |
-| `autoInvalidate` | `boolean` | Auto-invalidate on content changes |
-| `invalidationPatterns` | `string[]` | URL patterns to invalidate |
+| Property               | Type                   | Description                        |
+| ---------------------- | ---------------------- | ---------------------------------- |
+| `adapter`              | `string \| CDNAdapter` | CDN adapter                        |
+| `adapterOptions`       | `object`               | Adapter-specific options           |
+| `autoInvalidate`       | `boolean`              | Auto-invalidate on content changes |
+| `invalidationPatterns` | `string[]`             | URL patterns to invalidate         |
 
 ## Runtime Configuration
 
@@ -1037,69 +1063,69 @@ export default {
     type: 'node', // 'node', 'vercel-edge', 'aws-lambda', 'cloudflare-workers'
     options: {
       // Runtime-specific options
-    }
-  }
-}
+    },
+  },
+};
 ```
 
 #### Runtime Types
 
-| Type | Description | Use Case |
-|------|-------------|----------|
-| `'node'` | Standard Node.js runtime | Traditional servers, containers |
-| `'vercel-edge'` | Vercel Edge Runtime | Edge functions, serverless |
-| `'aws-lambda'` | AWS Lambda runtime | Serverless functions |
-| `'cloudflare-workers'` | Cloudflare Workers | Edge computing |
+| Type                   | Description              | Use Case                        |
+| ---------------------- | ------------------------ | ------------------------------- |
+| `'node'`               | Standard Node.js runtime | Traditional servers, containers |
+| `'vercel-edge'`        | Vercel Edge Runtime      | Edge functions, serverless      |
+| `'aws-lambda'`         | AWS Lambda runtime       | Serverless functions            |
+| `'cloudflare-workers'` | Cloudflare Workers       | Edge computing                  |
 
 #### MoroOptions (Legacy)
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `autoDiscover` | `boolean` | Enable automatic module discovery |
-| `modulesPath` | `string` | Path to modules directory |
-| `middleware` | `any[]` | Middleware array |
-| `database` | `any` | Database configuration |
-| `cors` | `boolean \| object` | CORS configuration |
-| `compression` | `boolean \| object` | Compression configuration |
-| `helmet` | `boolean \| object` | Helmet security configuration |
-| `runtime` | `RuntimeConfig` | Runtime configuration |
-| `logger` | `LoggerOptions \| boolean` | Logger configuration |
+| Property       | Type                       | Description                       |
+| -------------- | -------------------------- | --------------------------------- |
+| `autoDiscover` | `boolean`                  | Enable automatic module discovery |
+| `modulesPath`  | `string`                   | Path to modules directory         |
+| `middleware`   | `any[]`                    | Middleware array                  |
+| `database`     | `any`                      | Database configuration            |
+| `cors`         | `boolean \| object`        | CORS configuration                |
+| `compression`  | `boolean \| object`        | Compression configuration         |
+| `helmet`       | `boolean \| object`        | Helmet security configuration     |
+| `runtime`      | `RuntimeConfig`            | Runtime configuration             |
+| `logger`       | `LoggerOptions \| boolean` | Logger configuration              |
 
 ## Environment Variables
 
 ### Standard Variables
 
-| Variable | Alternative | Description |
-|----------|-------------|-------------|
-| `NODE_ENV` | `MORO_ENV` | Application environment |
-| `PORT` | `MORO_PORT` | Server port |
-| `HOST` | `MORO_HOST` | Server host |
-| `DATABASE_URL` | `MORO_DATABASE_URL` | Primary database URL |
-| `REDIS_URL` | `MORO_REDIS_URL` | Redis connection URL |
-| `LOG_LEVEL` | `MORO_LOG_LEVEL` | Logging level |
+| Variable       | Alternative         | Description             |
+| -------------- | ------------------- | ----------------------- |
+| `NODE_ENV`     | `MORO_ENV`          | Application environment |
+| `PORT`         | `MORO_PORT`         | Server port             |
+| `HOST`         | `MORO_HOST`         | Server host             |
+| `DATABASE_URL` | `MORO_DATABASE_URL` | Primary database URL    |
+| `REDIS_URL`    | `MORO_REDIS_URL`    | Redis connection URL    |
+| `LOG_LEVEL`    | `MORO_LOG_LEVEL`    | Logging level           |
 
 ### Authentication Variables
 
-| Variable | Description |
-|----------|-------------|
-| `AUTH_SECRET` | Authentication secret |
-| `NEXTAUTH_SECRET` | Next.js Auth compatible secret |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `GITHUB_CLIENT_ID` | GitHub OAuth client ID |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret |
+| Variable               | Description                    |
+| ---------------------- | ------------------------------ |
+| `AUTH_SECRET`          | Authentication secret          |
+| `NEXTAUTH_SECRET`      | Next.js Auth compatible secret |
+| `GOOGLE_CLIENT_ID`     | Google OAuth client ID         |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret     |
+| `GITHUB_CLIENT_ID`     | GitHub OAuth client ID         |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret     |
 
 ### External Service Variables
 
-| Variable | Description |
-|----------|-------------|
-| `STRIPE_SECRET_KEY` | Stripe secret key |
+| Variable                 | Description            |
+| ------------------------ | ---------------------- |
+| `STRIPE_SECRET_KEY`      | Stripe secret key      |
 | `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
-| `PAYPAL_CLIENT_ID` | PayPal client ID |
-| `SMTP_HOST` | SMTP server host |
-| `SMTP_PORT` | SMTP server port |
-| `SMTP_USER` | SMTP username |
-| `SMTP_PASS` | SMTP password |
+| `PAYPAL_CLIENT_ID`       | PayPal client ID       |
+| `SMTP_HOST`              | SMTP server host       |
+| `SMTP_PORT`              | SMTP server port       |
+| `SMTP_USER`              | SMTP username          |
+| `SMTP_PASS`              | SMTP password          |
 
 ### Prefixed Variables
 
@@ -1141,15 +1167,15 @@ module.exports = {
     port: process.env.PORT || 3001,
     host: '0.0.0.0',
     maxConnections: 5000,
-    timeout: 30000
+    timeout: 30000,
   },
 
   database: {
     url: process.env.DATABASE_URL,
     redis: {
       url: process.env.REDIS_URL || 'redis://localhost:6379',
-      keyPrefix: 'myapp:'
-    }
+      keyPrefix: 'myapp:',
+    },
   },
 
   logging: {
@@ -1159,40 +1185,40 @@ module.exports = {
       console: true,
       file: {
         enabled: process.env.NODE_ENV === 'production',
-        path: './logs/app.log'
-      }
-    }
+        path: './logs/app.log',
+      },
+    },
   },
 
   security: {
     cors: {
       origin: process.env.CORS_ORIGIN?.split(',') || '*',
-      credentials: true
+      credentials: true,
     },
     helmet: {
-      enabled: true
-    }
+      enabled: true,
+    },
   },
 
   external: {
     stripe: {
       secretKey: process.env.STRIPE_SECRET_KEY,
-      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY
-    }
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    },
   },
 
   performance: {
     compression: {
       enabled: true,
-      level: 6
+      level: 6,
     },
     clustering: {
       enabled: process.env.NODE_ENV === 'production',
       workers: require('os').cpus().length,
-      memoryPerWorkerGB: 1.5
-    }
-  }
-}
+      memoryPerWorkerGB: 1.5,
+    },
+  },
+};
 ```
 
 This configuration provides a production-ready setup with proper environment variable usage, security configurations, and performance optimizations.

@@ -37,11 +37,12 @@ const app = createApp({
   compression: true,
   helmet: true,
   autoDiscover: true,
-  modulesPath: './modules'
+  modulesPath: './modules',
 });
 ```
 
 **Options:**
+
 - `cors` (boolean | object): Enable CORS middleware
 - `compression` (boolean | object): Enable compression middleware
 - `helmet` (boolean | object): Enable security headers
@@ -112,14 +113,14 @@ const app = createAppWorker();
 app.get('/api/geo', (req, res) => {
   return {
     country: req.headers['cf-ipcountry'],
-    ray: req.headers['cf-ray']
+    ray: req.headers['cf-ray'],
   };
 });
 
 export default {
   async fetch(request, env, ctx) {
     return app.getHandler()(request, env, ctx);
-  }
+  },
 };
 ```
 
@@ -135,8 +136,8 @@ const app = createApp({
     type: 'vercel-edge', // 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers'
     options: {
       // Runtime-specific options
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -190,6 +191,7 @@ const edgeApp = createAppEdge();
 ### Runtime-Specific Features
 
 #### Node.js Runtime
+
 - Full HTTP server capabilities
 - WebSocket support
 - File system access
@@ -197,6 +199,7 @@ const edgeApp = createAppEdge();
 - Traditional `listen()` method
 
 #### Vercel Edge Runtime
+
 - Web API Request/Response objects
 - Global edge deployment
 - Fast cold starts
@@ -204,6 +207,7 @@ const edgeApp = createAppEdge();
 - Geographic routing
 
 #### AWS Lambda Runtime
+
 - Event/Context handling
 - Auto-scaling
 - Pay-per-request pricing
@@ -211,6 +215,7 @@ const edgeApp = createAppEdge();
 - Event-driven architecture
 
 #### Cloudflare Workers Runtime
+
 - Global edge network
 - KV storage integration
 - Durable Objects support
@@ -229,7 +234,8 @@ Register a GET route.
 
 ```typescript
 // Chainable API (Recommended)
-app.get('/users')
+app
+  .get('/users')
   .query(z.object({ limit: z.coerce.number().default(10) }))
   .cache({ ttl: 60 })
   .handler(async (req, res) => {
@@ -237,14 +243,21 @@ app.get('/users')
   });
 
 // Direct API
-app.get('/users', async (req, res) => {
-  return { users: await getUsers() };
-}, { cache: { ttl: 60 } });
+app.get(
+  '/users',
+  async (req, res) => {
+    return { users: await getUsers() };
+  },
+  { cache: { ttl: 60 } }
+);
 ```
 
 #### app.post(path, handler?, options?)
+
 #### app.put(path, handler?, options?)
+
 #### app.delete(path, handler?, options?)
+
 #### app.patch(path, handler?, options?)
 
 Same pattern as `get()` but for different HTTP methods.
@@ -262,11 +275,11 @@ app.route({
   validation: {
     body: z.object({
       name: z.string().min(2).max(50),
-      email: z.string().email()
+      email: z.string().email(),
     }),
     query: z.object({
-      notify: z.coerce.boolean().default(true)
-    })
+      notify: z.coerce.boolean().default(true),
+    }),
   },
   rateLimit: { requests: 10, window: 60000 },
   cache: { ttl: 300 },
@@ -275,11 +288,12 @@ app.route({
   handler: async (req, res) => {
     const user = await createUser(req.body);
     return { success: true, data: user };
-  }
+  },
 });
 ```
 
 **Schema Properties:**
+
 - `method` (HttpMethod): HTTP method
 - `path` (string): Route path
 - `validation` (ValidationConfig): Request validation
@@ -319,7 +333,7 @@ const db = new MySQLAdapter({
   host: 'localhost',
   user: 'root',
   password: 'password',
-  database: 'myapp'
+  database: 'myapp',
 });
 
 app.database(db);
@@ -342,8 +356,8 @@ app.websocket('/chat', {
     handler: (socket, data) => {
       socket.join(data.room);
       return { joined: data.room };
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -367,7 +381,7 @@ app.use(async (req, res, next) => {
 });
 
 // Function-style middleware
-app.use(async (app) => {
+app.use(async app => {
   app.addGlobalValidator(customValidator);
 });
 ```
@@ -375,6 +389,7 @@ app.use(async (app) => {
 ### Server
 
 #### app.listen(port, callback?)
+
 #### app.listen(port, host, callback?)
 
 Start the HTTP server.
@@ -403,8 +418,8 @@ app.enableDocs({
   description: 'API documentation',
   contact: {
     name: 'API Support',
-    email: 'support@example.com'
-  }
+    email: 'support@example.com',
+  },
 });
 ```
 
@@ -447,84 +462,88 @@ MoroJS automatically orders middleware execution in these phases:
 #### Validation Methods
 
 ```typescript
-app.post('/users')
+app
+  .post('/users')
   // Body validation
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  }))
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
   // Query parameter validation
-  .query(z.object({
-    notify: z.coerce.boolean().default(true)
-  }))
+  .query(
+    z.object({
+      notify: z.coerce.boolean().default(true),
+    })
+  )
   // Path parameter validation
-  .params(z.object({
-    id: z.string().uuid()
-  }))
+  .params(
+    z.object({
+      id: z.string().uuid(),
+    })
+  )
   // Header validation
-  .headers(z.object({
-    'x-api-key': z.string()
-  }))
+  .headers(
+    z.object({
+      'x-api-key': z.string(),
+    })
+  )
   // Combined validation
   .validate({
     body: UserSchema,
     query: QuerySchema,
-    params: ParamsSchema
+    params: ParamsSchema,
   });
 ```
 
 #### Security Methods
 
 ```typescript
-app.get('/admin')
+app
+  .get('/admin')
   // Authentication
   .auth({
     required: true,
     roles: ['admin'],
-    permissions: ['users:read']
+    permissions: ['users:read'],
   })
   // Rate limiting
   .rateLimit({
     requests: 100,
     window: 60000, // 1 minute
     skipSuccessfulRequests: false,
-    skipFailedRequests: true
+    skipFailedRequests: true,
   });
 ```
 
 #### Caching
 
 ```typescript
-app.get('/data')
-  .cache({
-    ttl: 300, // 5 minutes
-    strategy: 'memory', // 'memory' | 'redis' | 'file'
-    key: (req) => `data:${req.query.id}`,
-    tags: ['data', 'public']
-  });
+app.get('/data').cache({
+  ttl: 300, // 5 minutes
+  strategy: 'memory', // 'memory' | 'redis' | 'file'
+  key: req => `data:${req.query.id}`,
+  tags: ['data', 'public'],
+});
 ```
 
 #### Custom Middleware
 
 ```typescript
-app.get('/custom')
+app
+  .get('/custom')
   // Before handler middleware
-  .before(
-    logRequest,
-    validateApiKey,
-    enrichRequest
-  )
+  .before(logRequest, validateApiKey, enrichRequest)
   // After handler middleware
-  .after(
-    logResponse,
-    cleanupResources
-  );
+  .after(logResponse, cleanupResources);
 ```
 
 #### Handler
 
 ```typescript
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     // req.body is fully typed and validated
@@ -538,44 +557,43 @@ app.post('/users')
 #### Complex Route with Full Middleware Chain
 
 ```typescript
-app.post('/api/orders')
-  .body(z.object({
-    userId: z.string().uuid(),
-    items: z.array(z.object({
-      productId: z.string().uuid(),
-      quantity: z.number().min(1),
-      price: z.number().positive()
-    })).min(1),
-    shippingAddress: z.object({
-      street: z.string().min(1),
-      city: z.string().min(1),
-      zipCode: z.string().regex(/^\d{5}$/)
+app
+  .post('/api/orders')
+  .body(
+    z.object({
+      userId: z.string().uuid(),
+      items: z
+        .array(
+          z.object({
+            productId: z.string().uuid(),
+            quantity: z.number().min(1),
+            price: z.number().positive(),
+          })
+        )
+        .min(1),
+      shippingAddress: z.object({
+        street: z.string().min(1),
+        city: z.string().min(1),
+        zipCode: z.string().regex(/^\d{5}$/),
+      }),
     })
-  }))
+  )
   .auth({
     required: true,
     roles: ['customer'],
-    permissions: ['orders:create']
+    permissions: ['orders:create'],
   })
   .rateLimit({
     requests: 5,
     window: 60000,
-    keyGenerator: (req) => `orders:${req.user.id}`
+    keyGenerator: req => `orders:${req.user.id}`,
   })
   .cache({
     ttl: 0, // No caching for orders
-    strategy: 'none'
+    strategy: 'none',
   })
-  .before(
-    validateInventory,
-    calculateTotals,
-    checkPaymentMethod
-  )
-  .after(
-    sendOrderConfirmation,
-    updateInventory,
-    triggerFulfillment
-  )
+  .before(validateInventory, calculateTotals, checkPaymentMethod)
+  .after(sendOrderConfirmation, updateInventory, triggerFulfillment)
   .describe('Create a new order with full validation and processing')
   .tag('orders', 'create', 'ecommerce')
   .handler(async (req, res) => {
@@ -583,19 +601,19 @@ app.post('/api/orders')
       ...req.body,
       userId: req.user.id,
       status: 'pending',
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     req.events.emit('order:created', {
       order,
       user: req.user,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
     return {
       success: true,
       data: order,
-      message: 'Order created successfully'
+      message: 'Order created successfully',
     };
   });
 ```
@@ -608,31 +626,31 @@ app.route({
   path: '/api/users/:id/orders',
   validation: {
     params: z.object({
-      id: z.string().uuid('Invalid user ID format')
+      id: z.string().uuid('Invalid user ID format'),
     }),
     query: z.object({
       status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).optional(),
       limit: z.coerce.number().min(1).max(100).default(20),
       offset: z.coerce.number().min(0).default(0),
       sortBy: z.enum(['createdAt', 'total', 'status']).default('createdAt'),
-      sortOrder: z.enum(['asc', 'desc']).default('desc')
-    })
+      sortOrder: z.enum(['asc', 'desc']).default('desc'),
+    }),
   },
   auth: {
     required: true,
-    validator: (req) => {
+    validator: req => {
       // Users can only see their own orders, admins can see any
       return req.user.id === req.params.id || req.user.roles.includes('admin');
-    }
+    },
   },
   cache: {
     ttl: 60, // 1 minute cache
-    key: (req) => `user-orders:${req.params.id}:${JSON.stringify(req.query)}`,
-    tags: ['user-data', 'orders']
+    key: req => `user-orders:${req.params.id}:${JSON.stringify(req.query)}`,
+    tags: ['user-data', 'orders'],
   },
   rateLimit: {
     requests: 100,
-    window: 60000
+    window: 60000,
   },
   description: 'Get paginated orders for a specific user',
   tags: ['users', 'orders', 'pagination'],
@@ -642,11 +660,11 @@ app.route({
       limit: req.query.limit,
       offset: req.query.offset,
       sortBy: req.query.sortBy,
-      sortOrder: req.query.sortOrder
+      sortOrder: req.query.sortOrder,
     });
 
     const total = await getUserOrdersCount(req.params.id, {
-      status: req.query.status
+      status: req.query.status,
     });
 
     return {
@@ -656,10 +674,10 @@ app.route({
         limit: req.query.limit,
         offset: req.query.offset,
         total,
-        hasMore: req.query.offset + req.query.limit < total
-      }
+        hasMore: req.query.offset + req.query.limit < total,
+      },
     };
-  }
+  },
 });
 ```
 
@@ -680,7 +698,7 @@ export default defineModule({
   dependencies: ['auth@1.0.0'],
   config: {
     database: { table: 'users' },
-    features: { pagination: true }
+    features: { pagination: true },
   },
   routes: [
     {
@@ -689,34 +707,35 @@ export default defineModule({
       validation: {
         query: z.object({
           limit: z.coerce.number().min(1).max(100).default(10),
-          search: z.string().optional()
-        })
+          search: z.string().optional(),
+        }),
       },
       cache: { ttl: 60 },
       description: 'Get users with pagination',
       tags: ['users', 'list'],
       handler: async (req, res) => {
         return { users: await getUsers(req.query) };
-      }
-    }
+      },
+    },
   ],
   sockets: [
     {
       event: 'user-status',
       validation: z.object({
         userId: z.string().uuid(),
-        status: z.enum(['online', 'offline'])
+        status: z.enum(['online', 'offline']),
       }),
       handler: async (socket, data) => {
         socket.broadcast.emit('user-status-changed', data);
         return { success: true };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 ```
 
 **Module Definition Properties:**
+
 - `name` (string): Module name
 - `version` (string): Module version
 - `dependencies` (string[]): Module dependencies
@@ -764,28 +783,32 @@ import {
   getOrders,
   getOrderById,
   updateOrderStatus,
-  cancelOrder
+  cancelOrder,
 } from './services/OrderService';
 
 const OrderSchema = z.object({
   userId: z.string().uuid(),
-  items: z.array(z.object({
-    productId: z.string().uuid(),
-    quantity: z.number().min(1),
-    price: z.number().positive()
-  })).min(1),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        quantity: z.number().min(1),
+        price: z.number().positive(),
+      })
+    )
+    .min(1),
   shippingAddress: z.object({
     street: z.string().min(1),
     city: z.string().min(1),
-    zipCode: z.string().regex(/^\d{5}$/)
+    zipCode: z.string().regex(/^\d{5}$/),
   }),
-  paymentMethodId: z.string().uuid()
+  paymentMethodId: z.string().uuid(),
 });
 
 const OrderUpdateSchema = z.object({
   status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']),
   trackingNumber: z.string().optional(),
-  estimatedDelivery: z.string().datetime().optional()
+  estimatedDelivery: z.string().datetime().optional(),
 });
 
 export default defineModule({
@@ -795,17 +818,17 @@ export default defineModule({
   config: {
     database: {
       table: 'orders',
-      indexes: ['userId', 'status', 'createdAt']
+      indexes: ['userId', 'status', 'createdAt'],
     },
     features: {
       realTimeTracking: true,
       automaticInventoryUpdate: true,
-      emailNotifications: true
+      emailNotifications: true,
     },
     limits: {
       maxItemsPerOrder: 50,
-      maxOrdersPerUser: 10
-    }
+      maxOrdersPerUser: 10,
+    },
   },
   routes: [
     // Create Order
@@ -815,33 +838,33 @@ export default defineModule({
       validation: { body: OrderSchema },
       auth: {
         required: true,
-        roles: ['customer']
+        roles: ['customer'],
       },
       rateLimit: {
         requests: 5,
         window: 60000,
-        keyGenerator: (req) => `orders:create:${req.user.id}`
+        keyGenerator: req => `orders:create:${req.user.id}`,
       },
       description: 'Create a new order',
       tags: ['orders', 'create'],
       handler: async (req, res) => {
         const order = await createOrder({
           ...req.body,
-          userId: req.user.id
+          userId: req.user.id,
         });
 
         // Emit module-scoped event
         req.events.emit('order:created', {
           order,
-          user: req.user
+          user: req.user,
         });
 
         return {
           success: true,
           data: order,
-          message: 'Order created successfully'
+          message: 'Order created successfully',
         };
-      }
+      },
     },
 
     // Get Orders
@@ -854,20 +877,20 @@ export default defineModule({
           limit: z.coerce.number().min(1).max(100).default(20),
           offset: z.coerce.number().min(0).default(0),
           sortBy: z.enum(['createdAt', 'total', 'status']).default('createdAt'),
-          sortOrder: z.enum(['asc', 'desc']).default('desc')
-        })
+          sortOrder: z.enum(['asc', 'desc']).default('desc'),
+        }),
       },
       auth: { required: true },
       cache: {
         ttl: 60,
-        key: (req) => `orders:list:${req.user.id}:${JSON.stringify(req.query)}`
+        key: req => `orders:list:${req.user.id}:${JSON.stringify(req.query)}`,
       },
       description: 'Get user orders with pagination',
       tags: ['orders', 'list'],
       handler: async (req, res) => {
         const orders = await getOrders(req.user.id, req.query);
         return { success: true, data: orders };
-      }
+      },
     },
 
     // Get Order by ID
@@ -876,19 +899,19 @@ export default defineModule({
       path: '/orders/:id',
       validation: {
         params: z.object({
-          id: z.string().uuid()
-        })
+          id: z.string().uuid(),
+        }),
       },
       auth: {
         required: true,
-        validator: async (req) => {
+        validator: async req => {
           const order = await getOrderById(req.params.id);
           return order?.userId === req.user.id || req.user.roles.includes('admin');
-        }
+        },
       },
       cache: {
         ttl: 300,
-        key: (req) => `order:${req.params.id}`
+        key: req => `order:${req.params.id}`,
       },
       description: 'Get order by ID',
       tags: ['orders', 'detail'],
@@ -898,12 +921,12 @@ export default defineModule({
         if (!order) {
           return res.status(404).json({
             success: false,
-            error: 'Order not found'
+            error: 'Order not found',
           });
         }
 
         return { success: true, data: order };
-      }
+      },
     },
 
     // Update Order Status (Admin only)
@@ -912,11 +935,11 @@ export default defineModule({
       path: '/orders/:id/status',
       validation: {
         params: z.object({ id: z.string().uuid() }),
-        body: OrderUpdateSchema
+        body: OrderUpdateSchema,
       },
       auth: {
         required: true,
-        roles: ['admin', 'fulfillment']
+        roles: ['admin', 'fulfillment'],
       },
       rateLimit: { requests: 100, window: 60000 },
       description: 'Update order status',
@@ -928,11 +951,11 @@ export default defineModule({
           order,
           updatedBy: req.user,
           previousStatus: order.previousStatus,
-          newStatus: req.body.status
+          newStatus: req.body.status,
         });
 
         return { success: true, data: order };
-      }
+      },
     },
 
     // Cancel Order
@@ -940,15 +963,17 @@ export default defineModule({
       method: 'DELETE',
       path: '/orders/:id',
       validation: {
-        params: z.object({ id: z.string().uuid() })
+        params: z.object({ id: z.string().uuid() }),
       },
       auth: {
         required: true,
-        validator: async (req) => {
+        validator: async req => {
           const order = await getOrderById(req.params.id);
-          return (order?.userId === req.user.id && order?.status === 'pending') ||
-                 req.user.roles.includes('admin');
-        }
+          return (
+            (order?.userId === req.user.id && order?.status === 'pending') ||
+            req.user.roles.includes('admin')
+          );
+        },
       },
       rateLimit: { requests: 10, window: 60000 },
       description: 'Cancel an order',
@@ -959,15 +984,15 @@ export default defineModule({
         req.events.emit('order:cancelled', {
           order,
           cancelledBy: req.user,
-          reason: 'user_cancelled'
+          reason: 'user_cancelled',
         });
 
         return {
           success: true,
-          message: 'Order cancelled successfully'
+          message: 'Order cancelled successfully',
         };
-      }
-    }
+      },
+    },
   ],
 
   // WebSocket handlers for real-time order tracking
@@ -975,7 +1000,7 @@ export default defineModule({
     {
       event: 'track-order',
       validation: z.object({
-        orderId: z.string().uuid()
+        orderId: z.string().uuid(),
       }),
       rateLimit: { requests: 20, window: 60000 },
       handler: async (socket, data) => {
@@ -991,22 +1016,22 @@ export default defineModule({
         return {
           success: true,
           data: order,
-          message: 'Now tracking order updates'
+          message: 'Now tracking order updates',
         };
-      }
+      },
     },
 
     {
       event: 'stop-tracking',
       validation: z.object({
-        orderId: z.string().uuid()
+        orderId: z.string().uuid(),
       }),
       handler: async (socket, data) => {
         socket.leave(`order-${data.orderId}`);
         return { success: true, message: 'Stopped tracking order' };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 ```
 
@@ -1036,15 +1061,18 @@ Create a validation wrapper for handlers.
 ```typescript
 import { validate, z } from '@morojs/moro';
 
-const validateUser = validate({
-  body: z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  })
-}, async (req, res) => {
-  // req.body is validated and typed
-  return { user: req.body };
-});
+const validateUser = validate(
+  {
+    body: z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    }),
+  },
+  async (req, res) => {
+    // req.body is validated and typed
+    return { user: req.body };
+  }
+);
 ```
 
 #### Convenience Functions
@@ -1071,7 +1099,7 @@ const UserSchema = z.object({
   name: z.string().min(2).max(50),
   email: z.string().email(),
   age: z.number().min(18).max(120).optional(),
-  tags: z.array(z.string()).max(10).default([])
+  tags: z.array(z.string()).max(10).default([]),
 });
 ```
 
@@ -1082,7 +1110,7 @@ const PaginationSchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(10),
   sort: z.enum(['name', 'date', 'priority']).default('date'),
-  order: z.enum(['asc', 'desc']).default('desc')
+  order: z.enum(['asc', 'desc']).default('desc'),
 });
 ```
 
@@ -1091,93 +1119,122 @@ const PaginationSchema = z.object({
 ```typescript
 const ParamsSchema = z.object({
   id: z.string().uuid(),
-  category: z.enum(['users', 'posts', 'comments'])
+  category: z.enum(['users', 'posts', 'comments']),
 });
 ```
 
 #### Custom Validation
 
 ```typescript
-const PasswordSchema = z.object({
-  password: z.string().min(8),
-  confirmPassword: z.string()
-}).refine(data => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword']
-});
+const PasswordSchema = z
+  .object({
+    password: z.string().min(8),
+    confirmPassword: z.string(),
+  })
+  .refine(data => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
 ```
 
 #### Advanced Validation Examples
 
 ```typescript
 // Complex nested validation
-const OrderSchema = z.object({
-  customer: z.object({
-    id: z.string().uuid(),
-    email: z.string().email(),
-    phone: z.string().regex(/^\+?[\d\s-()]+$/).optional()
-  }),
-  items: z.array(z.object({
-    productId: z.string().uuid(),
-    quantity: z.number().min(1).max(99),
-    price: z.number().positive(),
-    options: z.record(z.string(), z.unknown()).optional()
-  })).min(1).max(50),
-  shipping: z.object({
-    method: z.enum(['standard', 'express', 'overnight']),
-    address: z.object({
-      line1: z.string().min(1),
-      line2: z.string().optional(),
-      city: z.string().min(1),
-      state: z.string().length(2),
-      zipCode: z.string().regex(/^\d{5}(-\d{4})?$/),
-      country: z.string().length(2).default('US')
+const OrderSchema = z
+  .object({
+    customer: z.object({
+      id: z.string().uuid(),
+      email: z.string().email(),
+      phone: z
+        .string()
+        .regex(/^\+?[\d\s-()]+$/)
+        .optional(),
     }),
-    instructions: z.string().max(500).optional()
-  }),
-  payment: z.object({
-    method: z.enum(['card', 'paypal', 'bank_transfer']),
-    token: z.string().min(1)
+    items: z
+      .array(
+        z.object({
+          productId: z.string().uuid(),
+          quantity: z.number().min(1).max(99),
+          price: z.number().positive(),
+          options: z.record(z.string(), z.unknown()).optional(),
+        })
+      )
+      .min(1)
+      .max(50),
+    shipping: z.object({
+      method: z.enum(['standard', 'express', 'overnight']),
+      address: z.object({
+        line1: z.string().min(1),
+        line2: z.string().optional(),
+        city: z.string().min(1),
+        state: z.string().length(2),
+        zipCode: z.string().regex(/^\d{5}(-\d{4})?$/),
+        country: z.string().length(2).default('US'),
+      }),
+      instructions: z.string().max(500).optional(),
+    }),
+    payment: z.object({
+      method: z.enum(['card', 'paypal', 'bank_transfer']),
+      token: z.string().min(1),
+    }),
   })
-}).refine(data => {
-  // Business rule: overnight shipping only for orders under $500
-  const total = data.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  return data.shipping.method !== 'overnight' || total <= 500;
-}, {
-  message: "Overnight shipping not available for orders over $500",
-  path: ['shipping', 'method']
-});
+  .refine(
+    data => {
+      // Business rule: overnight shipping only for orders under $500
+      const total = data.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      return data.shipping.method !== 'overnight' || total <= 500;
+    },
+    {
+      message: 'Overnight shipping not available for orders over $500',
+      path: ['shipping', 'method'],
+    }
+  );
 
 // Conditional validation based on environment
 const ConfigSchema = z.object({
   database: z.object({
-    url: process.env.NODE_ENV === 'production'
-      ? z.string().url().startsWith('postgres://')
-      : z.string().min(1),
+    url:
+      process.env.NODE_ENV === 'production'
+        ? z.string().url().startsWith('postgres://')
+        : z.string().min(1),
     ssl: z.boolean().default(process.env.NODE_ENV === 'production'),
-    poolSize: z.number().min(1).max(50).default(10)
+    poolSize: z.number().min(1).max(50).default(10),
   }),
-  redis: z.object({
-    url: z.string().url().optional(),
-    enabled: z.boolean().default(true)
-  }).optional(),
+  redis: z
+    .object({
+      url: z.string().url().optional(),
+      enabled: z.boolean().default(true),
+    })
+    .optional(),
   auth: z.object({
     jwtSecret: z.string().min(32),
     expiresIn: z.string().default('7d'),
-    issuer: z.string().default('moro-app')
-  })
+    issuer: z.string().default('moro-app'),
+  }),
 });
 
 // Transform and preprocess data
 const UserRegistrationSchema = z.object({
-  email: z.string().email().transform(email => email.toLowerCase()),
-  name: z.string().min(2).transform(name => name.trim()),
-  birthDate: z.string().datetime().transform(date => new Date(date)),
-  preferences: z.object({
-    newsletter: z.boolean().default(false),
-    notifications: z.boolean().default(true),
-    theme: z.enum(['light', 'dark']).default('light')
-  }).default({})
+  email: z
+    .string()
+    .email()
+    .transform(email => email.toLowerCase()),
+  name: z
+    .string()
+    .min(2)
+    .transform(name => name.trim()),
+  birthDate: z
+    .string()
+    .datetime()
+    .transform(date => new Date(date)),
+  preferences: z
+    .object({
+      newsletter: z.boolean().default(false),
+      notifications: z.boolean().default(true),
+      theme: z.enum(['light', 'dark']).default('light'),
+    })
+    .default({}),
 });
 ```
 
@@ -1193,44 +1250,76 @@ MoroJS includes 18+ built-in middleware options. For complete documentation, see
 
 **CORS** - Cross-origin resource sharing
 
+MoroJS automatically handles OPTIONS preflight requests.
+
 ```typescript
-app.use(middleware.cors({
-  origin: ['http://localhost:3000'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE']
-}));
+// Static origins
+app.use(
+  middleware.cors({
+    origin: ['http://localhost:3000'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    maxAge: 86400, // Cache preflight for 24 hours
+  })
+);
+
+// Dynamic origin validation
+app.use(
+  middleware.cors({
+    origin: async (requestOrigin, req) => {
+      // Database lookup or custom logic
+      const isAllowed = await checkOrigin(requestOrigin);
+      return isAllowed ? requestOrigin : false;
+    },
+    credentials: true,
+  })
+);
+
+// Disable automatic preflight handling
+app.use(
+  middleware.cors({
+    origin: 'https://example.com',
+    preflightContinue: true, // Handle OPTIONS manually
+  })
+);
 ```
 
 **Helmet** - Security headers
 
 ```typescript
-app.use(middleware.helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"]
-    }
-  }
-}));
+app.use(
+  middleware.helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+  })
+);
 ```
 
 **CSRF** - CSRF protection
 
 ```typescript
-app.use(middleware.csrf({
-  cookie: { httpOnly: true, secure: true }
-}));
+app.use(
+  middleware.csrf({
+    cookie: { httpOnly: true, secure: true },
+  })
+);
 ```
 
 **CSP** - Content Security Policy
 
 ```typescript
-app.use(middleware.csp({
-  directives: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'nonce-{NONCE}'"]
-  }
-}));
+app.use(
+  middleware.csp({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'nonce-{NONCE}'"],
+    },
+  })
+);
 ```
 
 #### Performance Middleware
@@ -1238,30 +1327,36 @@ app.use(middleware.csp({
 **Compression** - Response compression
 
 ```typescript
-app.use(middleware.compression({
-  level: 6,
-  threshold: 1024,
-  brotli: true
-}));
+app.use(
+  middleware.compression({
+    level: 6,
+    threshold: 1024,
+    brotli: true,
+  })
+);
 ```
 
 **Cache** - Response caching
 
 ```typescript
-app.use(middleware.cache({
-  ttl: 300,
-  strategy: 'memory' // 'memory' | 'redis' | 'file'
-}));
+app.use(
+  middleware.cache({
+    ttl: 300,
+    strategy: 'memory', // 'memory' | 'redis' | 'file'
+  })
+);
 ```
 
 **Rate Limiting** - Request rate limiting
 
 ```typescript
-app.use(middleware.rateLimit({
-  requests: 100,
-  window: 60000,
-  keyGenerator: (req) => req.ip
-}));
+app.use(
+  middleware.rateLimit({
+    requests: 100,
+    window: 60000,
+    keyGenerator: req => req.ip,
+  })
+);
 ```
 
 #### HTTP Features
@@ -1269,38 +1364,45 @@ app.use(middleware.rateLimit({
 **Body Size Limiting**
 
 ```typescript
-app.use(middleware.bodySize({
-  limit: '10mb'
-}));
+app.use(
+  middleware.bodySize({
+    limit: '10mb',
+  })
+);
 ```
 
 **Cookie Parser**
 
 ```typescript
-app.use(middleware.cookie({
-  secret: 'your-secret-key',
-  signed: true
-}));
+app.use(
+  middleware.cookie({
+    secret: 'your-secret-key',
+    signed: true,
+  })
+);
 ```
 
 **Static Files** - Static file serving with caching
 
 ```typescript
-app.use(middleware.staticFiles({
-  root: './public',
-  maxAge: 3600000,
-  etag: true
-}));
+app.use(
+  middleware.staticFiles({
+    root: './public',
+    maxAge: 3600000,
+    etag: true,
+  })
+);
 ```
 
 **File Upload** - Multipart file uploads
 
 ```typescript
-app.post('/upload')
+app
+  .post('/upload')
   .upload({
     dest: './uploads',
     maxFileSize: 10 * 1024 * 1024,
-    allowedTypes: ['image/jpeg', 'image/png']
+    allowedTypes: ['image/jpeg', 'image/png'],
   })
   .handler((req, res) => {
     return { files: req.files };
@@ -1310,11 +1412,13 @@ app.post('/upload')
 **Template Rendering** - Template engine support
 
 ```typescript
-app.use(middleware.template({
-  views: './views',
-  engine: 'moro', // 'moro' | 'handlebars' | 'ejs'
-  cache: true
-}));
+app.use(
+  middleware.template({
+    views: './views',
+    engine: 'moro', // 'moro' | 'handlebars' | 'ejs'
+    cache: true,
+  })
+);
 
 app.get('/page', (req, res) => {
   res.render('index', { title: 'Welcome' });
@@ -1334,12 +1438,12 @@ app.get('/video/:id', async (req, res) => {
 **HTTP/2 Server Push** - Optimize with HTTP/2 push
 
 ```typescript
-app.use(middleware.http2({
-  autoDetect: true,
-  resources: [
-    { path: '/styles/main.css', as: 'style', priority: 200 }
-  ]
-}));
+app.use(
+  middleware.http2({
+    autoDetect: true,
+    resources: [{ path: '/styles/main.css', as: 'style', priority: 200 }],
+  })
+);
 ```
 
 See [HTTP/2 Guide](./HTTP2_GUIDE.md) for detailed documentation.
@@ -1349,18 +1453,21 @@ See [HTTP/2 Guide](./HTTP2_GUIDE.md) for detailed documentation.
 **Authentication** - Auth.js integration with RBAC
 
 ```typescript
-app.use(middleware.auth({
-  providers: [
-    {
-      type: 'oauth',
-      provider: 'google',
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET
-    }
-  ]
-}));
+app.use(
+  middleware.auth({
+    providers: [
+      {
+        type: 'oauth',
+        provider: 'google',
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      },
+    ],
+  })
+);
 
-app.get('/api/profile')
+app
+  .get('/api/profile')
   .auth({ required: true, roles: ['admin'] })
   .handler((req, res) => {
     return { user: req.user };
@@ -1372,11 +1479,13 @@ See [Authentication Guide](./AUTH_GUIDE.md) for complete documentation.
 **Session Management**
 
 ```typescript
-app.use(middleware.session({
-  secret: 'your-secret-key',
-  store: 'redis',
-  cookie: { maxAge: 24 * 60 * 60 * 1000 }
-}));
+app.use(
+  middleware.session({
+    secret: 'your-secret-key',
+    store: 'redis',
+    cookie: { maxAge: 24 * 60 * 60 * 1000 },
+  })
+);
 ```
 
 #### Real-time & Advanced
@@ -1397,20 +1506,25 @@ app.get('/events', (req, res) => {
 **CDN Integration**
 
 ```typescript
-app.use(middleware.cdn({
-  provider: 'cloudfront',
-  config: { distributionId: 'E1234567890ABC' }
-}));
+app.use(
+  middleware.cdn({
+    provider: 'cloudfront',
+    config: { distributionId: 'E1234567890ABC' },
+  })
+);
 ```
 
 **GraphQL**
 
 ```typescript
-app.use('/graphql', middleware.graphql({
-  schema,
-  rootValue,
-  graphiql: true
-}));
+app.use(
+  '/graphql',
+  middleware.graphql({
+    schema,
+    rootValue,
+    graphiql: true,
+  })
+);
 ```
 
 See [GraphQL Guide](./GRAPHQL_GUIDE.md) for detailed documentation.
@@ -1420,35 +1534,42 @@ See [GraphQL Guide](./GRAPHQL_GUIDE.md) for detailed documentation.
 **Request Logger**
 
 ```typescript
-app.use(middleware.requestLogger({
-  format: 'json',
-  fields: ['method', 'url', 'status', 'responseTime']
-}));
+app.use(
+  middleware.requestLogger({
+    format: 'json',
+    fields: ['method', 'url', 'status', 'responseTime'],
+  })
+);
 ```
 
 **Performance Monitor**
 
 ```typescript
-app.use(middleware.performanceMonitor({
-  threshold: 1000,
-  onSlow: (req, duration) => {
-    console.warn(`Slow: ${req.path} - ${duration}ms`);
-  }
-}));
+app.use(
+  middleware.performanceMonitor({
+    threshold: 1000,
+    onSlow: (req, duration) => {
+      console.warn(`Slow: ${req.path} - ${duration}ms`);
+    },
+  })
+);
 ```
 
 **Error Tracker**
 
 ```typescript
-app.use(middleware.errorTracker({
-  dsn: process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV
-}));
+app.use(
+  middleware.errorTracker({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+  })
+);
 ```
 
 ### Middleware Reference
 
 For complete middleware documentation including all options and examples, see:
+
 - **[Middleware Guide](./MIDDLEWARE_GUIDE.md)** - Comprehensive reference for all built-in middleware
 
 ### Custom Middleware
@@ -1486,7 +1607,7 @@ const errorHandler = (err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
     success: false,
-    error: 'Internal server error'
+    error: 'Internal server error',
   });
 };
 
@@ -1510,7 +1631,7 @@ const db = new MySQLAdapter({
   user: 'root',
   password: 'password',
   database: 'myapp',
-  connectionLimit: 10
+  connectionLimit: 10,
 });
 
 app.database(db);
@@ -1526,7 +1647,7 @@ const db = new PostgreSQLAdapter({
   port: 5432,
   user: 'postgres',
   password: 'password',
-  database: 'myapp'
+  database: 'myapp',
 });
 
 app.database(db);
@@ -1538,7 +1659,7 @@ app.database(db);
 import { SQLiteAdapter } from '@morojs/moro';
 
 const db = new SQLiteAdapter({
-  filename: './database.sqlite'
+  filename: './database.sqlite',
 });
 
 app.database(db);
@@ -1550,7 +1671,7 @@ app.database(db);
 import { MongoDBAdapter } from '@morojs/moro';
 
 const db = new MongoDBAdapter({
-  url: 'mongodb://localhost:27017/myapp'
+  url: 'mongodb://localhost:27017/myapp',
 });
 
 app.database(db);
@@ -1564,7 +1685,7 @@ import { RedisAdapter } from '@morojs/moro';
 const redis = new RedisAdapter({
   host: 'localhost',
   port: 6379,
-  password: 'password'
+  password: 'password',
 });
 
 app.database(redis);
@@ -1573,7 +1694,8 @@ app.database(redis);
 ### Database Usage in Handlers
 
 ```typescript
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     // Database is available on request object
@@ -1585,18 +1707,21 @@ app.post('/users')
 ### Transaction Support
 
 ```typescript
-app.post('/transfer')
+app
+  .post('/transfer')
   .body(TransferSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
 
     try {
-      await transaction.update('accounts',
+      await transaction.update(
+        'accounts',
         { id: req.body.fromAccount },
         { balance: { decrement: req.body.amount } }
       );
 
-      await transaction.update('accounts',
+      await transaction.update(
+        'accounts',
         { id: req.body.toAccount },
         { balance: { increment: req.body.amount } }
       );
@@ -1619,6 +1744,7 @@ MoroJS includes a production-ready message queue system with multiple backend ad
 ### Overview
 
 The queue system supports:
+
 - Multiple adapters (Memory, Bull, RabbitMQ, AWS SQS, Kafka)
 - Job scheduling and delays
 - Retry logic with configurable backoff
@@ -1639,20 +1765,20 @@ await queueManager.registerQueue('emails', {
   adapter: 'bull',
   connection: {
     host: 'localhost',
-    port: 6379
+    port: 6379,
   },
-  concurrency: 10
+  concurrency: 10,
 });
 
 // Add a job
 await queueManager.addToQueue('emails', {
   to: 'user@example.com',
   subject: 'Welcome',
-  body: 'Welcome to our platform!'
+  body: 'Welcome to our platform!',
 });
 
 // Process jobs
-await queueManager.process('emails', async (job) => {
+await queueManager.process('emails', async job => {
   await sendEmail(job.data);
   return { sent: true };
 });
@@ -1665,7 +1791,7 @@ await queueManager.process('emails', async (job) => {
 ```typescript
 await queueManager.registerQueue('tasks', {
   adapter: 'memory',
-  concurrency: 5
+  concurrency: 5,
 });
 ```
 
@@ -1676,15 +1802,15 @@ await queueManager.registerQueue('tasks', {
   adapter: 'bull',
   connection: {
     host: 'localhost',
-    port: 6379
+    port: 6379,
   },
   defaultJobOptions: {
     attempts: 3,
     backoff: {
       type: 'exponential',
-      delay: 2000
-    }
-  }
+      delay: 2000,
+    },
+  },
 });
 ```
 
@@ -1697,8 +1823,8 @@ await queueManager.registerQueue('tasks', {
     host: 'localhost',
     port: 5672,
     username: 'guest',
-    password: 'guest'
-  }
+    password: 'guest',
+  },
 });
 ```
 
@@ -1709,8 +1835,8 @@ await queueManager.registerQueue('tasks', {
   adapter: 'sqs',
   connection: {
     region: 'us-east-1',
-    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue'
-  }
+    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue',
+  },
 });
 ```
 
@@ -1721,26 +1847,27 @@ await queueManager.registerQueue('events', {
   adapter: 'kafka',
   connection: {
     brokers: ['localhost:9092'],
-    groupId: 'my-consumer-group'
-  }
+    groupId: 'my-consumer-group',
+  },
 });
 ```
 
 ### Job Options
 
 ```typescript
-await queueManager.addToQueue('reports',
+await queueManager.addToQueue(
+  'reports',
   { reportId: 123, format: 'pdf' },
   {
     priority: 10,
-    delay: 60000,           // 1 minute delay
+    delay: 60000, // 1 minute delay
     attempts: 3,
     backoff: {
       type: 'exponential',
-      delay: 5000
+      delay: 5000,
     },
     removeOnComplete: true,
-    timeout: 30000
+    timeout: 30000,
   }
 );
 ```
@@ -1749,13 +1876,13 @@ await queueManager.addToQueue('reports',
 
 ```typescript
 // Basic processor
-await queueManager.process('emails', async (job) => {
+await queueManager.process('emails', async job => {
   await sendEmail(job.data);
   return { sent: true };
 });
 
 // With progress tracking
-await queueManager.process('video-encoding', async (job) => {
+await queueManager.process('video-encoding', async job => {
   await job.updateProgress(0);
   const video = await loadVideo(job.data.videoId);
 
@@ -1777,11 +1904,11 @@ console.log(`Active: ${metrics.active}`);
 console.log(`Completed: ${metrics.completed}`);
 
 // Listen to events
-queueManager.on('queue:job:completed', (event) => {
+queueManager.on('queue:job:completed', event => {
   console.log(`Job ${event.jobId} completed`);
 });
 
-queueManager.on('queue:job:failed', (event) => {
+queueManager.on('queue:job:failed', event => {
   console.error(`Job ${event.jobId} failed:`, event.error);
 });
 ```
@@ -1797,6 +1924,7 @@ MoroJS includes native gRPC support for building high-performance microservices.
 ### Overview
 
 Features:
+
 - Proto-based service definitions
 - All call types (unary, streaming, bidirectional)
 - Middleware (auth, validation, logging)
@@ -1811,22 +1939,18 @@ import { GrpcManager } from '@morojs/moro';
 
 const grpcManager = new GrpcManager({
   port: 50051,
-  host: '0.0.0.0'
+  host: '0.0.0.0',
 });
 
 await grpcManager.initialize();
 
 // Register service
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: async (call, callback) => {
-      const user = await db.users.findById(call.request.id);
-      callback(null, user);
-    }
-  }
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: async (call, callback) => {
+    const user = await db.users.findById(call.request.id);
+    callback(null, user);
+  },
+});
 
 await grpcManager.start();
 ```
@@ -1844,7 +1968,7 @@ await grpcManager.start();
       if (!user) {
         return callback({
           code: grpc.status.NOT_FOUND,
-          message: 'User not found'
+          message: 'User not found',
         });
       }
 
@@ -1852,10 +1976,10 @@ await grpcManager.start();
     } catch (error) {
       callback({
         code: grpc.status.INTERNAL,
-        message: error.message
+        message: error.message,
       });
     }
-  }
+  };
 }
 ```
 
@@ -1863,7 +1987,7 @@ await grpcManager.start();
 
 ```typescript
 {
-  ListUsers: async (call) => {
+  ListUsers: async call => {
     const users = await db.users.find().limit(100);
 
     for (const user of users) {
@@ -1871,7 +1995,7 @@ await grpcManager.start();
     }
 
     call.end();
-  }
+  };
 }
 ```
 
@@ -1882,7 +2006,7 @@ await grpcManager.start();
   CreateUsers: async (call, callback) => {
     const users = [];
 
-    call.on('data', (userData) => {
+    call.on('data', userData => {
       users.push(userData);
     });
 
@@ -1890,10 +2014,10 @@ await grpcManager.start();
       const result = await db.users.insertMany(users);
       callback(null, {
         created: result.length,
-        ids: result.map(u => u.id)
+        ids: result.map(u => u.id),
       });
     });
-  }
+  };
 }
 ```
 
@@ -1901,8 +2025,8 @@ await grpcManager.start();
 
 ```typescript
 {
-  Chat: async (call) => {
-    call.on('data', (message) => {
+  Chat: async call => {
+    call.on('data', message => {
       // Broadcast message
       broadcastToRoom(message);
 
@@ -1910,14 +2034,14 @@ await grpcManager.start();
       call.write({
         user_id: 'system',
         message: 'Received',
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     });
 
     call.on('end', () => {
       call.end();
     });
-  }
+  };
 }
 ```
 
@@ -1926,22 +2050,18 @@ await grpcManager.start();
 ```typescript
 import { grpcAuth, grpcRequireRole, grpcValidate } from '@morojs/moro';
 
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: grpcAuth()(async (call, callback) => {
-      // Authenticated user available in call.user
-      const user = await db.users.findOne({ id: call.request.id });
-      callback(null, user);
-    }),
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: grpcAuth()(async (call, callback) => {
+    // Authenticated user available in call.user
+    const user = await db.users.findOne({ id: call.request.id });
+    callback(null, user);
+  }),
 
-    DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
-      await db.users.deleteOne({ id: call.request.id });
-      callback(null, { success: true });
-    })
-  }
-);
+  DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
+    await db.users.deleteOne({ id: call.request.id });
+    callback(null, { success: true });
+  }),
+});
 ```
 
 ### gRPC Client
@@ -1972,11 +2092,11 @@ See [gRPC Guide](./GRPC_GUIDE.md) for complete documentation.
 
 ```typescript
 app.websocket('/chat', {
-  connection: (socket) => {
+  connection: socket => {
     console.log('User connected:', socket.id);
   },
 
-  disconnect: (socket) => {
+  disconnect: socket => {
     console.log('User disconnected:', socket.id);
   },
 
@@ -1984,10 +2104,10 @@ app.websocket('/chat', {
     socket.broadcast.emit('message', {
       id: socket.id,
       message: data.message,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
     return { success: true };
-  }
+  },
 });
 ```
 
@@ -1998,7 +2118,7 @@ app.websocket('/chat', {
   join: {
     validation: z.object({
       room: z.string().min(1),
-      username: z.string().min(2)
+      username: z.string().min(2),
     }),
     handler: (socket, data) => {
       socket.join(data.room);
@@ -2006,29 +2126,29 @@ app.websocket('/chat', {
 
       socket.to(data.room).emit('user-joined', {
         username: data.username,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       return { success: true, room: data.room };
-    }
+    },
   },
 
   message: {
     validation: z.object({
       room: z.string(),
-      content: z.string().min(1).max(500)
+      content: z.string().min(1).max(500),
     }),
     rateLimit: { requests: 10, window: 60000 },
     handler: (socket, data) => {
       socket.to(data.room).emit('message', {
         username: socket.username,
         content: data.content,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       return { success: true };
-    }
-  }
+    },
+  },
 });
 ```
 
@@ -2043,30 +2163,30 @@ export default defineModule({
       event: 'join-room',
       validation: z.object({
         room: z.string(),
-        username: z.string()
+        username: z.string(),
       }),
       handler: async (socket, data) => {
         socket.join(data.room);
         return { joined: data.room };
-      }
+      },
     },
     {
       event: 'send-message',
       validation: z.object({
         room: z.string(),
-        message: z.string().max(500)
+        message: z.string().max(500),
       }),
       rateLimit: { requests: 5, window: 60000 },
       handler: async (socket, data) => {
         socket.to(data.room).emit('new-message', {
           username: socket.username,
           message: data.message,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
         return { success: true };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 ```
 
@@ -2085,6 +2205,7 @@ MoroJS supports configuration through:
 3. **Schema Defaults** - Fallback values
 
 **Configuration Priority (highest to lowest):**
+
 - Environment Variables
 - Configuration File
 - Schema Defaults
@@ -2101,7 +2222,7 @@ module.exports = {
   server: {
     port: 3000,
     host: '0.0.0.0',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
     type: 'postgresql',
@@ -2109,37 +2230,37 @@ module.exports = {
     port: 5432,
     username: 'myapp',
     password: 'development-password',
-    database: 'myapp_dev'
+    database: 'myapp_dev',
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000', 'http://localhost:3001']
+      origin: ['http://localhost:3000', 'http://localhost:3001'],
     },
     helmet: {
-      enabled: true
+      enabled: true,
     },
     rateLimit: {
       enabled: true,
       requests: 100,
-      window: 60000
-    }
+      window: 60000,
+    },
   },
   performance: {
     compression: {
       enabled: true,
-      level: 6
+      level: 6,
     },
     cache: {
       enabled: true,
       adapter: 'memory',
-      ttl: 300
-    }
+      ttl: 300,
+    },
   },
   logging: {
     level: 'info',
-    format: 'json'
-  }
+    format: 'json',
+  },
 };
 ```
 
@@ -2155,7 +2276,7 @@ const config: Partial<AppConfig> = {
   server: {
     port: 3000,
     host: '0.0.0.0',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
     type: 'postgresql',
@@ -2163,14 +2284,14 @@ const config: Partial<AppConfig> = {
     port: 5432,
     username: 'myapp',
     password: 'development-password',
-    database: 'myapp_dev'
+    database: 'myapp_dev',
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000']
-    }
-  }
+      origin: ['http://localhost:3000'],
+    },
+  },
 };
 
 export default config;
@@ -2216,21 +2337,21 @@ LOG_FORMAT=json
 module.exports = {
   server: {
     port: 3000,
-    environment: 'development'
+    environment: 'development',
   },
   database: {
     type: 'sqlite',
-    database: './dev.db'
+    database: './dev.db',
   },
   logging: {
-    level: 'debug'
+    level: 'debug',
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000', 'http://localhost:5173']
-    }
-  }
+      origin: ['http://localhost:3000', 'http://localhost:5173'],
+    },
+  },
 };
 ```
 
@@ -2242,7 +2363,7 @@ module.exports = {
   server: {
     port: process.env.PORT || 3000,
     host: '0.0.0.0',
-    environment: 'production'
+    environment: 'production',
   },
   database: {
     type: 'postgresql',
@@ -2251,40 +2372,40 @@ module.exports = {
     username: process.env.DATABASE_USERNAME,
     password: process.env.DATABASE_PASSWORD,
     database: process.env.DATABASE_NAME,
-    ssl: true
+    ssl: true,
   },
   security: {
     cors: {
       enabled: true,
-      origin: process.env.CORS_ORIGIN?.split(',') || []
+      origin: process.env.CORS_ORIGIN?.split(',') || [],
     },
     helmet: {
-      enabled: true
+      enabled: true,
     },
     rateLimit: {
       enabled: true,
       requests: 1000,
-      window: 60000
-    }
+      window: 60000,
+    },
   },
   performance: {
     compression: {
       enabled: true,
-      level: 9
+      level: 9,
     },
     cache: {
       enabled: true,
       adapter: 'redis',
       redis: {
-        url: process.env.REDIS_URL
+        url: process.env.REDIS_URL,
       },
-      ttl: 3600
-    }
+      ttl: 3600,
+    },
   },
   logging: {
     level: 'info',
-    format: 'json'
-  }
+    format: 'json',
+  },
 };
 ```
 
@@ -2297,13 +2418,13 @@ const environment = process.env.NODE_ENV || 'development';
 const baseConfig = {
   server: {
     port: process.env.PORT || 3000,
-    host: process.env.HOST || 'localhost'
+    host: process.env.HOST || 'localhost',
   },
   security: {
     cors: {
-      enabled: true
-    }
-  }
+      enabled: true,
+    },
+  },
 };
 
 const environmentConfigs = {
@@ -2311,37 +2432,37 @@ const environmentConfigs = {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'development'
+      environment: 'development',
     },
     database: {
       type: 'sqlite',
-      database: './dev.db'
+      database: './dev.db',
     },
     logging: {
-      level: 'debug'
-    }
+      level: 'debug',
+    },
   },
 
   test: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'test'
+      environment: 'test',
     },
     database: {
       type: 'sqlite',
-      database: ':memory:'
+      database: ':memory:',
     },
     logging: {
-      level: 'error'
-    }
+      level: 'error',
+    },
   },
 
   production: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'production'
+      environment: 'production',
     },
     database: {
       type: 'postgresql',
@@ -2350,13 +2471,13 @@ const environmentConfigs = {
       username: process.env.DATABASE_USERNAME,
       password: process.env.DATABASE_PASSWORD,
       database: process.env.DATABASE_NAME,
-      ssl: true
+      ssl: true,
     },
     logging: {
       level: 'info',
-      format: 'json'
-    }
-  }
+      format: 'json',
+    },
+  },
 };
 
 module.exports = environmentConfigs[environment];
@@ -2374,7 +2495,7 @@ const EmailModuleSchema = z.object({
   apiKey: z.string(),
   timeout: z.number().default(5000),
   retries: z.number().default(3),
-  enabled: z.boolean().default(true)
+  enabled: z.boolean().default(true),
 });
 
 // Create module config with environment override support
@@ -2382,7 +2503,7 @@ const emailConfig = createModuleConfig(
   EmailModuleSchema,
   {
     apiKey: 'default-key',
-    timeout: 3000
+    timeout: 3000,
   },
   'EMAIL_' // Environment prefix
 );
@@ -2449,7 +2570,8 @@ app.events.on('database:connected', ({ adapter }) => {
 ### Custom Events in Handlers
 
 ```typescript
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     const user = await createUser(req.body);
@@ -2458,7 +2580,7 @@ app.post('/users')
     req.events.emit('user:created', {
       user,
       timestamp: new Date(),
-      ip: req.ip
+      ip: req.ip,
     });
 
     return { success: true, data: user };
@@ -2493,9 +2615,9 @@ export default defineModule({
         req.events.emit('order:created', { order });
 
         return { success: true, data: order };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 
 // Listen to module events
@@ -2530,6 +2652,7 @@ MoroJS includes built-in Worker Threads support for offloading CPU-intensive ope
 Worker threads execute CPU-intensive operations in separate threads, preventing main thread blocking.
 
 **Suitable for:**
+
 - JWT signing/verification
 - Password hashing
 - Data encryption/decryption
@@ -2538,6 +2661,7 @@ Worker threads execute CPU-intensive operations in separate threads, preventing 
 - Complex calculations
 
 **Not suitable for:**
+
 - Database queries (already async)
 - HTTP requests (already async)
 - File I/O (already async)
@@ -2551,10 +2675,7 @@ const workers = getWorkerManager();
 
 // Verify JWT on worker thread
 app.post('/api/auth/verify', async (req, res) => {
-  const result = await workerTasks.verifyJWT(
-    req.body.token,
-    process.env.JWT_SECRET
-  );
+  const result = await workerTasks.verifyJWT(req.body.token, process.env.JWT_SECRET);
 
   if (result.valid) {
     return { user: result.payload };
@@ -2565,14 +2686,11 @@ app.post('/api/auth/verify', async (req, res) => {
 
 // Hash password on worker thread
 app.post('/api/register', async (req, res) => {
-  const hash = await workerTasks.hashData(
-    req.body.password,
-    'sha256'
-  );
+  const hash = await workerTasks.hashData(req.body.password, 'sha256');
 
   const user = await createUser({
     email: req.body.email,
-    password: hash
+    password: hash,
   });
 
   return user;
@@ -2594,10 +2712,7 @@ const token = await workerTasks.signJWT(
 );
 
 // Verify JWT
-const result = await workerTasks.verifyJWT(
-  token,
-  process.env.JWT_SECRET
-);
+const result = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
 ```
 
 #### Cryptographic Operations
@@ -2607,46 +2722,33 @@ const result = await workerTasks.verifyJWT(
 const hash = await workerTasks.hashData(data, 'sha256');
 
 // Encrypt data
-const encrypted = await workerTasks.encryptData(
-  sensitiveData,
-  process.env.ENCRYPTION_KEY
-);
+const encrypted = await workerTasks.encryptData(sensitiveData, process.env.ENCRYPTION_KEY);
 
 // Decrypt data
-const decrypted = await workerTasks.decryptData(
-  encryptedData,
-  process.env.ENCRYPTION_KEY
-);
+const decrypted = await workerTasks.decryptData(encryptedData, process.env.ENCRYPTION_KEY);
 ```
 
 #### Data Compression
 
 ```typescript
 // Compress data
-const compressed = await workerTasks.compressData(
-  JSON.stringify(largeData)
-);
+const compressed = await workerTasks.compressData(JSON.stringify(largeData));
 
 // Decompress data
-const decompressed = await workerTasks.decompressData(
-  compressedData
-);
+const decompressed = await workerTasks.decompressData(compressedData);
 ```
 
 #### Heavy Computation
 
 ```typescript
 // Process complex calculation
-const result = await workerTasks.heavyComputation(
-  operation,
-  params
-);
+const result = await workerTasks.heavyComputation(operation, params);
 
 // Transform large JSON
-const transformed = await workerTasks.transformJSON(
-  data,
-  (item) => ({ ...item, computed: expensiveTransform(item) })
-);
+const transformed = await workerTasks.transformJSON(data, item => ({
+  ...item,
+  computed: expensiveTransform(item),
+}));
 ```
 
 ### Configuration
@@ -2657,15 +2759,15 @@ import { WorkerManager } from '@morojs/moro';
 // Configure worker pool
 const workers = new WorkerManager({
   workerCount: 4, // Number of worker threads
-  maxQueueSize: 1000 // Maximum queued tasks
+  maxQueueSize: 1000, // Maximum queued tasks
 });
 
 // Or use with createApp
 const app = createApp({
   workers: {
     count: 4,
-    maxQueueSize: 1000
-  }
+    maxQueueSize: 1000,
+  },
 });
 ```
 
@@ -2682,7 +2784,7 @@ await workers.executeTask({
   type: 'crypto:hash',
   data: { input: 'critical-data' },
   priority: 'high', // 'high' | 'normal' | 'low'
-  timeout: 10000 // Optional timeout
+  timeout: 10000, // Optional timeout
 });
 ```
 
@@ -2696,6 +2798,7 @@ Worker threads use message passing:
 4. Promise resolves with result
 
 **Overhead considerations:**
+
 - Data serialization cost
 - Thread communication overhead
 - Task complexity vs overhead tradeoff
@@ -2724,27 +2827,30 @@ For complete documentation, examples, and best practices, see the [Workers Guide
 
 ```typescript
 // Memory caching
-app.get('/popular-posts')
+app
+  .get('/popular-posts')
   .cache({
     ttl: 300, // 5 minutes
-    strategy: 'memory'
+    strategy: 'memory',
   })
   .handler(getPopularPosts);
 
 // Redis caching
-app.get('/user-profile/:id')
+app
+  .get('/user-profile/:id')
   .cache({
     ttl: 600, // 10 minutes
     strategy: 'redis',
-    key: (req) => `profile:${req.params.id}`
+    key: req => `profile:${req.params.id}`,
   })
   .handler(getUserProfile);
 
 // Custom cache key generation
-app.get('/search')
+app
+  .get('/search')
   .cache({
     ttl: 120,
-    key: (req) => `search:${JSON.stringify(req.query)}`
+    key: req => `search:${JSON.stringify(req.query)}`,
   })
   .handler(searchContent);
 ```
@@ -2753,27 +2859,31 @@ app.get('/search')
 
 ```typescript
 // Global rate limiting
-app.use(middleware.rateLimit({
-  requests: 1000,
-  window: 60000, // 1 minute
-  skipSuccessfulRequests: false
-}));
+app.use(
+  middleware.rateLimit({
+    requests: 1000,
+    window: 60000, // 1 minute
+    skipSuccessfulRequests: false,
+  })
+);
 
 // Route-specific rate limiting
-app.post('/api/upload')
+app
+  .post('/api/upload')
   .rateLimit({
     requests: 5,
     window: 60000,
-    skipSuccessfulRequests: true
+    skipSuccessfulRequests: true,
   })
   .handler(handleUpload);
 
 // User-specific rate limiting
-app.post('/api/send-email')
+app
+  .post('/api/send-email')
   .rateLimit({
     requests: 10,
     window: 3600000, // 1 hour
-    keyGenerator: (req) => `user:${req.user.id}`
+    keyGenerator: req => `user:${req.user.id}`,
   })
   .handler(sendEmail);
 ```
@@ -2782,25 +2892,24 @@ app.post('/api/send-email')
 
 ```typescript
 // Automatic circuit breaker protection
-app.get('/external-api')
-  .handler(async (req, res) => {
-    // Automatically protected by circuit breaker
-    const data = await callExternalAPI();
-    return { success: true, data };
-  });
+app.get('/external-api').handler(async (req, res) => {
+  // Automatically protected by circuit breaker
+  const data = await callExternalAPI();
+  return { success: true, data };
+});
 ```
 
 ### Performance Benchmarks
 
-| Framework | Req/sec | Latency | Memory |
-|-----------|---------|---------|--------|
+| Framework | Req/sec    | Latency   | Memory   |
+| --------- | ---------- | --------- | -------- |
 | **Moro**  | **52,400** | **1.8ms** | **24MB** |
-| Express   | 28,540  | 3.8ms   | 45MB   |
-| Fastify   | 38,120  | 2.9ms   | 35MB   |
-| NestJS    | 22,100  | 4.5ms   | 58MB   |
-| Koa       | 25,880  | 4.2ms   | 42MB   |
+| Express   | 28,540     | 3.8ms     | 45MB     |
+| Fastify   | 38,120     | 2.9ms     | 35MB     |
+| NestJS    | 22,100     | 4.5ms     | 58MB     |
+| Koa       | 25,880     | 4.2ms     | 42MB     |
 
-*Benchmark: 50,000 requests, 100 concurrent connections, Node.js 20.x*
+_Benchmark: 50,000 requests, 100 concurrent connections, Node.js 20.x_
 
 ---
 
@@ -2820,7 +2929,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({
     success: false,
     error: err.message || 'Internal server error',
-    requestId: req.requestId
+    requestId: req.requestId,
   });
 });
 ```
@@ -2828,7 +2937,8 @@ app.use((err, req, res, next) => {
 ### Route-Specific Error Handling
 
 ```typescript
-app.get('/users/:id')
+app
+  .get('/users/:id')
   .params(z.object({ id: z.string().uuid() }))
   .handler(async (req, res) => {
     try {
@@ -2837,7 +2947,7 @@ app.get('/users/:id')
       if (!user) {
         return res.status(404).json({
           success: false,
-          error: 'User not found'
+          error: 'User not found',
         });
       }
 
@@ -2853,7 +2963,10 @@ app.get('/users/:id')
 
 ```typescript
 class ValidationError extends Error {
-  constructor(message: string, public field: string) {
+  constructor(
+    message: string,
+    public field: string
+  ) {
     super(message);
     this.name = 'ValidationError';
   }
@@ -2867,16 +2980,15 @@ class NotFoundError extends Error {
 }
 
 // Use in handlers
-app.get('/users/:id')
-  .handler(async (req, res) => {
-    const user = await getUserById(req.params.id);
+app.get('/users/:id').handler(async (req, res) => {
+  const user = await getUserById(req.params.id);
 
-    if (!user) {
-      throw new NotFoundError('User');
-    }
+  if (!user) {
+    throw new NotFoundError('User');
+  }
 
-    return { success: true, data: user };
-  });
+  return { success: true, data: user };
+});
 ```
 
 ---

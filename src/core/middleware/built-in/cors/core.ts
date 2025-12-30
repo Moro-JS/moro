@@ -1,10 +1,15 @@
 // CORS Core - Reusable CORS logic
-import { HttpResponse } from '../../../../types/http.js';
+import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
 // ===== Types =====
 
+export type OriginFunction = (
+  origin: string | undefined,
+  req: HttpRequest
+) => string | string[] | boolean | Promise<string | string[] | boolean>;
+
 export interface CORSOptions {
-  origin?: string | string[];
+  origin?: string | string[] | boolean | OriginFunction;
   methods?: string | string[];
   headers?: string | string[];
   credentials?: boolean;
@@ -35,13 +40,32 @@ export class CORSCore {
 
   /**
    * Apply CORS headers to response
+   * Now supports async origin validation
    */
-  applyCORS(res: HttpResponse): void {
-    // Origin
-    const origin = Array.isArray(this.options.origin)
-      ? this.options.origin.join(',')
-      : this.options.origin || '*';
-    res.setHeader('Access-Control-Allow-Origin', origin);
+  async applyCORS(res: HttpResponse, req: HttpRequest): Promise<boolean> {
+    // Origin - handle function, array, string, or boolean
+    let resolvedOrigin: string | string[] | boolean = this.options.origin || '*';
+
+    if (typeof this.options.origin === 'function') {
+      const requestOrigin = (req.headers as any).origin || (req.headers as any).Origin;
+      resolvedOrigin = await this.options.origin(requestOrigin, req);
+    }
+
+    // If origin function returned false, deny the request
+    if (resolvedOrigin === false) {
+      return false;
+    }
+
+    // Convert true to wildcard
+    if (resolvedOrigin === true) {
+      resolvedOrigin = '*';
+    }
+
+    // Set origin header
+    const originHeader = Array.isArray(resolvedOrigin)
+      ? resolvedOrigin.join(',')
+      : String(resolvedOrigin);
+    res.setHeader('Access-Control-Allow-Origin', originHeader);
 
     // Methods
     const methods = Array.isArray(this.options.methods)
@@ -69,5 +93,7 @@ export class CORSCore {
     if (this.options.exposedHeaders && this.options.exposedHeaders.length > 0) {
       res.setHeader('Access-Control-Expose-Headers', this.options.exposedHeaders.join(','));
     }
+
+    return true;
   }
 }

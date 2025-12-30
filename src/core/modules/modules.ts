@@ -14,6 +14,11 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
     dependencies: definition.dependencies,
   };
 
+  // Store module-level middleware
+  if (definition.middleware) {
+    moduleConfig.middleware = definition.middleware;
+  }
+
   // Store route definitions and handlers
   if (definition.routes) {
     moduleConfig.routes = definition.routes.map((route, index) => ({
@@ -23,7 +28,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
       validation: route.validation,
       cache: route.cache,
       rateLimit: route.rateLimit,
-      middleware: route.middleware,
+      middleware: route.middleware, // Route-level middleware
       // Copy all additional properties for extensibility
       ...Object.fromEntries(
         Object.entries(route).filter(

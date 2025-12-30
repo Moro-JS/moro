@@ -271,14 +271,26 @@ export const productModule = defineModule({
 
 ### Route Middleware
 
+Modules support both module-level and route-level middleware, with flexible options for using built-in middleware by name or custom middleware functions.
+
+#### Module-Level Middleware
+
+Apply middleware to all routes in a module:
+
 ```typescript
-// Module-level middleware
+import { cors, helmet } from '@morojs/moro';
+
 export const apiModule = defineModule({
   name: 'api',
   version: '1.0.0',
 
+  // Applied to ALL routes in this module
   middleware: [
-    // Apply to all routes in this module
+    // Built-in middleware by name (string)
+    'cors',
+    'helmet',
+
+    // Custom middleware functions
     async (req, res, next) => {
       req.moduleContext = {
         moduleName: 'api',
@@ -286,18 +298,186 @@ export const apiModule = defineModule({
       };
       next();
     },
+
+    // Mixed approach
+    cors({ origin: '*' }),
   ],
 
   routes: [
     {
       method: 'GET',
       path: '/data',
-      // Route-specific middleware
-      middleware: ['auth', 'validateApiKey'],
       handler: async (req, res) => {
-        res.json({ data: 'secure data' });
+        // Module middleware runs before this handler
+        return { data: 'public data' };
       },
     },
+  ],
+});
+```
+
+#### Route-Level Middleware
+
+Apply middleware to specific routes:
+
+```typescript
+export const apiModule = defineModule({
+  name: 'api',
+  version: '1.0.0',
+
+  routes: [
+    {
+      method: 'GET',
+      path: '/public',
+      handler: async (req, res) => {
+        return { data: 'public' };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/secure',
+      // Middleware specific to this route only
+      middleware: [
+        'auth', // Built-in by string name
+        'rateLimit', // Built-in by string name
+        (req, res, next) => {
+          // Custom middleware function
+          console.log('Processing secure request');
+          next();
+        },
+      ],
+      handler: async (req, res) => {
+        return { data: 'secure data' };
+      },
+    },
+  ],
+});
+```
+
+#### Built-in Middleware Names
+
+You can reference these built-in middleware by string name:
+
+- `'auth'` - Authentication middleware
+- `'cors'` - CORS headers
+- `'helmet'` - Security headers
+- `'rateLimit'` - Rate limiting
+- `'validation'` - Request validation
+- `'cache'` - Response caching
+- `'compression'` - Response compression
+- `'bodySize'` - Body size limiting
+- `'csrf'` - CSRF protection
+- `'session'` - Session management
+
+#### Combined Module and Route Middleware
+
+```typescript
+export const apiModule = defineModule({
+  name: 'api',
+  version: '1.0.0',
+
+  // Module-level: runs on ALL routes
+  middleware: [
+    'cors',
+    'helmet',
+    async (req, res, next) => {
+      req.startTime = Date.now();
+      next();
+    },
+  ],
+
+  routes: [
+    {
+      method: 'GET',
+      path: '/public',
+      handler: async (req, res) => {
+        // Only module middleware runs
+        return { data: 'public' };
+      },
+    },
+    {
+      method: 'POST',
+      path: '/admin',
+      // Route-level: runs AFTER module middleware
+      middleware: ['auth', 'rateLimit'],
+      auth: { roles: ['admin'] },
+      handler: async (req, res) => {
+        // Both module AND route middleware have run
+        return { data: 'admin data' };
+      },
+    },
+  ],
+});
+```
+
+#### Execution Order
+
+Middleware executes in this order:
+
+1. **Global middleware** (app.use())
+2. **Module-level middleware** (applied to all routes in module)
+3. **Route-level middleware** (applied to specific route)
+4. **Route handler**
+
+```typescript
+// Execution flow example
+app.use(globalLogging); // 1. Runs first
+
+export const myModule = defineModule({
+  name: 'myModule',
+  version: '1.0.0',
+
+  middleware: [moduleAuth], // 2. Runs second
+
+  routes: [
+    {
+      method: 'POST',
+      path: '/data',
+      middleware: [routeValidation], // 3. Runs third
+      handler: async (req, res) => {
+        // 4. Runs last
+        return { success: true };
+      },
+    },
+  ],
+});
+```
+
+#### Custom Middleware Functions
+
+```typescript
+// Async middleware
+const asyncLogger = async (req, res, next) => {
+  await logToDatabase(req);
+  next();
+};
+
+// Error handling middleware
+const errorHandler = (req, res, next) => {
+  try {
+    next();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Conditional middleware
+const conditionalAuth = (req, res, next) => {
+  if (req.path.startsWith('/admin')) {
+    // Check auth for admin routes
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+  }
+  next();
+};
+
+export const myModule = defineModule({
+  name: 'myModule',
+  version: '1.0.0',
+  middleware: [asyncLogger, errorHandler, conditionalAuth],
+  routes: [
+    /* ... */
   ],
 });
 ```

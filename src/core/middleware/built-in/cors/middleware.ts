@@ -19,8 +19,22 @@ import { CORSCore, type CORSOptions } from './core.js';
 export function createCORSMiddleware(options: CORSOptions = {}): StandardMiddleware {
   const corsCore = new CORSCore(options);
 
-  return async (_req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
-    corsCore.applyCORS(res);
+  return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
+    // Apply CORS headers to all requests (now async to support origin functions)
+    const isAllowed = await corsCore.applyCORS(res, req);
+
+    // If origin validation failed, deny the request
+    if (!isAllowed) {
+      (res as any).status(403).end();
+      return;
+    }
+
+    // Handle OPTIONS preflight automatically unless preflightContinue is true
+    if (req.method === 'OPTIONS' && !options.preflightContinue) {
+      (res as any).status(204).end();
+      return;
+    }
+
     await next();
   };
 }
