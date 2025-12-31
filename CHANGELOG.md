@@ -1,3 +1,9 @@
+## [1.7.11] - 2025-12-31
+
+### Added
+
+- feat: enhance server configuration for file uploads
+
 ## [1.7.10] - 2025-12-31
 
 ### Added
