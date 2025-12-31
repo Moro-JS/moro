@@ -9,7 +9,9 @@ describe('DI Container Public API', () => {
   let app;
 
   beforeEach(() => {
-    app = createApp();
+    app = createApp({
+      logging: { level: 'error' },
+    });
   });
 
   afterEach(async () => {

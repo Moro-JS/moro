@@ -10,7 +10,11 @@ describe('File Upload - Binary Data Integrity', () => {
   const PORT = 3891;
 
   beforeAll(done => {
-    app = createApp();
+    app = createApp({
+      logging: {
+        level: 'error', // Suppress logs during tests
+      },
+    });
 
     // Simple upload endpoint - no middleware restrictions
     // Files come from req.body.files (multipart parsing result)

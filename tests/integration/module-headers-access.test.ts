@@ -1,4 +1,4 @@
-import { defineModule } from '../../src/index.js';
+import { createApp, defineModule } from '../../src/index.js';
 import { Moro } from '../../src/moro.js';
 import { ModuleDefinition } from '../../src/types/module.js';
 
@@ -9,7 +9,7 @@ describe('Module Routes - Headers Access', () => {
   beforeEach(() => {
     // Use dynamic port allocation to avoid conflicts in CI
     port = 3100 + Math.floor(Math.random() * 1000);
-    app = new Moro({ port: 0 });
+    app = createApp({ logging: { level: 'error' } });
   });
 
   afterEach(async () => {
