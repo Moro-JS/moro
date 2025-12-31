@@ -231,9 +231,14 @@ export interface JobsConfig {
     maxRetries?: number;
     retryDelay?: number;
     retryBackoff?: 'linear' | 'exponential';
+    retryBackoffMultiplier?: number;
+    maxRetryDelay?: number;
     timeout?: number;
     enableCircuitBreaker?: boolean;
+    circuitBreakerThreshold?: number;
+    circuitBreakerResetTimeout?: number;
     enableMemoryMonitoring?: boolean;
+    memoryThreshold?: number;
   };
   stateManager?: {
     persistPath?: string;

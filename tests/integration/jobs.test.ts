@@ -11,6 +11,9 @@ describe('Jobs Integration', () => {
         maxConcurrentJobs: 5,
         enableLeaderElection: false,
         gracefulShutdownTimeout: 1000, // Fast shutdown for tests
+        executor: {
+          memoryThreshold: 2048, // Higher threshold for CI environment (2GB)
+        },
       },
       logger: {
         level: 'error', // Reduce logging noise in tests
