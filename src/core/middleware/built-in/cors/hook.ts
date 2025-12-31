@@ -49,7 +49,12 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
           path: request.path,
         });
         response.status(403).end();
-        response.headersSent = true;
+        // Only set headersSent if it's writable (for custom response wrappers and mocks)
+        // Node.js native ServerResponse has a read-only headersSent getter
+        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
+        if (!descriptor || descriptor.writable || descriptor.set) {
+          response.headersSent = true;
+        }
         return;
       }
 
@@ -57,8 +62,12 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
       if (request.method === 'OPTIONS' && !config.preflightContinue) {
         logger.debug('Handling OPTIONS preflight request', 'Preflight', { path: request.path });
         response.status(204).end();
-        // Mark headers as sent to prevent further processing
-        response.headersSent = true;
+        // Only set headersSent if it's writable (for custom response wrappers and mocks)
+        // Node.js native ServerResponse has a read-only headersSent getter
+        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
+        if (!descriptor || descriptor.writable || descriptor.set) {
+          response.headersSent = true;
+        }
       }
     });
   },

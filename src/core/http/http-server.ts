@@ -1173,16 +1173,25 @@ export class MoroHttpServer {
       throw new Error('Invalid multipart boundary');
     }
 
-    const parts = buffer.toString('binary').split('--' + boundary);
+    // Work with Buffer directly - don't convert to string (corrupts binary data)
+    const boundaryBuffer = Buffer.from(`--${boundary}`);
+    const parts = this.splitBuffer(buffer, boundaryBuffer);
     const fields: Record<string, string> = {};
     const files: Record<string, any> = {};
 
+    // Skip first (empty) and last (closing boundary) parts
     const partsLen = parts.length - 1;
     for (let i = 1; i < partsLen; i++) {
       const part = parts[i];
-      const [headers, content] = part.split('\r\n\r\n');
 
-      if (!headers || content === undefined) continue;
+      // Find the double CRLF that separates headers from content
+      const headerEndPos = this.findBufferSequence(part, Buffer.from('\r\n\r\n'));
+      if (headerEndPos === -1) continue;
+
+      // Headers are always text - safe to convert to string
+      const headers = part.slice(0, headerEndPos).toString('utf8');
+      // Content stays as Buffer to preserve binary data
+      const content = part.slice(headerEndPos + 4); // Skip the \r\n\r\n
 
       const nameMatch = headers.match(/name="([^"]+)"/);
       const filenameMatch = headers.match(/filename="([^"]+)"/);
@@ -1192,25 +1201,56 @@ export class MoroHttpServer {
         const name = nameMatch[1];
 
         if (filenameMatch) {
-          // This is a file
+          // This is a file - keep as Buffer to preserve binary data
           const filename = filenameMatch[1];
           const mimeType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
-          const fileContent = content.substring(0, content.length - 2); // Remove trailing \r\n
+
+          // Remove trailing \r\n (2 bytes) from the end
+          const fileData = content.slice(0, content.length - 2);
 
           files[name] = {
             filename,
             mimetype: mimeType,
-            data: Buffer.from(fileContent, 'binary'),
-            size: Buffer.byteLength(fileContent, 'binary'),
+            data: fileData, // Already a Buffer - preserves binary integrity
+            size: fileData.length,
           };
         } else {
-          // This is a regular field
-          fields[name] = content.substring(0, content.length - 2); // Remove trailing \r\n
+          // This is a regular field - convert to string
+          const fieldContent = content.slice(0, content.length - 2); // Remove trailing \r\n
+          fields[name] = fieldContent.toString('utf8');
         }
       }
     }
 
     return { fields, files };
+  }
+
+  /**
+   * Split a Buffer by a delimiter Buffer
+   * Used for multipart boundary splitting without corrupting binary data
+   */
+  private splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
+    const parts: Buffer[] = [];
+    let start = 0;
+    let pos = 0;
+
+    while ((pos = buffer.indexOf(delimiter, start)) !== -1) {
+      parts.push(buffer.slice(start, pos));
+      start = pos + delimiter.length;
+    }
+
+    // Add the remaining part
+    parts.push(buffer.slice(start));
+
+    return parts;
+  }
+
+  /**
+   * Find the position of a sequence within a Buffer
+   * Returns -1 if not found
+   */
+  private findBufferSequence(buffer: Buffer, sequence: Buffer): number {
+    return buffer.indexOf(sequence);
   }
 
   private parseUrlEncoded(body: string): Record<string, string> {
