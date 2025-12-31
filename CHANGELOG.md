@@ -1,3 +1,9 @@
+## [1.7.10] - 2025-12-31
+
+### Added
+
+- feat: enhance multipart file upload handling and add tests for binary data integrity
+
 ## [1.7.9] - 2025-12-30
 
 ### Added
