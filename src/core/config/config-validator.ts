@@ -82,6 +82,7 @@ function validateServerConfig(config: any, path: string) {
     maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 1 }),
     timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 1000 }),
     bodySizeLimit: validateString(config.bodySizeLimit, `${path}.bodySizeLimit`),
+    maxUploadSize: validateString(config.maxUploadSize, `${path}.maxUploadSize`),
     requestTracking: {
       enabled: validateBoolean(config.requestTracking?.enabled, `${path}.requestTracking.enabled`),
     },

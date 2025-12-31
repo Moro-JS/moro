@@ -30,6 +30,8 @@ export interface Http2ServerOptions {
   ca?: string | Buffer;
   allowHTTP1?: boolean;
   maxSessionMemory?: number;
+  maxBodySize?: number; // Maximum body size for JSON/form data
+  maxUploadSize?: number; // Maximum size for file uploads
   settings?: {
     headerTableSize?: number;
     enablePush?: boolean;
@@ -53,6 +55,10 @@ export class MoroHttp2Server {
   private hookManager: any;
   private requestCounter = 0;
   private isSecure: boolean;
+
+  // Body size limits - defaults overridden by config in constructor
+  private maxBodySize: number = 10 * 1024 * 1024; // Default 10MB (overridden by server.bodySizeLimit config)
+  private maxUploadSize: number = 100 * 1024 * 1024; // Default 100MB for file uploads
 
   // Use shared object pool manager
   private poolManager = ObjectPoolManager.getInstance();
@@ -85,6 +91,14 @@ export class MoroHttp2Server {
 
   constructor(options: Http2ServerOptions = {}) {
     this.isSecure = !!(options.key && options.cert);
+
+    // Configure body size limits from options
+    if (options.maxBodySize) {
+      this.maxBodySize = options.maxBodySize;
+    }
+    if (options.maxUploadSize) {
+      this.maxUploadSize = options.maxUploadSize;
+    }
 
     const serverOptions: any = {
       allowHTTP1: options.allowHTTP1 !== false,
@@ -904,7 +918,12 @@ export class MoroHttp2Server {
     const contentType = (headers['content-type'] as string) || '';
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const contentLength = parseInt((headers['content-length'] as string) || '0');
-    const maxSize = 10 * 1024 * 1024; // 10MB limit
+
+    // Use different limits based on content type
+    const isMultipart = contentType.includes('multipart/form-data');
+    const maxSize = isMultipart
+      ? this.maxUploadSize // Configurable file upload limit (default 100MB)
+      : this.maxBodySize; // Configurable body size limit (default 10MB, from server.bodySizeLimit config)
 
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
@@ -913,7 +932,10 @@ export class MoroHttp2Server {
       stream.on('data', (chunk: Buffer) => {
         totalLength += chunk.length;
         if (totalLength > maxSize) {
-          reject(new Error('Request body too large'));
+          const errorMessage = isMultipart
+            ? `File upload too large. Maximum ${Math.floor(maxSize / (1024 * 1024))}MB allowed.`
+            : 'Request body too large';
+          reject(new Error(errorMessage));
           return;
         }
         chunks.push(chunk);
@@ -927,6 +949,8 @@ export class MoroHttp2Server {
             resolve(JSON.parse(body.toString()));
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
             resolve(this.parseUrlEncoded(body.toString()));
+          } else if (contentType.includes('multipart/form-data')) {
+            resolve(this.parseMultipart(body, contentType));
           } else {
             resolve(body.toString());
           }
@@ -946,6 +970,99 @@ export class MoroHttp2Server {
       result[key] = value;
     }
     return result;
+  }
+
+  /**
+   * Parse multipart/form-data without corrupting binary data
+   * Works directly with Buffers to preserve binary integrity
+   */
+  private parseMultipart(
+    buffer: Buffer,
+    contentType: string
+  ): { fields: Record<string, string>; files: Record<string, any> } {
+    const boundary = contentType.split('boundary=')[1];
+    if (!boundary) {
+      throw new Error('Invalid multipart boundary');
+    }
+
+    // Work with Buffer directly - don't convert to string (corrupts binary data)
+    const boundaryBuffer = Buffer.from(`--${boundary}`);
+    const parts = this.splitBuffer(buffer, boundaryBuffer);
+    const fields: Record<string, string> = {};
+    const files: Record<string, any> = {};
+
+    // Skip first (empty) and last (closing boundary) parts
+    const partsLen = parts.length - 1;
+    for (let i = 1; i < partsLen; i++) {
+      const part = parts[i];
+
+      // Find the double CRLF that separates headers from content
+      const headerEndPos = this.findBufferSequence(part, Buffer.from('\r\n\r\n'));
+      if (headerEndPos === -1) continue;
+
+      // Headers are always text - safe to convert to string
+      const headers = part.slice(0, headerEndPos).toString('utf8');
+      // Content stays as Buffer to preserve binary data
+      const content = part.slice(headerEndPos + 4); // Skip the \r\n\r\n
+
+      const nameMatch = headers.match(/name="([^"]+)"/);
+      const filenameMatch = headers.match(/filename="([^"]+)"/);
+      const contentTypeMatch = headers.match(/Content-Type: ([^\r\n]+)/);
+
+      if (nameMatch) {
+        const name = nameMatch[1];
+
+        if (filenameMatch) {
+          // This is a file - keep as Buffer to preserve binary data
+          const filename = filenameMatch[1];
+          const mimeType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
+
+          // Remove trailing \r\n (2 bytes) from the end
+          const fileData = content.slice(0, content.length - 2);
+
+          files[name] = {
+            filename,
+            mimetype: mimeType,
+            data: fileData, // Already a Buffer - preserves binary integrity
+            size: fileData.length,
+          };
+        } else {
+          // This is a regular field - convert to string
+          const fieldContent = content.slice(0, content.length - 2); // Remove trailing \r\n
+          fields[name] = fieldContent.toString('utf8');
+        }
+      }
+    }
+
+    return { fields, files };
+  }
+
+  /**
+   * Split a Buffer by a delimiter Buffer
+   * Used for multipart boundary splitting without corrupting binary data
+   */
+  private splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
+    const parts: Buffer[] = [];
+    let start = 0;
+    let pos = 0;
+
+    while ((pos = buffer.indexOf(delimiter, start)) !== -1) {
+      parts.push(buffer.slice(start, pos));
+      start = pos + delimiter.length;
+    }
+
+    // Add the remaining part
+    parts.push(buffer.slice(start));
+
+    return parts;
+  }
+
+  /**
+   * Find the position of a sequence within a Buffer
+   * Returns -1 if not found
+   */
+  private findBufferSequence(buffer: Buffer, sequence: Buffer): number {
+    return buffer.indexOf(sequence);
   }
 
   private parseQueryString(queryString: string): Record<string, string> {

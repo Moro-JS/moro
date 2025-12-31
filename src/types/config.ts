@@ -6,6 +6,7 @@ export interface ServerConfig {
   maxConnections: number;
   timeout: number;
   bodySizeLimit: string;
+  maxUploadSize: string; // Maximum size for file uploads (multipart/form-data)
   requestTracking: {
     enabled: boolean;
   };

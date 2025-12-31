@@ -100,7 +100,10 @@ export class Moro extends EventEmitter {
           'ServerInit'
         );
         this.usingUWebSockets = false;
-        this.httpServer = new MoroHttpServer();
+        this.httpServer = new MoroHttpServer({
+          maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
+          maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+        });
         this.server = (this.httpServer as MoroHttpServer).getServer();
       }
     } else if (options.http2) {
@@ -121,13 +124,20 @@ export class Moro extends EventEmitter {
         }
       }
 
-      this.httpServer = new MoroHttp2Server(http2Options);
+      this.httpServer = new MoroHttp2Server({
+        ...http2Options,
+        maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
+        maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+      });
       this.server = (this.httpServer as MoroHttp2Server).getServer();
       this.usingHttp2 = true;
       this.logger.info('HTTP/2 server created with native adapter', 'ServerInit');
     } else {
       // Use standard HTTP/1.1
-      this.httpServer = new MoroHttpServer();
+      this.httpServer = new MoroHttpServer({
+        maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
+        maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+      });
       this.server = (this.httpServer as MoroHttpServer).getServer();
     }
 
@@ -993,6 +1003,30 @@ export class Moro extends EventEmitter {
 
     limit.count++;
     return true;
+  }
+
+  /**
+   * Parse size string (e.g., "10mb", "5gb") to bytes
+   */
+  private parseSizeToBytes(size: string | number): number {
+    if (typeof size === 'number') {
+      return size;
+    }
+
+    const units: { [key: string]: number } = {
+      b: 1,
+      kb: 1024,
+      mb: 1024 * 1024,
+      gb: 1024 * 1024 * 1024,
+    };
+
+    const match = size.toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
+    if (!match) return 10 * 1024 * 1024; // Default 10MB
+
+    const value = parseFloat(match[1]);
+    const unit = match[2] || 'b';
+
+    return Math.round(value * units[unit]);
   }
 
   private getCircuitBreaker(key: string): CircuitBreaker {

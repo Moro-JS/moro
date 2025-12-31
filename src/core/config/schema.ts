@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxConnections: 1000,
     timeout: 30000,
     bodySizeLimit: '10mb',
+    maxUploadSize: '100mb', // Separate limit for file uploads (multipart/form-data)
     useUWebSockets: false, // Opt-in for high performance
     requestTracking: {
       enabled: true, // Enable by default for debugging

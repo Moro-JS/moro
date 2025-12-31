@@ -27,6 +27,10 @@ export class MoroHttpServer {
   private hookManager: any;
   private requestCounter = 0;
 
+  // Body size limits - defaults overridden by config in constructor
+  private maxBodySize: number = 10 * 1024 * 1024; // Default 10MB (overridden by server.bodySizeLimit config)
+  private maxUploadSize: number = 100 * 1024 * 1024; // Default 100MB for file uploads (future: configurable)
+
   // Use shared object pool manager
   private poolManager = ObjectPoolManager.getInstance();
 
@@ -49,8 +53,16 @@ export class MoroHttpServer {
     rateLimited: Buffer.from('{"success":false,"error":"Rate limit exceeded"}'),
   };
 
-  constructor() {
+  constructor(options?: { maxBodySize?: number; maxUploadSize?: number }) {
     this.server = createServer(this.handleRequest.bind(this));
+
+    // Configure body size limits from options
+    if (options?.maxBodySize) {
+      this.maxBodySize = options.maxBodySize;
+    }
+    if (options?.maxUploadSize) {
+      this.maxUploadSize = options.maxUploadSize;
+    }
 
     // Optimize server for high performance (conservative settings for compatibility)
     this.server.keepAliveTimeout = 5000; // 5 seconds
@@ -980,11 +992,17 @@ export class MoroHttpServer {
   private async parseBody(req: IncomingMessage): Promise<any> {
     const contentType = req.headers['content-type'] || '';
     const contentLength = parseInt(req.headers['content-length'] || '0');
-    const maxSize = 10 * 1024 * 1024; // 10MB limit
+
+    // Use different limits based on content type
+    // Multipart (file uploads) need much larger limits than JSON/form data
+    const isMultipart = contentType.includes('multipart/form-data');
+    const maxSize = isMultipart
+      ? this.maxUploadSize // Configurable file upload limit (default 100MB)
+      : this.maxBodySize; // Configurable body size limit (default 10MB, from server.bodySizeLimit config)
 
     // For very large payloads, return a streaming interface instead of buffering
     if (contentLength > maxSize / 2) {
-      // Stream for payloads > 5MB
+      // Stream for payloads > 50MB (uploads) or > 5MB (JSON/form)
       return this.createStreamingBodyParser(req, contentType, maxSize);
     }
 
@@ -996,7 +1014,10 @@ export class MoroHttpServer {
       req.on('data', (chunk: Buffer) => {
         totalLength += chunk.length;
         if (totalLength > maxSize) {
-          reject(new Error('Request body too large'));
+          const errorMessage = isMultipart
+            ? `File upload too large. Maximum ${Math.floor(maxSize / (1024 * 1024))}MB allowed.`
+            : 'Request body too large';
+          reject(new Error(errorMessage));
           return;
         }
         chunks.push(chunk);
