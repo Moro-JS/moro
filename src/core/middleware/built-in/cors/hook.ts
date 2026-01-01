@@ -49,11 +49,13 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
           path: request.path,
         });
         response.status(403).end();
-        // Only set headersSent if it's writable (for custom response wrappers and mocks)
-        // Node.js native ServerResponse has a read-only headersSent getter
-        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
-        if (!descriptor || descriptor.writable || descriptor.set) {
+        // Try to set headersSent for custom response wrappers (UWS, HTTP/2) and mocks
+        // Node.js native ServerResponse has a read-only headersSent getter, so this will fail silently
+        try {
           response.headersSent = true;
+        } catch {
+          // Ignore TypeError - native Node.js responses manage headersSent automatically
+          // This error occurs when trying to set a read-only property
         }
         return;
       }
@@ -62,11 +64,13 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
       if (request.method === 'OPTIONS' && !config.preflightContinue) {
         logger.debug('Handling OPTIONS preflight request', 'Preflight', { path: request.path });
         response.status(204).end();
-        // Only set headersSent if it's writable (for custom response wrappers and mocks)
-        // Node.js native ServerResponse has a read-only headersSent getter
-        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
-        if (!descriptor || descriptor.writable || descriptor.set) {
+        // Try to set headersSent for custom response wrappers (UWS, HTTP/2) and mocks
+        // Node.js native ServerResponse has a read-only headersSent getter, so this will fail silently
+        try {
           response.headersSent = true;
+        } catch {
+          // Ignore TypeError - native Node.js responses manage headersSent automatically
+          // This error occurs when trying to set a read-only property
         }
       }
     });
