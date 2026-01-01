@@ -34,6 +34,14 @@ export class BodySizeCore {
   }
 
   checkBodySize(req: HttpRequest, res: HttpResponse): boolean {
+    const contentType = req.headers['content-type'] || '';
+
+    // Skip body size check for multipart/form-data (file uploads)
+    // Those are handled by maxUploadSize in the HTTP server's parseBody method
+    if (contentType.includes('multipart/form-data')) {
+      return true; // Allow, will be checked by parseBody with maxUploadSize limit
+    }
+
     const contentLength = parseInt(req.headers['content-length'] || '0');
 
     if (contentLength > this.limitBytes) {
