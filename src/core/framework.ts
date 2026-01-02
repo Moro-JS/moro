@@ -892,31 +892,30 @@ export class Moro extends EventEmitter {
   private mountRouter(basePath: string, router: Router): void {
     this.logger.debug(`Mounting router for basePath: ${basePath}`, 'Router');
 
-    // Enterprise-grade middleware integration with performance optimization
-    // IMPORTANT: Module middleware runs AFTER user middleware (like auth) to ensure proper order
-    this.httpServer.use(async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-      if (req.path.startsWith(basePath)) {
-        this.logger.debug(`Module middleware handling: ${req.method} ${req.path}`, 'Middleware', {
-          basePath,
-        });
+    // Register module routes directly with http-server
+    // This ensures they appear in the route table and can be found by findRoute()
+    const routes = router.getRoutes();
+    for (const route of routes) {
+      const fullPath = basePath + route.path;
+      const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete' | 'patch';
 
-        // Mark this request as being handled by a module
-        (req as any).__moduleBasePath = basePath;
-        (req as any).__moduleRouter = router;
+      this.logger.debug(`Registering module route: ${route.method} ${fullPath}`, 'Router');
 
-        // Continue to next middleware (including auth) first
-        next();
-      } else {
-        next();
+      // Register route directly with http-server using its routing methods
+      // Cast to any to handle different server types (MoroHttpServer, UWebSocketsHttpServer, MoroHttp2Server)
+      const server = this.httpServer as any;
+      if (server[method] && typeof server[method] === 'function') {
+        server[method](fullPath, route.handler);
       }
-    });
+    }
 
-    this.logger.info(`Router mounted for ${basePath}`, 'Router');
+    this.logger.info(`Router mounted for ${basePath} with ${routes.length} routes`, 'Router');
   }
 
   private finalModuleHandlerSetup = false;
 
-  // Setup final module handler that runs after all user middleware
+  // Setup final module handler - NO LONGER NEEDED
+  // Module routes are now registered directly with http-server via mountRouter()
   setupFinalModuleHandler(): void {
     // Prevent duplicate setup
     if (this.finalModuleHandlerSetup) {
@@ -926,38 +925,11 @@ export class Moro extends EventEmitter {
     this.finalModuleHandlerSetup = true;
 
     this.logger.info(
-      'Setting up final module handler to run after user middleware',
+      'Module routes registered directly with http-server (no deferred handling needed)',
       'ModuleSystem'
     );
 
-    this.httpServer.use(async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-      // Check if this request was marked for module handling
-      const moduleBasePath = (req as any).__moduleBasePath;
-      const moduleRouter = (req as any).__moduleRouter;
-
-      if (moduleBasePath && moduleRouter && !res.headersSent) {
-        this.logger.debug(`Final module handler processing: ${req.method} ${req.path}`, 'Router');
-
-        try {
-          const handled = await moduleRouter.handle(req, res, moduleBasePath);
-          this.logger.debug(`Route handled by module: ${handled}`, 'Router');
-
-          if (!handled) {
-            next(); // Let other middleware handle it
-          }
-          // If handled, the router already sent the response, so don't call next()
-        } catch (error) {
-          this.logger.error('Module router error', 'Router', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          if (!res.headersSent) {
-            res.status(500).json({ success: false, error: 'Internal server error' });
-          }
-        }
-      } else {
-        next();
-      }
-    });
+    // No middleware needed - routes are in the http-server route table
   }
 
   private async setupWebSocketHandlers(config: ModuleConfig): Promise<void> {

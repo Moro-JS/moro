@@ -286,9 +286,9 @@ describe('Module Middleware - Integration Tests', () => {
     await fetch(`http://localhost:${port}/api/v1.0.0/test-module/route3`, { method: 'POST' });
 
     expect(middleware1Calls.length).toBe(3);
-    expect(middleware1Calls).toContain('/route1');
-    expect(middleware1Calls).toContain('/route2');
-    expect(middleware1Calls).toContain('/route3');
+    expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route1');
+    expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route2');
+    expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route3');
   });
 
   it('should handle async middleware functions', async () => {
