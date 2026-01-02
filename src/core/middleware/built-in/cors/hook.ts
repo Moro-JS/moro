@@ -49,13 +49,16 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
           path: request.path,
         });
         response.status(403).end();
-        // Try to set headersSent for custom response wrappers (UWS, HTTP/2) and mocks
-        // Node.js native ServerResponse has a read-only headersSent getter, so this will fail silently
-        try {
-          response.headersSent = true;
-        } catch {
-          // Ignore TypeError - native Node.js responses manage headersSent automatically
-          // This error occurs when trying to set a read-only property
+        // Set headersSent for custom response wrappers (UWS, HTTP/2) and mocks that support it
+        // Node.js native ServerResponse has a read-only headersSent getter
+        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
+        if (!descriptor || descriptor.writable || descriptor.set) {
+          // Property is writable (data property) or has a setter (accessor property)
+          try {
+            response.headersSent = true;
+          } catch {
+            // Silently ignore - native responses manage this automatically
+          }
         }
         return;
       }
@@ -64,13 +67,16 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
       if (request.method === 'OPTIONS' && !config.preflightContinue) {
         logger.debug('Handling OPTIONS preflight request', 'Preflight', { path: request.path });
         response.status(204).end();
-        // Try to set headersSent for custom response wrappers (UWS, HTTP/2) and mocks
-        // Node.js native ServerResponse has a read-only headersSent getter, so this will fail silently
-        try {
-          response.headersSent = true;
-        } catch {
-          // Ignore TypeError - native Node.js responses manage headersSent automatically
-          // This error occurs when trying to set a read-only property
+        // Set headersSent for custom response wrappers (UWS, HTTP/2) and mocks that support it
+        // Node.js native ServerResponse has a read-only headersSent getter
+        const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
+        if (!descriptor || descriptor.writable || descriptor.set) {
+          // Property is writable (data property) or has a setter (accessor property)
+          try {
+            response.headersSent = true;
+          } catch {
+            // Silently ignore - native responses manage this automatically
+          }
         }
       }
     });

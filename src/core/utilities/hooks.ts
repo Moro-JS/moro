@@ -66,8 +66,27 @@ export class HookManager extends EventEmitter {
           try {
             beforeHooks[i](context);
           } catch (error) {
+            // Check if this is a known/expected error that should not halt execution
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isHeadersError =
+              errorMessage.includes('headersSent') && errorMessage.includes('getter');
+
+            if (isHeadersError) {
+              // This is an expected error when trying to set read-only headersSent property
+              // Log as debug instead of error, and don't re-throw
+              this.logger.debug(
+                'Hook attempted to set read-only headersSent property',
+                'HookExecution',
+                {
+                  error: errorMessage,
+                  context: context.request?.method || 'unknown',
+                }
+              );
+              continue;
+            }
+
             this.logger.error('Hook execution error', 'HookExecution', {
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage,
             });
             throw error;
           }
@@ -79,8 +98,27 @@ export class HookManager extends EventEmitter {
           try {
             hooks[i](context);
           } catch (error) {
+            // Check if this is a known/expected error that should not halt execution
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isHeadersError =
+              errorMessage.includes('headersSent') && errorMessage.includes('getter');
+
+            if (isHeadersError) {
+              // This is an expected error when trying to set read-only headersSent property
+              // Log as debug instead of error, and don't re-throw
+              this.logger.debug(
+                'Hook attempted to set read-only headersSent property',
+                'HookExecution',
+                {
+                  error: errorMessage,
+                  context: context.request?.method || 'unknown',
+                }
+              );
+              continue;
+            }
+
             this.logger.error('Hook execution error', 'HookExecution', {
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage,
             });
             throw error;
           }
@@ -92,8 +130,27 @@ export class HookManager extends EventEmitter {
           try {
             afterHooks[i](context);
           } catch (error) {
+            // Check if this is a known/expected error that should not halt execution
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isHeadersError =
+              errorMessage.includes('headersSent') && errorMessage.includes('getter');
+
+            if (isHeadersError) {
+              // This is an expected error when trying to set read-only headersSent property
+              // Log as debug instead of error, and don't re-throw
+              this.logger.debug(
+                'Hook attempted to set read-only headersSent property',
+                'HookExecution',
+                {
+                  error: errorMessage,
+                  context: context.request?.method || 'unknown',
+                }
+              );
+              continue;
+            }
+
             this.logger.error('Hook execution error', 'HookExecution', {
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage,
             });
             throw error;
           }
@@ -201,8 +258,24 @@ export class HookManager extends EventEmitter {
     try {
       await hook(context);
     } catch (error) {
+      // Check if this is a known/expected error that should not halt execution
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isHeadersError =
+        errorMessage.includes('headersSent') && errorMessage.includes('getter');
+
+      if (isHeadersError) {
+        // This is an expected error when trying to set read-only headersSent property
+        // Log as debug instead of error, and don't re-throw
+        this.logger.debug('Hook attempted to set read-only headersSent property', 'HookExecution', {
+          error: errorMessage,
+          context: context.request?.method || 'unknown',
+        });
+        return;
+      }
+
+      // For other errors, log and re-throw as before
       this.logger.error('Hook execution error', 'HookExecution', {
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
         context: context.request?.method || 'unknown',
       });
       throw error;
