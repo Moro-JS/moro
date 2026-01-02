@@ -259,7 +259,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     expect(notFoundData.error).toBe('Not found');
   });
 
-  it('should handle multiple modules with overlapping base paths', async () => {
+  it('should handle multiple modules with different base paths', async () => {
     const module1Actions = {
       test: async () => ({ success: true, module: '1' }),
     };
@@ -287,13 +287,20 @@ describe('Module Routes - Direct Registration Fix', () => {
       app.listen(port, () => resolve());
     });
 
+    // Add delay for coverage test timing
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     // Test both modules
     const response1 = await fetch(`http://localhost:${port}/api/v1.0.0/module1/test`);
+    expect(response1.status).toBe(200);
     const data1 = await response1.json();
+    expect(data1.success).toBe(true);
     expect(data1.module).toBe('1');
 
     const response2 = await fetch(`http://localhost:${port}/api/v1.0.0/module2/test`);
+    expect(response2.status).toBe(200);
     const data2 = await response2.json();
+    expect(data2.success).toBe(true);
     expect(data2.module).toBe('2');
   });
 });

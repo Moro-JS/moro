@@ -292,6 +292,15 @@ function main() {
     log('✅ All tests passed', 'green');
   }
 
+  // Step 3.5: Run coverage tests
+  if (skipTests) {
+    log('\n📊 Step 3.5: Skipping coverage tests (--skip-tests)', 'yellow');
+  } else {
+    log('\n📊 Step 3.5: Running coverage tests', 'blue');
+    exec('npm run test:coverage');
+    log('✅ Coverage tests passed', 'green');
+  }
+
   // Step 4: Run package validation tests
   if (skipTests) {
     log('\n📦 Step 4: Skipping package validation (--skip-tests)', 'yellow');
