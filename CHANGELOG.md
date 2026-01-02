@@ -1,3 +1,14 @@
+## [1.7.12] - 2026-01-02
+
+### Fixed
+
+- fix: register module routes directly in http-server route table
+- fix: bodySize middleware now skips multipart/form-data to allow large file uploads
+
+### Other
+
+- Patch headersSent warning on certain cors edge cases
+
 ## [1.7.11] - 2025-12-31
 
 ### Added
