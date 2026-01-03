@@ -1,3 +1,9 @@
+## [1.7.13] - 2026-01-03
+
+### Added
+
+- feat: enhance CORS and middleware config exposure
+
 ## [1.7.12] - 2026-01-02
 
 ### Fixed
