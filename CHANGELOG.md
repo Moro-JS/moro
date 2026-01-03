@@ -1,3 +1,9 @@
+## [1.7.14] - 2026-01-03
+
+### Fixed
+
+- fix: production CORS hang and auto-discovery paths
+
 ## [1.7.13] - 2026-01-03
 
 ### Added
