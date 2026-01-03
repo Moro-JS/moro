@@ -11,7 +11,7 @@ export type OriginFunction = (
 export interface CORSOptions {
   origin?: string | string[] | boolean | OriginFunction;
   methods?: string | string[];
-  headers?: string | string[];
+  allowedHeaders?: string | string[];
   credentials?: boolean;
   maxAge?: number;
   exposedHeaders?: string[];
@@ -32,7 +32,7 @@ export class CORSCore {
     this.options = {
       origin: '*',
       methods: 'GET,POST,PUT,DELETE,OPTIONS',
-      headers: 'Content-Type,Authorization',
+      allowedHeaders: 'Content-Type,Authorization',
       credentials: false,
       ...options,
     };
@@ -63,10 +63,27 @@ export class CORSCore {
       resolvedOrigin = '*';
     }
 
-    // Set origin header
-    const originHeader = Array.isArray(resolvedOrigin)
-      ? resolvedOrigin.join(',')
-      : String(resolvedOrigin);
+    // Handle array origins with credentials: match against request origin
+    // CORS spec requires single origin (not comma-separated) when credentials are enabled
+    let originHeader: string;
+    if (Array.isArray(resolvedOrigin)) {
+      if (this.options.credentials) {
+        // When credentials are enabled, match the request origin against the allowed list
+        const requestOrigin = (req.headers as any).origin || (req.headers as any).Origin;
+        if (requestOrigin && resolvedOrigin.includes(requestOrigin)) {
+          originHeader = requestOrigin;
+        } else {
+          // Request origin not in allowed list - deny
+          return false;
+        }
+      } else {
+        // Without credentials, comma-separated is technically allowed (though not ideal)
+        originHeader = resolvedOrigin.join(',');
+      }
+    } else {
+      originHeader = String(resolvedOrigin);
+    }
+
     res.setHeader('Access-Control-Allow-Origin', originHeader);
 
     // Methods
@@ -76,10 +93,10 @@ export class CORSCore {
     res.setHeader('Access-Control-Allow-Methods', methods);
 
     // Headers
-    const headers = Array.isArray(this.options.headers)
-      ? this.options.headers.join(',')
-      : this.options.headers || 'Content-Type,Authorization';
-    res.setHeader('Access-Control-Allow-Headers', headers);
+    const allowedHeaders = Array.isArray(this.options.allowedHeaders)
+      ? this.options.allowedHeaders.join(',')
+      : this.options.allowedHeaders || 'Content-Type,Authorization';
+    res.setHeader('Access-Control-Allow-Headers', allowedHeaders);
 
     // Credentials
     if (this.options.credentials) {

@@ -374,12 +374,19 @@ function validateModuleDefaultsConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const validated: any = {
     cache: validateCacheConfig(config.cache, `${path}.cache`),
     rateLimit: validateRateLimitConfig(config.rateLimit, `${path}.rateLimit`),
     validation: validateValidationConfig(config.validation, `${path}.validation`),
     autoDiscovery: validateAutoDiscoveryConfig(config.autoDiscovery, `${path}.autoDiscovery`),
   };
+
+  // Optional session config
+  if (config.session !== undefined) {
+    validated.session = validateSessionConfig(config.session, `${path}.session`);
+  }
+
+  return validated;
 }
 
 /**
@@ -481,6 +488,59 @@ function validateValidationConfig(config: any, path: string) {
     stripUnknown: validateBoolean(config.stripUnknown, `${path}.stripUnknown`),
     abortEarly: validateBoolean(config.abortEarly, `${path}.abortEarly`),
   };
+}
+
+/**
+ * Validate session configuration
+ */
+function validateSessionConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Session configuration must be an object'
+    );
+  }
+
+  const validated: any = {
+    enabled: validateBoolean(config.enabled, `${path}.enabled`),
+    store: validateEnum(config.store, ['memory', 'redis', 'file'], `${path}.store`),
+  };
+
+  // Optional fields
+  if (config.storeOptions !== undefined) {
+    validated.storeOptions = config.storeOptions; // Complex object, allow through
+  }
+  if (config.secret !== undefined) {
+    validated.secret = validateString(config.secret, `${path}.secret`);
+  }
+  if (config.name !== undefined) {
+    validated.name = validateString(config.name, `${path}.name`);
+  }
+  if (config.rolling !== undefined) {
+    validated.rolling = validateBoolean(config.rolling, `${path}.rolling`);
+  }
+  if (config.resave !== undefined) {
+    validated.resave = validateBoolean(config.resave, `${path}.resave`);
+  }
+  if (config.saveUninitialized !== undefined) {
+    validated.saveUninitialized = validateBoolean(
+      config.saveUninitialized,
+      `${path}.saveUninitialized`
+    );
+  }
+  if (config.cookie !== undefined) {
+    validated.cookie = config.cookie; // Complex object, allow through
+  }
+  if (config.proxy !== undefined) {
+    validated.proxy = validateBoolean(config.proxy, `${path}.proxy`);
+  }
+  if (config.unset !== undefined) {
+    validated.unset = validateEnum(config.unset, ['destroy', 'keep'], `${path}.unset`);
+  }
+
+  return validated;
 }
 
 /**
@@ -586,11 +646,23 @@ function validateSecurityConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const validated: any = {
     cors: validateCorsConfig(config.cors, `${path}.cors`),
     helmet: validateHelmetConfig(config.helmet, `${path}.helmet`),
     rateLimit: validateSecurityRateLimitConfig(config.rateLimit, `${path}.rateLimit`),
   };
+
+  // Optional CSRF config
+  if (config.csrf !== undefined) {
+    validated.csrf = validateCsrfConfig(config.csrf, `${path}.csrf`);
+  }
+
+  // Optional CSP config
+  if (config.csp !== undefined) {
+    validated.csp = validateCspConfig(config.csp, `${path}.csp`);
+  }
+
+  return validated;
 }
 
 /**
@@ -601,13 +673,29 @@ function validateCorsConfig(config: any, path: string) {
     throw new ConfigValidationError(path, config, 'object', 'CORS configuration must be an object');
   }
 
-  return {
+  const validated: any = {
     enabled: validateBoolean(config.enabled, `${path}.enabled`),
     origin: validateCorsOrigin(config.origin, `${path}.origin`),
     methods: validateStringArray(config.methods, `${path}.methods`),
     allowedHeaders: validateStringArray(config.allowedHeaders, `${path}.allowedHeaders`),
     credentials: validateBoolean(config.credentials, `${path}.credentials`),
   };
+
+  // Optional fields
+  if (config.exposedHeaders !== undefined) {
+    validated.exposedHeaders = validateStringArray(config.exposedHeaders, `${path}.exposedHeaders`);
+  }
+  if (config.maxAge !== undefined) {
+    validated.maxAge = validateNumber(config.maxAge, `${path}.maxAge`);
+  }
+  if (config.preflightContinue !== undefined) {
+    validated.preflightContinue = validateBoolean(
+      config.preflightContinue,
+      `${path}.preflightContinue`
+    );
+  }
+
+  return validated;
 }
 
 /**
@@ -641,16 +729,123 @@ function validateHelmetConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const validated: any = {
     enabled: validateBoolean(config.enabled, `${path}.enabled`),
-    contentSecurityPolicy: validateBoolean(
-      config.contentSecurityPolicy,
-      `${path}.contentSecurityPolicy`
-    ),
-    hsts: validateBoolean(config.hsts, `${path}.hsts`),
-    noSniff: validateBoolean(config.noSniff, `${path}.noSniff`),
-    frameguard: validateBoolean(config.frameguard, `${path}.frameguard`),
   };
+
+  // Simplified options (backward compatible)
+  if (config.contentSecurityPolicy !== undefined) {
+    if (typeof config.contentSecurityPolicy === 'boolean') {
+      validated.contentSecurityPolicy = config.contentSecurityPolicy;
+    } else if (typeof config.contentSecurityPolicy === 'object') {
+      validated.contentSecurityPolicy = config.contentSecurityPolicy;
+    }
+  }
+  if (config.hsts !== undefined) {
+    validated.hsts = validateBoolean(config.hsts, `${path}.hsts`);
+  }
+  if (config.noSniff !== undefined) {
+    validated.noSniff = validateBoolean(config.noSniff, `${path}.noSniff`);
+  }
+  if (config.frameguard !== undefined) {
+    validated.frameguard = validateBoolean(config.frameguard, `${path}.frameguard`);
+  }
+
+  // Detailed options (for advanced configuration)
+  if (config.xFrameOptions !== undefined) {
+    validated.xFrameOptions = config.xFrameOptions;
+  }
+  if (config.xContentTypeOptions !== undefined) {
+    validated.xContentTypeOptions = validateBoolean(
+      config.xContentTypeOptions,
+      `${path}.xContentTypeOptions`
+    );
+  }
+  if (config.xXssProtection !== undefined) {
+    validated.xXssProtection = validateBoolean(config.xXssProtection, `${path}.xXssProtection`);
+  }
+  if (config.referrerPolicy !== undefined) {
+    validated.referrerPolicy = config.referrerPolicy;
+  }
+  if (config.strictTransportSecurity !== undefined) {
+    validated.strictTransportSecurity = config.strictTransportSecurity;
+  }
+  if (config.xDownloadOptions !== undefined) {
+    validated.xDownloadOptions = validateBoolean(
+      config.xDownloadOptions,
+      `${path}.xDownloadOptions`
+    );
+  }
+  if (config.xPermittedCrossDomainPolicies !== undefined) {
+    validated.xPermittedCrossDomainPolicies = validateBoolean(
+      config.xPermittedCrossDomainPolicies,
+      `${path}.xPermittedCrossDomainPolicies`
+    );
+  }
+
+  return validated;
+}
+
+/**
+ * Validate CSRF configuration
+ */
+function validateCsrfConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(path, config, 'object', 'CSRF configuration must be an object');
+  }
+
+  const validated: any = {
+    enabled: validateBoolean(config.enabled, `${path}.enabled`),
+  };
+
+  if (config.secret !== undefined) {
+    validated.secret = validateString(config.secret, `${path}.secret`);
+  }
+  if (config.tokenLength !== undefined) {
+    validated.tokenLength = validateNumber(config.tokenLength, `${path}.tokenLength`);
+  }
+  if (config.cookieName !== undefined) {
+    validated.cookieName = validateString(config.cookieName, `${path}.cookieName`);
+  }
+  if (config.headerName !== undefined) {
+    validated.headerName = validateString(config.headerName, `${path}.headerName`);
+  }
+  if (config.ignoreMethods !== undefined) {
+    validated.ignoreMethods = validateStringArray(config.ignoreMethods, `${path}.ignoreMethods`);
+  }
+  if (config.sameSite !== undefined) {
+    validated.sameSite = validateBoolean(config.sameSite, `${path}.sameSite`);
+  }
+
+  return validated;
+}
+
+/**
+ * Validate CSP configuration
+ */
+function validateCspConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(path, config, 'object', 'CSP configuration must be an object');
+  }
+
+  const validated: any = {
+    enabled: validateBoolean(config.enabled, `${path}.enabled`),
+  };
+
+  if (config.directives !== undefined) {
+    validated.directives = config.directives; // Complex object, allow through
+  }
+  if (config.reportOnly !== undefined) {
+    validated.reportOnly = validateBoolean(config.reportOnly, `${path}.reportOnly`);
+  }
+  if (config.reportUri !== undefined) {
+    validated.reportUri = validateString(config.reportUri, `${path}.reportUri`);
+  }
+  if (config.nonce !== undefined) {
+    validated.nonce = validateBoolean(config.nonce, `${path}.nonce`);
+  }
+
+  return validated;
 }
 
 /**

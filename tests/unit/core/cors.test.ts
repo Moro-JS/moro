@@ -115,7 +115,7 @@ describe('CORS Middleware', () => {
       const corsMiddleware = cors({
         origin: '*',
         methods: ['GET', 'POST', 'PUT'],
-        headers: ['Content-Type', 'X-Custom-Header'],
+        allowedHeaders: ['Content-Type', 'X-Custom-Header'],
       });
 
       await corsMiddleware.install(mockHooks, {});
@@ -368,10 +368,10 @@ describe('CORS Middleware', () => {
       );
     });
 
-    it('should handle array of headers', async () => {
+    it('should handle array of allowedHeaders', async () => {
       const middleware = createCORSMiddleware({
         origin: '*',
-        headers: ['Content-Type', 'Authorization', 'X-API-Key'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
       });
 
       await middleware(mockRequest, mockResponse, mockNext);
@@ -409,6 +409,239 @@ describe('CORS Middleware', () => {
       );
 
       expect(credentialsCalls.length).toBe(0);
+    });
+
+    it('should handle multiple origins with credentials by matching request origin', async () => {
+      const mockRequest1 = {
+        method: 'GET',
+        path: '/api',
+        headers: { origin: 'https://app.example.com' },
+      };
+      const mockResponse1 = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext1 = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: ['https://example.com', 'https://app.example.com', 'https://admin.example.com'],
+        credentials: true,
+      });
+
+      await middleware(mockRequest1, mockResponse1, mockNext1);
+
+      // Should match the request origin from the allowed list
+      expect(mockResponse1.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        'https://app.example.com'
+      );
+      expect(mockResponse1.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Credentials',
+        'true'
+      );
+      expect(mockNext1).toHaveBeenCalled();
+
+      // Test with a different allowed origin
+      const mockRequest2 = {
+        method: 'GET',
+        path: '/api',
+        headers: { origin: 'https://admin.example.com' },
+      };
+      const mockResponse2 = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext2 = jest.fn();
+
+      await middleware(mockRequest2, mockResponse2, mockNext2);
+
+      expect(mockResponse2.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        'https://admin.example.com'
+      );
+      expect(mockNext2).toHaveBeenCalled();
+    });
+
+    it('should deny request when origin not in allowed list with credentials', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: { origin: 'https://malicious.com' },
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: ['https://example.com', 'https://app.example.com'],
+        credentials: true,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      // Should not call next or set origin header - request should be denied
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it('should allow comma-separated origins when credentials is false', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: {},
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: ['https://example.com', 'https://app.example.com'],
+        credentials: false,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      // Without credentials, should join with comma (though not ideal)
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        'https://example.com,https://app.example.com'
+      );
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('should support allowedHeaders config property (alias for headers)', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: {},
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: 'https://example.com',
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+        credentials: true,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Headers',
+        'Content-Type,Authorization,X-CSRF-Token'
+      );
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('should handle exposedHeaders config property', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: {},
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: 'https://example.com',
+        exposedHeaders: ['X-Total-Count', 'X-Page-Number', 'X-Custom-Header'],
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Expose-Headers',
+        'X-Total-Count,X-Page-Number,X-Custom-Header'
+      );
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('should handle maxAge config property', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: {},
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: 'https://example.com',
+        maxAge: 7200,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      expect(mockResponse.setHeader).toHaveBeenCalledWith('Access-Control-Max-Age', '7200');
+      expect(mockNext).toHaveBeenCalled();
+    });
+
+    it('should handle complete CORS config with all options', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: { origin: 'https://app.example.com' },
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: ['https://example.com', 'https://app.example.com'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+        exposedHeaders: ['X-Total-Count', 'X-Page-Number'],
+        credentials: true,
+        maxAge: 86400,
+        preflightContinue: false,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        'https://app.example.com'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Methods',
+        'GET,POST,PUT,DELETE'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Headers',
+        'Content-Type,Authorization,X-CSRF-Token'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Expose-Headers',
+        'X-Total-Count,X-Page-Number'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Credentials',
+        'true'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith('Access-Control-Max-Age', '86400');
+      expect(mockNext).toHaveBeenCalled();
     });
   });
 
@@ -452,7 +685,7 @@ describe('CORS Middleware', () => {
       const middleware = createCORSMiddleware({
         origin: 'https://example.com',
         methods: ['GET', 'POST', 'PUT', 'DELETE'],
-        headers: ['Content-Type', 'Authorization'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
         maxAge: 3600,
       });
 

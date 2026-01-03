@@ -94,6 +94,33 @@ export interface ModuleDefaultsConfig {
     stripUnknown: boolean;
     abortEarly: boolean;
   };
+  session?: {
+    enabled: boolean;
+    store: 'memory' | 'redis' | 'file';
+    storeOptions?: {
+      host?: string;
+      port?: number;
+      password?: string;
+      keyPrefix?: string;
+      path?: string;
+      max?: number;
+    };
+    secret?: string;
+    name?: string;
+    rolling?: boolean;
+    resave?: boolean;
+    saveUninitialized?: boolean;
+    cookie?: {
+      maxAge?: number;
+      httpOnly?: boolean;
+      secure?: boolean;
+      sameSite?: 'strict' | 'lax' | 'none';
+      domain?: string;
+      path?: string;
+    };
+    proxy?: boolean;
+    unset?: 'destroy' | 'keep';
+  };
   autoDiscovery: {
     enabled: boolean;
     paths: string[];
@@ -136,14 +163,57 @@ export interface SecurityConfig {
     origin: string | string[] | boolean;
     methods: string[];
     allowedHeaders: string[];
+    exposedHeaders?: string[];
     credentials: boolean;
+    maxAge?: number;
+    preflightContinue?: boolean;
   };
   helmet: {
     enabled: boolean;
-    contentSecurityPolicy: boolean;
-    hsts: boolean;
-    noSniff: boolean;
-    frameguard: boolean;
+    // Simplified options (backward compatible)
+    contentSecurityPolicy?: boolean;
+    hsts?: boolean;
+    noSniff?: boolean;
+    frameguard?: boolean;
+    // Detailed options (for advanced configuration)
+    xFrameOptions?: 'DENY' | 'SAMEORIGIN';
+    xContentTypeOptions?: boolean;
+    xXssProtection?: boolean;
+    referrerPolicy?: string;
+    strictTransportSecurity?: { maxAge?: number; includeSubDomains?: boolean };
+    xDownloadOptions?: boolean;
+    xPermittedCrossDomainPolicies?: boolean;
+  };
+  csrf?: {
+    enabled: boolean;
+    secret?: string;
+    tokenLength?: number;
+    cookieName?: string;
+    headerName?: string;
+    ignoreMethods?: string[];
+    sameSite?: boolean;
+  };
+  csp?: {
+    enabled: boolean;
+    directives?: {
+      defaultSrc?: string[];
+      scriptSrc?: string[];
+      styleSrc?: string[];
+      imgSrc?: string[];
+      connectSrc?: string[];
+      fontSrc?: string[];
+      objectSrc?: string[];
+      mediaSrc?: string[];
+      frameSrc?: string[];
+      childSrc?: string[];
+      workerSrc?: string[];
+      formAction?: string[];
+      upgradeInsecureRequests?: boolean;
+      blockAllMixedContent?: boolean;
+    };
+    reportOnly?: boolean;
+    reportUri?: string;
+    nonce?: boolean;
   };
   rateLimit: {
     global: {

@@ -50,6 +50,24 @@ export const DEFAULT_CONFIG: AppConfig = {
       stripUnknown: true,
       abortEarly: false,
     },
+    session: {
+      enabled: false, // Opt-in
+      store: 'memory',
+      secret: 'moro-session-secret',
+      name: 'connect.sid',
+      rolling: false,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        maxAge: 86400000, // 24 hours in ms
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+      },
+      proxy: false,
+      unset: 'keep',
+    },
     autoDiscovery: {
       enabled: true, // Enable by default for better DX
       paths: ['./modules', './src/modules'],
@@ -89,14 +107,54 @@ export const DEFAULT_CONFIG: AppConfig = {
       origin: '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
+      exposedHeaders: [],
       credentials: false,
+      maxAge: 86400, // 24 hours
+      preflightContinue: false,
     },
     helmet: {
       enabled: false, // Opt-in for better performance
+      // Simplified options (backward compatible)
       contentSecurityPolicy: true,
       hsts: true,
       noSniff: true,
       frameguard: true,
+      // Detailed options (use these for advanced configuration)
+      xFrameOptions: 'DENY',
+      xContentTypeOptions: true,
+      xXssProtection: true,
+      referrerPolicy: 'strict-origin-when-cross-origin',
+      strictTransportSecurity: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+      },
+      xDownloadOptions: true,
+      xPermittedCrossDomainPolicies: true,
+    },
+    csrf: {
+      enabled: false, // Opt-in
+      secret: 'moro-csrf-secret',
+      tokenLength: 32,
+      cookieName: '_csrf',
+      headerName: 'x-csrf-token',
+      ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
+      sameSite: true,
+    },
+    csp: {
+      enabled: false, // Opt-in
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+      },
+      reportOnly: false,
+      nonce: false,
     },
     rateLimit: {
       global: {
