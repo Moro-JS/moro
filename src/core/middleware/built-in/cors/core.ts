@@ -70,7 +70,11 @@ export class CORSCore {
       if (this.options.credentials) {
         // When credentials are enabled, match the request origin against the allowed list
         const requestOrigin = (req.headers as any).origin || (req.headers as any).Origin;
-        if (requestOrigin && resolvedOrigin.includes(requestOrigin)) {
+
+        // If no origin header (same-origin request), allow and use first origin in list
+        if (!requestOrigin) {
+          originHeader = resolvedOrigin[0] || '*';
+        } else if (resolvedOrigin.includes(requestOrigin)) {
           originHeader = requestOrigin;
         } else {
           // Request origin not in allowed list - deny

@@ -70,7 +70,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     autoDiscovery: {
       enabled: true, // Enable by default for better DX
-      paths: ['./modules', './src/modules'],
+      paths:
+        process.env.NODE_ENV === 'production'
+          ? ['./dist/modules', './dist/src/modules', './modules']
+          : ['./modules', './src/modules'],
       patterns: ['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}'],
       recursive: true,
       loadingStrategy: 'eager',

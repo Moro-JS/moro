@@ -643,6 +643,38 @@ describe('CORS Middleware', () => {
       expect(mockResponse.setHeader).toHaveBeenCalledWith('Access-Control-Max-Age', '86400');
       expect(mockNext).toHaveBeenCalled();
     });
+
+    it('should allow same-origin requests without Origin header when using multiple origins with credentials', async () => {
+      const mockRequest = {
+        method: 'GET',
+        path: '/api',
+        headers: {}, // No origin header (same-origin request)
+      };
+      const mockResponse = {
+        setHeader: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+        end: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      const middleware = createCORSMiddleware({
+        origin: ['https://example.com', 'https://app.example.com'],
+        credentials: true,
+      });
+
+      await middleware(mockRequest, mockResponse, mockNext);
+
+      // Should use first origin in list for same-origin requests
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        'https://example.com'
+      );
+      expect(mockResponse.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Allow-Credentials',
+        'true'
+      );
+      expect(mockNext).toHaveBeenCalled();
+    });
   });
 
   describe('CORS Integration Scenarios', () => {
