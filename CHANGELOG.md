@@ -1,3 +1,9 @@
+## [1.7.15] - 2026-01-15
+
+### Added
+
+- feat: add validation error handler with enhanced error formatting
+
 ## [1.7.14] - 2026-01-03
 
 ### Fixed
