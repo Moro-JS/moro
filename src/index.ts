@@ -138,13 +138,26 @@ export type {
 export { createFrameworkLogger, logger } from './core/logger/index.js';
 
 // Universal Validation System
-export { validate, body, query, params, combineSchemas, z } from './core/validation/index.js';
+export {
+  validate,
+  body,
+  query,
+  params,
+  combineSchemas,
+  z,
+  handleValidationError,
+  normalizeErrors,
+} from './core/validation/index.js';
 
 export type {
   ValidationConfig,
   ValidationResult,
   ValidationErrorDetail,
   ValidatedRequest,
+  ValidationErrorHandler,
+  ValidationErrorContext,
+  ValidationErrorResponse,
+  ValidationErrorDetailType,
 } from './core/validation/index.js';
 
 // Validation Interfaces and Adapters
@@ -230,7 +243,7 @@ export {
 } from './core/config/index.js';
 
 // Export configuration types for TypeScript users
-export type { AppConfig } from './core/config/index.js';
+export type { AppConfig, DeepPartial } from './core/config/index.js';
 
 // GraphQL System - Only export types and adapter
 // The core classes are lazy-loaded internally via app.graphqlInit()

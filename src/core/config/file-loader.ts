@@ -2,7 +2,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { createRequire } from 'module';
-import { AppConfig } from './schema.js';
+import { AppConfig, DeepPartial } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigFile');
@@ -19,9 +19,9 @@ const CONFIG_FILES = ['moro.config.js', 'moro.config.ts'] as const;
 /**
  * Find and load configuration from moro.config.js (synchronously)
  * @param cwd Current working directory to search for config files
- * @returns Partial configuration object or null if no config file found
+ * @returns DeepPartial configuration object or null if no config file found
  */
-export function loadConfigFileSync(cwd: string = process.cwd()): Partial<AppConfig> | null {
+export function loadConfigFileSync(cwd: string = process.cwd()): DeepPartial<AppConfig> | null {
   const configFile = findConfigFile(cwd);
 
   if (!configFile) {
@@ -58,11 +58,11 @@ export function loadConfigFileSync(cwd: string = process.cwd()): Partial<AppConf
 /**
  * Find and load configuration from moro.config.js or moro.config.ts (async)
  * @param cwd Current working directory to search for config files
- * @returns Partial configuration object or null if no config file found
+ * @returns DeepPartial configuration object or null if no config file found
  */
 export async function loadConfigFile(
   cwd: string = process.cwd()
-): Promise<Partial<AppConfig> | null> {
+): Promise<DeepPartial<AppConfig> | null> {
   const configFile = findConfigFile(cwd);
 
   if (!configFile) {
@@ -105,7 +105,7 @@ function findConfigFile(cwd: string): string | null {
 /**
  * Dynamically import a configuration file
  */
-async function importConfigFile(filePath: string): Promise<Partial<AppConfig> | null> {
+async function importConfigFile(filePath: string): Promise<DeepPartial<AppConfig> | null> {
   const isTypeScript = filePath.endsWith('.ts');
 
   if (isTypeScript) {

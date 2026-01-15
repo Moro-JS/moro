@@ -1,5 +1,17 @@
 // TypeScript-based Configuration Types for Moro Framework
 
+/**
+ * Deep partial type that makes all properties and nested properties optional
+ * Used for user-provided configuration where only partial overrides are needed
+ */
+export type DeepPartial<T> = T extends object
+  ? T extends Array<infer U>
+    ? Array<DeepPartial<U>>
+    : T extends (...args: any[]) => any
+      ? T
+      : { [P in keyof T]?: DeepPartial<T[P]> }
+  : T;
+
 export interface ServerConfig {
   port: number;
   host: string;
@@ -75,7 +87,45 @@ export interface DatabaseConfig {
   };
 }
 
+// Validation error context passed to error handlers
+export interface ValidationErrorContext {
+  request: {
+    method: string;
+    path: string;
+    url: string;
+    headers: Record<string, any>;
+  };
+  route?: {
+    path: string;
+    method: string;
+  };
+  field: 'body' | 'query' | 'params' | 'headers';
+}
+
+// Validation error detail structure
+export interface ValidationErrorDetail {
+  field: string;
+  message: string;
+  code?: string;
+  value?: any;
+  path?: (string | number)[];
+}
+
+// Validation error response structure
+export interface ValidationErrorResponse {
+  status: number;
+  body: any;
+  headers?: Record<string, string>;
+}
+
+// Validation error handler function type
+export type ValidationErrorHandler = (
+  errors: ValidationErrorDetail[],
+  context: ValidationErrorContext
+) => ValidationErrorResponse;
+
 export interface ModuleDefaultsConfig {
+  apiPrefix?: string; // Prefix for module routes, defaults to '/api/' - set to empty string '' to disable
   cache: {
     enabled: boolean;
     defaultTtl: number;
@@ -93,6 +143,8 @@ export interface ModuleDefaultsConfig {
     enabled: boolean;
     stripUnknown: boolean;
     abortEarly: boolean;
+    allowUnknown?: boolean;
+    onError?: ValidationErrorHandler;
   };
   session?: {
     enabled: boolean;

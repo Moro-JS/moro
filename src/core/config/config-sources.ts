@@ -5,7 +5,7 @@
  * Environment Variables > createApp Options > Config File > Schema Defaults
  */
 
-import { AppConfig } from '../../types/config.js';
+import { AppConfig, DeepPartial } from '../../types/config.js';
 import { MoroOptions } from '../../types/core.js';
 import { DEFAULT_CONFIG } from './schema.js';
 import { loadConfigFileSync } from './file-loader.js';
@@ -41,7 +41,7 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
   try {
     const fileConfig = loadConfigFileSync();
     if (fileConfig) {
-      config = deepMerge(config, fileConfig);
+      config = deepMerge(config, fileConfig) as AppConfig;
       trackConfigSource(fileConfig, sourceMap, 'configFile', 'moro.config.js/ts');
       logger.debug('Config file loaded and merged');
     }
@@ -51,13 +51,13 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
 
   // 3. Load and merge environment variables
   const envConfig = loadEnvironmentConfig();
-  config = deepMerge(config, envConfig);
+  config = deepMerge(config, envConfig) as AppConfig;
   trackConfigSource(envConfig, sourceMap, 'environment', 'process.env');
 
   // 4. Load and merge createApp options (highest precedence)
   if (createAppOptions) {
     const normalizedOptions = normalizeCreateAppOptions(createAppOptions);
-    config = deepMerge(config, normalizedOptions);
+    config = deepMerge(config, normalizedOptions) as AppConfig;
     trackConfigSource(normalizedOptions, sourceMap, 'createApp', 'createApp()');
     logger.debug('createApp options merged');
   }
@@ -75,8 +75,8 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
  * Load configuration from environment variables
  * Handles both standard and MORO_ prefixed variables
  */
-function loadEnvironmentConfig(): Partial<AppConfig> {
-  const config: Partial<AppConfig> = {};
+function loadEnvironmentConfig(): DeepPartial<AppConfig> {
+  const config: DeepPartial<AppConfig> = {};
 
   // Server configuration
   if (process.env.PORT || process.env.MORO_PORT) {
@@ -440,8 +440,8 @@ function loadEnvironmentConfig(): Partial<AppConfig> {
  * Normalize createApp options to match AppConfig structure
  * This handles the flexible createApp API while converting to structured config
  */
-function normalizeCreateAppOptions(options: MoroOptions): Partial<AppConfig> {
-  const config: Partial<AppConfig> = {};
+function normalizeCreateAppOptions(options: MoroOptions): DeepPartial<AppConfig> {
+  const config: DeepPartial<AppConfig> = {};
 
   // Direct config section overrides - merge with existing config
   if (options.server) {
@@ -466,6 +466,17 @@ function normalizeCreateAppOptions(options: MoroOptions): Partial<AppConfig> {
       autoDiscovery: {
         ...DEFAULT_CONFIG.modules.autoDiscovery,
         ...autoDiscoveryConfig,
+      },
+    } as any;
+  }
+
+  // Handle validation option (maps to modules.validation)
+  if (options.validation !== undefined) {
+    config.modules = {
+      ...config.modules,
+      validation: {
+        ...DEFAULT_CONFIG.modules.validation,
+        ...options.validation,
       },
     } as any;
   }
@@ -577,10 +588,12 @@ function isSensitiveField(path: string): boolean {
  * Deep merge two configuration objects
  * Later object properties override earlier ones
  */
-function deepMerge<T>(target: T, source: Partial<T>): T {
+function deepMerge<T extends Record<string, any>>(target: T, source: DeepPartial<T>): T {
   const result = { ...target };
 
   for (const key in source) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+
     const sourceValue = source[key];
     const targetValue = result[key];
 
@@ -592,9 +605,9 @@ function deepMerge<T>(target: T, source: Partial<T>): T {
       typeof targetValue === 'object' &&
       !Array.isArray(targetValue)
     ) {
-      (result as any)[key] = deepMerge(targetValue, sourceValue);
+      result[key] = deepMerge(targetValue, sourceValue as any);
     } else if (sourceValue !== undefined) {
-      (result as any)[key] = sourceValue;
+      result[key] = sourceValue as any;
     }
   }
 

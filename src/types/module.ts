@@ -1,5 +1,7 @@
 // Module Definition Types
 
+import type { ValidationErrorHandler } from './config.js';
+
 // Middleware can be a string name (resolved from built-in) or actual function
 export type ModuleMiddleware =
   | string
@@ -10,6 +12,7 @@ export interface ModuleRoute {
   path: string;
   handler: (req: any, res: any) => any | Promise<any>;
   validation?: any;
+  onValidationError?: ValidationErrorHandler;
   cache?: { ttl: number; key?: string };
   rateLimit?: { requests: number; window: number };
   middleware?: ModuleMiddleware[]; // Support both strings and functions
@@ -67,6 +70,7 @@ export interface InternalRouteDefinition {
   handler: string;
   middleware?: ModuleMiddleware[]; // Support both strings and functions
   validation?: any;
+  onValidationError?: ValidationErrorHandler;
   cache?: CacheConfig;
   rateLimit?: RateLimitConfig;
   auth?: {

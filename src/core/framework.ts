@@ -1,11 +1,10 @@
-// Core Moro Framework with Pluggable WebSocket Adapters
 import { Server } from 'http';
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse, Middleware } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
 import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
-import { Container } from './utilities/container.js';
+import { Container, buildModuleBasePath } from './utilities/index.js';
 import { ModuleLoader } from './modules/index.js';
 import { WebSocketManager } from './networking/websocket-manager.js';
 import { CircuitBreaker } from './utilities/circuit-breaker.js';
@@ -479,9 +478,13 @@ export class Moro extends EventEmitter {
       await this.setupWebSocketHandlers(moduleConfig);
     }
 
-    // Mount with versioning
+    // Mount with versioning and configurable API prefix
     this.logger.debug(`Module version before basePath: "${moduleConfig.version}"`, 'ModuleLoader');
-    const basePath = `/api/v${moduleConfig.version}/${moduleConfig.name}`;
+    const basePath = buildModuleBasePath(
+      this.config.modules?.apiPrefix,
+      moduleConfig.version,
+      moduleConfig.name
+    );
     this.logger.debug(`Generated basePath: "${basePath}"`, 'ModuleLoader');
     this.mountRouter(basePath, router);
 
@@ -710,14 +713,67 @@ export class Moro extends EventEmitter {
                 errors: validationError.issues.length,
               });
 
+              // Format errors
+              const errors = validationError.issues.map((issue: any) => ({
+                field: issue.path.length > 0 ? issue.path.join('.') : 'request',
+                message: issue.message,
+                code: issue.code,
+                path: issue.path,
+              }));
+
+              // Use route-level or global error handler
+              const handler = route.onValidationError || this.config.modules.validation.onError;
+              if (handler) {
+                try {
+                  // Determine which field failed (simplified - checks first validation type)
+                  let failedField: 'body' | 'query' | 'params' | 'headers' = 'body';
+                  if (route.validation.query) failedField = 'query';
+                  if (route.validation.params) failedField = 'params';
+                  if (route.validation.headers) failedField = 'headers';
+
+                  const errorResponse = handler(errors, {
+                    request: {
+                      method: req.method || 'UNKNOWN',
+                      path: req.path || req.url || '',
+                      url: req.url || '',
+                      headers: req.headers || {},
+                    },
+                    route: {
+                      path: route.path,
+                      method: route.method,
+                    },
+                    field: failedField,
+                  });
+
+                  if (errorResponse.headers) {
+                    Object.entries(errorResponse.headers).forEach(([key, value]) => {
+                      res.setHeader(key, String(value));
+                    });
+                  }
+
+                  res.status(errorResponse.status).json(errorResponse.body);
+                  return;
+                } catch (handlerError) {
+                  this.logger.error('Error in validation error handler', 'ValidationError', {
+                    error:
+                      handlerError instanceof Error ? handlerError.message : String(handlerError),
+                  });
+
+                  // Fallback if handler throws
+                  res.status(500).json({
+                    success: false,
+                    error: 'Internal error while handling validation error',
+                    requestId,
+                  });
+                  return;
+                }
+              }
+
+              // Default error response if no handler
               res.status(400).json({
                 success: false,
                 error: 'Validation failed',
-                details: validationError.issues.map((issue: any) => ({
-                  field: issue.path.length > 0 ? issue.path.join('.') : 'request',
-                  message: issue.message,
-                  code: issue.code,
-                })),
+                details: errors,
                 requestId,
               });
               return;

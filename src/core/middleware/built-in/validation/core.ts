@@ -5,6 +5,9 @@ import {
   ValidationSchema,
   normalizeValidationError,
 } from '../../../validation/schema-interface.js';
+import { handleValidationError, normalizeErrors } from '../../../validation/error-handler.js';
+import { getGlobalConfig } from '../../../config/index.js';
+import type { ValidationErrorHandler } from '../../../../types/config.js';
 
 const logger = createFrameworkLogger('ValidationCore');
 
@@ -15,6 +18,7 @@ export interface ValidationConfig {
   query?: ValidationSchema;
   params?: ValidationSchema;
   headers?: ValidationSchema;
+  onValidationError?: ValidationErrorHandler;
 }
 
 export interface ValidationErrorDetail {
@@ -37,6 +41,16 @@ export class ValidationCore {
       return false;
     }
 
+    // Get global validation config
+    let globalHandler: ValidationErrorHandler | undefined;
+    try {
+      const globalConfig = getGlobalConfig();
+      globalHandler = globalConfig.modules.validation.onError;
+    } catch {
+      // Config not initialized yet, use default handler
+      globalHandler = undefined;
+    }
+
     try {
       // Order by likelihood and cost: params > query > body > headers
       // Params are fastest (already parsed, small) and most common in REST APIs
@@ -53,7 +67,14 @@ export class ValidationCore {
             (req as any).validatedParams = await config.params.parseAsync(req.params);
             req.params = (req as any).validatedParams;
           } catch (error: any) {
-            this.handleValidationError(error, 'params', req, res);
+            this.handleValidationError(
+              error,
+              'params',
+              req,
+              res,
+              config.onValidationError,
+              globalHandler
+            );
             return false;
           }
         }
@@ -73,7 +94,14 @@ export class ValidationCore {
             (req as any).validatedQuery = await config.query.parseAsync(req.query);
             req.query = (req as any).validatedQuery;
           } catch (error: any) {
-            this.handleValidationError(error, 'query', req, res);
+            this.handleValidationError(
+              error,
+              'query',
+              req,
+              res,
+              config.onValidationError,
+              globalHandler
+            );
             return false;
           }
         }
@@ -85,7 +113,14 @@ export class ValidationCore {
           (req as any).validatedBody = await config.body.parseAsync(req.body);
           req.body = (req as any).validatedBody;
         } catch (error: any) {
-          this.handleValidationError(error, 'body', req, res);
+          this.handleValidationError(
+            error,
+            'body',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
           return false;
         }
       }
@@ -95,7 +130,14 @@ export class ValidationCore {
         try {
           (req as any).validatedHeaders = await config.headers.parseAsync(req.headers);
         } catch (error: any) {
-          this.handleValidationError(error, 'headers', req, res);
+          this.handleValidationError(
+            error,
+            'headers',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
           return false;
         }
       }
@@ -121,7 +163,9 @@ export class ValidationCore {
     error: any,
     field: 'body' | 'query' | 'params' | 'headers',
     req: HttpRequest,
-    res: HttpResponse
+    res: HttpResponse,
+    customHandler?: ValidationErrorHandler,
+    globalHandler?: ValidationErrorHandler
   ): void {
     // Don't send error if headers already sent
     if (res.headersSent) {
@@ -129,17 +173,9 @@ export class ValidationCore {
     }
 
     const normalizedError = normalizeValidationError(error);
+    const errors = normalizeErrors(normalizedError.issues, field);
 
-    res.status(400).json({
-      success: false,
-      error: `Validation failed for ${field}`,
-      details: normalizedError.issues.map((issue: any) => ({
-        field: issue.path.length > 0 ? issue.path.join('.') : field,
-        message: issue.message,
-        code: issue.code,
-      })),
-      requestId: req.requestId,
-    });
+    handleValidationError(errors, field, req, res, customHandler, globalHandler);
   }
 }
 

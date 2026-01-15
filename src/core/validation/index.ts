@@ -5,6 +5,9 @@ import { HttpRequest, HttpResponse } from '../http/index.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { createUserRequire, isPackageAvailable } from '../utilities/package-utils.js';
 import { ValidationSchema, normalizeValidationError } from './schema-interface.js';
+import { handleValidationError } from './error-handler.js';
+import { getGlobalConfig } from '../config/index.js';
+import type { ValidationErrorHandler } from '../../types/config.js';
 
 const logger = createFrameworkLogger('Validation');
 
@@ -74,6 +77,7 @@ export interface ValidationConfig {
   query?: ValidationSchema;
   params?: ValidationSchema;
   headers?: ValidationSchema;
+  onValidationError?: ValidationErrorHandler;
 }
 
 // Validation result types
@@ -107,12 +111,28 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
     try {
       const validatedReq = req as ValidatedRequest<TBody>;
 
+      // Get global validation config
+      let globalHandler: ValidationErrorHandler | undefined;
+      try {
+        const globalConfig = getGlobalConfig();
+        globalHandler = globalConfig.modules.validation.onError;
+      } catch {
+        // Config not initialized yet, use default handler
+        globalHandler = undefined;
+      }
+
       // Validate body
       if (config.body) {
         const result = await validateField(config.body, req.body, 'body');
         if (!result.success) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          return sendValidationError(res, result.errors!, 'body');
+          return handleValidationError(
+            result.errors || [],
+            'body',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
         }
         validatedReq.validatedBody = result.data;
         validatedReq.body = result.data; // Also update original body for compatibility
@@ -122,8 +142,14 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.query) {
         const result = await validateField(config.query, req.query, 'query');
         if (!result.success) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          return sendValidationError(res, result.errors!, 'query');
+          return handleValidationError(
+            result.errors || [],
+            'query',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
         }
         validatedReq.validatedQuery = result.data;
         validatedReq.query = result.data; // Also update original query for compatibility
@@ -133,8 +159,14 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.params) {
         const result = await validateField(config.params, req.params, 'params');
         if (!result.success) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          return sendValidationError(res, result.errors!, 'params');
+          return handleValidationError(
+            result.errors || [],
+            'params',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
         }
         validatedReq.validatedParams = result.data;
         validatedReq.params = result.data; // Also update original params for compatibility
@@ -144,8 +176,14 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
       if (config.headers) {
         const result = await validateField(config.headers, req.headers, 'headers');
         if (!result.success) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          return sendValidationError(res, result.errors!, 'headers');
+          return handleValidationError(
+            result.errors || [],
+            'headers',
+            req,
+            res,
+            config.onValidationError,
+            globalHandler
+          );
         }
         validatedReq.validatedHeaders = result.data;
       }
@@ -209,24 +247,17 @@ async function validateField(
   }
 }
 
-// Send validation error response
-function sendValidationError(
-  res: HttpResponse,
-  errors: ValidationErrorDetail[],
-  field: string
-): void {
-  logger.debug('Sending validation error response', 'ValidationResponse', {
-    field,
-    errorCount: errors.length,
-  });
-
-  res.status(400).json({
-    success: false,
-    error: `Validation failed for ${field}`,
-    details: errors,
-    requestId: (res as any).req?.requestId,
-  });
-}
+// Re-export common validation tools
+export { ValidationError, normalizeValidationError } from './schema-interface.js';
+export type { ValidationSchema, InferSchemaType } from './schema-interface.js';
+export { joi, yup, fn as customValidator, classValidator } from './adapters.js';
+export { handleValidationError, normalizeErrors } from './error-handler.js';
+export type {
+  ValidationErrorHandler,
+  ValidationErrorContext,
+  ValidationErrorResponse,
+  ValidationErrorDetail as ValidationErrorDetailType,
+} from '../../types/config.js';
 
 // Convenience functions for single-field validation
 export function body<T>(schema: ValidationSchema<T>) {
@@ -251,8 +282,3 @@ export function params<T>(schema: ValidationSchema<T>) {
 export function combineSchemas(schemas: ValidationConfig): ValidationConfig {
   return schemas;
 }
-
-// Re-export common validation tools
-export { ValidationError, normalizeValidationError } from './schema-interface.js';
-export type { ValidationSchema, InferSchemaType } from './schema-interface.js';
-export { joi, yup, fn as customValidator, classValidator } from './adapters.js';

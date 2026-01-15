@@ -22,6 +22,7 @@ import { EventEmitter } from 'events';
 import cluster from 'cluster';
 import os from 'os';
 import { normalizeValidationError } from './core/validation/schema-interface.js';
+import { buildModuleBasePath } from './core/utilities/module-path.js';
 // Configuration System Integration
 import { initializeConfig, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
@@ -1133,16 +1134,63 @@ export class Moro extends EventEmitter {
               const validated = await route.validation.parseAsync(req.body);
               req.body = validated;
             } catch (error: any) {
-              // Handle universal validation errors
+              // Handle universal validation errors using the new error handler
               const normalizedError = normalizeValidationError(error);
+              const errors = normalizedError.issues.map((issue: any) => ({
+                field: issue.path.length > 0 ? issue.path.join('.') : 'body',
+                message: issue.message,
+                code: issue.code,
+                path: issue.path,
+              }));
+
+              // Get global validation error handler
+              let globalHandler;
+              try {
+                const { getGlobalConfig } = await import('./core/config/index.js');
+                const config = getGlobalConfig();
+                globalHandler = config.modules.validation.onError;
+              } catch {
+                globalHandler = undefined;
+              }
+
+              // Use route-level or global error handler
+              const handler = route.onValidationError || globalHandler;
+              if (handler) {
+                try {
+                  const errorResponse = handler(errors, {
+                    request: {
+                      method: req.method || 'UNKNOWN',
+                      path: req.path || req.url || '',
+                      url: req.url || '',
+                      headers: req.headers || {},
+                    },
+                    field: 'body',
+                  });
+
+                  if (errorResponse.headers) {
+                    Object.entries(errorResponse.headers).forEach(([key, value]) => {
+                      res.setHeader(key, value);
+                    });
+                  }
+
+                  res.status(errorResponse.status).json(errorResponse.body);
+                  return;
+                } catch {
+                  // Fallback if handler throws
+                  res.status(500).json({
+                    success: false,
+                    error: 'Internal error while handling validation error',
+                    requestId: req.requestId,
+                  });
+                  return;
+                }
+              }
+
+              // Default error response if no handler
               res.status(400).json({
                 success: false,
                 error: 'Validation failed',
-                details: normalizedError.issues.map((issue: any) => ({
-                  field: issue.path.length > 0 ? issue.path.join('.') : 'body',
-                  message: issue.message,
-                  code: issue.code,
-                })),
+                details: errors,
                 requestId: req.requestId,
               });
               return;
@@ -1365,7 +1413,11 @@ export class Moro extends EventEmitter {
       // Register placeholder routes that trigger lazy loading
       if (module.routes) {
         module.routes.forEach(route => {
-          const basePath = `/api/v${module.version}/${module.name}`;
+          const basePath = buildModuleBasePath(
+            this.config.modules?.apiPrefix,
+            module.version,
+            module.name
+          );
           const fullPath = `${basePath}${route.path}`;
 
           // Note: Lazy loading will be implemented when route is accessed

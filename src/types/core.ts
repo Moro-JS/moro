@@ -1,7 +1,7 @@
 // Core Framework Types
 import { RuntimeConfig } from './runtime.js';
 import { LoggerOptions } from './logger.js';
-import { AppConfig } from './config.js';
+import { AppConfig, ValidationErrorHandler } from './config.js';
 
 export interface MoroOptions {
   autoDiscover?:
@@ -66,6 +66,15 @@ export interface MoroOptions {
   workers?: {
     count?: number;
     maxQueueSize?: number;
+  };
+
+  // Validation configuration (top-level for convenience, maps to modules.validation)
+  validation?: {
+    enabled?: boolean;
+    stripUnknown?: boolean;
+    abortEarly?: boolean;
+    allowUnknown?: boolean;
+    onError?: ValidationErrorHandler;
   };
 
   // Direct config overrides (partial)

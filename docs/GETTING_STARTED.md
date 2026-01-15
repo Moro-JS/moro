@@ -100,7 +100,7 @@ app.get('/', (req, res) => {
   return {
     message: 'Hello from MoroJS!',
     timestamp: new Date().toISOString(),
-    framework: 'MoroJS'
+    framework: 'MoroJS',
   };
 });
 
@@ -109,7 +109,7 @@ app.get('/health', (req, res) => {
   return {
     status: 'healthy',
     uptime: process.uptime(),
-    memory: process.memoryUsage()
+    memory: process.memoryUsage(),
   };
 });
 
@@ -153,7 +153,7 @@ const app = createAppEdge();
 app.get('/api/hello', (req, res) => {
   return {
     message: 'Hello from Vercel Edge!',
-    region: process.env.VERCEL_REGION
+    region: process.env.VERCEL_REGION,
   };
 });
 
@@ -171,7 +171,7 @@ app.get('/api/users/:id', (req, res) => {
   return {
     userId: req.params.id,
     lambda: true,
-    region: process.env.AWS_REGION
+    region: process.env.AWS_REGION,
   };
 });
 
@@ -191,14 +191,14 @@ app.get('/api/geo', (req, res) => {
   return {
     country: req.headers['cf-ipcountry'],
     ray: req.headers['cf-ray'],
-    worker: true
+    worker: true,
   };
 });
 
 export default {
   async fetch(request: Request, env: any, ctx: any) {
     return app.getHandler()(request, env, ctx);
-  }
+  },
 };
 ```
 
@@ -222,11 +222,14 @@ import { createApp, z } from '@morojs/moro';
 const app = createApp();
 
 // Chainable API - order doesn't matter!
-app.post('/users')
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  }))
+app
+  .post('/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
   .rateLimit({ requests: 10, window: 60000 })
   .cache({ ttl: 300 })
   .handler(async (req, res) => {
@@ -255,7 +258,7 @@ Built-in Zod integration provides runtime validation with TypeScript types:
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
   email: z.string().email(),
-  age: z.number().min(18).optional()
+  age: z.number().min(18).optional(),
 });
 
 type User = z.infer<typeof UserSchema>; // Automatic TypeScript type!
@@ -275,36 +278,36 @@ module.exports = {
   server: {
     port: 3000,
     host: 'localhost',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
     type: 'sqlite',
-    database: './dev.db'
+    database: './dev.db',
   },
   logging: {
-    level: 'debug'
+    level: 'debug',
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000', 'http://localhost:5173']
+      origin: ['http://localhost:3000', 'http://localhost:5173'],
     },
     rateLimit: {
       enabled: true,
       requests: 100,
-      window: 60000
-    }
+      window: 60000,
+    },
   },
   performance: {
     compression: {
-      enabled: true
+      enabled: true,
     },
     cache: {
       enabled: true,
       adapter: 'memory',
-      ttl: 300
-    }
-  }
+      ttl: 300,
+    },
+  },
 };
 ```
 
@@ -348,7 +351,7 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     framework: 'MoroJS',
     environment: config.server.environment,
-    port: config.server.port
+    port: config.server.port,
   };
 });
 
@@ -360,8 +363,8 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage(),
     config: {
       environment: config.server.environment,
-      database: config.database.type
-    }
+      database: config.database.type,
+    },
   };
 });
 
@@ -388,13 +391,13 @@ const environment = process.env.NODE_ENV || 'development';
 const baseConfig = {
   server: {
     port: process.env.PORT || 3000,
-    host: process.env.HOST || 'localhost'
+    host: process.env.HOST || 'localhost',
   },
   security: {
     cors: {
-      enabled: true
-    }
-  }
+      enabled: true,
+    },
+  },
 };
 
 const configs = {
@@ -402,22 +405,22 @@ const configs = {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'development'
+      environment: 'development',
     },
     database: {
       type: 'sqlite',
-      database: './dev.db'
+      database: './dev.db',
     },
     logging: {
-      level: 'debug'
-    }
+      level: 'debug',
+    },
   },
 
   production: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'production'
+      environment: 'production',
     },
     database: {
       type: 'postgresql',
@@ -425,13 +428,13 @@ const configs = {
       port: parseInt(process.env.DATABASE_PORT || '5432'),
       username: process.env.DATABASE_USERNAME,
       password: process.env.DATABASE_PASSWORD,
-      database: process.env.DATABASE_NAME
+      database: process.env.DATABASE_NAME,
     },
     logging: {
       level: 'info',
-      format: 'json'
-    }
-  }
+      format: 'json',
+    },
+  },
 };
 
 module.exports = configs[environment];
@@ -443,25 +446,26 @@ For TypeScript projects, you can create a `moro.config.ts` file:
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from '@morojs/moro';
+import type { AppConfig, DeepPartial } from '@morojs/moro';
 
-const config: Partial<AppConfig> = {
+const config: DeepPartial<AppConfig> = {
   server: {
     port: 3000,
-    host: 'localhost',
-    environment: 'development'
   },
   database: {
-    type: 'sqlite',
-    database: './dev.db'
+    sqlite: {
+      filename: './dev.db',
+    },
   },
   logging: {
-    level: 'debug'
-  }
+    level: 'debug',
+  },
 };
 
 export default config;
 ```
+
+**Note:** Use `DeepPartial<AppConfig>` for proper nested type support.
 
 ### Configuration Priority
 
@@ -483,35 +487,36 @@ import { createApp, z } from '@morojs/moro';
 const app = createApp({
   cors: true,
   compression: true,
-  helmet: true
+  helmet: true,
 });
 
 // In-memory storage for demo
 let users: any[] = [
   { id: 1, name: 'John Doe', email: 'john@example.com' },
-  { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+  { id: 2, name: 'Jane Smith', email: 'jane@example.com' },
 ];
 let nextId = 3;
 
 // Validation schemas
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
-  email: z.string().email()
+  email: z.string().email(),
 });
 
 const UpdateUserSchema = z.object({
   name: z.string().min(2).max(50).optional(),
-  email: z.string().email().optional()
+  email: z.string().email().optional(),
 });
 
 const PaginationSchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(10),
-  search: z.string().optional()
+  search: z.string().optional(),
 });
 
 // GET /users - List users with pagination
-app.get('/users')
+app
+  .get('/users')
   .query(PaginationSchema)
   .cache({ ttl: 60 })
   .handler(async (req, res) => {
@@ -519,9 +524,10 @@ app.get('/users')
 
     let filteredUsers = users;
     if (search) {
-      filteredUsers = users.filter(user =>
-        user.name.toLowerCase().includes(search.toLowerCase()) ||
-        user.email.toLowerCase().includes(search.toLowerCase())
+      filteredUsers = users.filter(
+        user =>
+          user.name.toLowerCase().includes(search.toLowerCase()) ||
+          user.email.toLowerCase().includes(search.toLowerCase())
       );
     }
 
@@ -536,13 +542,14 @@ app.get('/users')
         page,
         limit,
         total: filteredUsers.length,
-        pages: Math.ceil(filteredUsers.length / limit)
-      }
+        pages: Math.ceil(filteredUsers.length / limit),
+      },
     };
   });
 
 // GET /users/:id - Get user by ID
-app.get('/users/:id')
+app
+  .get('/users/:id')
   .params(z.object({ id: z.coerce.number() }))
   .cache({ ttl: 300 })
   .handler(async (req, res) => {
@@ -551,7 +558,7 @@ app.get('/users/:id')
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: 'User not found',
       });
     }
 
@@ -559,7 +566,8 @@ app.get('/users/:id')
   });
 
 // POST /users - Create new user
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .rateLimit({ requests: 10, window: 60000 })
   .handler(async (req, res) => {
@@ -568,14 +576,14 @@ app.post('/users')
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        error: 'Email already exists'
+        error: 'Email already exists',
       });
     }
 
     const newUser = {
       id: nextId++,
       ...req.body,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     users.push(newUser);
@@ -583,12 +591,13 @@ app.post('/users')
     return {
       success: true,
       data: newUser,
-      message: 'User created successfully'
+      message: 'User created successfully',
     };
   });
 
 // PUT /users/:id - Update user
-app.put('/users/:id')
+app
+  .put('/users/:id')
   .params(z.object({ id: z.coerce.number() }))
   .body(UpdateUserSchema)
   .handler(async (req, res) => {
@@ -597,7 +606,7 @@ app.put('/users/:id')
     if (userIndex === -1) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: 'User not found',
       });
     }
 
@@ -607,7 +616,7 @@ app.put('/users/:id')
       if (existingUser) {
         return res.status(400).json({
           success: false,
-          error: 'Email already exists'
+          error: 'Email already exists',
         });
       }
     }
@@ -615,18 +624,19 @@ app.put('/users/:id')
     users[userIndex] = {
       ...users[userIndex],
       ...req.body,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     return {
       success: true,
       data: users[userIndex],
-      message: 'User updated successfully'
+      message: 'User updated successfully',
     };
   });
 
 // DELETE /users/:id - Delete user
-app.delete('/users/:id')
+app
+  .delete('/users/:id')
   .params(z.object({ id: z.coerce.number() }))
   .handler(async (req, res) => {
     const userIndex = users.findIndex(u => u.id === req.params.id);
@@ -634,7 +644,7 @@ app.delete('/users/:id')
     if (userIndex === -1) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: 'User not found',
       });
     }
 
@@ -643,7 +653,7 @@ app.delete('/users/:id')
     return {
       success: true,
       data: deletedUser,
-      message: 'User deleted successfully'
+      message: 'User deleted successfully',
     };
   });
 
@@ -694,12 +704,12 @@ import { defineModule, z } from '@morojs/moro';
 
 const UserSchema = z.object({
   name: z.string().min(2).max(50),
-  email: z.string().email()
+  email: z.string().email(),
 });
 
 const PaginationSchema = z.object({
   page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(100).default(10)
+  limit: z.coerce.number().min(1).max(100).default(10),
 });
 
 export default defineModule({
@@ -718,9 +728,9 @@ export default defineModule({
         return {
           success: true,
           data: [],
-          pagination: req.query
+          pagination: req.query,
         };
-      }
+      },
     },
     {
       method: 'POST',
@@ -733,24 +743,24 @@ export default defineModule({
         // Your user creation logic here
         return {
           success: true,
-          data: req.body
+          data: req.body,
         };
-      }
-    }
+      },
+    },
   ],
   sockets: [
     {
       event: 'user-status',
       validation: z.object({
         userId: z.string(),
-        status: z.enum(['online', 'offline'])
+        status: z.enum(['online', 'offline']),
       }),
       handler: async (socket, data) => {
         socket.broadcast.emit('user-status-changed', data);
         return { success: true };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 ```
 
@@ -786,10 +796,11 @@ import { z } from '@morojs/moro';
 const userSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email format'),
-  age: z.number().min(18, 'Must be 18 or older').optional()
+  age: z.number().min(18, 'Must be 18 or older').optional(),
 });
 
-app.post('/users')
+app
+  .post('/users')
   .body(userSchema)
   .handler(async (req, res) => {
     // req.body is typed and validated
@@ -801,38 +812,46 @@ app.post('/users')
 
 ```typescript
 // Complex validation with custom rules
-const registrationSchema = z.object({
-  username: z.string()
-    .min(3, 'Username must be at least 3 characters')
-    .max(20, 'Username must be less than 20 characters')
-    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
+const registrationSchema = z
+  .object({
+    username: z
+      .string()
+      .min(3, 'Username must be at least 3 characters')
+      .max(20, 'Username must be less than 20 characters')
+      .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
 
-  email: z.string().email('Invalid email format'),
+    email: z.string().email('Invalid email format'),
 
-  password: z.string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Password must contain at least one lowercase letter, one uppercase letter, and one number'),
+    password: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .regex(
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
+        'Password must contain at least one lowercase letter, one uppercase letter, and one number'
+      ),
 
-  confirmPassword: z.string(),
+    confirmPassword: z.string(),
 
-  profile: z.object({
-    firstName: z.string().min(1, 'First name is required'),
-    lastName: z.string().min(1, 'Last name is required'),
-    bio: z.string().max(500, 'Bio must be less than 500 characters').optional(),
-    tags: z.array(z.string()).max(5, 'Maximum 5 tags allowed').default([])
-  }),
+    profile: z.object({
+      firstName: z.string().min(1, 'First name is required'),
+      lastName: z.string().min(1, 'Last name is required'),
+      bio: z.string().max(500, 'Bio must be less than 500 characters').optional(),
+      tags: z.array(z.string()).max(5, 'Maximum 5 tags allowed').default([]),
+    }),
 
-  preferences: z.object({
-    newsletter: z.boolean().default(false),
-    notifications: z.boolean().default(true),
-    theme: z.enum(['light', 'dark']).default('light')
+    preferences: z.object({
+      newsletter: z.boolean().default(false),
+      notifications: z.boolean().default(true),
+      theme: z.enum(['light', 'dark']).default('light'),
+    }),
   })
-}).refine(data => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword']
-});
+  .refine(data => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
 
-app.post('/register')
+app
+  .post('/register')
   .body(registrationSchema)
   .handler(async (req, res) => {
     // All validation passed, req.body is fully typed
@@ -850,17 +869,18 @@ const searchSchema = z.object({
   sort: z.enum(['relevance', 'date', 'popularity']).default('relevance'),
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(10),
-  includeInactive: z.coerce.boolean().default(false)
+  includeInactive: z.coerce.boolean().default(false),
 });
 
-app.get('/search')
+app
+  .get('/search')
   .query(searchSchema)
   .handler(async (req, res) => {
     const { q, category, sort, page, limit, includeInactive } = req.query;
     // All parameters are validated and typed
     return {
       results: [],
-      query: { q, category, sort, page, limit, includeInactive }
+      query: { q, category, sort, page, limit, includeInactive },
     };
   });
 ```
@@ -884,29 +904,29 @@ const db = new MySQLAdapter({
   port: parseInt(process.env.DB_PORT || '3306'),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'myapp'
+  database: process.env.DB_NAME || 'myapp',
 });
 
 app.database(db);
 
 // Use database in routes
-app.get('/users')
-  .handler(async (req, res) => {
-    const users = await req.database.query('SELECT * FROM users');
-    return { success: true, data: users };
-  });
+app.get('/users').handler(async (req, res) => {
+  const users = await req.database.query('SELECT * FROM users');
+  return { success: true, data: users };
+});
 
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
-    const result = await req.database.query(
-      'INSERT INTO users (name, email) VALUES (?, ?)',
-      [req.body.name, req.body.email]
-    );
+    const result = await req.database.query('INSERT INTO users (name, email) VALUES (?, ?)', [
+      req.body.name,
+      req.body.email,
+    ]);
 
     return {
       success: true,
-      data: { id: result.insertId, ...req.body }
+      data: { id: result.insertId, ...req.body },
     };
   });
 ```
@@ -914,23 +934,24 @@ app.post('/users')
 ### With Transactions
 
 ```typescript
-app.post('/transfer')
+app
+  .post('/transfer')
   .body(TransferSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
 
     try {
       // Debit from source account
-      await transaction.query(
-        'UPDATE accounts SET balance = balance - ? WHERE id = ?',
-        [req.body.amount, req.body.fromAccount]
-      );
+      await transaction.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [
+        req.body.amount,
+        req.body.fromAccount,
+      ]);
 
       // Credit to destination account
-      await transaction.query(
-        'UPDATE accounts SET balance = balance + ? WHERE id = ?',
-        [req.body.amount, req.body.toAccount]
-      );
+      await transaction.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [
+        req.body.amount,
+        req.body.toAccount,
+      ]);
 
       // Record transaction
       await transaction.query(
@@ -940,7 +961,6 @@ app.post('/transfer')
 
       await transaction.commit();
       return { success: true, message: 'Transfer completed' };
-
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -960,7 +980,7 @@ const app = createApp();
 // WebSocket with validation
 app.websocket('/chat', {
   // Connection event
-  connection: (socket) => {
+  connection: socket => {
     console.log(`User connected: ${socket.id}`);
     socket.emit('welcome', { message: 'Welcome to the chat!' });
   },
@@ -969,7 +989,7 @@ app.websocket('/chat', {
   'join-room': {
     validation: z.object({
       room: z.string().min(1),
-      username: z.string().min(2)
+      username: z.string().min(2),
     }),
     handler: (socket, data) => {
       socket.join(data.room);
@@ -979,18 +999,18 @@ app.websocket('/chat', {
       socket.to(data.room).emit('user-joined', {
         username: data.username,
         message: `${data.username} joined the room`,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       return { success: true, room: data.room };
-    }
+    },
   },
 
   // Send message event
   'send-message': {
     validation: z.object({
       message: z.string().min(1).max(500),
-      room: z.string()
+      room: z.string(),
     }),
     rateLimit: { requests: 10, window: 60000 },
     handler: (socket, data) => {
@@ -998,24 +1018,24 @@ app.websocket('/chat', {
         username: socket.username,
         message: data.message,
         room: data.room,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
       return { success: true };
-    }
+    },
   },
 
   // Disconnect event
-  disconnect: (socket) => {
+  disconnect: socket => {
     if (socket.currentRoom && socket.username) {
       socket.to(socket.currentRoom).emit('user-left', {
         username: socket.username,
         message: `${socket.username} left the room`,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
     console.log(`User disconnected: ${socket.id}`);
-  }
+  },
 });
 
 app.listen(3000, () => {
@@ -1029,41 +1049,41 @@ app.listen(3000, () => {
 ```html
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>MoroJS Chat</title>
     <script src="/socket.io/socket.io.js"></script>
-</head>
-<body>
+  </head>
+  <body>
     <div id="messages"></div>
-    <input type="text" id="messageInput" placeholder="Type a message...">
+    <input type="text" id="messageInput" placeholder="Type a message..." />
     <button onclick="sendMessage()">Send</button>
 
     <script>
-        const socket = io('/chat');
+      const socket = io('/chat');
 
-        // Join a room
-        socket.emit('join-room', {
-            room: 'general',
-            username: 'User' + Math.floor(Math.random() * 1000)
+      // Join a room
+      socket.emit('join-room', {
+        room: 'general',
+        username: 'User' + Math.floor(Math.random() * 1000),
+      });
+
+      // Listen for messages
+      socket.on('new-message', data => {
+        const messages = document.getElementById('messages');
+        messages.innerHTML += `<div><strong>${data.username}:</strong> ${data.message}</div>`;
+      });
+
+      // Send message
+      function sendMessage() {
+        const input = document.getElementById('messageInput');
+        socket.emit('send-message', {
+          message: input.value,
+          room: 'general',
         });
-
-        // Listen for messages
-        socket.on('new-message', (data) => {
-            const messages = document.getElementById('messages');
-            messages.innerHTML += `<div><strong>${data.username}:</strong> ${data.message}</div>`;
-        });
-
-        // Send message
-        function sendMessage() {
-            const input = document.getElementById('messageInput');
-            socket.emit('send-message', {
-                message: input.value,
-                room: 'general'
-            });
-            input.value = '';
-        }
+        input.value = '';
+      }
     </script>
-</body>
+  </body>
 </html>
 ```
 
@@ -1083,10 +1103,7 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
-  ],
+  collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
 };
 ```
 
@@ -1107,11 +1124,14 @@ describe('MoroJS Application', () => {
 
     app.get('/test', () => ({ message: 'Hello Test!' }));
 
-    app.post('/users')
-      .body(z.object({
-        name: z.string().min(2),
-        email: z.string().email()
-      }))
+    app
+      .post('/users')
+      .body(
+        z.object({
+          name: z.string().min(2),
+          email: z.string().email(),
+        })
+      )
       .handler(async (req: any) => {
         return { success: true, user: req.body };
       });
@@ -1124,9 +1144,7 @@ describe('MoroJS Application', () => {
   });
 
   it('should respond to GET /test', async () => {
-    const response = await request(server)
-      .get('/test')
-      .expect(200);
+    const response = await request(server).get('/test').expect(200);
 
     expect(response.body).toEqual({ message: 'Hello Test!' });
   });
@@ -1134,24 +1152,18 @@ describe('MoroJS Application', () => {
   it('should validate POST /users', async () => {
     const validUser = { name: 'John Doe', email: 'john@example.com' };
 
-    const response = await request(server)
-      .post('/users')
-      .send(validUser)
-      .expect(200);
+    const response = await request(server).post('/users').send(validUser).expect(200);
 
     expect(response.body).toEqual({
       success: true,
-      user: validUser
+      user: validUser,
     });
   });
 
   it('should reject invalid user data', async () => {
     const invalidUser = { name: 'J', email: 'invalid-email' };
 
-    await request(server)
-      .post('/users')
-      .send(invalidUser)
-      .expect(400);
+    await request(server).post('/users').send(invalidUser).expect(400);
   });
 });
 ```
@@ -1167,6 +1179,7 @@ npm test
 Congratulations! You've learned the basics of MoroJS. Here are some next steps:
 
 ### 1. Explore Advanced Features
+
 - [API Documentation](../API.md) - Complete API reference
 - [Module System](./MODULES.md) - Advanced module patterns
 - [Database Adapters](./DATABASE.md) - Working with different databases
@@ -1175,7 +1188,9 @@ Congratulations! You've learned the basics of MoroJS. Here are some next steps:
 - [Deployment](./DEPLOYMENT.md) - Production deployment guide
 
 ### 2. Example Applications
+
 Check out the [examples repository](https://github.com/Moro-JS/examples) for:
+
 - Enterprise applications
 - Microservices architecture
 - Real-time chat applications
@@ -1183,13 +1198,16 @@ Check out the [examples repository](https://github.com/Moro-JS/examples) for:
 - Authentication systems
 
 ### 3. Community and Support
+
 - [GitHub Repository](https://github.com/Moro-JS/moro)
 - [Discord Community](https://morojs.com/discord)
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/morojs)
 - [Documentation](https://morojs.com)
 
 ### 4. Contributing
+
 MoroJS is open source! Contributions are welcome:
+
 - [Contributing Guide](../CONTRIBUTING.md)
 - [Code of Conduct](../CODE_OF_CONDUCT.md)
 - [Development Setup](../DEVELOPMENT.md)

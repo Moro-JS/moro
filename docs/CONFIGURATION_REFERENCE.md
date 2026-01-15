@@ -53,23 +53,25 @@ module.exports = {
 
 ```typescript
 // moro.config.ts
-import { AppConfig } from '@morojs/core';
+import type { AppConfig, DeepPartial } from '@morojs/core';
 
-export default {
+const config: DeepPartial<AppConfig> = {
   server: {
     port: 3001,
-    host: 'localhost',
-    environment: 'development',
   },
   database: {
-    url: 'postgresql://user:pass@localhost:5432/mydb',
+    url: process.env.DATABASE_URL,
   },
   logging: {
     level: 'info',
     format: 'pretty',
   },
-} as Partial<AppConfig>;
+};
+
+export default config;
 ```
+
+**Note:** Use `DeepPartial<AppConfig>` instead of `Partial<AppConfig>` to properly handle nested configuration objects. `DeepPartial` makes all nested properties optional, while `Partial` only makes top-level properties optional.
 
 ## Server Configuration
 
@@ -225,6 +227,37 @@ Configure database connections and adapters.
 ### `modules` Section
 
 Configure default behaviors for modules.
+
+#### API Prefix
+
+| Property    | Type     | Default   | Description                                                       |
+| ----------- | -------- | --------- | ----------------------------------------------------------------- |
+| `apiPrefix` | `string` | `'/api/'` | Prefix for all module routes. Set to empty string `''` to disable |
+
+The `apiPrefix` is prepended to all module routes. The final URL structure is:
+
+```
+{apiPrefix}/v{version}/{moduleName}{routePath}
+```
+
+**Examples:**
+
+- Default (`'/api/'`): `/api/v1.0.0/user/list`
+- No prefix (`''`): `/v1.0.0/user/list`
+- Custom (`'/services/'`): `/services/v1.0.0/user/list`
+
+```typescript
+// moro.config.ts
+export default {
+  modules: {
+    apiPrefix: '/api/', // Default
+    // or
+    apiPrefix: '', // No prefix
+    // or
+    apiPrefix: '/v1/', // Custom prefix
+  },
+};
+```
 
 #### Cache Defaults
 

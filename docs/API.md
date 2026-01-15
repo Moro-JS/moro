@@ -2270,21 +2270,18 @@ For TypeScript projects, you can use a `.ts` config file:
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from '@morojs/moro';
+import type { AppConfig, DeepPartial } from '@morojs/moro';
 
-const config: Partial<AppConfig> = {
+const config: DeepPartial<AppConfig> = {
   server: {
     port: 3000,
-    host: '0.0.0.0',
-    environment: 'development',
   },
   database: {
-    type: 'postgresql',
-    host: 'localhost',
-    port: 5432,
-    username: 'myapp',
-    password: 'development-password',
-    database: 'myapp_dev',
+    postgresql: {
+      host: 'localhost',
+      port: 5432,
+      database: 'myapp_dev',
+    },
   },
   security: {
     cors: {
@@ -2296,6 +2293,8 @@ const config: Partial<AppConfig> = {
 
 export default config;
 ```
+
+**Note:** Use `DeepPartial<AppConfig>` instead of `Partial<AppConfig>` for proper nested type support.
 
 ### Environment Variables
 

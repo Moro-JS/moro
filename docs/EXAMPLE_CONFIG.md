@@ -24,11 +24,11 @@ module.exports = {
   server: {
     port: 3000,
     host: 'localhost',
-    environment: 'development'
+    environment: 'development',
   },
   logging: {
-    level: 'debug'
-  }
+    level: 'debug',
+  },
 };
 ```
 
@@ -52,38 +52,38 @@ module.exports = {
   server: {
     port: 3000,
     host: 'localhost',
-    environment: 'development'
+    environment: 'development',
   },
   database: {
     type: 'sqlite',
-    database: './dev.db'
+    database: './dev.db',
   },
   logging: {
     level: 'debug',
-    format: 'pretty'
+    format: 'pretty',
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080']
+      origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8080'],
     },
     helmet: {
-      enabled: true
+      enabled: true,
     },
     rateLimit: {
-      enabled: false // Disabled for development
-    }
+      enabled: false, // Disabled for development
+    },
   },
   performance: {
     compression: {
-      enabled: false // Disabled for development
+      enabled: false, // Disabled for development
     },
     cache: {
       enabled: true,
       adapter: 'memory',
-      ttl: 60 // Short TTL for development
-    }
-  }
+      ttl: 60, // Short TTL for development
+    },
+  },
 };
 ```
 
@@ -121,7 +121,7 @@ module.exports = {
   server: {
     port: process.env.PORT || 3000,
     host: '0.0.0.0',
-    environment: 'production'
+    environment: 'production',
   },
   database: {
     type: 'postgresql',
@@ -131,24 +131,24 @@ module.exports = {
     password: process.env.DATABASE_PASSWORD,
     database: process.env.DATABASE_NAME,
     ssl: {
-      rejectUnauthorized: false
+      rejectUnauthorized: false,
     },
     pool: {
       min: 2,
       max: 10,
       acquireTimeoutMillis: 30000,
-      idleTimeoutMillis: 30000
-    }
+      idleTimeoutMillis: 30000,
+    },
   },
   logging: {
     level: 'info',
-    format: 'json'
+    format: 'json',
   },
   security: {
     cors: {
       enabled: true,
       origin: process.env.CORS_ORIGIN?.split(',') || ['https://myapp.com'],
-      credentials: true
+      credentials: true,
     },
     helmet: {
       enabled: true,
@@ -157,23 +157,23 @@ module.exports = {
           defaultSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "https:"]
-        }
-      }
+          imgSrc: ["'self'", 'data:', 'https:'],
+        },
+      },
     },
     rateLimit: {
       enabled: true,
       requests: 1000,
       window: 60000, // 1 minute
       skipSuccessfulRequests: false,
-      skipFailedRequests: false
-    }
+      skipFailedRequests: false,
+    },
   },
   performance: {
     compression: {
       enabled: true,
       level: 9,
-      threshold: 1024
+      threshold: 1024,
     },
     cache: {
       enabled: true,
@@ -181,11 +181,11 @@ module.exports = {
       redis: {
         url: process.env.REDIS_URL,
         retryDelayOnFailover: 100,
-        maxRetriesPerRequest: 3
+        maxRetriesPerRequest: 3,
       },
-      ttl: 3600 // 1 hour
-    }
-  }
+      ttl: 3600, // 1 hour
+    },
+  },
 };
 ```
 
@@ -231,16 +231,16 @@ const environment = process.env.NODE_ENV || 'development';
 const baseConfig = {
   server: {
     port: process.env.PORT || 3000,
-    host: process.env.HOST || 'localhost'
+    host: process.env.HOST || 'localhost',
   },
   security: {
     cors: {
-      enabled: true
+      enabled: true,
     },
     helmet: {
-      enabled: true
-    }
-  }
+      enabled: true,
+    },
+  },
 };
 
 const environmentConfigs = {
@@ -248,72 +248,72 @@ const environmentConfigs = {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'development'
+      environment: 'development',
     },
     database: {
       type: 'sqlite',
-      database: './dev.db'
+      database: './dev.db',
     },
     logging: {
       level: 'debug',
-      format: 'pretty'
+      format: 'pretty',
     },
     security: {
       ...baseConfig.security,
       cors: {
         ...baseConfig.security.cors,
-        origin: ['http://localhost:3000', 'http://localhost:5173']
+        origin: ['http://localhost:3000', 'http://localhost:5173'],
       },
       rateLimit: {
-        enabled: false
-      }
+        enabled: false,
+      },
     },
     performance: {
       compression: {
-        enabled: false
+        enabled: false,
       },
       cache: {
         enabled: true,
         adapter: 'memory',
-        ttl: 60
-      }
-    }
+        ttl: 60,
+      },
+    },
   },
 
   test: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'test'
+      environment: 'test',
     },
     database: {
       type: 'sqlite',
-      database: ':memory:'
+      database: ':memory:',
     },
     logging: {
-      level: 'error'
+      level: 'error',
     },
     security: {
       ...baseConfig.security,
       rateLimit: {
-        enabled: false
-      }
+        enabled: false,
+      },
     },
     performance: {
       compression: {
-        enabled: false
+        enabled: false,
       },
       cache: {
-        enabled: false
-      }
-    }
+        enabled: false,
+      },
+    },
   },
 
   staging: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'staging'
+      environment: 'staging',
     },
     database: {
       type: 'postgresql',
@@ -321,45 +321,45 @@ const environmentConfigs = {
       port: parseInt(process.env.DATABASE_PORT || '5432'),
       username: process.env.DATABASE_USERNAME,
       password: process.env.DATABASE_PASSWORD,
-      database: process.env.DATABASE_NAME
+      database: process.env.DATABASE_NAME,
     },
     logging: {
       level: 'debug',
-      format: 'json'
+      format: 'json',
     },
     security: {
       ...baseConfig.security,
       cors: {
         ...baseConfig.security.cors,
-        origin: process.env.CORS_ORIGIN?.split(',') || ['https://staging.myapp.com']
+        origin: process.env.CORS_ORIGIN?.split(',') || ['https://staging.myapp.com'],
       },
       rateLimit: {
         enabled: true,
         requests: 500,
-        window: 60000
-      }
+        window: 60000,
+      },
     },
     performance: {
       compression: {
         enabled: true,
-        level: 6
+        level: 6,
       },
       cache: {
         enabled: true,
         adapter: 'redis',
         redis: {
-          url: process.env.REDIS_URL
+          url: process.env.REDIS_URL,
         },
-        ttl: 1800
-      }
-    }
+        ttl: 1800,
+      },
+    },
   },
 
   production: {
     ...baseConfig,
     server: {
       ...baseConfig.server,
-      environment: 'production'
+      environment: 'production',
     },
     database: {
       type: 'postgresql',
@@ -371,40 +371,40 @@ const environmentConfigs = {
       ssl: true,
       pool: {
         min: 5,
-        max: 20
-      }
+        max: 20,
+      },
     },
     logging: {
       level: 'info',
-      format: 'json'
+      format: 'json',
     },
     security: {
       ...baseConfig.security,
       cors: {
         ...baseConfig.security.cors,
-        origin: process.env.CORS_ORIGIN?.split(',') || ['https://myapp.com']
+        origin: process.env.CORS_ORIGIN?.split(',') || ['https://myapp.com'],
       },
       rateLimit: {
         enabled: true,
         requests: 1000,
-        window: 60000
-      }
+        window: 60000,
+      },
     },
     performance: {
       compression: {
         enabled: true,
-        level: 9
+        level: 9,
       },
       cache: {
         enabled: true,
         adapter: 'redis',
         redis: {
-          url: process.env.REDIS_URL
+          url: process.env.REDIS_URL,
         },
-        ttl: 3600
-      }
-    }
-  }
+        ttl: 3600,
+      },
+    },
+  },
 };
 
 module.exports = environmentConfigs[environment];
@@ -416,51 +416,45 @@ module.exports = environmentConfigs[environment];
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from '@morojs/moro';
+import type { AppConfig, DeepPartial } from '@morojs/moro';
 
-const config: Partial<AppConfig> = {
+const config: DeepPartial<AppConfig> = {
   server: {
     port: 3000,
-    host: 'localhost',
-    environment: 'development'
   },
   database: {
-    type: 'postgresql',
-    host: 'localhost',
-    port: 5432,
-    username: 'myapp',
-    password: 'development-password',
-    database: 'myapp_dev'
+    postgresql: {
+      host: 'localhost',
+      port: 5432,
+      database: 'myapp_dev',
+    },
   },
   security: {
     cors: {
       enabled: true,
-      origin: ['http://localhost:3000']
+      origin: ['http://localhost:3000'],
     },
     helmet: {
-      enabled: true
+      enabled: true,
     },
     rateLimit: {
-      enabled: true,
-      requests: 100,
-      window: 60000
-    }
+      global: {
+        enabled: true,
+        requests: 100,
+        window: 60000,
+      },
+    },
   },
   performance: {
     compression: {
       enabled: true,
-      level: 6
+      level: 6,
     },
-    cache: {
-      enabled: true,
-      adapter: 'memory',
-      ttl: 300
-    }
   },
   logging: {
     level: 'debug',
-    format: 'pretty'
-  }
+    format: 'pretty',
+  },
 };
 
 export default config;
@@ -470,7 +464,7 @@ export default config;
 
 ```typescript
 // moro.config.ts
-import type { AppConfig } from '@morojs/moro';
+import type { AppConfig, DeepPartial } from '@morojs/moro';
 import { z } from 'zod';
 
 // Environment validation schema
@@ -485,49 +479,39 @@ const EnvSchema = z.object({
   DATABASE_NAME: z.string().optional(),
   REDIS_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32).optional(),
-  CORS_ORIGIN: z.string().optional()
+  CORS_ORIGIN: z.string().optional(),
 });
 
 // Validate environment variables
 const env = EnvSchema.parse(process.env);
 
-const config: Partial<AppConfig> = {
+const config: DeepPartial<AppConfig> = {
   server: {
     port: env.PORT,
-    host: env.HOST,
-    environment: env.NODE_ENV
   },
-  database: env.DATABASE_HOST ? {
-    type: 'postgresql',
-    host: env.DATABASE_HOST,
-    port: env.DATABASE_PORT,
-    username: env.DATABASE_USERNAME!,
-    password: env.DATABASE_PASSWORD!,
-    database: env.DATABASE_NAME!
-  } : {
-    type: 'sqlite',
-    database: './dev.db'
-  },
+  database: env.DATABASE_HOST
+    ? {
+        postgresql: {
+          host: env.DATABASE_HOST,
+          port: env.DATABASE_PORT,
+          database: env.DATABASE_NAME,
+        },
+      }
+    : {
+        sqlite: {
+          filename: './dev.db',
+        },
+      },
   security: {
     cors: {
       enabled: true,
-      origin: env.CORS_ORIGIN?.split(',') || ['http://localhost:3000']
-    }
-  },
-  performance: {
-    cache: {
-      enabled: true,
-      adapter: env.REDIS_URL ? 'redis' : 'memory',
-      ...(env.REDIS_URL && {
-        redis: { url: env.REDIS_URL }
-      }),
-      ttl: 300
-    }
+      origin: env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
+    },
   },
   logging: {
     level: env.NODE_ENV === 'production' ? 'info' : 'debug',
-    format: env.NODE_ENV === 'production' ? 'json' : 'pretty'
-  }
+    format: env.NODE_ENV === 'production' ? 'json' : 'pretty',
+  },
 };
 
 export default config;
@@ -547,11 +531,13 @@ const EmailConfigSchema = z.object({
   timeout: z.number().default(5000),
   retries: z.number().default(3),
   enabled: z.boolean().default(true),
-  templates: z.object({
-    welcome: z.string().default('welcome-template'),
-    resetPassword: z.string().default('reset-password-template'),
-    verification: z.string().default('verification-template')
-  }).default({})
+  templates: z
+    .object({
+      welcome: z.string().default('welcome-template'),
+      resetPassword: z.string().default('reset-password-template'),
+      verification: z.string().default('verification-template'),
+    })
+    .default({}),
 });
 
 export const emailConfig = createModuleConfig(
@@ -559,7 +545,7 @@ export const emailConfig = createModuleConfig(
   {
     apiKey: 'dev-api-key',
     timeout: 3000,
-    enabled: process.env.NODE_ENV !== 'test'
+    enabled: process.env.NODE_ENV !== 'test',
   },
   'EMAIL_'
 );
@@ -585,11 +571,13 @@ const PaymentConfigSchema = z.object({
   environment: z.enum(['test', 'live']).default('test'),
   currency: z.string().default('usd'),
   captureMethod: z.enum(['automatic', 'manual']).default('automatic'),
-  features: z.object({
-    subscriptions: z.boolean().default(true),
-    multiParty: z.boolean().default(false),
-    connect: z.boolean().default(false)
-  }).default({})
+  features: z
+    .object({
+      subscriptions: z.boolean().default(true),
+      multiParty: z.boolean().default(false),
+      connect: z.boolean().default(false),
+    })
+    .default({}),
 });
 
 export const paymentConfig = createModuleConfig(
@@ -597,7 +585,7 @@ export const paymentConfig = createModuleConfig(
   {
     environment: process.env.NODE_ENV === 'production' ? 'live' : 'test',
     currency: 'usd',
-    captureMethod: 'automatic'
+    captureMethod: 'automatic',
   },
   'STRIPE_'
 );
@@ -617,20 +605,23 @@ module.exports = {
     username: process.env.DATABASE_USERNAME || 'postgres',
     password: process.env.DATABASE_PASSWORD || '',
     database: process.env.DATABASE_NAME || 'myapp',
-    ssl: process.env.NODE_ENV === 'production' ? {
-      rejectUnauthorized: false
-    } : false,
+    ssl:
+      process.env.NODE_ENV === 'production'
+        ? {
+            rejectUnauthorized: false,
+          }
+        : false,
     pool: {
       min: 2,
       max: 10,
       acquireTimeoutMillis: 30000,
-      idleTimeoutMillis: 30000
+      idleTimeoutMillis: 30000,
     },
     migrations: {
       directory: './migrations',
-      tableName: 'migrations'
-    }
-  }
+      tableName: 'migrations',
+    },
+  },
 };
 ```
 
@@ -651,9 +642,9 @@ module.exports = {
       min: 2,
       max: 10,
       acquireTimeoutMillis: 30000,
-      idleTimeoutMillis: 30000
-    }
-  }
+      idleTimeoutMillis: 30000,
+    },
+  },
 };
 ```
 
@@ -669,9 +660,9 @@ module.exports = {
       maxPoolSize: 10,
       minPoolSize: 2,
       maxIdleTimeMS: 30000,
-      serverSelectionTimeoutMS: 30000
-    }
-  }
+      serverSelectionTimeoutMS: 30000,
+    },
+  },
 };
 ```
 
@@ -690,11 +681,11 @@ module.exports = {
       keepAlive: 30000,
       family: 4, // 4 for IPv4, 6 for IPv6
       keyPrefix: 'myapp:',
-      db: parseInt(process.env.REDIS_DB || '0')
+      db: parseInt(process.env.REDIS_DB || '0'),
     },
     ttl: 3600,
-    compression: true
-  }
+    compression: true,
+  },
 };
 ```
 
@@ -712,25 +703,25 @@ module.exports = {
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
       credentials: true,
       optionsSuccessStatus: 200,
-      maxAge: 86400 // 24 hours
+      maxAge: 86400, // 24 hours
     },
     helmet: {
       enabled: true,
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "https:"],
-          connectSrc: ["'self'", "wss:", "https:"]
-        }
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: ["'self'", 'wss:', 'https:'],
+        },
       },
       hsts: {
         maxAge: 31536000,
         includeSubDomains: true,
-        preload: true
-      }
+        preload: true,
+      },
     },
     rateLimit: {
       enabled: true,
@@ -740,24 +731,24 @@ module.exports = {
       standardHeaders: true,
       legacyHeaders: false,
       skipSuccessfulRequests: false,
-      skipFailedRequests: false
+      skipFailedRequests: false,
     },
     auth: {
       jwt: {
         secret: process.env.JWT_SECRET,
         expiresIn: '24h',
         issuer: 'myapp',
-        audience: 'myapp-users'
+        audience: 'myapp-users',
       },
       session: {
         secret: process.env.SESSION_SECRET,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        sameSite: 'strict'
-      }
-    }
-  }
+        sameSite: 'strict',
+      },
+    },
+  },
 };
 ```
 
@@ -777,7 +768,7 @@ module.exports = {
           return false;
         }
         return compression.filter(req, res);
-      }
+      },
     },
     cache: {
       enabled: true,
@@ -786,7 +777,7 @@ module.exports = {
         url: process.env.REDIS_URL,
         keyPrefix: 'cache:',
         retryDelayOnFailover: 100,
-        maxRetriesPerRequest: 3
+        maxRetriesPerRequest: 3,
       },
       ttl: 3600,
       compression: true,
@@ -794,9 +785,9 @@ module.exports = {
         routes: {
           '/api/users': { ttl: 300 },
           '/api/posts': { ttl: 600 },
-          '/api/static/*': { ttl: 86400 }
-        }
-      }
+          '/api/static/*': { ttl: 86400 },
+        },
+      },
     },
     monitoring: {
       enabled: true,
@@ -804,10 +795,10 @@ module.exports = {
       healthCheck: {
         enabled: true,
         path: '/health',
-        checks: ['database', 'redis', 'memory']
-      }
-    }
-  }
+        checks: ['database', 'redis', 'memory'],
+      },
+    },
+  },
 };
 ```
 
@@ -816,33 +807,41 @@ module.exports = {
 ## Best Practices
 
 ### 1. Environment Variables for Secrets
+
 Always use environment variables for sensitive data:
+
 - Database passwords
 - API keys
 - JWT secrets
 - Third-party service credentials
 
 ### 2. Different Configs per Environment
+
 Use environment-specific configurations:
+
 - Development: Debug logging, local databases
 - Test: In-memory databases, minimal logging
 - Staging: Production-like setup with test data
 - Production: Optimized for performance and security
 
 ### 3. Configuration Validation
+
 Validate your configuration at startup:
+
 ```typescript
 const ConfigSchema = z.object({
   DATABASE_HOST: z.string(),
   DATABASE_PASSWORD: z.string().min(8),
-  JWT_SECRET: z.string().min(32)
+  JWT_SECRET: z.string().min(32),
 });
 
 const env = ConfigSchema.parse(process.env);
 ```
 
 ### 4. Graceful Defaults
+
 Provide sensible defaults in your config files:
+
 ```javascript
 {
   server: {
@@ -853,4 +852,5 @@ Provide sensible defaults in your config files:
 ```
 
 ### 5. Documentation
+
 Document all configuration options and their purposes for your team.

@@ -381,6 +381,19 @@ function validateModuleDefaultsConfig(config: any, path: string) {
     autoDiscovery: validateAutoDiscoveryConfig(config.autoDiscovery, `${path}.autoDiscovery`),
   };
 
+  // Optional apiPrefix
+  if (config.apiPrefix !== undefined) {
+    if (typeof config.apiPrefix !== 'string') {
+      throw new ConfigValidationError(
+        `${path}.apiPrefix`,
+        config.apiPrefix,
+        'string',
+        'API prefix must be a string'
+      );
+    }
+    validated.apiPrefix = config.apiPrefix;
+  }
+
   // Optional session config
   if (config.session !== undefined) {
     validated.session = validateSessionConfig(config.session, `${path}.session`);
@@ -483,11 +496,31 @@ function validateValidationConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const validated: any = {
     enabled: validateBoolean(config.enabled, `${path}.enabled`),
     stripUnknown: validateBoolean(config.stripUnknown, `${path}.stripUnknown`),
     abortEarly: validateBoolean(config.abortEarly, `${path}.abortEarly`),
   };
+
+  // Optional allowUnknown
+  if (config.allowUnknown !== undefined) {
+    validated.allowUnknown = validateBoolean(config.allowUnknown, `${path}.allowUnknown`);
+  }
+
+  // Optional onError handler
+  if (config.onError !== undefined) {
+    if (typeof config.onError !== 'function') {
+      throw new ConfigValidationError(
+        `${path}.onError`,
+        typeof config.onError,
+        'function',
+        'Validation error handler must be a function'
+      );
+    }
+    validated.onError = config.onError;
+  }
+
+  return validated;
 }
 
 /**

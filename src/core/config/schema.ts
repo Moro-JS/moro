@@ -1,6 +1,6 @@
 // Core Configuration Schema for Moro Framework
 
-import { AppConfig } from '../../types/config.js';
+import type { AppConfig } from '../../types/config.js';
 
 // Minimal default configuration - performance-focused, most things opt-in
 export const DEFAULT_CONFIG: AppConfig = {
@@ -32,6 +32,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   database: {},
   modules: {
+    apiPrefix: '/api/', // Default prefix for module routes - set to '' to disable
     cache: {
       enabled: false, // Opt-in for better performance
       defaultTtl: 300,
@@ -49,6 +50,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       enabled: false,
       stripUnknown: true,
       abortEarly: false,
+      allowUnknown: false,
     },
     session: {
       enabled: false, // Opt-in
@@ -205,6 +207,7 @@ export const ConfigSchema = {
 // Re-export types for backward compatibility
 export type {
   AppConfig,
+  DeepPartial,
   ServerConfig,
   ServiceDiscoveryConfig,
   DatabaseConfig,

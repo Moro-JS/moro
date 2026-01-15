@@ -215,6 +215,82 @@ export const userModule = defineModule({
 
 ## Routes in Modules
 
+### Module URL Structure
+
+Module routes are automatically prefixed with a versioned path. By default, the URL structure is:
+
+```
+{apiPrefix}/v{version}/{moduleName}{routePath}
+```
+
+**Default behavior:**
+
+- `apiPrefix`: `/api/` (configurable)
+- `version`: Module version (e.g., `1.0.0`)
+- `moduleName`: Module name
+- `routePath`: Individual route path
+
+**Example:**
+
+```typescript
+export const userModule = defineModule({
+  name: 'user',
+  version: '1.0.0',
+  routes: [
+    {
+      method: 'GET',
+      path: '/list',
+      handler: async (req, res) => {
+        // This route will be available at: /api/v1.0.0/user/list
+        res.json({ users: [] });
+      },
+    },
+  ],
+});
+```
+
+### Configuring API Prefix
+
+You can customize or remove the API prefix in your configuration:
+
+```typescript
+// moro.config.ts
+export default {
+  modules: {
+    apiPrefix: '/api/', // Default - all modules start with /api/
+  },
+};
+```
+
+**Remove the prefix entirely:**
+
+```typescript
+export default {
+  modules: {
+    apiPrefix: '', // No prefix - routes start with /v{version}/{moduleName}
+  },
+};
+```
+
+**Custom prefix:**
+
+```typescript
+export default {
+  modules: {
+    apiPrefix: '/v1/', // Custom prefix - routes start with /v1/v{version}/{moduleName}
+  },
+};
+```
+
+**Examples with different prefixes:**
+
+| Config            | Module Name | Version | Route Path | Final URL                    |
+| ----------------- | ----------- | ------- | ---------- | ---------------------------- |
+| `/api/` (default) | `user`      | `1.0.0` | `/list`    | `/api/v1.0.0/user/list`      |
+| `` (empty)        | `user`      | `1.0.0` | `/list`    | `/v1.0.0/user/list`          |
+| `/services/`      | `user`      | `1.0.0` | `/list`    | `/services/v1.0.0/user/list` |
+| `/v1/`            | `admin`     | `2.0.0` | `/users`   | `/v1/v2.0.0/admin/users`     |
+
 ### Route Configuration
 
 ```typescript
