@@ -1,3 +1,9 @@
+## [1.7.16] - 2026-01-21
+
+### Fixed
+
+- fix: Convert Windows absolute paths to file URLs for ESM dynamic imports
+
 ## [1.7.15] - 2026-01-15
 
 ### Added
