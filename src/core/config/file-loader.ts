@@ -4,6 +4,7 @@ import { join } from 'path';
 import { createRequire } from 'module';
 import { AppConfig, DeepPartial } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
+import { filePathToImportURL } from '../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('ConfigFile');
 
@@ -115,7 +116,9 @@ async function importConfigFile(filePath: string): Promise<DeepPartial<AppConfig
 
   try {
     // Use dynamic import to load the configuration
-    const configModule = await import(filePath);
+    // Convert file path to proper file URL for Windows compatibility
+    const importURL = filePathToImportURL(filePath);
+    const configModule = await import(importURL);
 
     // Handle both default export and module.exports
     const config = configModule.default || configModule;

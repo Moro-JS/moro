@@ -5,6 +5,7 @@ import { Container } from '../utilities/index.js';
 import { ModuleConfig } from '../../types/module.js';
 import { ModuleDefinition } from '../../types/module.js';
 import { createFrameworkLogger } from '../logger/index.js';
+import { filePathToImportURL } from '../utilities/package-utils.js';
 
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {
@@ -104,7 +105,9 @@ export class ModuleLoader {
 
           try {
             await fs.access(modulePath);
-            const moduleExports = await import(modulePath);
+            // Convert file path to proper file URL for Windows compatibility
+            const importURL = filePathToImportURL(modulePath);
+            const moduleExports = await import(importURL);
 
             // Look for exported module config
             for (const exportName of Object.keys(moduleExports)) {

@@ -5,6 +5,7 @@ import { ModuleConfig } from '../../types/module.js';
 import { DiscoveryOptions } from '../../types/discovery.js';
 import { ModuleDefaultsConfig } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
+import { filePathToImportURL } from '../utilities/package-utils.js';
 
 export class ModuleDiscovery {
   private baseDir: string;
@@ -141,7 +142,9 @@ export class ModuleDiscovery {
   // Load a module from a file path
   private async loadModule(modulePath: string): Promise<ModuleConfig | null> {
     try {
-      const module = await import(modulePath);
+      // Convert file path to proper file URL for Windows compatibility
+      const importURL = filePathToImportURL(modulePath);
+      const module = await import(importURL);
 
       // Try different export patterns
       const candidates = [

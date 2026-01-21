@@ -23,6 +23,7 @@ import cluster from 'cluster';
 import os from 'os';
 import { normalizeValidationError } from './core/validation/schema-interface.js';
 import { buildModuleBasePath } from './core/utilities/module-path.js';
+import { filePathToImportURL } from './core/utilities/package-utils.js';
 // Configuration System Integration
 import { initializeConfig, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
@@ -1511,7 +1512,9 @@ export class Moro extends EventEmitter {
   }
 
   private async importModule(modulePath: string): Promise<ModuleConfig> {
-    const module = await import(modulePath);
+    // Convert file path to proper file URL for Windows compatibility
+    const importURL = filePathToImportURL(modulePath);
+    const module = await import(importURL);
     return module.default || module;
   }
 

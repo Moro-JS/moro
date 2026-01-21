@@ -3,6 +3,7 @@
 
 import { createRequire } from 'module';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 /**
  * Check if a package is available in the user's node_modules
@@ -56,4 +57,49 @@ export function resolveUserPackage(packageName: string): string {
  */
 export function createUserRequire() {
   return createRequire(join(process.cwd(), 'package.json'));
+}
+
+/**
+ * Convert a file path to a file URL for ESM dynamic imports
+ * This is required on Windows where absolute paths like C:\path\to\module
+ * need to be converted to file:/// URLs for dynamic import() to work
+ *
+ * @param filePath - The file path to convert (absolute or relative)
+ * @returns A proper URL string for ESM import() that works cross-platform
+ *
+ * @example
+ * const modulePath = 'C:\\Users\\project\\module.js';
+ * const module = await import(filePathToImportURL(modulePath));
+ */
+export function filePathToImportURL(filePath: string): string {
+  if (!filePath) {
+    return filePath;
+  }
+
+  // If it's already a URL (starts with file:// or http(s)://), return as-is
+  if (
+    filePath.startsWith('file://') ||
+    filePath.startsWith('http://') ||
+    filePath.startsWith('https://')
+  ) {
+    return filePath;
+  }
+
+  // Check if it's a Windows absolute path (C:\ or C:/)
+  const windowsAbsolutePathRegex = /^[A-Za-z]:[\\//]/;
+  const isWindowsAbsolute = windowsAbsolutePathRegex.test(filePath);
+
+  // Check if it's a Unix absolute path (starts with /)
+  const isUnixAbsolute = filePath.startsWith('/');
+
+  // Check if it's a Windows UNC path (\\server\share)
+  const isWindowsUNC = filePath.startsWith('\\\\');
+
+  // Convert absolute paths to file URLs
+  if (isWindowsAbsolute || isUnixAbsolute || isWindowsUNC) {
+    return pathToFileURL(filePath).href;
+  }
+
+  // For relative paths, return as-is (they work in import())
+  return filePath;
 }
