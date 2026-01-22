@@ -1,3 +1,9 @@
+## [1.7.17] - 2026-01-22
+
+### Fixed
+
+- fix: resolve module root route overriding app root route
+
 ## [1.7.16] - 2026-01-21
 
 ### Fixed
