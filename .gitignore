@@ -13,3 +13,4 @@ dist
 .cursor
 coverage/
 docs-*
+sampleApp

@@ -303,4 +303,84 @@ describe('Module Routes - Direct Registration Fix', () => {
     expect(data2.success).toBe(true);
     expect(data2.module).toBe('2');
   });
+
+  it('should handle module root path "/" without overriding app root', async () => {
+    let appRootCalled = false;
+    let moduleRootCalled = false;
+    let moduleStatusCalled = false;
+
+    // Register app root route first
+    app.get('/', async (_req: any, res: any) => {
+      appRootCalled = true;
+      res.json({ success: true, message: 'App root' });
+    });
+
+    // Create health module with root path
+    const healthActions = {
+      rootHandler: async (_req: any, res: any) => {
+        moduleRootCalled = true;
+        res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString() });
+      },
+      statusHandler: async (_req: any, res: any) => {
+        moduleStatusCalled = true;
+        res.json({ success: true, status: 'ok' });
+      },
+    };
+
+    const healthModule: ModuleDefinition = {
+      name: 'health',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/',
+          handler: healthActions.rootHandler,
+        },
+        {
+          method: 'GET',
+          path: '/status',
+          handler: healthActions.statusHandler,
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(healthModule));
+
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    // Test app root - should NOT be overridden by module
+    const appRootResponse = await fetch(`http://localhost:${port}/`);
+    const appRootData = await appRootResponse.json();
+    expect(appRootResponse.status).toBe(200);
+    expect(appRootCalled).toBe(true);
+    expect(appRootData.success).toBe(true);
+    expect(appRootData.message).toBe('App root');
+
+    // Test module root - should map to /api/v1.0.0/health
+    const moduleRootResponse = await fetch(`http://localhost:${port}/api/v1.0.0/health`);
+    const moduleRootData = await moduleRootResponse.json();
+    expect(moduleRootResponse.status).toBe(200);
+    expect(moduleRootCalled).toBe(true);
+    expect(moduleRootData.success).toBe(true);
+    expect(moduleRootData.status).toBe('healthy');
+    expect(moduleRootData.timestamp).toBeDefined();
+
+    // Test module status route - should map to /api/v1.0.0/health/status
+    const moduleStatusResponse = await fetch(`http://localhost:${port}/api/v1.0.0/health/status`);
+    const moduleStatusData = await moduleStatusResponse.json();
+    expect(moduleStatusResponse.status).toBe(200);
+    expect(moduleStatusCalled).toBe(true);
+    expect(moduleStatusData.success).toBe(true);
+    expect(moduleStatusData.status).toBe('ok');
+
+    // Verify app root was not overridden - test again
+    appRootCalled = false;
+    const appRootResponse2 = await fetch(`http://localhost:${port}/`);
+    const appRootData2 = await appRootResponse2.json();
+    expect(appRootResponse2.status).toBe(200);
+    expect(appRootCalled).toBe(true);
+    expect(appRootData2.message).toBe('App root');
+  });
 });

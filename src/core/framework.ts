@@ -527,6 +527,13 @@ export class Moro extends EventEmitter {
 
     if (!config.routes) return router;
 
+    // Calculate basePath for this module
+    const basePath = buildModuleBasePath(
+      this.config.modules?.apiPrefix,
+      config.version,
+      config.name
+    );
+
     for (const route of config.routes) {
       this.logger.debug(
         `Adding route: ${route.method} ${route.path} -> ${route.handler}`,
@@ -535,8 +542,13 @@ export class Moro extends EventEmitter {
       const handler = await this.createResilientHandler(route, config, moduleEventBus);
       const method = route.method.toLowerCase() as keyof Router;
 
-      // Add route to router
-      (router[method] as CallableFunction)(route.path, handler);
+      // Transform path: module root '/' becomes the basePath, other paths are appended
+      const routePath = route.path === '/' ? '' : route.path;
+      const fullPath = basePath + routePath;
+
+      // Add route to router with FULL PATH (including basePath)
+      // This ensures UnifiedRouter sees the complete path like /api/v1.0.0/health
+      (router[method] as CallableFunction)(fullPath, handler);
     }
 
     this.logger.debug(`Router created with ${router.getRoutes().length} total routes`, 'Router');
@@ -949,10 +961,11 @@ export class Moro extends EventEmitter {
     this.logger.debug(`Mounting router for basePath: ${basePath}`, 'Router');
 
     // Register module routes directly with http-server
-    // This ensures they appear in the route table and can be found by findRoute()
+    // Routes are already stored with full paths (basePath + route.path) from createModuleRouter
     const routes = router.getRoutes();
     for (const route of routes) {
-      const fullPath = basePath + route.path;
+      // Routes already have full paths, no need to transform
+      const fullPath = route.path;
       const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete' | 'patch';
 
       this.logger.debug(`Registering module route: ${route.method} ${fullPath}`, 'Router');

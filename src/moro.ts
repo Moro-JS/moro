@@ -1419,7 +1419,9 @@ export class Moro extends EventEmitter {
             module.version,
             module.name
           );
-          const fullPath = `${basePath}${route.path}`;
+          // Handle root path within module: '/' should map to basePath, not basePath + '/'
+          const routePath = route.path === '/' ? '' : route.path;
+          const fullPath = `${basePath}${routePath}`;
 
           // Note: Lazy loading will be implemented when route is accessed
           // For now, we'll store the module for later loading
