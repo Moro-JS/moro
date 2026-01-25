@@ -1,6 +1,6 @@
 import { Server } from 'http';
 import { EventEmitter } from 'events';
-import { MoroHttpServer, HttpRequest, HttpResponse, Middleware } from './http/index.js';
+import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
 import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
@@ -186,7 +186,7 @@ export class Moro extends EventEmitter {
           : this.config.security.cors
             ? this.config.security.cors
             : {};
-      this.httpServer.use(cors(corsOptions) as unknown as Middleware);
+      this.httpServer.use(cors(corsOptions));
     }
 
     // Performance middleware - check config enabled property OR options.performance.*.enabled === true

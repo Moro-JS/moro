@@ -1,7 +1,7 @@
 // Built-in Middleware Exports
 export { auth } from './auth/index.js';
 export { rateLimit } from './rate-limit/index.js';
-export { cors } from './cors/index.js';
+export { cors, corsHook } from './cors/index.js';
 export { validation } from './validation/index.js';
 export { requestLogger } from './request-logger/index.js';
 export { performanceMonitor } from './performance-monitor/index.js';
@@ -63,7 +63,7 @@ export {
 // Import for collections
 import { auth } from './auth/index.js';
 import { rateLimit } from './rate-limit/index.js';
-import { cors } from './cors/index.js';
+import { corsHook } from './cors/index.js';
 import { validation } from './validation/index.js';
 import { requestLogger } from './request-logger/index.js';
 import { performanceMonitor } from './performance-monitor/index.js';
@@ -88,7 +88,7 @@ import { range } from './range/index.js';
 export const builtInMiddleware = {
   auth,
   rateLimit,
-  cors,
+  cors: corsHook,
   validation,
   // Advanced middleware
   cookie,

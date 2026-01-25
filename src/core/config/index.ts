@@ -16,6 +16,7 @@ export * from './schema.js';
 export * from './config-sources.js';
 export * from './config-validator.js';
 export * from './file-loader.js';
+export type { OriginFunction } from '../../types/config.js';
 
 // Export specific functions from config-manager to avoid conflicts
 export {

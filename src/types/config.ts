@@ -1,6 +1,14 @@
 // TypeScript-based Configuration Types for Moro Framework
 
 /**
+ * CORS origin function type for dynamic origin validation
+ */
+export type OriginFunction = (
+  origin: string | undefined,
+  req: any
+) => string | string[] | boolean | Promise<string | string[] | boolean>;
+
+/**
  * Deep partial type that makes all properties and nested properties optional
  * Used for user-provided configuration where only partial overrides are needed
  */
@@ -212,7 +220,7 @@ export interface LoggingConfig {
 export interface SecurityConfig {
   cors: {
     enabled: boolean;
-    origin: string | string[] | boolean;
+    origin: string | string[] | boolean | OriginFunction;
     methods: string[];
     allowedHeaders: string[];
     exposedHeaders?: string[];

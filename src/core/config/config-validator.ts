@@ -5,7 +5,7 @@
  * simple TypeScript functions that match the type definitions exactly.
  */
 
-import { AppConfig } from '../../types/config.js';
+import { AppConfig, OriginFunction } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
 const logger = createFrameworkLogger('ConfigValidator');
@@ -732,11 +732,17 @@ function validateCorsConfig(config: any, path: string) {
 }
 
 /**
- * Validate CORS origin (can be string, array, or boolean)
+ * Validate CORS origin (can be string, array, boolean, or function)
  */
-function validateCorsOrigin(value: any, path: string): string | string[] | boolean {
+function validateCorsOrigin(
+  value: any,
+  path: string
+): string | string[] | boolean | OriginFunction {
   if (typeof value === 'boolean' || typeof value === 'string') {
     return value;
+  }
+  if (typeof value === 'function') {
+    return value as OriginFunction;
   }
   if (Array.isArray(value)) {
     return validateStringArray(value, path);
@@ -744,8 +750,8 @@ function validateCorsOrigin(value: any, path: string): string | string[] | boole
   throw new ConfigValidationError(
     path,
     value,
-    'string | string[] | boolean',
-    'Must be a string, array of strings, or boolean'
+    'string | string[] | boolean | function',
+    'Must be a string, array of strings, boolean, or function'
   );
 }
 

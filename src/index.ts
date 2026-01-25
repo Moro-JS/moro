@@ -243,7 +243,7 @@ export {
 } from './core/config/index.js';
 
 // Export configuration types for TypeScript users
-export type { AppConfig, DeepPartial } from './core/config/index.js';
+export type { AppConfig, DeepPartial, OriginFunction } from './core/config/index.js';
 
 // GraphQL System - Only export types and adapter
 // The core classes are lazy-loaded internally via app.graphqlInit()

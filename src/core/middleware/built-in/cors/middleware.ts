@@ -1,5 +1,5 @@
-// CORS Middleware - Standard (req, res, next) middleware function
-import { StandardMiddleware } from '../../../../types/hooks.js';
+// CORS Middleware
+import { Middleware } from '../../../../types/http.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import { CORSCore, type CORSOptions } from './core.js';
 
@@ -16,10 +16,10 @@ import { CORSCore, type CORSOptions } from './core.js';
  * app.use(corsMw);
  * ```
  */
-export function createCORSMiddleware(options: CORSOptions = {}): StandardMiddleware {
+export function createCORSMiddleware(options: CORSOptions = {}): Middleware {
   const corsCore = new CORSCore(options);
 
-  return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
+  return async (req: HttpRequest, res: HttpResponse, next: () => void) => {
     // Apply CORS headers to all requests (now async to support origin functions)
     const isAllowed = await corsCore.applyCORS(res, req);
 
@@ -35,6 +35,6 @@ export function createCORSMiddleware(options: CORSOptions = {}): StandardMiddlew
       return;
     }
 
-    await next();
+    next();
   };
 }

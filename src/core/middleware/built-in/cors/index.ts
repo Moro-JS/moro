@@ -8,4 +8,9 @@ export { CORSCore, type CORSOptions } from './core.js';
 export { createCORSMiddleware } from './middleware.js';
 
 // Hook (for global registration)
-export { cors } from './hook.js';
+export { cors as corsHook } from './hook.js';
+
+// Default export for framework use
+import { createCORSMiddleware } from './middleware.js';
+
+export const cors = createCORSMiddleware;
