@@ -1,3 +1,9 @@
+## [1.7.18] - 2026-01-25
+
+### Added
+
+- fix: Add CORS origin function support in config and fix MiddlewareInterface warning
+
 ## [1.7.17] - 2026-01-22
 
 ### Fixed
