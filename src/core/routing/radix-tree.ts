@@ -8,6 +8,8 @@ export interface RadixNode {
   paramChild: RadixNode | null;
   paramName: string | null;
   handler: any;
+  // Store parameter names for this specific handler/route
+  paramPath: string[] | null;
 }
 
 export interface MatchResult {
@@ -39,6 +41,7 @@ export class RadixTree {
       paramChild: null,
       paramName: null,
       handler: null,
+      paramPath: null,
     };
   }
 
@@ -49,6 +52,7 @@ export class RadixTree {
     let node = this.root;
     let i = 0;
     const len = path.length;
+    const paramNames: string[] = [];
 
     // Skip leading slash
     if (len > 0 && path.charCodeAt(0) === 47) {
@@ -72,6 +76,9 @@ export class RadixTree {
           end++;
         }
 
+        const paramName = path.slice(i + 1, end);
+        paramNames.push(paramName);
+
         // Create param child if needed
         if (!node.paramChild) {
           node.paramChild = {
@@ -79,8 +86,9 @@ export class RadixTree {
             segment: '',
             staticChildren: null,
             paramChild: null,
-            paramName: path.slice(i + 1, end),
+            paramName: paramName,
             handler: null,
+            paramPath: null,
           };
         }
 
@@ -109,6 +117,7 @@ export class RadixTree {
           paramChild: null,
           paramName: null,
           handler: null,
+          paramPath: null,
         };
         node.staticChildren.set(segmentHash, child);
         node = child;
@@ -122,6 +131,7 @@ export class RadixTree {
             paramChild: null,
             paramName: null,
             handler: null,
+            paramPath: null,
           };
           node.staticChildren.set(segmentHash, child);
         } else {
@@ -138,19 +148,27 @@ export class RadixTree {
       i = segEnd;
     }
 
-    // Store handler
+    // Store handler and parameter names for this specific route
     node.handler = handler;
+    node.paramPath = paramNames.length > 0 ? paramNames : null;
   }
 
   /**
    * Search for a route in the radix tree - HASH-BASED
    */
   search(path: string): MatchResult | null {
-    const params: Record<string, string> = {};
-    const result = this.searchNode(this.root, path, 0, params);
+    const paramValues: string[] = [];
+    const result = this.searchNode(this.root, path, 0, paramValues);
 
     if (result) {
-      return { handler: result, params };
+      // Build params object using stored parameter names from the matched route
+      const params: Record<string, string> = {};
+      if (result.paramPath) {
+        for (let i = 0; i < result.paramPath.length; i++) {
+          params[result.paramPath[i]] = paramValues[i];
+        }
+      }
+      return { handler: result.handler, params };
     }
 
     return null;
@@ -160,8 +178,8 @@ export class RadixTree {
     node: RadixNode,
     path: string,
     idx: number,
-    params: Record<string, string>
-  ): any {
+    paramValues: string[]
+  ): RadixNode | null {
     const len = path.length;
 
     // Skip slashes
@@ -169,9 +187,9 @@ export class RadixTree {
       idx++;
     }
 
-    // End of path - return handler if exists
+    // End of path - return node if it has a handler
     if (idx === len) {
-      return node.handler;
+      return node.handler ? node : null;
     }
 
     // Try static children first (fastest) - hash-based lookup
@@ -188,7 +206,7 @@ export class RadixTree {
       // Direct hash lookup (O(1))
       const child = node.staticChildren.get(segmentHash);
       if (child && child.segment === segment) {
-        const result = this.searchNode(child, path, segEnd, params);
+        const result = this.searchNode(child, path, segEnd, paramValues);
         if (result) {
           return result;
         }
@@ -205,20 +223,16 @@ export class RadixTree {
       }
 
       if (end > idx) {
-        const paramName = node.paramChild.paramName;
-        if (paramName) {
-          params[paramName] = path.slice(idx, end);
-        }
+        const paramValue = path.slice(idx, end);
+        paramValues.push(paramValue);
 
-        const result = this.searchNode(node.paramChild, path, end, params);
+        const result = this.searchNode(node.paramChild, path, end, paramValues);
         if (result) {
           return result;
         }
 
         // Backtrack if no match
-        if (paramName) {
-          delete params[paramName];
-        }
+        paramValues.pop();
       }
     }
 
@@ -236,6 +250,7 @@ export class RadixTree {
       paramChild: null,
       paramName: null,
       handler: null,
+      paramPath: null,
     };
   }
 }
