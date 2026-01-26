@@ -1,3 +1,9 @@
+## [1.7.19] - 2026-01-26
+
+### Fixed
+
+- fix: correct parameter name handling in RadixTree for module routes
+
 ## [1.7.18] - 2026-01-25
 
 ### Added
