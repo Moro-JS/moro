@@ -1,3 +1,9 @@
+## [1.7.20] - 2026-02-11
+
+### Fixed
+
+- fix: resolve three cascading bugs in job scheduler for long-interval cron schedules
+
 ## [1.7.19] - 2026-01-26
 
 ### Fixed
