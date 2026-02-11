@@ -510,7 +510,7 @@ function normalizeCreateAppOptions(options: MoroOptions): DeepPartial<AppConfig>
     config.performance = { ...config.performance, ...options.performance } as any;
   }
   if (options.jobs) {
-    config.jobs = { ...config.jobs, ...options.jobs } as any;
+    config.jobs = deepMerge(config.jobs || {}, options.jobs) as any;
   }
 
   // Handle shorthand boolean/object options

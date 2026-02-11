@@ -43,6 +43,7 @@ export function validateConfig(config: any): AppConfig {
       external: validateExternalServicesConfig(config.external, 'external'),
       performance: validatePerformanceConfig(config.performance, 'performance'),
       websocket: validateWebSocketConfig(config.websocket, 'websocket'),
+      jobs: validateJobsConfig(config.jobs, 'jobs'),
       queue: validateQueueConfig(config.queue, 'queue'),
     };
 
@@ -1625,6 +1626,211 @@ function validateQueueLimiterConfig(config: any, path: string) {
     max: validateNumber(config.max, `${path}.max`, { min: 1 }),
     duration: validateNumber(config.duration, `${path}.duration`, { min: 1 }),
   };
+}
+
+/**
+ * Validate jobs configuration
+ */
+function validateJobsConfig(config: any, path: string) {
+  if (config === undefined || config === null) {
+    return undefined;
+  }
+
+  if (typeof config !== 'object' || Array.isArray(config)) {
+    throw new ConfigValidationError(path, config, 'object', 'Jobs configuration must be an object');
+  }
+
+  const result: any = {};
+
+  if (config.enabled !== undefined) {
+    result.enabled = validateBoolean(config.enabled, `${path}.enabled`);
+  }
+  if (config.maxConcurrentJobs !== undefined) {
+    result.maxConcurrentJobs = validateNumber(
+      config.maxConcurrentJobs,
+      `${path}.maxConcurrentJobs`,
+      { min: 1 }
+    );
+  }
+  if (config.gracefulShutdownTimeout !== undefined) {
+    result.gracefulShutdownTimeout = validateNumber(
+      config.gracefulShutdownTimeout,
+      `${path}.gracefulShutdownTimeout`,
+      { min: 0 }
+    );
+  }
+  if (config.leaderElection !== undefined) {
+    result.leaderElection = validateJobsLeaderElectionConfig(
+      config.leaderElection,
+      `${path}.leaderElection`
+    );
+  }
+  if (config.executor !== undefined) {
+    result.executor = validateJobsExecutorConfig(config.executor, `${path}.executor`);
+  }
+  if (config.stateManager !== undefined) {
+    result.stateManager = validateJobsStateManagerConfig(
+      config.stateManager,
+      `${path}.stateManager`
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Validate jobs leader election configuration
+ */
+function validateJobsLeaderElectionConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Jobs leader election configuration must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.enabled !== undefined) {
+    result.enabled = validateBoolean(config.enabled, `${path}.enabled`);
+  }
+  if (config.strategy !== undefined) {
+    result.strategy = validateEnum(config.strategy, ['file', 'redis', 'none'], `${path}.strategy`);
+  }
+  if (config.lockPath !== undefined) {
+    result.lockPath = validateString(config.lockPath, `${path}.lockPath`);
+  }
+  if (config.lockTimeout !== undefined) {
+    result.lockTimeout = validateNumber(config.lockTimeout, `${path}.lockTimeout`, { min: 1000 });
+  }
+  if (config.heartbeatInterval !== undefined) {
+    result.heartbeatInterval = validateNumber(
+      config.heartbeatInterval,
+      `${path}.heartbeatInterval`,
+      { min: 1000 }
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Validate jobs executor configuration
+ */
+function validateJobsExecutorConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Jobs executor configuration must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.maxRetries !== undefined) {
+    result.maxRetries = validateNumber(config.maxRetries, `${path}.maxRetries`, { min: 0 });
+  }
+  if (config.retryDelay !== undefined) {
+    result.retryDelay = validateNumber(config.retryDelay, `${path}.retryDelay`, { min: 0 });
+  }
+  if (config.retryBackoff !== undefined) {
+    result.retryBackoff = validateEnum(
+      config.retryBackoff,
+      ['linear', 'exponential'],
+      `${path}.retryBackoff`
+    );
+  }
+  if (config.retryBackoffMultiplier !== undefined) {
+    result.retryBackoffMultiplier = validateNumber(
+      config.retryBackoffMultiplier,
+      `${path}.retryBackoffMultiplier`,
+      { min: 1 }
+    );
+  }
+  if (config.maxRetryDelay !== undefined) {
+    result.maxRetryDelay = validateNumber(config.maxRetryDelay, `${path}.maxRetryDelay`, {
+      min: 0,
+    });
+  }
+  if (config.timeout !== undefined) {
+    result.timeout = validateNumber(config.timeout, `${path}.timeout`, { min: 0 });
+  }
+  if (config.enableCircuitBreaker !== undefined) {
+    result.enableCircuitBreaker = validateBoolean(
+      config.enableCircuitBreaker,
+      `${path}.enableCircuitBreaker`
+    );
+  }
+  if (config.circuitBreakerThreshold !== undefined) {
+    result.circuitBreakerThreshold = validateNumber(
+      config.circuitBreakerThreshold,
+      `${path}.circuitBreakerThreshold`,
+      { min: 1 }
+    );
+  }
+  if (config.circuitBreakerResetTimeout !== undefined) {
+    result.circuitBreakerResetTimeout = validateNumber(
+      config.circuitBreakerResetTimeout,
+      `${path}.circuitBreakerResetTimeout`,
+      { min: 1000 }
+    );
+  }
+  if (config.enableMemoryMonitoring !== undefined) {
+    result.enableMemoryMonitoring = validateBoolean(
+      config.enableMemoryMonitoring,
+      `${path}.enableMemoryMonitoring`
+    );
+  }
+  if (config.memoryThreshold !== undefined) {
+    result.memoryThreshold = validateNumber(config.memoryThreshold, `${path}.memoryThreshold`, {
+      min: 1,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Validate jobs state manager configuration
+ */
+function validateJobsStateManagerConfig(config: any, path: string) {
+  if (!config || typeof config !== 'object') {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'object',
+      'Jobs state manager configuration must be an object'
+    );
+  }
+
+  const result: any = {};
+
+  if (config.persistPath !== undefined) {
+    result.persistPath = validateString(config.persistPath, `${path}.persistPath`);
+  }
+  if (config.historySize !== undefined) {
+    result.historySize = validateNumber(config.historySize, `${path}.historySize`, { min: 1 });
+  }
+  if (config.persistInterval !== undefined) {
+    result.persistInterval = validateNumber(config.persistInterval, `${path}.persistInterval`, {
+      min: 1000,
+    });
+  }
+  if (config.enableAutoPersist !== undefined) {
+    result.enableAutoPersist = validateBoolean(
+      config.enableAutoPersist,
+      `${path}.enableAutoPersist`
+    );
+  }
+  if (config.enableRecovery !== undefined) {
+    result.enableRecovery = validateBoolean(config.enableRecovery, `${path}.enableRecovery`);
+  }
+
+  return result;
 }
 
 /**

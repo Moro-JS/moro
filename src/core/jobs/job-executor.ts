@@ -104,16 +104,26 @@ export class JobExecutor extends EventEmitter {
 
   /**
    * Execute a job with full resilience features
+   *
+   * @param jobId - Unique job identifier
+   * @param executionId - Unique execution identifier
+   * @param jobFn - The job function to execute
+   * @param context - Execution context
+   * @param optionOverrides - Per-execution option overrides (merged on top of constructor defaults)
    */
   public async execute(
     jobId: string,
     executionId: string,
     jobFn: JobFunction,
-    context?: ExecutionContext
+    context?: ExecutionContext,
+    optionOverrides?: Partial<JobExecutorOptions>
   ): Promise<ExecutionResult> {
     if (this.isShuttingDown) {
       throw new Error('JobExecutor is shutting down');
     }
+
+    // Merge per-execution overrides with constructor defaults
+    const opts = optionOverrides ? { ...this.options, ...optionOverrides } : this.options;
 
     const ctx: ExecutionContext = context || {
       jobId,
@@ -133,18 +143,18 @@ export class JobExecutor extends EventEmitter {
 
     try {
       // Check memory before execution
-      if (this.options.enableMemoryMonitoring) {
+      if (opts.enableMemoryMonitoring) {
         await this.checkMemoryUsage(jobId);
       }
 
       // Execute with retries
-      while (attempts <= this.options.maxRetries) {
+      while (attempts <= opts.maxRetries) {
         attempts++;
         ctx.attempt = attempts;
 
         try {
           // Check circuit breaker
-          if (this.options.enableCircuitBreaker) {
+          if (opts.enableCircuitBreaker) {
             const breaker = this.getCircuitBreaker(jobId);
 
             if (breaker.isOpen()) {
@@ -154,10 +164,15 @@ export class JobExecutor extends EventEmitter {
           }
 
           // Execute with timeout
-          const result = await this.executeWithTimeout(jobFn, ctx, abortController.signal);
+          const result = await this.executeWithTimeout(
+            jobFn,
+            ctx,
+            abortController.signal,
+            opts.timeout
+          );
 
           // Success - record in circuit breaker
-          if (this.options.enableCircuitBreaker) {
+          if (opts.enableCircuitBreaker) {
             const breaker = this.getCircuitBreaker(jobId);
             breaker.recordSuccess();
           }
@@ -198,13 +213,13 @@ export class JobExecutor extends EventEmitter {
           }
 
           // Record failure in circuit breaker
-          if (this.options.enableCircuitBreaker && !circuitBreakerTripped) {
+          if (opts.enableCircuitBreaker && !circuitBreakerTripped) {
             const breaker = this.getCircuitBreaker(jobId);
             breaker.recordFailure();
           }
 
           this.logger.warn(
-            `Job execution failed: ${jobId} (attempt ${attempts}/${this.options.maxRetries + 1})`,
+            `Job execution failed: ${jobId} (attempt ${attempts}/${opts.maxRetries + 1})`,
             'JobExecutor',
             {
               executionId,
@@ -218,7 +233,7 @@ export class JobExecutor extends EventEmitter {
             jobId,
             executionId,
             attempt: attempts,
-            maxAttempts: this.options.maxRetries + 1,
+            maxAttempts: opts.maxRetries + 1,
             error: lastError,
             timedOut,
           });
@@ -229,8 +244,8 @@ export class JobExecutor extends EventEmitter {
           }
 
           // Calculate retry delay with backoff and jitter
-          if (attempts <= this.options.maxRetries) {
-            const delay = this.calculateRetryDelay(attempts);
+          if (attempts <= opts.maxRetries) {
+            const delay = this.calculateRetryDelay(attempts, opts);
             await this.sleep(delay);
           }
         }
@@ -272,14 +287,14 @@ export class JobExecutor extends EventEmitter {
       this.activeExecutions.delete(executionId);
 
       // Force GC if memory threshold exceeded
-      if (this.options.enableMemoryMonitoring) {
+      if (opts.enableMemoryMonitoring) {
         const memUsage = process.memoryUsage();
         const heapUsedMB = memUsage.heapUsed / 1024 / 1024;
 
-        if (heapUsedMB > this.options.memoryThreshold * 0.9 && globalThis.gc) {
+        if (heapUsedMB > opts.memoryThreshold * 0.9 && globalThis.gc) {
           this.logger.warn('High memory usage detected, triggering GC', 'JobExecutor', {
             heapUsedMB: Math.round(heapUsedMB),
-            threshold: this.options.memoryThreshold,
+            threshold: opts.memoryThreshold,
           });
           globalThis.gc();
         }
@@ -293,15 +308,17 @@ export class JobExecutor extends EventEmitter {
   private async executeWithTimeout(
     jobFn: JobFunction,
     context: ExecutionContext,
-    signal: AbortSignal
+    signal: AbortSignal,
+    timeout?: number
   ): Promise<any> {
+    const effectiveTimeout = timeout ?? this.options.timeout;
     return new Promise((resolve, reject) => {
       // Setup timeout
       const timeoutId = setTimeout(() => {
-        const error = new Error(`Job execution timeout after ${this.options.timeout}ms`);
+        const error = new Error(`Job execution timeout after ${effectiveTimeout}ms`);
         error.name = 'TimeoutError';
         reject(error);
-      }, this.options.timeout);
+      }, effectiveTimeout);
 
       // Don't keep process alive for job execution timeout
       timeoutId.unref();
@@ -339,17 +356,25 @@ export class JobExecutor extends EventEmitter {
   /**
    * Calculate retry delay with backoff and jitter
    */
-  private calculateRetryDelay(attempt: number): number {
+  private calculateRetryDelay(
+    attempt: number,
+    opts?: Pick<
+      Required<JobExecutorOptions>,
+      'retryBackoff' | 'retryDelay' | 'retryBackoffMultiplier' | 'maxRetryDelay'
+    >
+  ): number {
+    const effectiveOpts = opts ?? this.options;
     let delay: number;
 
-    if (this.options.retryBackoff === 'exponential') {
-      delay = this.options.retryDelay * Math.pow(this.options.retryBackoffMultiplier, attempt - 1);
+    if (effectiveOpts.retryBackoff === 'exponential') {
+      delay =
+        effectiveOpts.retryDelay * Math.pow(effectiveOpts.retryBackoffMultiplier, attempt - 1);
     } else {
-      delay = this.options.retryDelay * attempt;
+      delay = effectiveOpts.retryDelay * attempt;
     }
 
     // Cap at max delay
-    delay = Math.min(delay, this.options.maxRetryDelay);
+    delay = Math.min(delay, effectiveOpts.maxRetryDelay);
 
     // Add jitter (±20%)
     const jitter = delay * 0.2 * (Math.random() * 2 - 1);

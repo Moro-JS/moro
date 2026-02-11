@@ -356,6 +356,11 @@ export class JobScheduler extends EventEmitter {
     }
   }
 
+  // Maximum safe setTimeout delay: 2^31 - 1 ms (~24.8 days)
+  // Values exceeding this overflow Node.js's 32-bit signed integer, causing
+  // the timer to fire at 1ms instead of the intended delay.
+  private static readonly MAX_TIMEOUT = 2_147_483_647;
+
   /**
    * Schedule a single job
    */
@@ -373,16 +378,27 @@ export class JobScheduler extends EventEmitter {
 
     const delay = job.nextRun.getTime() - Date.now();
 
-    if (delay < 0) {
+    if (delay <= 0) {
       // Should have run already, execute immediately and calculate next
       this.logger.debug(`Job ${job.name} overdue, executing immediately`, this.loggerContext);
       this.queueJobExecution(job);
       return;
     }
 
+    // Cap at MAX_TIMEOUT to prevent 32-bit integer overflow in setTimeout.
+    // When the capped timer wakes, we re-check whether it's actually time to run.
+    // If not, scheduleJob is called again, naturally chaining until the real fire time.
+    const safeDelay = Math.min(delay, JobScheduler.MAX_TIMEOUT);
+
     job.timer = setTimeout(() => {
-      this.queueJobExecution(job);
-    }, delay);
+      const remaining = job.nextRun ? job.nextRun.getTime() - Date.now() : 0;
+      if (remaining <= 0) {
+        this.queueJobExecution(job);
+      } else {
+        // Not yet time to run -- reschedule for the remaining duration
+        this.scheduleJob(job);
+      }
+    }, safeDelay);
 
     // Don't keep process alive for job timers
     job.timer.unref();
@@ -392,6 +408,8 @@ export class JobScheduler extends EventEmitter {
     this.logger.debug(`Job scheduled: ${job.name} (${job.id})`, this.loggerContext, {
       nextRun: job.nextRun,
       delay,
+      safeDelay,
+      capped: delay > JobScheduler.MAX_TIMEOUT,
     });
   }
 
@@ -511,16 +529,11 @@ export class JobScheduler extends EventEmitter {
       }
 
       // Execute with executor (handles retry, timeout, circuit breaker)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const executorOptions = {
-        timeout: job.options.timeout,
-        maxRetries: job.options.maxRetries,
-        retryDelay: job.options.retryDelay,
-        retryBackoff: job.options.retryBackoff,
-        enableCircuitBreaker: job.options.enableCircuitBreaker,
-      };
+      // Build per-job overrides, filtering out undefined values so only
+      // explicitly set options override the global executor defaults.
+      const executorOptions = this.buildExecutorOverrides(job.options);
 
-      const result = await this.executor.execute(job.id, execId, job.fn, context);
+      const result = await this.executor.execute(job.id, execId, job.fn, context, executorOptions);
 
       if (result.success) {
         // End execution tracking
@@ -627,6 +640,39 @@ export class JobScheduler extends EventEmitter {
       return true; // No leader election, always leader
     }
     return this.leaderElection.isCurrentLeader();
+  }
+
+  /**
+   * Build per-job executor option overrides from job options.
+   * Only includes properties that are explicitly defined, so undefined
+   * values do not override the global executor defaults.
+   */
+  private buildExecutorOverrides(jobOptions: JobOptions): Partial<JobExecutorOptions> | undefined {
+    const overrides: Partial<JobExecutorOptions> = {};
+    let hasOverrides = false;
+
+    if (jobOptions.timeout !== undefined) {
+      overrides.timeout = jobOptions.timeout;
+      hasOverrides = true;
+    }
+    if (jobOptions.maxRetries !== undefined) {
+      overrides.maxRetries = jobOptions.maxRetries;
+      hasOverrides = true;
+    }
+    if (jobOptions.retryDelay !== undefined) {
+      overrides.retryDelay = jobOptions.retryDelay;
+      hasOverrides = true;
+    }
+    if (jobOptions.retryBackoff !== undefined) {
+      overrides.retryBackoff = jobOptions.retryBackoff;
+      hasOverrides = true;
+    }
+    if (jobOptions.enableCircuitBreaker !== undefined) {
+      overrides.enableCircuitBreaker = jobOptions.enableCircuitBreaker;
+      hasOverrides = true;
+    }
+
+    return hasOverrides ? overrides : undefined;
   }
 
   /**
