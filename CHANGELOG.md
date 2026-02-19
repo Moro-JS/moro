@@ -1,3 +1,13 @@
+## [1.7.21] - 2026-02-19
+
+### Fixed
+
+- fix: await createApp in validation scripts and package tests
+
+### Other
+
+- feat!: make createApp/createAppNode/Edge/Lambda/Worker async for ESM config file support
+
 ## [1.7.20] - 2026-02-11
 
 ### Fixed
