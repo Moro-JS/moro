@@ -9,8 +9,8 @@ describe('File Upload - Binary Data Integrity', () => {
   let server: http.Server;
   const PORT = 3891;
 
-  beforeAll(done => {
-    app = createApp({
+  beforeAll(async () => {
+    app = await createApp({
       logging: {
         level: 'error', // Suppress logs during tests
       },
@@ -36,9 +36,7 @@ describe('File Upload - Binary Data Integrity', () => {
       };
     });
 
-    app.listen(PORT, () => {
-      done();
-    });
+    await new Promise<void>(resolve => app.listen(PORT, () => resolve()));
 
     server = (app as any).coreFramework.httpServer.getServer();
   });

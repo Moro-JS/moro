@@ -11,8 +11,8 @@ describe('Auth Integration Tests (Better Auth)', () => {
   let app: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp({
+  beforeEach(async () => {
+    app = await createApp({
       logger: { level: 'error' }, // Reduce log noise in tests
     });
     port = createTestPort();

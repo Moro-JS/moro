@@ -7,9 +7,9 @@ describe('Module Routes - Direct Registration Fix', () => {
   let app: any;
   let port: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     port = 3100 + Math.floor(Math.random() * 1000);
-    app = createApp({ logging: { level: 'error' } });
+    app = await createApp({ logging: { level: 'error' } });
   });
 
   afterEach(async () => {
@@ -165,7 +165,7 @@ describe('Module Routes - Direct Registration Fix', () => {
   });
 
   it('should handle compression correctly with await', async () => {
-    const appWithCompression = createApp({
+    const appWithCompression = await createApp({
       logging: { level: 'error' },
       performance: {
         compression: {

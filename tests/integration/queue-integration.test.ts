@@ -11,8 +11,8 @@ import type { Moro } from '../../src/moro';
 describe('Queue Integration with Moro', () => {
   let app: Moro;
 
-  beforeEach(() => {
-    app = createApp({
+  beforeEach(async () => {
+    app = await createApp({
       logger: { level: 'error' }, // Suppress logs during tests
     });
   });

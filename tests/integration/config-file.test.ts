@@ -19,7 +19,7 @@ describe('Config File Integration', () => {
     process.env = originalEnv;
   });
 
-  it('should work without config file (existing behavior)', () => {
+  it('should work without config file (existing behavior)', async () => {
     // Clean environment first
     delete process.env.PORT;
     delete process.env.HOST;
@@ -28,13 +28,13 @@ describe('Config File Integration', () => {
     process.env.PORT = '4000';
 
     resetConfig();
-    const app = createApp({ logger: { level: 'error' } });
+    const app = await createApp({ logger: { level: 'error' } });
     const config = (app as any).config;
 
     expect(config.server.port).toBe(4000);
   });
 
-  it('should load and apply config file values', () => {
+  it('should load and apply config file values', async () => {
     // Clean environment first
     delete process.env.PORT;
     delete process.env.HOST;
@@ -60,7 +60,7 @@ describe('Config File Integration', () => {
     writeFileSync(configPath, configContent);
 
     resetConfig();
-    const app = createApp({ logger: { level: 'error' } });
+    const app = await createApp({ logger: { level: 'error' } });
     const config = (app as any).config;
 
     // Config file values should be applied
@@ -71,7 +71,7 @@ describe('Config File Integration', () => {
     expect(config.logging.level).toBe('error');
   });
 
-  it('should gracefully handle invalid config files', () => {
+  it('should gracefully handle invalid config files', async () => {
     // Create invalid config file
     const configContent = `
       module.exports = "invalid config";
@@ -80,12 +80,10 @@ describe('Config File Integration', () => {
     writeFileSync(configPath, configContent);
 
     // Should not throw error, just fall back to env vars
-    expect(() => {
-      const app = createApp({ logger: { level: 'error' } });
-    }).not.toThrow();
+    await expect(createApp({ logger: { level: 'error' } })).resolves.toBeDefined();
   });
 
-  it('should handle config file with syntax errors', () => {
+  it('should handle config file with syntax errors', async () => {
     // Create config file with syntax error
     const configContent = `
       module.exports = {
@@ -100,8 +98,6 @@ describe('Config File Integration', () => {
     writeFileSync(configPath, configContent);
 
     // Should not throw error, just fall back to env vars
-    expect(() => {
-      const app = createApp({ logger: { level: 'error' } });
-    }).not.toThrow();
+    await expect(createApp({ logger: { level: 'error' } })).resolves.toBeDefined();
   });
 });

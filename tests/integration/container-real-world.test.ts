@@ -11,7 +11,7 @@ import { createApp } from '../../src/index';
 describe('Real-World DI Patterns', () => {
   describe('Accessing Container in Different Contexts', () => {
     it('should access container via req.app in routes', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -38,7 +38,7 @@ describe('Real-World DI Patterns', () => {
     });
 
     it('should access container in middleware via req.app', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -63,7 +63,7 @@ describe('Real-World DI Patterns', () => {
 
   describe('Complete Application Example (from docs)', () => {
     it('should demonstrate full dependency chain', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -180,7 +180,7 @@ describe('Real-World DI Patterns', () => {
 
   describe('Service Organization Pattern', () => {
     it('should support centralized service exports', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -233,7 +233,7 @@ describe('Real-World DI Patterns', () => {
 
   describe('Advanced Patterns from Docs', () => {
     it('should support service composition with tags', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -280,7 +280,7 @@ describe('Real-World DI Patterns', () => {
     });
 
     it('should support request-scoped services with context', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -311,7 +311,7 @@ describe('Real-World DI Patterns', () => {
     });
 
     it('should support service interceptors for logging', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -349,7 +349,7 @@ describe('Real-World DI Patterns', () => {
     });
 
     it('should support service interceptors with next() callback pattern', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();
@@ -382,7 +382,7 @@ describe('Real-World DI Patterns', () => {
     });
 
     it('should support service decorators for error handling', async () => {
-      const app = createApp({
+      const app = await createApp({
         logging: { level: 'error' },
       });
       const container = app.getContainer();

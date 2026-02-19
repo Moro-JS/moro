@@ -8,8 +8,8 @@ import { createApp } from '../../src/index';
 describe('DI Container Public API', () => {
   let app;
 
-  beforeEach(() => {
-    app = createApp({
+  beforeEach(async () => {
+    app = await createApp({
       logging: { level: 'error' },
     });
   });

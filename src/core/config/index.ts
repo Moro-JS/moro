@@ -30,7 +30,7 @@ export * from './utils.js';
 
 import { MoroOptions } from '../../types/core.js';
 import { AppConfig } from '../../types/config.js';
-import { loadConfigFromAllSources } from './config-sources.js';
+import { loadConfigFromAllSources, loadConfigFromAllSourcesAsync } from './config-sources.js';
 import {
   initializeAndLockConfig,
   getGlobalConfig as getConfig,
@@ -60,6 +60,33 @@ export function initializeConfig(options?: MoroOptions): Readonly<AppConfig> {
   const config = loadConfigFromAllSources(options);
 
   // Lock the configuration to prevent further changes
+  initializeAndLockConfig(config);
+
+  logger.info(
+    `Configuration system initialized and locked: ${process.env.NODE_ENV || 'development'}:${config.server.port} (sources: env + file + options + defaults)`
+  );
+
+  return config;
+}
+
+/**
+ * Initialize configuration system asynchronously.
+ * Uses dynamic import() for the config file — supports ESM config files in
+ * projects with "type":"module". Called internally by the async createApp().
+ *
+ * @param options - createApp options that can override config file and defaults
+ * @returns Immutable, validated configuration object
+ */
+export async function initializeConfigAsync(options?: MoroOptions): Promise<Readonly<AppConfig>> {
+  if (isConfigLocked()) {
+    logger.debug('Configuration already locked, returning existing config');
+    return getConfig();
+  }
+
+  logger.debug('Initializing configuration system (async)');
+
+  const config = await loadConfigFromAllSourcesAsync(options);
+
   initializeAndLockConfig(config);
 
   logger.info(

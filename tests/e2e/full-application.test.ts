@@ -9,8 +9,8 @@ describe('End-to-End Application Tests', () => {
   let app: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp({ logger: { level: 'error' } });
+  beforeEach(async () => {
+    app = await createApp({ logger: { level: 'error' } });
     port = createTestPort();
   });
 

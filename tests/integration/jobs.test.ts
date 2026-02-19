@@ -4,8 +4,8 @@ import { createApp } from '../../src/index.js';
 describe('Jobs Integration', () => {
   let app;
 
-  beforeEach(() => {
-    app = createApp({
+  beforeEach(async () => {
+    app = await createApp({
       jobs: {
         enabled: true,
         maxConcurrentJobs: 5,
@@ -69,7 +69,7 @@ describe('Jobs Integration', () => {
     });
 
     it('should throw error if job scheduler not enabled', async () => {
-      const app = createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
+      const app = await createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
 
       expect(() => {
         app.job('test-job', '* * * * *', () => {});
@@ -277,7 +277,7 @@ describe('Jobs Integration', () => {
     });
 
     it('should handle health check when scheduler not enabled', async () => {
-      const app = createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
+      const app = await createApp({ jobs: { enabled: false }, logger: { level: 'error' } });
 
       const health = app.getJobHealth('job1');
       expect(health.status).toBe('unknown');

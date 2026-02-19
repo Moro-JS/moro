@@ -8,7 +8,7 @@
 import { AppConfig, DeepPartial } from '../../types/config.js';
 import { MoroOptions } from '../../types/core.js';
 import { DEFAULT_CONFIG } from './schema.js';
-import { loadConfigFileSync } from './file-loader.js';
+import { loadConfigFileSync, loadConfigFile } from './file-loader.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { validateConfig } from './config-validator.js';
 
@@ -66,6 +66,58 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
   const validatedConfig = validateConfig(config);
 
   // Log configuration sources for debugging
+  logConfigurationSources(sourceMap);
+
+  return validatedConfig;
+}
+
+/**
+ * Load configuration from all sources with proper precedence — async version.
+ * Uses dynamic import() for the config file so ESM config files
+ * (projects with "type":"module") are loaded correctly.
+ *
+ * Called by the async createApp() factory. Precedence is identical to the
+ * sync version: Env Vars > createApp Options > Config File > Defaults
+ */
+export async function loadConfigFromAllSourcesAsync(
+  createAppOptions?: MoroOptions
+): Promise<AppConfig> {
+  logger.debug('Loading configuration from all sources (async)');
+
+  // 1. Start with schema defaults
+  let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as AppConfig;
+  const sourceMap = new Map<string, ConfigSourceInfo>();
+
+  trackConfigSource(config, sourceMap, 'default', 'schema');
+
+  // 2. Load and merge config file via import() — supports both CJS and ESM
+  try {
+    const fileConfig = await loadConfigFile();
+    if (fileConfig) {
+      config = deepMerge(config, fileConfig) as AppConfig;
+      trackConfigSource(fileConfig, sourceMap, 'configFile', 'moro.config.js/ts');
+      logger.debug('Config file loaded and merged (async)');
+    }
+  } catch (error) {
+    logger.warn('Config file loading failed, continuing without it:', String(error));
+  }
+
+  // 3. Load and merge environment variables
+  const envConfig = loadEnvironmentConfig();
+  config = deepMerge(config, envConfig) as AppConfig;
+  trackConfigSource(envConfig, sourceMap, 'environment', 'process.env');
+
+  // 4. Load and merge createApp options (highest precedence)
+  if (createAppOptions) {
+    const normalizedOptions = normalizeCreateAppOptions(createAppOptions);
+    config = deepMerge(config, normalizedOptions) as AppConfig;
+    trackConfigSource(normalizedOptions, sourceMap, 'createApp', 'createApp()');
+    logger.debug('createApp options merged');
+  }
+
+  // 5. Validate the final configuration
+  const validatedConfig = validateConfig(config);
+
   logConfigurationSources(sourceMap);
 
   return validatedConfig;

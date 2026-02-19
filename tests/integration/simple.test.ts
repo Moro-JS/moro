@@ -9,8 +9,8 @@ describe('MoroJS Basic Integration', () => {
   let app: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp({ logger: { level: 'error' } });
+  beforeEach(async () => {
+    app = await createApp({ logger: { level: 'error' } });
     port = createTestPort();
   });
 

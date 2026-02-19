@@ -8,7 +8,7 @@ describe('gRPC Integration', () => {
     let app: Moro;
 
     beforeAll(async () => {
-      app = createApp({
+      app = await createApp({
         server: {
           port: 3999,
         },
@@ -66,7 +66,7 @@ describe('gRPC Integration', () => {
     let app: Moro;
 
     beforeAll(async () => {
-      app = createApp({
+      app = await createApp({
         server: {
           port: 4000,
         },

@@ -6,10 +6,10 @@ describe('Module Routes - Headers Access', () => {
   let app: Moro;
   let port: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Use dynamic port allocation to avoid conflicts in CI
     port = 3100 + Math.floor(Math.random() * 1000);
-    app = createApp({ logging: { level: 'error' } });
+    app = await createApp({ logging: { level: 'error' } });
   });
 
   afterEach(async () => {

@@ -13,7 +13,7 @@ describe('Configuration System Validation', () => {
   const configPath = join(process.cwd(), 'moro.config.js');
   const originalEnv = process.env;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env = { ...originalEnv };
     resetConfig();
 
@@ -116,7 +116,7 @@ describe('Configuration System Validation', () => {
       expect(config.external.smtp).toBeUndefined();
     });
 
-    it('TESTING: Config precedence with createApp options', () => {
+    it('TESTING: Config precedence with createApp options', async () => {
       const configContent = `
         module.exports = {
           server: { port: 4000 }
@@ -126,7 +126,7 @@ describe('Configuration System Validation', () => {
 
       process.env.PORT = '5000'; // Should win
 
-      const app = createApp({
+      const app = await createApp({
         server: { port: 6000 }, // Should lose to env var
         logger: { level: 'error' },
       });

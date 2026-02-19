@@ -14,7 +14,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should configure GraphQL endpoint', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `
@@ -35,7 +35,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should get GraphQL stats', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `
@@ -67,7 +67,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should throw error when GraphQL configured twice', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,
@@ -83,7 +83,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should work with custom context', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `
@@ -110,7 +110,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should enable JIT by default', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,
@@ -123,7 +123,7 @@ describe('GraphQL Integration with Moro', () => {
   });
 
   it('should support disabling JIT', async () => {
-    app = createApp({ logger: { level: 'error' } });
+    app = await createApp({ logger: { level: 'error' } });
 
     app.graphqlInit({
       typeDefs: `type Query { hello: String! }`,

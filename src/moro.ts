@@ -25,7 +25,7 @@ import { normalizeValidationError } from './core/validation/schema-interface.js'
 import { buildModuleBasePath } from './core/utilities/module-path.js';
 import { filePathToImportURL } from './core/utilities/package-utils.js';
 // Configuration System Integration
-import { initializeConfig, type AppConfig } from './core/config/index.js';
+import { initializeConfig, initializeConfigAsync, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
 import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime/index.js';
 // Job System Integration
@@ -130,7 +130,7 @@ export class Moro extends EventEmitter {
   private mailInitialized = false;
   private mailConfig?: any; // Store config for lazy initialization
 
-  constructor(options: MoroOptions = {}) {
+  constructor(options: MoroOptions = {}, preloadedConfig?: Readonly<AppConfig>) {
     super(); // Call EventEmitter constructor
 
     // Track if user explicitly set logger/logging options
@@ -151,8 +151,9 @@ export class Moro extends EventEmitter {
     // Create logger AFTER initial configuration
     this.logger = createFrameworkLogger('App');
 
-    // Use simplified global configuration system
-    this.config = initializeConfig(options);
+    // Use pre-loaded config (from async createApp factory) when available,
+    // otherwise fall back to synchronous loading (env vars + options, no file)
+    this.config = preloadedConfig ?? initializeConfig(options);
 
     // Apply final config logging (this includes normalized logger → logging conversion)
     // Always apply this as it's the authoritative merged config
@@ -3166,36 +3167,58 @@ export class Moro extends EventEmitter {
   }
 }
 
-// Export convenience function
-export function createApp(options?: MoroOptions): Moro {
-  return new Moro(options);
+/**
+ * Create and fully initialise a Moro application.
+ *
+ * Must be awaited — the async step loads moro.config.js/ts via dynamic
+ * import() so ESM config files (projects with "type":"module") work correctly,
+ * exactly the same way all other modules are loaded.
+ *
+ * @example
+ * const app = await createApp({ server: { port: 3000 } });
+ * app.listen();
+ */
+export async function createApp(options?: MoroOptions): Promise<Moro> {
+  const config = await initializeConfigAsync(options);
+  return new Moro(options, config);
 }
 
-// Runtime-specific convenience functions
-export function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Moro {
-  return new Moro({
-    ...options,
-    runtime: { type: 'node' },
-  });
+/**
+ * Create a Node.js-targeted Moro application. Must be awaited.
+ * @example const app = await createAppNode();
+ */
+export async function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
+  const mergedOptions = { ...options, runtime: { type: 'node' as const } };
+  const config = await initializeConfigAsync(mergedOptions);
+  return new Moro(mergedOptions, config);
 }
 
-export function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Moro {
-  return new Moro({
-    ...options,
-    runtime: { type: 'vercel-edge' },
-  });
+/**
+ * Create a Vercel Edge-targeted Moro application. Must be awaited.
+ * @example const app = await createAppEdge();
+ */
+export async function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
+  const mergedOptions = { ...options, runtime: { type: 'vercel-edge' as const } };
+  const config = await initializeConfigAsync(mergedOptions);
+  return new Moro(mergedOptions, config);
 }
 
-export function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): Moro {
-  return new Moro({
-    ...options,
-    runtime: { type: 'aws-lambda' },
-  });
+/**
+ * Create an AWS Lambda-targeted Moro application. Must be awaited.
+ * @example const app = await createAppLambda();
+ */
+export async function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
+  const mergedOptions = { ...options, runtime: { type: 'aws-lambda' as const } };
+  const config = await initializeConfigAsync(mergedOptions);
+  return new Moro(mergedOptions, config);
 }
 
-export function createAppWorker(options?: Omit<MoroOptions, 'runtime'>): Moro {
-  return new Moro({
-    ...options,
-    runtime: { type: 'cloudflare-workers' },
-  });
+/**
+ * Create a Cloudflare Workers-targeted Moro application. Must be awaited.
+ * @example const app = await createAppWorker();
+ */
+export async function createAppWorker(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
+  const mergedOptions = { ...options, runtime: { type: 'cloudflare-workers' as const } };
+  const config = await initializeConfigAsync(mergedOptions);
+  return new Moro(mergedOptions, config);
 }

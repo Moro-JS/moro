@@ -7,7 +7,7 @@ describe('Module API Prefix Configuration', () => {
   let app: any;
   let port: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     port = 3100 + Math.floor(Math.random() * 1000);
     // Reset config before each test to allow different configurations
     resetConfig();
@@ -21,7 +21,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should use default /api/ prefix when no config provided', async () => {
-    app = createApp({ logging: { level: 'error' } });
+    app = await createApp({ logging: { level: 'error' } });
 
     const testModule: ModuleDefinition = {
       name: 'default-prefix',
@@ -54,7 +54,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should remove prefix when apiPrefix is empty string', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '',
@@ -96,7 +96,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should use custom apiPrefix when configured', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/services/',
@@ -138,7 +138,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should normalize trailing slash in custom prefix', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/v1',
@@ -176,7 +176,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should work with multiple modules using same apiPrefix', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/rest/',
@@ -233,7 +233,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should work with different versions and custom prefix', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/v1/',
@@ -290,7 +290,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should work with no prefix and nested routes', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '',
@@ -345,7 +345,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should work with custom prefix and middleware', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/backend/',
@@ -398,7 +398,7 @@ describe('Module API Prefix Configuration', () => {
   });
 
   it('should handle root path routes with custom prefix', async () => {
-    app = createApp({
+    app = await createApp({
       logging: { level: 'error' },
       modules: {
         apiPrefix: '/api/',
