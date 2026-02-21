@@ -32,12 +32,12 @@ MoroJS includes native gRPC support for building high-performance microservices.
 
 ### gRPC Call Types
 
-| Type | Description | Use Case |
-|------|-------------|----------|
-| Unary | Single request/response | REST-like operations |
-| Server Streaming | Single request, stream responses | Data feeds, file downloads |
+| Type             | Description                      | Use Case                       |
+| ---------------- | -------------------------------- | ------------------------------ |
+| Unary            | Single request/response          | REST-like operations           |
+| Server Streaming | Single request, stream responses | Data feeds, file downloads     |
 | Client Streaming | Stream requests, single response | File uploads, batch operations |
-| Bidirectional | Stream both directions | Chat, real-time collaboration |
+| Bidirectional    | Stream both directions           | Chat, real-time collaboration  |
 
 ---
 
@@ -57,7 +57,7 @@ The easiest way to use gRPC in MoroJS is with the built-in `app.grpcInit()` meth
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Configure gRPC - synchronous, no await needed!
 app.grpcInit({
@@ -65,7 +65,7 @@ app.grpcInit({
   host: '0.0.0.0',
   adapter: 'grpc-js',
   enableHealthCheck: true,
-  enableReflection: true
+  enableReflection: true,
 });
 
 // Register a service
@@ -74,13 +74,13 @@ await app.grpcService('./proto/users.proto', 'UserService', {
     const user = await db.users.findById(call.request.id);
     callback(null, user);
   },
-  ListUsers: async (call) => {
+  ListUsers: async call => {
     const users = await db.users.findAll();
     for (const user of users) {
       call.write(user);
     }
     call.end();
-  }
+  },
 });
 
 // Start both HTTP and gRPC servers
@@ -99,23 +99,19 @@ import { GrpcManager } from '@morojs/moro';
 
 const grpcManager = new GrpcManager({
   port: 50051,
-  host: '0.0.0.0'
+  host: '0.0.0.0',
 });
 
 // Initialize
 await grpcManager.initialize();
 
 // Register a service
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: async (call, callback) => {
-      const user = await db.users.findById(call.request.id);
-      callback(null, user);
-    }
-  }
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: async (call, callback) => {
+    const user = await db.users.findById(call.request.id);
+    callback(null, user);
+  },
+});
 
 // Start server
 await grpcManager.start();
@@ -194,11 +190,11 @@ Single request, single response.
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 app.grpcInit({
   port: 50051,
-  enableHealthCheck: true
+  enableHealthCheck: true,
 });
 
 await app.grpcService('./proto/users.proto', 'UserService', {
@@ -212,7 +208,7 @@ await app.grpcService('./proto/users.proto', 'UserService', {
       if (!user) {
         return callback({
           code: grpc.status.NOT_FOUND,
-          message: 'User not found'
+          message: 'User not found',
         });
       }
 
@@ -220,10 +216,10 @@ await app.grpcService('./proto/users.proto', 'UserService', {
     } catch (error) {
       callback({
         code: grpc.status.INTERNAL,
-        message: error.message
+        message: error.message,
       });
     }
-  }
+  },
 });
 
 app.listen(3000);
@@ -232,38 +228,34 @@ app.listen(3000);
 **Using Low-Level API:**
 
 ```typescript
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: async (call, callback) => {
-      try {
-        const { id } = call.request;
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: async (call, callback) => {
+    try {
+      const { id } = call.request;
 
-        const user = await db.users.findOne({ id });
+      const user = await db.users.findOne({ id });
 
-        if (!user) {
-          return callback({
-            code: grpc.status.NOT_FOUND,
-            message: 'User not found'
-          });
-        }
-
-        callback(null, {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          age: user.age
-        });
-      } catch (error) {
-        callback({
-          code: grpc.status.INTERNAL,
-          message: error.message
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          message: 'User not found',
         });
       }
+
+      callback(null, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        age: user.age,
+      });
+    } catch (error) {
+      callback({
+        code: grpc.status.INTERNAL,
+        message: error.message,
+      });
     }
-  }
-);
+  },
+});
 ```
 
 ### Server Streaming RPC
@@ -272,7 +264,7 @@ Single request, stream of responses.
 
 ```typescript
 {
-  ListUsers: async (call) => {
+  ListUsers: async call => {
     const { page, limit } = call.request;
 
     try {
@@ -287,7 +279,7 @@ Single request, stream of responses.
           id: user.id,
           name: user.name,
           email: user.email,
-          age: user.age
+          age: user.age,
         });
       }
 
@@ -296,7 +288,7 @@ Single request, stream of responses.
     } catch (error) {
       call.destroy(error);
     }
-  }
+  };
 }
 ```
 
@@ -310,7 +302,7 @@ Stream of requests, single response.
     const users = [];
 
     // Receive user data stream
-    call.on('data', (userData) => {
+    call.on('data', userData => {
       users.push(userData);
     });
 
@@ -321,20 +313,20 @@ Stream of requests, single response.
 
         callback(null, {
           created: result.length,
-          ids: result.map(u => u.id)
+          ids: result.map(u => u.id),
         });
       } catch (error) {
         callback({
           code: grpc.status.INTERNAL,
-          message: error.message
+          message: error.message,
         });
       }
     });
 
-    call.on('error', (error) => {
+    call.on('error', error => {
       console.error('Stream error:', error);
     });
-  }
+  };
 }
 ```
 
@@ -344,11 +336,11 @@ Stream both requests and responses.
 
 ```typescript
 {
-  Chat: async (call) => {
+  Chat: async call => {
     const userId = call.metadata.get('user-id');
 
     // Receive messages
-    call.on('data', (message) => {
+    call.on('data', message => {
       console.log(`User ${userId}: ${message.message}`);
 
       // Broadcast to other clients
@@ -358,7 +350,7 @@ Stream both requests and responses.
       call.write({
         user_id: 'system',
         message: `Message received: ${message.message}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     });
 
@@ -366,10 +358,10 @@ Stream both requests and responses.
       call.end();
     });
 
-    call.on('error', (error) => {
+    call.on('error', error => {
       console.error('Chat error:', error);
     });
-  }
+  };
 }
 ```
 
@@ -384,17 +376,12 @@ Stream both requests and responses.
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Create a gRPC client
-const client = await app.createGrpcClient(
-  './proto/users.proto',
-  'UserService',
-  'localhost:50051',
-  {
-    credentials: 'insecure' // or provide TLS credentials
-  }
-);
+const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051', {
+  credentials: 'insecure', // or provide TLS credentials
+});
 
 // Use the client
 const user = await new Promise((resolve, reject) => {
@@ -415,7 +402,7 @@ const client = await grpcManager.createClient(
   'UserService',
   'localhost:50051',
   {
-    credentials: grpc.credentials.createInsecure()
+    credentials: grpc.credentials.createInsecure(),
   }
 );
 ```
@@ -438,7 +425,7 @@ console.log(response.name);
 ```typescript
 const call = client.ListUsers({ page: 0, limit: 10 });
 
-call.on('data', (user) => {
+call.on('data', user => {
   console.log('Received user:', user.name);
 });
 
@@ -446,7 +433,7 @@ call.on('end', () => {
   console.log('Stream ended');
 });
 
-call.on('error', (error) => {
+call.on('error', error => {
   console.error('Stream error:', error);
 });
 ```
@@ -480,11 +467,11 @@ const call = client.Chat();
 call.write({
   user_id: '123',
   message: 'Hello!',
-  timestamp: Date.now()
+  timestamp: Date.now(),
 });
 
 // Receive messages
-call.on('data', (message) => {
+call.on('data', message => {
   console.log(`${message.user_id}: ${message.message}`);
 });
 
@@ -502,23 +489,19 @@ call.on('end', () => {
 ```typescript
 import { grpcAuth, grpcRequireRole } from '@morojs/moro';
 
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: grpcAuth()(async (call, callback) => {
-      // call.user is now available
-      const user = await db.users.findOne({ id: call.request.id });
-      callback(null, user);
-    }),
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: grpcAuth()(async (call, callback) => {
+    // call.user is now available
+    const user = await db.users.findOne({ id: call.request.id });
+    callback(null, user);
+  }),
 
-    DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
-      // Only admins can delete users
-      await db.users.deleteOne({ id: call.request.id });
-      callback(null, { success: true });
-    })
-  }
-);
+  DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
+    // Only admins can delete users
+    await db.users.deleteOne({ id: call.request.id });
+    callback(null, { success: true });
+  }),
+});
 ```
 
 ### Validation Middleware
@@ -528,20 +511,16 @@ import { grpcValidate } from '@morojs/moro';
 import { z } from 'zod';
 
 const GetUserSchema = z.object({
-  id: z.string().uuid()
+  id: z.string().uuid(),
 });
 
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: grpcValidate(GetUserSchema)(async (call, callback) => {
-      // Request is validated
-      const user = await db.users.findOne({ id: call.request.id });
-      callback(null, user);
-    })
-  }
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: grpcValidate(GetUserSchema)(async (call, callback) => {
+    // Request is validated
+    const user = await db.users.findOne({ id: call.request.id });
+    callback(null, user);
+  }),
+});
 ```
 
 ### Logging Middleware
@@ -549,20 +528,16 @@ await grpcManager.registerService(
 ```typescript
 import { grpcLogger } from '@morojs/moro';
 
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: grpcLogger({
-      logRequest: true,
-      logResponse: true,
-      logMetadata: true
-    })(async (call, callback) => {
-      const user = await db.users.findOne({ id: call.request.id });
-      callback(null, user);
-    })
-  }
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: grpcLogger({
+    logRequest: true,
+    logResponse: true,
+    logMetadata: true,
+  })(async (call, callback) => {
+    const user = await db.users.findOne({ id: call.request.id });
+    callback(null, user);
+  }),
+});
 ```
 
 ---
@@ -575,22 +550,18 @@ await grpcManager.registerService(
 import { grpcAuth, extractTokenFromMetadata } from '@morojs/moro';
 
 // Server side
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    GetUser: grpcAuth({
-      extractToken: extractTokenFromMetadata,
-      verifyToken: async (token) => {
-        return await verifyJWT(token, process.env.JWT_SECRET);
-      }
-    })(async (call, callback) => {
-      console.log('Authenticated user:', call.user);
-      const user = await db.users.findOne({ id: call.request.id });
-      callback(null, user);
-    })
-  }
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  GetUser: grpcAuth({
+    extractToken: extractTokenFromMetadata,
+    verifyToken: async token => {
+      return await verifyJWT(token, process.env.JWT_SECRET);
+    },
+  })(async (call, callback) => {
+    console.log('Authenticated user:', call.user);
+    const user = await db.users.findOne({ id: call.request.id });
+    callback(null, user);
+  }),
+});
 
 // Client side
 const metadata = new grpc.Metadata();
@@ -606,26 +577,19 @@ client.GetUser({ id: '123' }, metadata, (error, response) => {
 ```typescript
 import { grpcRequireRole, grpcRequirePermission } from '@morojs/moro';
 
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  {
-    // Requires 'admin' role
-    DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
-      await db.users.deleteOne({ id: call.request.id });
-      callback(null, { success: true });
-    }),
+await grpcManager.registerService('./protos/user.proto', 'UserService', {
+  // Requires 'admin' role
+  DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
+    await db.users.deleteOne({ id: call.request.id });
+    callback(null, { success: true });
+  }),
 
-    // Requires specific permission
-    UpdateUser: grpcRequirePermission('users:write')(async (call, callback) => {
-      const updated = await db.users.updateOne(
-        { id: call.request.id },
-        call.request.updates
-      );
-      callback(null, updated);
-    })
-  }
-);
+  // Requires specific permission
+  UpdateUser: grpcRequirePermission('users:write')(async (call, callback) => {
+    const updated = await db.users.updateOne({ id: call.request.id }, call.request.updates);
+    callback(null, updated);
+  }),
+});
 ```
 
 ---
@@ -645,7 +609,7 @@ import * as grpc from '@grpc/grpc-js';
       if (!user) {
         return callback({
           code: grpc.status.NOT_FOUND,
-          message: 'User not found'
+          message: 'User not found',
         });
       }
 
@@ -653,29 +617,29 @@ import * as grpc from '@grpc/grpc-js';
     } catch (error) {
       callback({
         code: grpc.status.INTERNAL,
-        message: 'Internal server error'
+        message: 'Internal server error',
       });
     }
-  }
+  };
 }
 ```
 
 ### Common Status Codes
 
-| Code | Use Case |
-|------|----------|
-| `OK` | Successful response |
-| `CANCELLED` | Operation cancelled |
-| `INVALID_ARGUMENT` | Invalid request parameters |
-| `NOT_FOUND` | Resource not found |
-| `ALREADY_EXISTS` | Resource already exists |
-| `PERMISSION_DENIED` | Insufficient permissions |
-| `UNAUTHENTICATED` | Authentication required |
-| `RESOURCE_EXHAUSTED` | Rate limit exceeded |
-| `FAILED_PRECONDITION` | Precondition not met |
-| `INTERNAL` | Server error |
-| `UNAVAILABLE` | Service unavailable |
-| `UNIMPLEMENTED` | Method not implemented |
+| Code                  | Use Case                   |
+| --------------------- | -------------------------- |
+| `OK`                  | Successful response        |
+| `CANCELLED`           | Operation cancelled        |
+| `INVALID_ARGUMENT`    | Invalid request parameters |
+| `NOT_FOUND`           | Resource not found         |
+| `ALREADY_EXISTS`      | Resource already exists    |
+| `PERMISSION_DENIED`   | Insufficient permissions   |
+| `UNAUTHENTICATED`     | Authentication required    |
+| `RESOURCE_EXHAUSTED`  | Rate limit exceeded        |
+| `FAILED_PRECONDITION` | Precondition not met       |
+| `INTERNAL`            | Server error               |
+| `UNAVAILABLE`         | Service unavailable        |
+| `UNIMPLEMENTED`       | Method not implemented     |
 
 ### Error with Metadata
 
@@ -685,8 +649,8 @@ callback({
   message: 'Invalid user ID',
   metadata: new grpc.Metadata({
     'error-code': 'USER_ID_INVALID',
-    'field': 'id'
-  })
+    field: 'id',
+  }),
 });
 ```
 
@@ -699,7 +663,7 @@ callback({
 ```typescript
 const grpcManager = new GrpcManager({
   port: 50051,
-  enableHealthCheck: true
+  enableHealthCheck: true,
 });
 
 // Health check is automatically available at:
@@ -711,7 +675,7 @@ const grpcManager = new GrpcManager({
 ```typescript
 const grpcManager = new GrpcManager({
   port: 50051,
-  enableReflection: true
+  enableReflection: true,
 });
 
 // Allows tools like grpcurl to discover services
@@ -727,8 +691,8 @@ const grpcManager = new GrpcManager({
   port: 50051,
   credentials: {
     privateKey: fs.readFileSync('./key.pem'),
-    certChain: fs.readFileSync('./cert.pem')
-  }
+    certChain: fs.readFileSync('./cert.pem'),
+  },
 });
 
 // Client
@@ -751,7 +715,7 @@ const client = await grpcManager.createClient(
 ```typescript
 const grpcManager = new GrpcManager({
   port: 50051,
-  compression: true
+  compression: true,
 });
 
 // Messages are automatically compressed using gzip
@@ -763,7 +727,7 @@ const grpcManager = new GrpcManager({
 const grpcManager = new GrpcManager({
   port: 50051,
   maxReceiveMessageLength: 10 * 1024 * 1024, // 10MB
-  maxSendMessageLength: 10 * 1024 * 1024      // 10MB
+  maxSendMessageLength: 10 * 1024 * 1024, // 10MB
 });
 ```
 
@@ -779,17 +743,13 @@ const loggingInterceptor = (options, nextCall) => {
         onReceiveMessage: (message, next) => {
           console.log('Received message:', message);
           next(message);
-        }
+        },
       });
-    }
+    },
   });
 };
 
-client.GetUser(
-  { id: '123' },
-  { interceptors: [loggingInterceptor] },
-  callback
-);
+client.GetUser({ id: '123' }, { interceptors: [loggingInterceptor] }, callback);
 ```
 
 ---
@@ -801,7 +761,7 @@ client.GetUser(
 ```typescript
 import { createApp, GrpcManager } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const grpcManager = new GrpcManager({ port: 50051 });
 
 // Initialize both
@@ -826,11 +786,7 @@ console.log('gRPC server on port 50051');
 
 ```typescript
 // Register with service discovery
-await grpcManager.registerService(
-  './protos/user.proto',
-  'UserService',
-  implementation
-);
+await grpcManager.registerService('./protos/user.proto', 'UserService', implementation);
 
 // Get service info
 const services = grpcManager.getRegisteredServices();
@@ -879,7 +835,7 @@ Always handle errors properly:
       if (!user) {
         return callback({
           code: grpc.status.NOT_FOUND,
-          message: `User ${call.request.id} not found`
+          message: `User ${call.request.id} not found`,
         });
       }
 
@@ -888,10 +844,10 @@ Always handle errors properly:
       callback({
         code: grpc.status.INTERNAL,
         message: 'Failed to fetch user',
-        metadata: new grpc.Metadata({ 'internal-error': error.message })
+        metadata: new grpc.Metadata({ 'internal-error': error.message }),
       });
     }
-  }
+  };
 }
 ```
 
@@ -900,17 +856,17 @@ Always handle errors properly:
 ```typescript
 // Instead of returning large arrays
 {
-  ListAllUsers: async (call) => {
+  ListAllUsers: async call => {
     const stream = db.users.find().stream();
 
-    stream.on('data', (user) => {
+    stream.on('data', user => {
       call.write(user);
     });
 
     stream.on('end', () => {
       call.end();
     });
-  }
+  };
 }
 ```
 
@@ -919,7 +875,7 @@ Always handle errors properly:
 ```typescript
 const grpcManager = new GrpcManager({
   port: 50051,
-  enableHealthCheck: true
+  enableHealthCheck: true,
 });
 
 // Monitor health
@@ -954,6 +910,7 @@ function getClient(service) {
 Configure gRPC server (synchronous, lazy initialization).
 
 **Parameters:**
+
 - `options.port` (number) - gRPC server port (default: 50051)
 - `options.host` (string) - Server host (default: '0.0.0.0')
 - `options.adapter` (string) - gRPC adapter ('grpc-js' or 'google-cloud-grpc')
@@ -966,6 +923,7 @@ Configure gRPC server (synchronous, lazy initialization).
 **Returns:** `this` (chainable)
 
 **Example:**
+
 ```typescript
 app.grpcInit({
   port: 50051,
@@ -974,7 +932,7 @@ app.grpcInit({
   enableHealthCheck: true,
   enableReflection: true,
   maxReceiveMessageLength: 4 * 1024 * 1024, // 4MB
-  maxSendMessageLength: 4 * 1024 * 1024
+  maxSendMessageLength: 4 * 1024 * 1024,
 });
 ```
 
@@ -983,6 +941,7 @@ app.grpcInit({
 Register a gRPC service from a proto file.
 
 **Parameters:**
+
 - `protoPath` (string) - Path to .proto file
 - `serviceName` (string) - Name of the service
 - `implementation` (object) - Service method implementations
@@ -991,19 +950,20 @@ Register a gRPC service from a proto file.
 **Returns:** `Promise<void>`
 
 **Example:**
+
 ```typescript
 await app.grpcService('./proto/users.proto', 'UserService', {
   GetUser: async (call, callback) => {
     const user = await db.users.findById(call.request.id);
     callback(null, user);
   },
-  ListUsers: async (call) => {
+  ListUsers: async call => {
     const users = await db.users.findAll();
     for (const user of users) {
       call.write(user);
     }
     call.end();
-  }
+  },
 });
 ```
 
@@ -1012,6 +972,7 @@ await app.grpcService('./proto/users.proto', 'UserService', {
 Create a gRPC client for calling remote services.
 
 **Parameters:**
+
 - `protoPath` (string) - Path to .proto file
 - `serviceName` (string) - Name of the service
 - `address` (string) - Server address (host:port)
@@ -1023,15 +984,11 @@ Create a gRPC client for calling remote services.
 **Returns:** `Promise<GrpcClient>`
 
 **Example:**
+
 ```typescript
-const client = await app.createGrpcClient(
-  './proto/users.proto',
-  'UserService',
-  'localhost:50051',
-  {
-    credentials: 'insecure'
-  }
-);
+const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051', {
+  credentials: 'insecure',
+});
 
 // Call methods
 client.GetUser({ id: '123' }, (error, response) => {
@@ -1084,7 +1041,7 @@ const protoOptions = {
   longs: String,
   enums: String,
   defaults: true,
-  oneofs: true
+  oneofs: true,
 };
 ```
 
@@ -1102,7 +1059,7 @@ metadata.add('authorization', `Bearer ${token}`);
 Handle stream lifecycle properly:
 
 ```typescript
-call.on('error', (error) => {
+call.on('error', error => {
   console.error('Stream error:', error);
 });
 
@@ -1116,6 +1073,7 @@ call.on('end', () => {
 ## API Reference
 
 For complete type definitions and API details, see:
+
 - [API Reference](./API.md) - Complete API documentation
 - [Types Reference](../src/core/grpc/types.ts) - TypeScript type definitions
 

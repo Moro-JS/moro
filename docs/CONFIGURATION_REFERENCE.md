@@ -377,7 +377,7 @@ MoroJS includes a powerful auto-discovery system that automatically finds and lo
 
 ```javascript
 // Primary method - nested under modules
-const app = createApp({
+const app = await createApp({
   modules: {
     autoDiscovery: {
       enabled: true,
@@ -389,12 +389,12 @@ const app = createApp({
 });
 
 // Shorthand convenience method
-const app = createApp({
+const app = await createApp({
   autoDiscover: true, // Use defaults
 });
 
 // Shorthand with options
-const app = createApp({
+const app = await createApp({
   autoDiscover: {
     enabled: true,
     paths: ['./modules', './src/modules'],
@@ -407,7 +407,7 @@ const app = createApp({
 
 ```javascript
 // Legacy modulesPath (still supported)
-const app = createApp({
+const app = await createApp({
   modulesPath: './modules', // Equivalent to autoDiscover.paths: ['./modules']
 });
 ```
@@ -457,7 +457,7 @@ Modules are loaded based on environment or feature flags.
 Enable file watching for automatic module reloading during development:
 
 ```javascript
-const app = createApp({
+const app = await createApp({
   modules: {
     autoDiscovery: {
       watchForChanges: process.env.NODE_ENV === 'development',
@@ -472,7 +472,7 @@ const app = createApp({
 Configure custom file patterns for different project structures:
 
 ```javascript
-const app = createApp({
+const app = await createApp({
   modules: {
     autoDiscovery: {
       patterns: ['**/*.module.{ts,js}', '**/modules/*.{ts,js}', '**/*-module.{ts,js}'],
@@ -492,7 +492,7 @@ const app = createApp({
 The auto-discovery system can automatically resolve and order module dependencies:
 
 ```javascript
-const app = createApp({
+const app = await createApp({
   modules: {
     autoDiscovery: {
       loadOrder: 'dependency', // Automatic topological sort
@@ -507,7 +507,7 @@ const app = createApp({
 Optimized settings for production environments:
 
 ```javascript
-const app = createApp({
+const app = await createApp({
   modules: {
     autoDiscovery: {
       enabled: true,

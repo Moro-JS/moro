@@ -23,12 +23,12 @@ MoroJS provides a **write-once, deploy-everywhere** approach to backend developm
 
 ### Supported Runtimes
 
-| Runtime | Use Case | Strengths | Limitations |
-|---------|----------|-----------|-------------|
-| **Node.js** | Traditional servers, microservices | Full features, WebSockets, file system | Manual scaling, server management |
-| **Vercel Edge** | Global edge applications | Fast cold starts, global distribution | Limited compute time, no file system |
-| **AWS Lambda** | Event-driven, serverless | Auto-scaling, pay-per-request | Cold starts, timeout limits |
-| **Cloudflare Workers** | Edge computing, global APIs | Instant deployment, KV storage | V8 isolates, limited APIs |
+| Runtime                | Use Case                           | Strengths                              | Limitations                          |
+| ---------------------- | ---------------------------------- | -------------------------------------- | ------------------------------------ |
+| **Node.js**            | Traditional servers, microservices | Full features, WebSockets, file system | Manual scaling, server management    |
+| **Vercel Edge**        | Global edge applications           | Fast cold starts, global distribution  | Limited compute time, no file system |
+| **AWS Lambda**         | Event-driven, serverless           | Auto-scaling, pay-per-request          | Cold starts, timeout limits          |
+| **Cloudflare Workers** | Edge computing, global APIs        | Instant deployment, KV storage         | V8 isolates, limited APIs            |
 
 ### Key Benefits
 
@@ -50,7 +50,7 @@ MoroJS automatically detects the runtime environment:
 import { createApp } from '@morojs/moro';
 
 // Automatically detects runtime based on environment
-const app = createApp();
+const app = await createApp();
 
 console.log('Runtime:', app.getRuntimeType());
 // Outputs: 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers'
@@ -60,13 +60,13 @@ console.log('Runtime:', app.getRuntimeType());
 
 ```typescript
 // Explicitly specify runtime
-const app = createApp({
+const app = await createApp({
   runtime: {
     type: 'vercel-edge',
     options: {
-      regions: ['iad1', 'sfo1']
-    }
-  }
+      regions: ['iad1', 'sfo1'],
+    },
+  },
 });
 ```
 
@@ -74,10 +74,10 @@ const app = createApp({
 
 ```typescript
 // Runtime-specific imports for type safety
-import { createApp } from '@morojs/moro';           // Node.js
-import { createAppEdge } from '@morojs/moro';       // Vercel Edge
-import { createAppLambda } from '@morojs/moro';     // AWS Lambda
-import { createAppWorker } from '@morojs/moro';     // Cloudflare Workers
+import { createApp } from '@morojs/moro'; // Node.js
+import { createAppEdge } from '@morojs/moro'; // Vercel Edge
+import { createAppLambda } from '@morojs/moro'; // AWS Lambda
+import { createAppWorker } from '@morojs/moro'; // Cloudflare Workers
 ```
 
 ---
@@ -91,10 +91,10 @@ The Node.js runtime provides the full feature set and is ideal for traditional s
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   cors: true,
   compression: true,
-  helmet: true
+  helmet: true,
 });
 
 app.get('/health', () => ({ status: 'healthy' }));
@@ -129,14 +129,14 @@ if (cluster.isMaster) {
     cluster.fork();
   }
 
-  cluster.on('exit', (worker) => {
+  cluster.on('exit', worker => {
     console.log(`Worker ${worker.process.pid} died`);
     cluster.fork();
   });
 } else {
-  const app = createApp({
+  const app = await createApp({
     cluster: true,
-    workerId: cluster.worker.id
+    workerId: cluster.worker.id,
   });
 
   app.listen(3000);
@@ -163,16 +163,18 @@ CMD ["node", "server.js"]
 ```javascript
 // ecosystem.config.js
 module.exports = {
-  apps: [{
-    name: 'moro-app',
-    script: './server.js',
-    instances: 'max',
-    exec_mode: 'cluster',
-    env: {
-      NODE_ENV: 'production',
-      PORT: 3000
-    }
-  }]
+  apps: [
+    {
+      name: 'moro-app',
+      script: './server.js',
+      instances: 'max',
+      exec_mode: 'cluster',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+      },
+    },
+  ],
 };
 ```
 
@@ -188,12 +190,12 @@ Vercel Edge Functions run at the edge, close to users globally.
 // api/hello.ts
 import { createAppEdge } from '@morojs/moro';
 
-const app = createAppEdge();
+const app = await createAppEdge();
 
 app.get('/api/hello', (req, res) => {
   return {
     message: 'Hello from the Edge!',
-    region: process.env.VERCEL_REGION
+    region: process.env.VERCEL_REGION,
   };
 });
 
@@ -214,7 +216,7 @@ export default app.getHandler();
 ### Edge-Optimized Configuration
 
 ```typescript
-const app = createAppEdge({
+const app = await createAppEdge({
   // Enable streaming for large responses
   streaming: true,
 
@@ -222,11 +224,11 @@ const app = createAppEdge({
   cache: {
     edge: true,
     maxAge: 3600,
-    staleWhileRevalidate: 86400
+    staleWhileRevalidate: 86400,
   },
 
   // Deploy to specific regions
-  regions: ['iad1', 'sfo1', 'cdg1']
+  regions: ['iad1', 'sfo1', 'cdg1'],
 });
 ```
 
@@ -238,7 +240,7 @@ app.get('/api/geo', (req, res) => {
     country: req.headers['x-vercel-ip-country'],
     region: req.headers['x-vercel-ip-country-region'],
     city: req.headers['x-vercel-ip-city'],
-    timezone: req.headers['x-vercel-ip-timezone']
+    timezone: req.headers['x-vercel-ip-timezone'],
   };
 });
 ```
@@ -246,11 +248,12 @@ app.get('/api/geo', (req, res) => {
 ### Edge Caching
 
 ```typescript
-app.get('/api/content/:id')
+app
+  .get('/api/content/:id')
   .cache({
     ttl: 3600,
     strategy: 'edge',
-    vary: ['x-vercel-ip-country'] // Cache per country
+    vary: ['x-vercel-ip-country'], // Cache per country
   })
   .handler((req, res) => {
     return { content: getLocalizedContent(req.params.id, req.headers['x-vercel-ip-country']) };
@@ -283,18 +286,18 @@ AWS Lambda provides event-driven, auto-scaling serverless compute.
 // handler.ts
 import { createAppLambda } from '@morojs/moro';
 
-const app = createAppLambda({
+const app = await createAppLambda({
   // Lambda-specific configuration
   memorySize: 1024,
   timeout: 30,
-  runtime: 'nodejs18.x'
+  runtime: 'nodejs18.x',
 });
 
 app.get('/api/users/:id', (req, res) => {
   return {
     userId: req.params.id,
     lambda: true,
-    requestId: req.context.awsRequestId
+    requestId: req.context.awsRequestId,
   };
 });
 
@@ -321,7 +324,7 @@ app.get('/api/info', (req, res) => {
     functionName: req.context.functionName,
     functionVersion: req.context.functionVersion,
     memoryLimit: req.context.memoryLimitInMB,
-    remainingTime: req.context.getRemainingTimeInMillis()
+    remainingTime: req.context.getRemainingTimeInMillis(),
   };
 });
 ```
@@ -329,10 +332,10 @@ app.get('/api/info', (req, res) => {
 ### Cold Start Optimization
 
 ```typescript
-const app = createAppLambda({
+const app = await createAppLambda({
   coldStartOptimization: true,
   connectionReuse: true,
-  preloadModules: ['database', 'auth']
+  preloadModules: ['database', 'auth'],
 });
 
 // Warm-up handler
@@ -401,25 +404,25 @@ Cloudflare Workers run in V8 isolates at the edge with instant cold starts.
 // worker.ts
 import { createAppWorker } from '@morojs/moro';
 
-const app = createAppWorker({
+const app = await createAppWorker({
   kv: {
     enabled: true,
-    namespace: 'API_CACHE'
-  }
+    namespace: 'API_CACHE',
+  },
 });
 
 app.get('/api/geo', (req, res) => {
   return {
     country: req.headers['cf-ipcountry'],
     ray: req.headers['cf-ray'],
-    colo: req.headers['cf-colo']
+    colo: req.headers['cf-colo'],
   };
 });
 
 export default {
   async fetch(request: Request, env: any, ctx: ExecutionContext) {
     return app.getHandler()(request, env, ctx);
-  }
+  },
 };
 ```
 
@@ -438,27 +441,22 @@ export default {
 ### KV Storage Integration
 
 ```typescript
-app.get('/api/cache/:key')
-  .handler(async (req, res, env) => {
-    // Read from KV
-    const value = await env.API_CACHE.get(req.params.key);
+app.get('/api/cache/:key').handler(async (req, res, env) => {
+  // Read from KV
+  const value = await env.API_CACHE.get(req.params.key);
 
-    if (value) {
-      return { value: JSON.parse(value), cached: true };
-    }
+  if (value) {
+    return { value: JSON.parse(value), cached: true };
+  }
 
-    // Generate new value
-    const newValue = await generateValue(req.params.key);
+  // Generate new value
+  const newValue = await generateValue(req.params.key);
 
-    // Store in KV with TTL
-    await env.API_CACHE.put(
-      req.params.key,
-      JSON.stringify(newValue),
-      { expirationTtl: 3600 }
-    );
+  // Store in KV with TTL
+  await env.API_CACHE.put(req.params.key, JSON.stringify(newValue), { expirationTtl: 3600 });
 
-    return { value: newValue, cached: false };
-  });
+  return { value: newValue, cached: false };
+});
 ```
 
 ### Durable Objects Integration
@@ -471,22 +469,21 @@ export class Counter {
   }
 
   async fetch(request: Request) {
-    const count = await this.state.storage.get('count') || 0;
+    const count = (await this.state.storage.get('count')) || 0;
     await this.state.storage.put('count', count + 1);
     return new Response(JSON.stringify({ count: count + 1 }));
   }
 }
 
 // Use in Worker
-app.post('/api/increment/:id')
-  .handler(async (req, res, env) => {
-    const id = env.COUNTER.idFromName(req.params.id);
-    const stub = env.COUNTER.get(id);
-    const response = await stub.fetch(req);
-    const data = await response.json();
+app.post('/api/increment/:id').handler(async (req, res, env) => {
+  const id = env.COUNTER.idFromName(req.params.id);
+  const stub = env.COUNTER.get(id);
+  const response = await stub.fetch(req);
+  const data = await response.json();
 
-    return { success: true, data };
-  });
+  return { success: true, data };
+});
 ```
 
 ### Wrangler Configuration
@@ -523,13 +520,14 @@ import { z } from 'zod';
 
 const UserSchema = z.object({
   name: z.string().min(2),
-  email: z.string().email()
+  email: z.string().email(),
 });
 
 export function setupRoutes(app: any) {
   app.get('/api/health', () => ({ status: 'healthy' }));
 
-  app.post('/api/users')
+  app
+    .post('/api/users')
     .body(UserSchema)
     .rateLimit({ requests: 100, window: 60000 })
     .handler(async (req, res) => {
@@ -538,7 +536,8 @@ export function setupRoutes(app: any) {
       return { success: true, data: user };
     });
 
-  app.get('/api/users/:id')
+  app
+    .get('/api/users/:id')
     .params(z.object({ id: z.string().uuid() }))
     .cache({ ttl: 300 })
     .handler(async (req, res) => {
@@ -560,7 +559,7 @@ async function createUser(userData: any) {
 import { createApp } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
-const app = createApp();
+const app = await createApp();
 setupRoutes(app);
 app.listen(3000);
 
@@ -568,7 +567,7 @@ app.listen(3000);
 import { createAppEdge } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
-const app = createAppEdge();
+const app = await createAppEdge();
 setupRoutes(app);
 export default app.getHandler();
 
@@ -576,7 +575,7 @@ export default app.getHandler();
 import { createAppLambda } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
-const app = createAppLambda();
+const app = await createAppLambda();
 setupRoutes(app);
 export const handler = app.getHandler();
 
@@ -584,7 +583,7 @@ export const handler = app.getHandler();
 import { createAppWorker } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
-const app = createAppWorker();
+const app = await createAppWorker();
 setupRoutes(app);
 export default { fetch: app.getHandler() };
 ```
@@ -602,23 +601,23 @@ export function setupRoutes(app: any) {
       timestamp: new Date(),
       ...(runtime === 'cloudflare-workers' && {
         country: req.headers['cf-ipcountry'],
-        ray: req.headers['cf-ray']
+        ray: req.headers['cf-ray'],
       }),
       ...(runtime === 'aws-lambda' && {
         requestId: req.context?.awsRequestId,
-        functionName: req.context?.functionName
+        functionName: req.context?.functionName,
       }),
       ...(runtime === 'vercel-edge' && {
-        region: process.env.VERCEL_REGION
-      })
+        region: process.env.VERCEL_REGION,
+      }),
     };
   });
 
   // Runtime-specific routes
   if (app.getRuntimeType() === 'node') {
     app.websocket('/ws', {
-      connection: (socket) => console.log('Connected'),
-      message: (socket, data) => socket.broadcast.emit('message', data)
+      connection: socket => console.log('Connected'),
+      message: (socket, data) => socket.broadcast.emit('message', data),
     });
   }
 }
@@ -727,17 +726,17 @@ export const config = {
     url: process.env.DATABASE_URL,
     pool: {
       min: process.env.DB_POOL_MIN ? parseInt(process.env.DB_POOL_MIN) : 2,
-      max: process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX) : 10
-    }
+      max: process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX) : 10,
+    },
   },
   cache: {
     redis: process.env.REDIS_URL,
-    ttl: process.env.CACHE_TTL ? parseInt(process.env.CACHE_TTL) : 300
+    ttl: process.env.CACHE_TTL ? parseInt(process.env.CACHE_TTL) : 300,
   },
   auth: {
     secret: process.env.JWT_SECRET || 'dev-secret',
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-  }
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  },
 };
 ```
 
@@ -749,7 +748,7 @@ export function getRuntimeConfig(runtime: string) {
   const baseConfig = {
     cors: true,
     compression: true,
-    helmet: true
+    helmet: true,
   };
 
   switch (runtime) {
@@ -757,7 +756,7 @@ export function getRuntimeConfig(runtime: string) {
       return {
         ...baseConfig,
         cluster: process.env.NODE_ENV === 'production',
-        websockets: true
+        websockets: true,
       };
 
     case 'vercel-edge':
@@ -765,7 +764,7 @@ export function getRuntimeConfig(runtime: string) {
         ...baseConfig,
         streaming: true,
         regions: ['iad1', 'sfo1'],
-        cache: { edge: true }
+        cache: { edge: true },
       };
 
     case 'aws-lambda':
@@ -773,14 +772,14 @@ export function getRuntimeConfig(runtime: string) {
         ...baseConfig,
         coldStartOptimization: true,
         memorySize: 1024,
-        timeout: 30
+        timeout: 30,
       };
 
     case 'cloudflare-workers':
       return {
         ...baseConfig,
         kv: { enabled: true },
-        durableObjects: true
+        durableObjects: true,
       };
 
     default:
@@ -822,7 +821,7 @@ app.get('/api/features', (req, res) => {
     fileSystem: runtime === 'node',
     kv: runtime === 'cloudflare-workers',
     edge: ['vercel-edge', 'cloudflare-workers'].includes(runtime),
-    serverless: ['aws-lambda', 'vercel-edge', 'cloudflare-workers'].includes(runtime)
+    serverless: ['aws-lambda', 'vercel-edge', 'cloudflare-workers'].includes(runtime),
   };
 });
 ```
@@ -859,7 +858,7 @@ const runtimes = [
   { name: 'node', factory: createApp },
   { name: 'vercel-edge', factory: createAppEdge },
   { name: 'aws-lambda', factory: createAppLambda },
-  { name: 'cloudflare-workers', factory: createAppWorker }
+  { name: 'cloudflare-workers', factory: createAppWorker },
 ];
 
 describe.each(runtimes)('$name runtime', ({ name, factory }) => {

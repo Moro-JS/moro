@@ -1329,7 +1329,7 @@ app
 ### 3. Configure Middleware Based on Environment
 
 ```typescript
-const app = createApp({
+const app = await createApp({
   cors:
     process.env.NODE_ENV === 'production'
       ? { origin: process.env.ALLOWED_ORIGINS }

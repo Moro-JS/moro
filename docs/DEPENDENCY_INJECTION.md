@@ -38,7 +38,7 @@ interface UserService {
 }
 
 // 2. Register and store the typed reference
-const app = createApp();
+const app = await createApp();
 const container = app.getContainer().getEnhanced();
 
 const userServiceRef = container
@@ -107,7 +107,7 @@ For larger applications, organize your service references in a central location:
 // services.ts
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const container = app.getContainer().getEnhanced();
 
 // Define all service types
@@ -179,7 +179,7 @@ app.post('/auth/signin', async (req, res) => {
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Access the DI container
 const container = app.getContainer();
@@ -860,7 +860,7 @@ class UserService {
 }
 
 // Application setup
-const app = createApp();
+const app = await createApp();
 const container = app.getContainer();
 const enhanced = container.getEnhanced();
 

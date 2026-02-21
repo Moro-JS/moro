@@ -84,7 +84,7 @@ export default {
 import { createApp } from '@morojs/moro';
 import { UWebSocketsAdapter } from '@morojs/moro/networking/adapters';
 
-const app = createApp({
+const app = await createApp({
   websocket: {
     enabled: true,
     adapter: new UWebSocketsAdapter(),
@@ -125,7 +125,7 @@ Once configured, uWebSockets handles both HTTP and WebSocket with zero code chan
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp(); // Reads moro.config.js with useUWebSockets: true
+const app = await createApp(); // Reads moro.config.js with useUWebSockets: true
 
 // HTTP routes work exactly the same
 app.get('/api/users', async (req, res) => {
@@ -140,7 +140,7 @@ app.post('/api/users', async (req, res) => {
 
 // WebSocket handlers work exactly the same
 app.websocket('/chat', {
-  'message': async (socket, data) => {
+  message: async (socket, data) => {
     // Broadcast to all clients
     socket.broadcast.emit('message', {
       user: socket.data.username,
@@ -149,7 +149,7 @@ app.websocket('/chat', {
     });
   },
 
-  'join': async (socket, data) => {
+  join: async (socket, data) => {
     socket.data.username = data.username;
     socket.join('chat-room');
 
@@ -159,7 +159,7 @@ app.websocket('/chat', {
     });
   },
 
-  'leave': async (socket) => {
+  leave: async socket => {
     socket.leave('chat-room');
     socket.to('chat-room').emit('user-left', {
       username: socket.data.username,
@@ -285,7 +285,7 @@ uWebSockets.js adapter is designed to be a drop-in replacement. Most code works 
 ```typescript
 // Before (socket.io)
 app.websocket('/api', {
-  'event': (socket, data) => {
+  event: (socket, data) => {
     socket.emit('response', { success: true });
     socket.broadcast.emit('broadcast', data);
   },
@@ -293,7 +293,7 @@ app.websocket('/api', {
 
 // After (uWebSockets) - NO CHANGES NEEDED
 app.websocket('/api', {
-  'event': (socket, data) => {
+  event: (socket, data) => {
     socket.emit('response', { success: true });
     socket.broadcast.emit('broadcast', data);
   },
@@ -313,6 +313,7 @@ app.websocket('/api', {
 If you encounter installation issues with uWebSockets.js:
 
 1. Ensure you have build tools installed:
+
    ```bash
    # macOS
    xcode-select --install
@@ -336,6 +337,7 @@ uWebSockets.js creates its own server. If you need it to coexist with Moro's HTT
 ### Memory Leaks
 
 uWebSockets.js is very efficient, but ensure you:
+
 - Clean up event listeners when sockets disconnect
 - Don't store large objects in `socket.data`
 - Use rooms efficiently (leave rooms when done)
@@ -344,13 +346,13 @@ uWebSockets.js is very efficient, but ensure you:
 
 Approximate performance comparison (1000 concurrent connections):
 
-| Adapter | Messages/sec | Memory (MB) | CPU Usage |
-|---------|-------------|-------------|-----------|
-| uWebSockets.js | 500,000+ | 80-120 | 15-25% |
-| socket.io | 60,000-80,000 | 150-200 | 35-45% |
-| ws | 100,000-150,000 | 100-150 | 25-35% |
+| Adapter        | Messages/sec    | Memory (MB) | CPU Usage |
+| -------------- | --------------- | ----------- | --------- |
+| uWebSockets.js | 500,000+        | 80-120      | 15-25%    |
+| socket.io      | 60,000-80,000   | 150-200     | 35-45%    |
+| ws             | 100,000-150,000 | 100-150     | 25-35%    |
 
-*Benchmarks are approximate and vary by use case*
+_Benchmarks are approximate and vary by use case_
 
 ## Best Practices
 
@@ -373,4 +375,3 @@ See the [WebSocket Adapter Documentation](./WEBSOCKET-ADAPTERS.md) for the compl
 
 Moro Framework: MIT License
 uWebSockets.js: Apache License 2.0
-

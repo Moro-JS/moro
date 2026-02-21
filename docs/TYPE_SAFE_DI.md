@@ -114,7 +114,7 @@ The pattern is simple and intuitive - register, store reference, resolve.
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const container = app.getContainer().getEnhanced();
 
 // Define service types

@@ -31,6 +31,7 @@ MoroJS includes built-in Worker Threads support for offloading CPU-intensive ope
 ### When to Use Worker Threads
 
 **Good Use Cases:**
+
 - JWT token signing/verification
 - Password hashing (bcrypt, argon2)
 - Data encryption/decryption
@@ -40,6 +41,7 @@ MoroJS includes built-in Worker Threads support for offloading CPU-intensive ope
 - Data compression/decompression
 
 **Not Recommended:**
+
 - Simple I/O operations (use async/await)
 - Database queries (already non-blocking)
 - Network requests (already non-blocking)
@@ -58,7 +60,7 @@ Worker threads are built into Node.js 18+ and included in MoroJS core. No additi
 ```typescript
 import { createApp, getWorkerManager } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const workers = getWorkerManager();
 
 // Execute a task on worker thread
@@ -68,8 +70,8 @@ app.post('/api/hash', async (req, res) => {
     type: 'crypto:hash',
     data: {
       input: req.body.password,
-      algorithm: 'sha256'
-    }
+      algorithm: 'sha256',
+    },
   });
 
   return { hash: result };
@@ -85,17 +87,17 @@ Configure worker thread pool on application startup:
 ```typescript
 import { createApp, WorkerManager } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   workers: {
     count: 4, // Number of worker threads (default: CPU cores - 1)
-    maxQueueSize: 1000 // Maximum queued tasks (default: 1000)
-  }
+    maxQueueSize: 1000, // Maximum queued tasks (default: 1000)
+  },
 });
 
 // Or configure manually
 const workers = new WorkerManager({
   workerCount: 4,
-  maxQueueSize: 1000
+  maxQueueSize: 1000,
 });
 ```
 
@@ -114,10 +116,7 @@ import { workerTasks } from '@morojs/moro';
 
 // Verify JWT token
 app.post('/api/auth/verify', async (req, res) => {
-  const result = await workerTasks.verifyJWT(
-    req.body.token,
-    process.env.JWT_SECRET
-  );
+  const result = await workerTasks.verifyJWT(req.body.token, process.env.JWT_SECRET);
 
   if (result.valid) {
     return { user: result.payload };
@@ -145,14 +144,11 @@ app.post('/api/auth/login', async (req, res) => {
 ```typescript
 // Hash password
 app.post('/api/register', async (req, res) => {
-  const hash = await workerTasks.hashData(
-    req.body.password,
-    'sha256'
-  );
+  const hash = await workerTasks.hashData(req.body.password, 'sha256');
 
   const user = await createUser({
     email: req.body.email,
-    password: hash
+    password: hash,
   });
 
   return user;
@@ -160,10 +156,7 @@ app.post('/api/register', async (req, res) => {
 
 // Encrypt sensitive data
 app.post('/api/secrets', async (req, res) => {
-  const encrypted = await workerTasks.encryptData(
-    req.body.secret,
-    process.env.ENCRYPTION_KEY
-  );
+  const encrypted = await workerTasks.encryptData(req.body.secret, process.env.ENCRYPTION_KEY);
 
   return { encrypted };
 });
@@ -172,10 +165,7 @@ app.post('/api/secrets', async (req, res) => {
 app.get('/api/secrets/:id', async (req, res) => {
   const secret = await getSecret(req.params.id);
 
-  const decrypted = await workerTasks.decryptData(
-    secret.data,
-    process.env.ENCRYPTION_KEY
-  );
+  const decrypted = await workerTasks.decryptData(secret.data, process.env.ENCRYPTION_KEY);
 
   return { secret: decrypted };
 });
@@ -188,9 +178,7 @@ app.get('/api/secrets/:id', async (req, res) => {
 app.get('/api/export', async (req, res) => {
   const data = await getLargeDataset();
 
-  const compressed = await workerTasks.compressData(
-    JSON.stringify(data)
-  );
+  const compressed = await workerTasks.compressData(JSON.stringify(data));
 
   res.setHeader('Content-Encoding', 'gzip');
   res.setHeader('Content-Type', 'application/json');
@@ -199,9 +187,7 @@ app.get('/api/export', async (req, res) => {
 
 // Decompress data
 app.post('/api/import', async (req, res) => {
-  const decompressed = await workerTasks.decompressData(
-    req.body.data
-  );
+  const decompressed = await workerTasks.decompressData(req.body.data);
 
   const data = JSON.parse(decompressed);
   await importData(data);
@@ -215,23 +201,17 @@ app.post('/api/import', async (req, res) => {
 ```typescript
 // Process complex calculation
 app.post('/api/calculate', async (req, res) => {
-  const result = await workerTasks.heavyComputation(
-    req.body.operation,
-    req.body.params
-  );
+  const result = await workerTasks.heavyComputation(req.body.operation, req.body.params);
 
   return { result };
 });
 
 // Transform large JSON
 app.post('/api/transform', async (req, res) => {
-  const transformed = await workerTasks.transformJSON(
-    req.body.data,
-    (item) => ({
-      ...item,
-      computed: expensiveTransform(item)
-    })
-  );
+  const transformed = await workerTasks.transformJSON(req.body.data, item => ({
+    ...item,
+    computed: expensiveTransform(item),
+  }));
 
   return transformed;
 });
@@ -251,7 +231,7 @@ await workers.executeTask({
   id: 'critical-task',
   type: 'crypto:hash',
   data: { input: 'critical-data' },
-  priority: 'high' // 'high' | 'normal' | 'low'
+  priority: 'high', // 'high' | 'normal' | 'low'
 });
 
 // Normal priority (default)
@@ -259,7 +239,7 @@ await workers.executeTask({
   id: 'normal-task',
   type: 'crypto:hash',
   data: { input: 'normal-data' },
-  priority: 'normal'
+  priority: 'normal',
 });
 
 // Low priority (executes last)
@@ -267,7 +247,7 @@ await workers.executeTask({
   id: 'background-task',
   type: 'crypto:hash',
   data: { input: 'background-data' },
-  priority: 'low'
+  priority: 'low',
 });
 ```
 
@@ -280,7 +260,7 @@ await workers.executeTask({
   id: 'long-task',
   type: 'heavy:computation',
   data: { operation: 'complex-calculation' },
-  timeout: 30000 // 30 seconds
+  timeout: 30000, // 30 seconds
 });
 ```
 
@@ -376,7 +356,7 @@ const workers = getWorkerManager();
 const result = await executeOnWorker({
   id: 'task-1',
   type: 'crypto:hash',
-  data: { input: 'test' }
+  data: { input: 'test' },
 });
 ```
 
@@ -389,13 +369,13 @@ const result = await executeOnWorker({
 ```typescript
 import { createApp, workerTasks } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Login with JWT signing on worker thread
 app.post('/api/login', async (req, res) => {
   const user = await db.users.findOne({ email: req.body.email });
 
-  if (!user || !await verifyPassword(req.body.password, user.password)) {
+  if (!user || !(await verifyPassword(req.body.password, user.password))) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -436,15 +416,13 @@ app.get('/api/export', async (req, res) => {
   const data = await db.collection.find().toArray();
 
   // Transform and compress on worker thread
-  const processed = await workerTasks.transformJSON(data, (item) => ({
+  const processed = await workerTasks.transformJSON(data, item => ({
     id: item._id.toString(),
     ...item,
-    exportedAt: new Date()
+    exportedAt: new Date(),
   }));
 
-  const compressed = await workerTasks.compressData(
-    JSON.stringify(processed)
-  );
+  const compressed = await workerTasks.compressData(JSON.stringify(processed));
 
   res.setHeader('Content-Type', 'application/gzip');
   res.setHeader('Content-Disposition', 'attachment; filename="export.json.gz"');
@@ -459,10 +437,10 @@ app.post('/api/import', async (req, res) => {
   const data = JSON.parse(decompressed);
 
   // Validate and transform
-  const validated = await workerTasks.transformJSON(data, (item) => ({
+  const validated = await workerTasks.transformJSON(data, item => ({
     ...item,
     importedAt: new Date(),
-    status: 'active'
+    status: 'active',
   }));
 
   await db.collection.insertMany(validated);
@@ -479,7 +457,7 @@ app.post('/api/images/resize', async (req, res) => {
   const result = await workerTasks.heavyComputation('image:resize', {
     image: req.body.image,
     width: req.body.width,
-    height: req.body.height
+    height: req.body.height,
   });
 
   return { image: result };
@@ -491,13 +469,11 @@ app.post('/api/images/thumbnails', async (req, res) => {
     id: `thumbnail-${i}`,
     type: 'image:thumbnail',
     data: { image, size: 150 },
-    priority: 'normal'
+    priority: 'normal',
   }));
 
   const workers = getWorkerManager();
-  const thumbnails = await Promise.all(
-    tasks.map(task => workers.executeTask(task))
-  );
+  const thumbnails = await Promise.all(tasks.map(task => workers.executeTask(task)));
 
   return { thumbnails };
 });
@@ -525,7 +501,7 @@ app.post('/api/analytics/process', async (req, res) => {
         id: `analytics-batch-${i}`,
         type: 'analytics:process',
         data: { events: batch },
-        priority: 'low' // Background processing
+        priority: 'low', // Background processing
       })
     )
   );
@@ -561,6 +537,7 @@ Worker threads execute code in separate V8 isolates:
 ### Suitable Operations
 
 Operations that benefit from worker threads:
+
 - Long-running computations
 - Cryptographic operations (hashing, encryption)
 - Data transformations on large datasets
@@ -568,6 +545,7 @@ Operations that benefit from worker threads:
 - JWT token operations
 
 Operations that should NOT use worker threads:
+
 - Database queries (already non-blocking)
 - Network requests (already non-blocking)
 - File I/O (already non-blocking)
@@ -587,7 +565,7 @@ const cpuCount = require('os').cpus().length;
 
 const workers = new WorkerManager({
   workerCount: Math.max(1, cpuCount - 1), // Leave 1 for main thread
-  maxQueueSize: 1000
+  maxQueueSize: 1000,
 });
 ```
 
@@ -615,21 +593,21 @@ await fetch('https://api.example.com'); // Already non-blocking
 await workers.executeTask({
   type: 'jwt:verify',
   data: { token },
-  priority: 'high'
+  priority: 'high',
 });
 
 // Normal priority: Regular operations
 await workers.executeTask({
   type: 'crypto:hash',
   data: { input },
-  priority: 'normal'
+  priority: 'normal',
 });
 
 // Low priority: Background tasks
 await workers.executeTask({
   type: 'analytics:process',
   data: { events },
-  priority: 'low'
+  priority: 'low',
 });
 ```
 
@@ -641,7 +619,7 @@ try {
     id: 'task-1',
     type: 'heavy:computation',
     data: { operation: 'complex' },
-    timeout: 10000 // 10 seconds
+    timeout: 10000, // 10 seconds
   });
 } catch (error) {
   if (error.message.includes('timeout')) {
@@ -660,13 +638,11 @@ const tasks = items.map((item, i) => ({
   id: `task-${i}`,
   type: 'crypto:hash',
   data: { input: item.password },
-  priority: 'normal'
+  priority: 'normal',
 }));
 
 const workers = getWorkerManager();
-const results = await Promise.all(
-  tasks.map(task => workers.executeTask(task))
-);
+const results = await Promise.all(tasks.map(task => workers.executeTask(task)));
 ```
 
 ### 5. Monitor Worker Health
@@ -717,7 +693,7 @@ Create custom tasks by extending the worker implementation:
 // Define custom task type
 const CUSTOM_TASKS = {
   IMAGE_RESIZE: 'custom:image-resize',
-  PDF_GENERATE: 'custom:pdf-generate'
+  PDF_GENERATE: 'custom:pdf-generate',
 };
 
 // Execute custom task
@@ -727,8 +703,8 @@ await workers.executeTask({
   data: {
     image: imageBuffer,
     width: 800,
-    height: 600
-  }
+    height: 600,
+  },
 });
 ```
 
@@ -748,7 +724,7 @@ if (stats.queueSize < 800) {
 } else {
   // Queue is full, handle gracefully
   return res.status(503).json({
-    error: 'Service busy, try again later'
+    error: 'Service busy, try again later',
   });
 }
 ```
@@ -782,7 +758,7 @@ try {
   const result = await workers.executeTask({
     id: 'task-1',
     type: 'crypto:hash',
-    data: { input: 'test' }
+    data: { input: 'test' },
   });
 } catch (error) {
   if (error.code === 'WORKER_ERROR') {
@@ -806,6 +782,7 @@ try {
 **Symptoms:** Memory usage grows with worker threads
 
 **Solutions:**
+
 1. Reduce worker count
 2. Limit queue size
 3. Process smaller batches
@@ -814,7 +791,7 @@ try {
 ```typescript
 const workers = new WorkerManager({
   workerCount: 2, // Reduce workers
-  maxQueueSize: 500 // Limit queue
+  maxQueueSize: 500, // Limit queue
 });
 ```
 
@@ -823,6 +800,7 @@ const workers = new WorkerManager({
 **Symptoms:** Tasks frequently timeout
 
 **Solutions:**
+
 1. Increase timeout duration
 2. Optimize task implementation
 3. Break large tasks into smaller chunks
@@ -831,7 +809,7 @@ const workers = new WorkerManager({
 await workers.executeTask({
   type: 'heavy:computation',
   data: { operation: 'complex' },
-  timeout: 30000 // Increase timeout
+  timeout: 30000, // Increase timeout
 });
 ```
 
@@ -840,6 +818,7 @@ await workers.executeTask({
 **Symptoms:** Queue size exceeds limit
 
 **Solutions:**
+
 1. Increase max queue size
 2. Add more workers
 3. Implement backpressure
@@ -851,7 +830,7 @@ if (stats.queueSize >= stats.maxQueueSize * 0.8) {
   // Queue is 80% full - implement backpressure
   return res.status(503).json({
     error: 'Service busy',
-    retryAfter: 60
+    retryAfter: 60,
   });
 }
 ```
@@ -861,6 +840,7 @@ if (stats.queueSize >= stats.maxQueueSize * 0.8) {
 **Symptoms:** Workers crash or become unresponsive
 
 **Solutions:**
+
 1. Add error handling in tasks
 2. Implement task validation
 3. Monitor worker health
@@ -891,42 +871,43 @@ setInterval(() => {
 import { createApp, workerTasks } from '@morojs/moro';
 import { z } from 'zod';
 
-const app = createApp();
+const app = await createApp();
 
 // Registration with password hashing
-app.post('/api/register')
-  .body(z.object({
-    email: z.string().email(),
-    password: z.string().min(8)
-  }))
+app
+  .post('/api/register')
+  .body(
+    z.object({
+      email: z.string().email(),
+      password: z.string().min(8),
+    })
+  )
   .handler(async (req, res) => {
     // Hash password on worker thread
-    const hash = await workerTasks.hashData(
-      req.body.password,
-      'sha256'
-    );
+    const hash = await workerTasks.hashData(req.body.password, 'sha256');
 
     const user = await db.users.create({
       email: req.body.email,
-      password: hash
+      password: hash,
     });
 
     // Generate token on worker thread
-    const token = await workerTasks.signJWT(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const token = await workerTasks.signJWT({ userId: user.id }, process.env.JWT_SECRET, {
+      expiresIn: '7d',
+    });
 
     return { token, user: { id: user.id, email: user.email } };
   });
 
 // Login
-app.post('/api/login')
-  .body(z.object({
-    email: z.string().email(),
-    password: z.string()
-  }))
+app
+  .post('/api/login')
+  .body(
+    z.object({
+      email: z.string().email(),
+      password: z.string(),
+    })
+  )
   .handler(async (req, res) => {
     const user = await db.users.findOne({ email: req.body.email });
 
@@ -942,11 +923,9 @@ app.post('/api/login')
     }
 
     // Sign token on worker thread
-    const token = await workerTasks.signJWT(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const token = await workerTasks.signJWT({ userId: user.id }, process.env.JWT_SECRET, {
+      expiresIn: '7d',
+    });
 
     return { token };
   });
@@ -960,10 +939,7 @@ app.get('/api/profile', async (req, res) => {
   }
 
   // Verify on worker thread
-  const result = await workerTasks.verifyJWT(
-    token,
-    process.env.JWT_SECRET
-  );
+  const result = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
 
   if (!result.valid) {
     return res.status(401).json({ error: 'Invalid token' });
@@ -989,4 +965,3 @@ For more information, see:
 ---
 
 **Need help?** Join our [Discord community](https://morojs.com/discord) or [open an issue](https://github.com/Moro-JS/moro/issues).
-

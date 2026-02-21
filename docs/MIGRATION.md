@@ -36,6 +36,7 @@ app.post('/users', createUser);     // Must be last
 ```
 
 **Problems:**
+
 - Middleware order dependencies cause bugs
 - Manual validation setup for each route
 - No TypeScript inference from validation
@@ -47,20 +48,25 @@ app.post('/users', createUser);     // Must be last
 ```typescript
 // ✅ Moro - Order independent, automatic validation
 import { createApp, z } from '@morojs/moro';
-const app = createApp();
+const app = await createApp();
 
-app.post('/users')
-   .body(z.object({                 // Automatic validation + TypeScript types
-     name: z.string().min(2),
-     email: z.string().email()
-   }))
-   .rateLimit({ requests: 10, window: 60000 })  // Order doesn't matter!
-   .handler(createUser);            // Framework handles optimal ordering
+app
+  .post('/users')
+  .body(
+    z.object({
+      // Automatic validation + TypeScript types
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
+  .rateLimit({ requests: 10, window: 60000 }) // Order doesn't matter!
+  .handler(createUser); // Framework handles optimal ordering
 ```
 
 ### Migration Steps
 
 1. **Replace Express app creation:**
+
    ```typescript
    // Before
    const express = require('express');
@@ -68,10 +74,11 @@ app.post('/users')
 
    // After
    import { createApp } from '@morojs/moro';
-   const app = createApp();
+   const app = await createApp();
    ```
 
 2. **Convert middleware to chainable API:**
+
    ```typescript
    // Before
    app.use(cors());
@@ -80,22 +87,17 @@ app.post('/users')
    app.post('/users', validate(schema), handler);
 
    // After
-   app.post('/users')
-     .body(schema)
-     .rateLimit(config)
-     .handler(handler);
+   app.post('/users').body(schema).rateLimit(config).handler(handler);
    // CORS and helmet are enabled by default
    ```
 
 3. **Replace custom validation with MoroJS validation (Zod is optional):**
+
    ```typescript
    // Before
    const { body, validationResult } = require('express-validator');
 
-   app.post('/users', [
-     body('name').isLength({ min: 2 }),
-     body('email').isEmail()
-   ], (req, res) => {
+   app.post('/users', [body('name').isLength({ min: 2 }), body('email').isEmail()], (req, res) => {
      const errors = validationResult(req);
      if (!errors.isEmpty()) {
        return res.status(400).json({ errors: errors.array() });
@@ -105,25 +107,28 @@ app.post('/users')
 
    // After (with Zod - install as peer dependency)
    import { z } from '@morojs/moro'; // Zod is optional peer dependency
-   app.post('/users')
-     .body(z.object({
-       name: z.string().min(2),
-       email: z.string().email()
-     }))
+   app
+     .post('/users')
+     .body(
+       z.object({
+         name: z.string().min(2),
+         email: z.string().email(),
+       })
+     )
      .handler((req, res) => {
        // req.body is automatically validated and typed!
        return { success: true, data: req.body };
      });
 
    // Or without any validation library
-   app.post('/users')
-     .handler((req, res) => {
-       // Manual validation or no validation
-       return { success: true, data: req.body };
-     });
+   app.post('/users').handler((req, res) => {
+     // Manual validation or no validation
+     return { success: true, data: req.body };
+   });
    ```
 
 4. **Convert error handling:**
+
    ```typescript
    // Before
    app.use((err, req, res, next) => {
@@ -153,16 +158,17 @@ fastify.post('/users', {
       required: ['name', 'email'],
       properties: {
         name: { type: 'string', minLength: 2 },
-        email: { type: 'string', format: 'email' }
-      }
-    }
+        email: { type: 'string', format: 'email' },
+      },
+    },
   },
-  preHandler: [rateLimit, auth],     // Manual ordering required
-  handler: createUser
+  preHandler: [rateLimit, auth], // Manual ordering required
+  handler: createUser,
 });
 ```
 
 **Problems:**
+
 - JSON Schema is verbose and hard to maintain
 - Poor TypeScript integration
 - Manual middleware ordering still required
@@ -172,29 +178,34 @@ fastify.post('/users', {
 
 ```typescript
 // ✅ Moro - Concise Zod schema with full TypeScript
-app.post('/users')
-   .body(z.object({
-     name: z.string().min(2),       // Better TypeScript integration
-     email: z.string().email()
-   }))
-   .rateLimit({ requests: 10, window: 60000 })
-   .auth({ roles: ['user'] })      // Automatic optimal ordering
-   .handler(createUser);
+app
+  .post('/users')
+  .body(
+    z.object({
+      name: z.string().min(2), // Better TypeScript integration
+      email: z.string().email(),
+    })
+  )
+  .rateLimit({ requests: 10, window: 60000 })
+  .auth({ roles: ['user'] }) // Automatic optimal ordering
+  .handler(createUser);
 ```
 
 ### Migration Steps
 
 1. **Replace Fastify app creation:**
+
    ```typescript
    // Before
    const fastify = require('fastify')({ logger: true });
 
    // After
    import { createApp } from '@morojs/moro';
-   const app = createApp({ logging: true });
+   const app = await createApp({ logging: true });
    ```
 
 2. **Convert JSON Schema to MoroJS validation (Zod is optional):**
+
    ```typescript
    // Before
    const userSchema = {
@@ -204,9 +215,9 @@ app.post('/users')
        properties: {
          name: { type: 'string', minLength: 2, maxLength: 50 },
          email: { type: 'string', format: 'email' },
-         age: { type: 'number', minimum: 18 }
-       }
-     }
+         age: { type: 'number', minimum: 18 },
+       },
+     },
    };
 
    // After (with Zod - install as peer dependency)
@@ -214,7 +225,7 @@ app.post('/users')
    const userSchema = z.object({
      name: z.string().min(2).max(50),
      email: z.string().email(),
-     age: z.number().min(18).optional()
+     age: z.number().min(18).optional(),
    });
 
    // Or use other validation libraries (Joi, Yup, Class Validator)
@@ -223,6 +234,7 @@ app.post('/users')
    ```
 
 3. **Convert route definitions:**
+
    ```typescript
    // Before
    fastify.post('/users', {
@@ -230,11 +242,12 @@ app.post('/users')
      preHandler: [authenticate, rateLimit],
      handler: async (request, reply) => {
        return { user: request.body };
-     }
+     },
    });
 
    // After
-   app.post('/users')
+   app
+     .post('/users')
      .body(userSchema)
      .auth({ required: true })
      .rateLimit({ requests: 10, window: 60000 })
@@ -244,6 +257,7 @@ app.post('/users')
    ```
 
 4. **Convert plugins to modules:**
+
    ```typescript
    // Before
    await fastify.register(require('./plugins/database'));
@@ -277,6 +291,7 @@ export class UsersController {
 ```
 
 **Problems:**
+
 - Heavy use of decorators reduces readability
 - Class-based architecture adds complexity
 - Requires understanding of dependency injection
@@ -287,18 +302,21 @@ export class UsersController {
 
 ```typescript
 // ✅ Moro - Functional, clean, no decorators
-app.post('/users')
-   .body(CreateUserSchema)          // Direct Zod schema
-   .auth({ roles: ['user'] })       // No guards needed
-   .rateLimit({ requests: 10, window: 60000 })  // No interceptors
-   .handler(async (req, res) => {   // Pure function
-     return { success: true, data: await createUser(req.body) };
-   });
+app
+  .post('/users')
+  .body(CreateUserSchema) // Direct Zod schema
+  .auth({ roles: ['user'] }) // No guards needed
+  .rateLimit({ requests: 10, window: 60000 }) // No interceptors
+  .handler(async (req, res) => {
+    // Pure function
+    return { success: true, data: await createUser(req.body) };
+  });
 ```
 
 ### Migration Steps
 
 1. **Replace NestJS app with MoroJS:**
+
    ```typescript
    // Before
    import { NestFactory } from '@nestjs/core';
@@ -312,11 +330,12 @@ app.post('/users')
    // After
    import { createApp } from '@morojs/moro';
 
-   const app = createApp();
+   const app = await createApp();
    app.listen(3000);
    ```
 
 2. **Convert controllers to route handlers:**
+
    ```typescript
    // Before
    @Controller('users')
@@ -334,13 +353,15 @@ app.post('/users')
    }
 
    // After
-   app.get('/users')
+   app
+     .get('/users')
      .query(GetUsersSchema)
      .handler(async (req, res) => {
        return { users: await findAllUsers(req.query) };
      });
 
-   app.post('/users')
+   app
+     .post('/users')
      .body(CreateUserSchema)
      .handler(async (req, res) => {
        return { user: await createUser(req.body) };
@@ -348,6 +369,7 @@ app.post('/users')
    ```
 
 3. **Convert DTOs to Zod schemas:**
+
    ```typescript
    // Before
    export class CreateUserDto {
@@ -369,11 +391,12 @@ app.post('/users')
    const CreateUserSchema = z.object({
      name: z.string().min(2).max(50),
      email: z.string().email(),
-     age: z.number().int().min(18).optional()
+     age: z.number().int().min(18).optional(),
    });
    ```
 
 4. **Convert guards to auth middleware:**
+
    ```typescript
    // Before
    @Injectable()
@@ -385,21 +408,23 @@ app.post('/users')
    }
 
    // After - Built into route definition
-   app.get('/protected')
+   app
+     .get('/protected')
      .auth({
        required: true,
-       validator: (req) => validateUser(req.headers.authorization)
+       validator: req => validateUser(req.headers.authorization),
      })
      .handler(protectedHandler);
    ```
 
 5. **Convert modules to MoroJS modules:**
+
    ```typescript
    // Before
    @Module({
      controllers: [UsersController],
      providers: [UsersService],
-     exports: [UsersService]
+     exports: [UsersService],
    })
    export class UsersModule {}
 
@@ -411,15 +436,15 @@ app.post('/users')
        {
          method: 'GET',
          path: '/users',
-         handler: getUsersHandler
+         handler: getUsersHandler,
        },
        {
          method: 'POST',
          path: '/users',
          validation: { body: CreateUserSchema },
-         handler: createUserHandler
-       }
-     ]
+         handler: createUserHandler,
+       },
+     ],
    });
    ```
 
@@ -443,7 +468,7 @@ const router = new Router();
 app.use(bodyParser());
 app.use(router.routes());
 
-router.post('/users', async (ctx) => {
+router.post('/users', async ctx => {
   // Manual validation required
   if (!ctx.request.body.name || ctx.request.body.name.length < 2) {
     ctx.status = 400;
@@ -458,20 +483,24 @@ router.post('/users', async (ctx) => {
 
 ```typescript
 // ✅ Moro - Built-in validation and routing
-app.post('/users')
-   .body(z.object({
-     name: z.string().min(2),
-     email: z.string().email()
-   }))
-   .handler(async (req, res) => {
-     // Automatic validation, fully typed
-     return { success: true, data: req.body };
-   });
+app
+  .post('/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
+  .handler(async (req, res) => {
+    // Automatic validation, fully typed
+    return { success: true, data: req.body };
+  });
 ```
 
 ### Migration Steps
 
 1. **Replace Koa app:**
+
    ```typescript
    // Before
    const Koa = require('koa');
@@ -479,10 +508,11 @@ app.post('/users')
 
    // After
    import { createApp } from '@morojs/moro';
-   const app = createApp();
+   const app = await createApp();
    ```
 
 2. **Convert middleware:**
+
    ```typescript
    // Before
    app.use(async (ctx, next) => {
@@ -498,12 +528,13 @@ app.post('/users')
    ```
 
 3. **Convert routes:**
+
    ```typescript
    // Before
    const Router = require('koa-router');
    const router = new Router();
 
-   router.get('/users', async (ctx) => {
+   router.get('/users', async ctx => {
      ctx.body = { users: await getUsers() };
    });
 
@@ -551,6 +582,7 @@ export default NextAuth({
 ```
 
 **Problems:**
+
 - Tightly coupled to Next.js framework
 - Manual validation and error handling
 - Limited middleware options
@@ -566,23 +598,30 @@ import { createApp, z } from '@morojs/moro';
 import { createAuthMiddleware } from '@auth/morojs';
 import Google from '@auth/core/providers/google';
 
-const app = createApp();
+const app = await createApp();
 
 // Built-in authentication
-app.use(createAuthMiddleware({
-  providers: [Google({
-    clientId: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  })],
-  secret: process.env.AUTH_SECRET,
-}));
+app.use(
+  createAuthMiddleware({
+    providers: [
+      Google({
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      }),
+    ],
+    secret: process.env.AUTH_SECRET,
+  })
+);
 
 // Automatic validation and TypeScript inference
-app.post('/api/users')
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  }))
+app
+  .post('/api/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
   .auth({ required: true })
   .handler(async (req, res) => {
     return { success: true, user: req.body };
@@ -592,6 +631,7 @@ app.post('/api/users')
 ### Migration Steps
 
 1. **Replace Next.js API routes:**
+
    ```typescript
    // Before (Next.js)
    // pages/api/users.ts
@@ -601,12 +641,11 @@ app.post('/api/users')
 
    // After (MoroJS)
    // src/routes/users.ts
-   app.post('/api/users')
-     .body(userSchema)
-     .handler(createUser);
+   app.post('/api/users').body(userSchema).handler(createUser);
    ```
 
 2. **Convert authentication:**
+
    ```typescript
    // Before (NextAuth.js)
    import NextAuth from 'next-auth';
@@ -626,6 +665,7 @@ app.post('/api/users')
    ```
 
 3. **Deploy to multiple runtimes:**
+
    ```typescript
    // Node.js
    app.listen(3000);
@@ -667,6 +707,7 @@ export const POST: RequestHandler = async ({ request }) => {
 ```
 
 **Problems:**
+
 - Limited to SvelteKit ecosystem
 - Manual validation and error handling
 - No built-in authentication
@@ -679,13 +720,16 @@ export const POST: RequestHandler = async ({ request }) => {
 // ✅ MoroJS - Full-featured API framework
 import { createApp, z } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
-app.post('/api/users')
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  }))
+app
+  .post('/api/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
   .handler(async (req, res) => {
     return { success: true, user: req.body };
   });
@@ -694,6 +738,7 @@ app.post('/api/users')
 ### Migration Steps
 
 1. **Extract API logic to MoroJS:**
+
    ```typescript
    // Before (SvelteKit)
    // src/routes/api/users/+server.ts
@@ -703,12 +748,11 @@ app.post('/api/users')
 
    // After (MoroJS)
    // src/api/users.ts
-   app.post('/api/users')
-     .body(userSchema)
-     .handler(createUser);
+   app.post('/api/users').body(userSchema).handler(createUser);
    ```
 
 2. **Keep SvelteKit for frontend, MoroJS for API:**
+
    ```typescript
    // SvelteKit frontend
    // src/routes/+page.svelte
@@ -736,6 +780,7 @@ app.post('/api/users')
 ### 1. Request/Response Objects
 
 **Express/Koa style → MoroJS:**
+
 ```typescript
 // Before (Express)
 app.get('/users', (req, res) => {
@@ -743,7 +788,7 @@ app.get('/users', (req, res) => {
 });
 
 // Before (Koa)
-router.get('/users', (ctx) => {
+router.get('/users', ctx => {
   ctx.body = { users: [] };
 });
 
@@ -756,6 +801,7 @@ app.get('/users', (req, res) => {
 ### 2. Validation
 
 **Manual validation → Zod validation:**
+
 ```typescript
 // Before
 app.post('/users', (req, res) => {
@@ -769,11 +815,14 @@ app.post('/users', (req, res) => {
 });
 
 // After
-app.post('/users')
-  .body(z.object({
-    name: z.string().min(2),
-    email: z.string().email()
-  }))
+app
+  .post('/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
   .handler((req, res) => {
     // req.body is automatically validated and typed
     return { success: true, data: req.body };
@@ -783,6 +832,7 @@ app.post('/users')
 ### 3. Middleware
 
 **Global middleware:**
+
 ```typescript
 // Before (Express)
 app.use(cors());
@@ -790,10 +840,10 @@ app.use(helmet());
 app.use(rateLimit(config));
 
 // After (MoroJS) - Built in with configuration
-const app = createApp({
+const app = await createApp({
   cors: true,
   helmet: true,
-  rateLimit: config
+  rateLimit: config,
 });
 
 // Or use middleware explicitly
@@ -805,6 +855,7 @@ app.use(middleware.rateLimit(config));
 ### 4. Error Handling
 
 **Error handling patterns:**
+
 ```typescript
 // Before
 app.use((err, req, res, next) => {
@@ -822,6 +873,7 @@ app.use((err, req, res, next) => {
 ### 5. Database Integration
 
 **Database usage:**
+
 ```typescript
 // Before
 const mysql = require('mysql2');
@@ -856,13 +908,14 @@ Support for multiple validation libraries with a unified interface. All validati
 ```typescript
 import { createApp, z, joi, yup, classValidator } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Use any validation library (all are optional)
-app.post('/users')
-  .body(z.object({ name: z.string() }))           // Zod (optional)
-  .query(joi.object({ page: joi.number() }))      // Joi (optional)
-  .params(yup.object({ id: yup.string() }))       // Yup (optional)
+app
+  .post('/users')
+  .body(z.object({ name: z.string() })) // Zod (optional)
+  .query(joi.object({ page: joi.number() })) // Joi (optional)
+  .params(yup.object({ id: yup.string() })) // Yup (optional)
   .handler(createUser);
 
 // Or use class-validator (optional)
@@ -872,13 +925,10 @@ class CreateUserDto {
   name: string;
 }
 
-app.post('/users')
-  .body(classValidator(CreateUserDto))
-  .handler(createUser);
+app.post('/users').body(classValidator(CreateUserDto)).handler(createUser);
 
 // Or use no validation at all - framework works without any validation libraries!
-app.post('/users')
-  .handler(createUser);
+app.post('/users').handler(createUser);
 ```
 
 ### 2. Enterprise Authentication
@@ -890,24 +940,27 @@ import { createApp } from '@morojs/moro';
 import { createAuthMiddleware } from '@auth/morojs';
 import { providers } from '@auth/core';
 
-const app = createApp();
+const app = await createApp();
 
-app.use(createAuthMiddleware({
-  providers: [
-    providers.GitHub({
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-    }),
-    providers.Google({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    }),
-  ],
-  secret: process.env.AUTH_SECRET,
-}));
+app.use(
+  createAuthMiddleware({
+    providers: [
+      providers.GitHub({
+        clientId: process.env.GITHUB_CLIENT_ID,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET,
+      }),
+      providers.Google({
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      }),
+    ],
+    secret: process.env.AUTH_SECRET,
+  })
+);
 
 // Automatic authentication
-app.get('/protected')
+app
+  .get('/protected')
   .auth({ required: true })
   .handler((req, res) => {
     return { user: req.auth.user };
@@ -922,19 +975,19 @@ Deploy the same code to multiple environments:
 import { createApp, createAppEdge, createAppLambda, createAppWorker } from '@morojs/moro';
 
 // Node.js
-const nodeApp = createApp();
+const nodeApp = await createApp();
 nodeApp.listen(3000);
 
 // Vercel Edge Functions
-const edgeApp = createAppEdge();
+const edgeApp = await createAppEdge();
 export default edgeApp.getHandler();
 
 // AWS Lambda
-const lambdaApp = createAppLambda();
+const lambdaApp = await createAppLambda();
 export const handler = lambdaApp.getLambdaHandler();
 
 // Cloudflare Workers
-const workerApp = createAppWorker();
+const workerApp = await createAppWorker();
 export default workerApp.getWorkerHandler();
 ```
 
@@ -945,21 +998,25 @@ Built-in WebSocket support with multiple adapters:
 ```typescript
 import { createApp, SocketIOAdapter, WSAdapter } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Socket.IO adapter
-app.websocket('/socket.io', new SocketIOAdapter({
-  cors: { origin: '*' }
-}));
+app.websocket(
+  '/socket.io',
+  new SocketIOAdapter({
+    cors: { origin: '*' },
+  })
+);
 
 // Native WebSocket adapter
 app.websocket('/ws', new WSAdapter());
 
 // WebSocket routes
-app.websocket('/chat')
+app
+  .websocket('/chat')
   .auth({ required: true })
   .handler((socket, req) => {
-    socket.on('message', (data) => {
+    socket.on('message', data => {
       socket.broadcast.emit('message', data);
     });
   });
@@ -972,32 +1029,37 @@ Multiple database adapters with unified interface:
 ```typescript
 import { createApp, MySQLAdapter, PostgreSQLAdapter, MongoDBAdapter } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // MySQL
-app.database(new MySQLAdapter({
-  host: 'localhost',
-  user: 'root',
-  password: 'password',
-  database: 'myapp'
-}));
+app.database(
+  new MySQLAdapter({
+    host: 'localhost',
+    user: 'root',
+    password: 'password',
+    database: 'myapp',
+  })
+);
 
 // PostgreSQL
-app.database(new PostgreSQLAdapter({
-  connectionString: 'postgresql://user:password@localhost:5432/myapp'
-}));
+app.database(
+  new PostgreSQLAdapter({
+    connectionString: 'postgresql://user:password@localhost:5432/myapp',
+  })
+);
 
 // MongoDB
-app.database(new MongoDBAdapter({
-  uri: 'mongodb://localhost:27017/myapp'
-}));
+app.database(
+  new MongoDBAdapter({
+    uri: 'mongodb://localhost:27017/myapp',
+  })
+);
 
 // Use in routes
-app.get('/users')
-  .handler(async (req, res) => {
-    const users = await req.database.query('SELECT * FROM users');
-    return { users };
-  });
+app.get('/users').handler(async (req, res) => {
+  const users = await req.database.query('SELECT * FROM users');
+  return { users };
+});
 ```
 
 ### 6. Intelligent Routing
@@ -1005,12 +1067,13 @@ app.get('/users')
 Automatic middleware ordering and optimization:
 
 ```typescript
-app.post('/users')
-  .body(userSchema)                    // Validation middleware
-  .auth({ required: true })            // Authentication middleware
-  .rateLimit({ requests: 10, window: 60000 })  // Rate limiting
-  .cache({ ttl: 300 })                 // Caching
-  .handler(createUser);                // Handler
+app
+  .post('/users')
+  .body(userSchema) // Validation middleware
+  .auth({ required: true }) // Authentication middleware
+  .rateLimit({ requests: 10, window: 60000 }) // Rate limiting
+  .cache({ ttl: 300 }) // Caching
+  .handler(createUser); // Handler
 
 // Framework automatically orders middleware optimally
 // No need to worry about middleware order!
@@ -1030,21 +1093,21 @@ export default defineModule({
     {
       method: 'GET',
       path: '/users',
-      handler: getUsers
+      handler: getUsers,
     },
     {
       method: 'POST',
       path: '/users',
       validation: { body: userSchema },
-      handler: createUser
-    }
+      handler: createUser,
+    },
   ],
   sockets: [
     {
       path: '/users',
-      handler: userSocketHandler
-    }
-  ]
+      handler: userSocketHandler,
+    },
+  ],
 });
 
 // Auto-discover modules
@@ -1058,26 +1121,25 @@ Enterprise-grade event bus for microservices:
 ```typescript
 import { createApp, MoroEventBus } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Global event bus
-app.eventBus.on('user.created', (event) => {
+app.eventBus.on('user.created', event => {
   console.log('User created:', event.payload);
 });
 
 // Emit events
-app.post('/users')
-  .handler(async (req, res) => {
-    const user = await createUser(req.body);
+app.post('/users').handler(async (req, res) => {
+  const user = await createUser(req.body);
 
-    // Emit event
-    app.eventBus.emit('user.created', {
-      userId: user.id,
-      timestamp: new Date()
-    });
-
-    return { user };
+  // Emit event
+  app.eventBus.emit('user.created', {
+    userId: user.id,
+    timestamp: new Date(),
   });
+
+  return { user };
+});
 ```
 
 ### 9. Configuration System
@@ -1089,17 +1151,17 @@ Flexible configuration with multiple sources:
 module.exports = {
   server: {
     port: 3000,
-    host: 'localhost'
+    host: 'localhost',
   },
   database: {
     type: 'postgresql',
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT
+    port: process.env.DB_PORT,
   },
   auth: {
     providers: ['github', 'google'],
-    secret: process.env.AUTH_SECRET
-  }
+    secret: process.env.AUTH_SECRET,
+  },
 };
 
 // Environment variables override config file
@@ -1112,21 +1174,21 @@ module.exports = {
 Built-in performance features:
 
 ```typescript
-const app = createApp({
+const app = await createApp({
   performance: {
     clustering: {
       enabled: true,
-      workers: 'auto'
+      workers: 'auto',
     },
     compression: {
       enabled: true,
-      threshold: 1024
+      threshold: 1024,
     },
     circuitBreaker: {
       enabled: true,
-      timeout: 5000
-    }
-  }
+      timeout: 5000,
+    },
+  },
 });
 ```
 
@@ -1136,10 +1198,10 @@ const app = createApp({
 
 ### Expected Performance Gains
 
-| Migration From | Req/sec Improvement | Latency Improvement | Memory Improvement |
-|----------------|-------------------|-------------------|-------------------|
-| Express        | **+84%** (28,540 → 52,400) | **-53%** (3.8ms → 1.8ms) | **-47%** (45MB → 24MB) |
-| Fastify        | **+37%** (38,120 → 52,400) | **-38%** (2.9ms → 1.8ms) | **-31%** (35MB → 24MB) |
+| Migration From | Req/sec Improvement         | Latency Improvement      | Memory Improvement     |
+| -------------- | --------------------------- | ------------------------ | ---------------------- |
+| Express        | **+84%** (28,540 → 52,400)  | **-53%** (3.8ms → 1.8ms) | **-47%** (45MB → 24MB) |
+| Fastify        | **+37%** (38,120 → 52,400)  | **-38%** (2.9ms → 1.8ms) | **-31%** (35MB → 24MB) |
 | NestJS         | **+137%** (22,100 → 52,400) | **-60%** (4.5ms → 1.8ms) | **-59%** (58MB → 24MB) |
 | Koa            | **+102%** (25,880 → 52,400) | **-57%** (4.2ms → 1.8ms) | **-43%** (42MB → 24MB) |
 | Next.js API    | **+156%** (20,400 → 52,400) | **-65%** (5.1ms → 1.8ms) | **-62%** (63MB → 24MB) |
@@ -1189,12 +1251,14 @@ const app = createApp({
 ### Migration Checklist
 
 #### Pre-Migration
+
 - [ ] **Audit current application** - Document all routes, middleware, and dependencies
 - [ ] **Choose validation library** - Select from Zod, Joi, Yup, or Class Validator
 - [ ] **Plan authentication strategy** - Decide on Auth.js providers and configuration
 - [ ] **Select deployment target** - Choose from Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers
 
 #### Core Migration
+
 - [ ] **Replace framework initialization** - Update app creation and configuration
 - [ ] **Convert routes to MoroJS syntax** - Use chainable API with automatic ordering
 - [ ] **Replace validation with chosen library** - Convert existing validation to MoroJS format
@@ -1202,6 +1266,7 @@ const app = createApp({
 - [ ] **Convert modules/plugins** - Use MoroJS module system or convert existing plugins
 
 #### Advanced Features
+
 - [ ] **Set up authentication** - Configure Auth.js with chosen providers
 - [ ] **Configure database integration** - Set up database adapters if needed
 - [ ] **Set up WebSocket support** - Configure WebSocket adapters if needed
@@ -1209,12 +1274,14 @@ const app = createApp({
 - [ ] **Set up configuration system** - Create moro.config.js file
 
 #### Testing and Deployment
+
 - [ ] **Update tests** - Convert tests to work with MoroJS patterns
 - [ ] **Performance testing** - Benchmark against previous implementation
 - [ ] **Deploy to target runtime** - Deploy using appropriate MoroJS runtime adapter
 - [ ] **Monitor and optimize** - Use built-in performance features and monitoring
 
 #### Post-Migration
+
 - [ ] **Verify all functionality** - Ensure all features work as expected
 - [ ] **Update documentation** - Update API documentation and team guides
 - [ ] **Train team** - Ensure team understands MoroJS patterns and best practices

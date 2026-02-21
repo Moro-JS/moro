@@ -44,15 +44,16 @@ MoroJS is designed for high performance across all supported runtimes. The frame
 
 Comprehensive benchmarks comparing MoroJS with popular Node.js frameworks:
 
-| Framework | Req/sec | Latency (avg) | Latency (99p) | Memory Usage | CPU Usage |
-|-----------|---------|---------------|---------------|--------------|-----------|
-| **MoroJS** | **52,400** | **1.8ms** | **4.2ms** | **24MB** | **45%** |
-| Express   | 28,540  | 3.8ms     | 8.9ms     | 45MB     | 72%      |
-| Fastify   | 38,120  | 2.9ms     | 6.5ms     | 35MB     | 58%      |
-| NestJS    | 22,100  | 4.5ms     | 11.2ms    | 58MB     | 78%      |
-| Koa       | 25,880  | 4.2ms     | 9.8ms     | 42MB     | 69%      |
+| Framework  | Req/sec    | Latency (avg) | Latency (99p) | Memory Usage | CPU Usage |
+| ---------- | ---------- | ------------- | ------------- | ------------ | --------- |
+| **MoroJS** | **52,400** | **1.8ms**     | **4.2ms**     | **24MB**     | **45%**   |
+| Express    | 28,540     | 3.8ms         | 8.9ms         | 45MB         | 72%       |
+| Fastify    | 38,120     | 2.9ms         | 6.5ms         | 35MB         | 58%       |
+| NestJS     | 22,100     | 4.5ms         | 11.2ms        | 58MB         | 78%       |
+| Koa        | 25,880     | 4.2ms         | 9.8ms         | 42MB         | 69%       |
 
 **Test Configuration:**
+
 - **Load:** 50,000 requests, 100 concurrent connections
 - **Environment:** Node.js 20.x, 4 CPU cores, 8GB RAM
 - **Route:** POST /api/users with validation, auth, rate limiting
@@ -62,23 +63,23 @@ Comprehensive benchmarks comparing MoroJS with popular Node.js frameworks:
 
 Zod vs other validation libraries:
 
-| Library | Ops/sec | Relative Performance | Memory per Op |
-|---------|---------|-------------------|---------------|
-| **Zod** | **1,245,000** | **1.0x** | **0.12KB** |
-| Joi     | 485,000   | 0.39x | 0.28KB |
-| JSON Schema (AJV) | 890,000 | 0.71x | 0.18KB |
-| Yup     | 320,000   | 0.26x | 0.35KB |
+| Library           | Ops/sec       | Relative Performance | Memory per Op |
+| ----------------- | ------------- | -------------------- | ------------- |
+| **Zod**           | **1,245,000** | **1.0x**             | **0.12KB**    |
+| Joi               | 485,000       | 0.39x                | 0.28KB        |
+| JSON Schema (AJV) | 890,000       | 0.71x                | 0.18KB        |
+| Yup               | 320,000       | 0.26x                | 0.35KB        |
 
 ### Runtime-Specific Performance
 
 Performance across different deployment environments:
 
-| Runtime | Req/sec | Cold Start | Memory | Scaling |
-|---------|---------|------------|--------|---------|
-| **Node.js** | **52,400** | N/A | 24MB | Manual |
-| **Vercel Edge** | **48,200** | 15ms | 18MB | Auto |
-| **AWS Lambda** | **45,800** | 95ms | 22MB | Auto |
-| **Cloudflare Workers** | **51,100** | 8ms | 16MB | Auto |
+| Runtime                | Req/sec    | Cold Start | Memory | Scaling |
+| ---------------------- | ---------- | ---------- | ------ | ------- |
+| **Node.js**            | **52,400** | N/A        | 24MB   | Manual  |
+| **Vercel Edge**        | **48,200** | 15ms       | 18MB   | Auto    |
+| **AWS Lambda**         | **45,800** | 95ms       | 22MB   | Auto    |
+| **Cloudflare Workers** | **51,100** | 8ms        | 16MB   | Auto    |
 
 ---
 
@@ -126,6 +127,7 @@ This provides near-instant lookups for static routes regardless of route count.
 #### Route Patterns
 
 **Static Routes** (fastest)
+
 ```typescript
 app.get('/api/users', handler);
 app.get('/api/posts', handler);
@@ -134,6 +136,7 @@ app.get('/api/comments', handler);
 ```
 
 **Dynamic Routes** (fast)
+
 ```typescript
 app.get('/api/users/:id', handler);
 app.get('/api/posts/:id/comments/:commentId', handler);
@@ -141,9 +144,10 @@ app.get('/api/posts/:id/comments/:commentId', handler);
 ```
 
 **Mixed Routes** (optimized)
+
 ```typescript
-app.get('/api/users', handler);           // Static (O(1))
-app.get('/api/users/:id', handler);       // Dynamic (O(log n))
+app.get('/api/users', handler); // Static (O(1))
+app.get('/api/users/:id', handler); // Dynamic (O(log n))
 app.get('/api/users/:id/posts', handler); // Mixed (optimized)
 // Radix tree handles all patterns efficiently
 ```
@@ -212,11 +216,12 @@ For highly-trafficked routes, consider caching at the application level:
 
 ```typescript
 // Cache route results
-app.get('/api/popular-data')
+app
+  .get('/api/popular-data')
   .cache({
     ttl: 300, // 5 minutes
-    key: (req) => `popular-data`,
-    strategy: 'memory'
+    key: req => `popular-data`,
+    strategy: 'memory',
   })
   .handler(async (req, res) => {
     // Expensive operation
@@ -236,27 +241,30 @@ See [Worker Threads Guide](./WORKERS_GUIDE.md) for CPU-intensive operations.
 
 ```typescript
 // ❌ Inefficient - unnecessary middleware
-app.post('/simple-endpoint')
-  .auth({ required: false })     // Unnecessary if no auth needed
-  .cache({ ttl: 0 })            // Unnecessary if no caching
+app
+  .post('/simple-endpoint')
+  .auth({ required: false }) // Unnecessary if no auth needed
+  .cache({ ttl: 0 }) // Unnecessary if no caching
   .rateLimit({ requests: 1000000 }) // Too high to be meaningful
   .handler(simpleHandler);
 
 // ✅ Optimized - minimal middleware
-app.post('/simple-endpoint')
-  .handler(simpleHandler);
+app.post('/simple-endpoint').handler(simpleHandler);
 ```
 
 #### Use Appropriate Validation
 
 ```typescript
 // ❌ Over-validation
-app.get('/health')
-  .query(z.object({
-    timestamp: z.string().datetime(),
-    signature: z.string().min(64),
-    nonce: z.string().uuid()
-  }))
+app
+  .get('/health')
+  .query(
+    z.object({
+      timestamp: z.string().datetime(),
+      signature: z.string().min(64),
+      nonce: z.string().uuid(),
+    })
+  )
   .handler(() => ({ status: 'ok' }));
 
 // ✅ Minimal validation for simple endpoints
@@ -272,14 +280,18 @@ app.get('/health', () => ({ status: 'ok' }));
 const UserSchema = z.object({
   name: z.string().refine(name => validateComplexName(name)),
   email: z.string().refine(email => isUniqueEmail(email)), // Async operation
-  age: z.number().refine(age => validateAgeWithDatabase(age))
+  age: z.number().refine(age => validateAgeWithDatabase(age)),
 });
 
 // ✅ Optimized schema
 const UserSchema = z.object({
-  name: z.string().min(2).max(50).regex(/^[a-zA-Z\s]+$/),
+  name: z
+    .string()
+    .min(2)
+    .max(50)
+    .regex(/^[a-zA-Z\s]+$/),
   email: z.string().email(),
-  age: z.number().int().min(18).max(120)
+  age: z.number().int().min(18).max(120),
 });
 // Move complex validations to handler if needed
 ```
@@ -290,11 +302,11 @@ const UserSchema = z.object({
 // ✅ Reuse schemas
 const BaseUserSchema = z.object({
   name: z.string().min(2).max(50),
-  email: z.string().email()
+  email: z.string().email(),
 });
 
 const CreateUserSchema = BaseUserSchema.extend({
-  password: z.string().min(8)
+  password: z.string().min(8),
 });
 
 const UpdateUserSchema = BaseUserSchema.partial();
@@ -302,8 +314,11 @@ const UpdateUserSchema = BaseUserSchema.partial();
 // ✅ Preprocess transformations
 const UserInputSchema = z.object({
   name: z.string().transform(s => s.trim().toLowerCase()),
-  email: z.string().email().transform(s => s.toLowerCase()),
-  tags: z.string().transform(s => s.split(',').map(t => t.trim()))
+  email: z
+    .string()
+    .email()
+    .transform(s => s.toLowerCase()),
+  tags: z.string().transform(s => s.split(',').map(t => t.trim())),
 });
 ```
 
@@ -313,44 +328,40 @@ const UserInputSchema = z.object({
 
 ```typescript
 // ❌ Sequential operations
-app.get('/user-dashboard/:id')
-  .handler(async (req, res) => {
-    const user = await getUser(req.params.id);
-    const posts = await getUserPosts(req.params.id);
-    const followers = await getUserFollowers(req.params.id);
+app.get('/user-dashboard/:id').handler(async (req, res) => {
+  const user = await getUser(req.params.id);
+  const posts = await getUserPosts(req.params.id);
+  const followers = await getUserFollowers(req.params.id);
 
-    return { user, posts, followers };
-  });
+  return { user, posts, followers };
+});
 
 // ✅ Parallel operations
-app.get('/user-dashboard/:id')
-  .handler(async (req, res) => {
-    const [user, posts, followers] = await Promise.all([
-      getUser(req.params.id),
-      getUserPosts(req.params.id),
-      getUserFollowers(req.params.id)
-    ]);
+app.get('/user-dashboard/:id').handler(async (req, res) => {
+  const [user, posts, followers] = await Promise.all([
+    getUser(req.params.id),
+    getUserPosts(req.params.id),
+    getUserFollowers(req.params.id),
+  ]);
 
-    return { user, posts, followers };
-  });
+  return { user, posts, followers };
+});
 ```
 
 #### Response Optimization
 
 ```typescript
 // ❌ Large response objects
-app.get('/users')
-  .handler(async (req, res) => {
-    const users = await db.query('SELECT * FROM users');
-    return { users }; // Returns all columns
-  });
+app.get('/users').handler(async (req, res) => {
+  const users = await db.query('SELECT * FROM users');
+  return { users }; // Returns all columns
+});
 
 // ✅ Selective fields
-app.get('/users')
-  .handler(async (req, res) => {
-    const users = await db.query('SELECT id, name, email FROM users');
-    return { users };
-  });
+app.get('/users').handler(async (req, res) => {
+  const users = await db.query('SELECT id, name, email FROM users');
+  return { users };
+});
 ```
 
 ---
@@ -363,20 +374,22 @@ Best for frequently accessed, small data:
 
 ```typescript
 // Basic memory caching
-app.get('/popular-posts')
+app
+  .get('/popular-posts')
   .cache({
     ttl: 300, // 5 minutes
-    strategy: 'memory'
+    strategy: 'memory',
   })
   .handler(getPopularPosts);
 
 // Advanced memory caching with custom key
-app.get('/user-preferences/:id')
+app
+  .get('/user-preferences/:id')
   .cache({
     ttl: 600,
     strategy: 'memory',
-    key: (req) => `prefs:${req.params.id}`,
-    maxSize: 1000 // Limit cache size
+    key: req => `prefs:${req.params.id}`,
+    maxSize: 1000, // Limit cache size
   })
   .handler(getUserPreferences);
 ```
@@ -390,16 +403,17 @@ Best for shared data across instances:
 import { RedisAdapter } from '@morojs/moro';
 const redis = new RedisAdapter({
   host: 'localhost',
-  port: 6379
+  port: 6379,
 });
 app.cache(redis);
 
 // Use Redis caching
-app.get('/global-stats')
+app
+  .get('/global-stats')
   .cache({
     ttl: 900, // 15 minutes
     strategy: 'redis',
-    key: 'global:stats'
+    key: 'global:stats',
   })
   .handler(getGlobalStats);
 ```
@@ -408,7 +422,8 @@ app.get('/global-stats')
 
 ```typescript
 // Tag-based cache invalidation
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
     const user = await createUser(req.body);
@@ -420,29 +435,29 @@ app.post('/users')
   });
 
 // Manual cache invalidation
-app.delete('/users/:id')
-  .handler(async (req, res) => {
-    await deleteUser(req.params.id);
+app.delete('/users/:id').handler(async (req, res) => {
+  await deleteUser(req.params.id);
 
-    // Invalidate specific cache entries
-    req.cache.delete(`user:${req.params.id}`);
-    req.cache.delete('users:list');
+  // Invalidate specific cache entries
+  req.cache.delete(`user:${req.params.id}`);
+  req.cache.delete('users:list');
 
-    return { success: true };
-  });
+  return { success: true };
+});
 ```
 
 ### Cache Strategies
 
 ```typescript
 // Read-through caching
-app.get('/expensive-data/:id')
+app
+  .get('/expensive-data/:id')
   .cache({
     ttl: 3600,
     strategy: 'read-through',
     loader: async (key, req) => {
       return await expensiveDataCalculation(req.params.id);
-    }
+    },
   })
   .handler(async (req, res) => {
     // Data is automatically cached
@@ -450,13 +465,14 @@ app.get('/expensive-data/:id')
   });
 
 // Write-through caching
-app.put('/user-settings/:id')
+app
+  .put('/user-settings/:id')
   .cache({
     strategy: 'write-through',
     writeLoader: async (key, data) => {
       await saveToDatabase(key, data);
       return data;
-    }
+    },
   })
   .handler(updateUserSettings);
 ```
@@ -469,18 +485,21 @@ app.put('/user-settings/:id')
 
 ```typescript
 // Global rate limiting
-app.use(middleware.rateLimit({
-  requests: 1000,
-  window: 60000, // 1 minute
-  skipSuccessfulRequests: false
-}));
+app.use(
+  middleware.rateLimit({
+    requests: 1000,
+    window: 60000, // 1 minute
+    skipSuccessfulRequests: false,
+  })
+);
 
 // Route-specific rate limiting
-app.post('/api/send-email')
+app
+  .post('/api/send-email')
   .rateLimit({
     requests: 5,
     window: 60000,
-    skipSuccessfulRequests: true
+    skipSuccessfulRequests: true,
   })
   .handler(sendEmail);
 ```
@@ -489,29 +508,31 @@ app.post('/api/send-email')
 
 ```typescript
 // User-specific rate limiting
-app.post('/api/upload')
+app
+  .post('/api/upload')
   .auth({ required: true })
   .rateLimit({
     requests: 10,
     window: 3600000, // 1 hour
-    keyGenerator: (req) => `uploads:${req.user.id}`,
-    skipFailedRequests: true
+    keyGenerator: req => `uploads:${req.user.id}`,
+    skipFailedRequests: true,
   })
   .handler(handleUpload);
 
 // Dynamic rate limiting based on user tier
-app.post('/api/process')
+app
+  .post('/api/process')
   .auth({ required: true })
   .rateLimit({
-    requests: (req) => req.user.tier === 'premium' ? 1000 : 100,
+    requests: req => (req.user.tier === 'premium' ? 1000 : 100),
     window: 3600000,
-    keyGenerator: (req) => `api:${req.user.id}`,
+    keyGenerator: req => `api:${req.user.id}`,
     onLimitReached: (req, res) => {
       res.status(429).json({
         error: 'Rate limit exceeded',
-        upgrade: '/upgrade-plan'
+        upgrade: '/upgrade-plan',
       });
-    }
+    },
   })
   .handler(processRequest);
 ```
@@ -520,20 +541,22 @@ app.post('/api/process')
 
 ```typescript
 // Sliding window rate limiting
-app.post('/api/critical')
+app
+  .post('/api/critical')
   .rateLimit({
     requests: 100,
     window: 60000,
-    strategy: 'sliding-window' // More accurate than fixed window
+    strategy: 'sliding-window', // More accurate than fixed window
   })
   .handler(criticalHandler);
 
 // Token bucket rate limiting
-app.post('/api/burst')
+app
+  .post('/api/burst')
   .rateLimit({
     tokens: 50,
     refillRate: 10, // tokens per second
-    strategy: 'token-bucket' // Allows bursts
+    strategy: 'token-bucket', // Allows bursts
   })
   .handler(burstHandler);
 ```
@@ -548,24 +571,24 @@ Circuit breakers automatically protect against cascading failures:
 
 ```typescript
 // Automatic protection for external calls
-app.get('/external-api')
-  .handler(async (req, res) => {
-    // Automatically protected by circuit breaker
-    const data = await fetch('https://external-api.com/data');
-    return { data: await data.json() };
-  });
+app.get('/external-api').handler(async (req, res) => {
+  // Automatically protected by circuit breaker
+  const data = await fetch('https://external-api.com/data');
+  return { data: await data.json() };
+});
 ```
 
 ### Manual Circuit Breaker Configuration
 
 ```typescript
 // Custom circuit breaker settings
-app.get('/unreliable-service')
+app
+  .get('/unreliable-service')
   .circuitBreaker({
-    threshold: 5,        // Open after 5 failures
-    timeout: 30000,      // 30 second timeout
+    threshold: 5, // Open after 5 failures
+    timeout: 30000, // 30 second timeout
     resetTimeout: 60000, // Try again after 1 minute
-    monitor: true        // Enable monitoring
+    monitor: true, // Enable monitoring
   })
   .handler(async (req, res) => {
     const result = await callUnreliableService();
@@ -613,7 +636,7 @@ const db = new MySQLAdapter({
   // Query optimization
   dateStrings: false,
   supportBigNumbers: true,
-  bigNumberStrings: false
+  bigNumberStrings: false,
 });
 ```
 
@@ -621,46 +644,48 @@ const db = new MySQLAdapter({
 
 ```typescript
 // ❌ N+1 query problem
-app.get('/posts-with-authors')
-  .handler(async (req, res) => {
-    const posts = await db.query('SELECT * FROM posts');
-    for (const post of posts) {
-      post.author = await db.query('SELECT * FROM users WHERE id = ?', [post.authorId]);
-    }
-    return { posts };
-  });
+app.get('/posts-with-authors').handler(async (req, res) => {
+  const posts = await db.query('SELECT * FROM posts');
+  for (const post of posts) {
+    post.author = await db.query('SELECT * FROM users WHERE id = ?', [post.authorId]);
+  }
+  return { posts };
+});
 
 // ✅ Optimized with joins
-app.get('/posts-with-authors')
-  .handler(async (req, res) => {
-    const posts = await db.query(`
+app.get('/posts-with-authors').handler(async (req, res) => {
+  const posts = await db.query(`
       SELECT p.*, u.name as authorName, u.email as authorEmail
       FROM posts p
       JOIN users u ON p.authorId = u.id
     `);
-    return { posts };
-  });
+  return { posts };
+});
 ```
 
 ### Database Caching
 
 ```typescript
 // Query result caching
-app.get('/expensive-report')
+app
+  .get('/expensive-report')
   .cache({
     ttl: 1800, // 30 minutes
-    key: (req) => `report:${req.query.date}`,
-    strategy: 'redis'
+    key: req => `report:${req.query.date}`,
+    strategy: 'redis',
   })
   .handler(async (req, res) => {
-    const report = await db.query(`
+    const report = await db.query(
+      `
       SELECT
         COUNT(*) as total_orders,
         SUM(amount) as total_revenue,
         AVG(amount) as avg_order_value
       FROM orders
       WHERE DATE(created_at) = ?
-    `, [req.query.date]);
+    `,
+      [req.query.date]
+    );
 
     return { report };
   });
@@ -670,7 +695,8 @@ app.get('/expensive-report')
 
 ```typescript
 // Optimized transactions
-app.post('/complex-operation')
+app
+  .post('/complex-operation')
   .body(ComplexOperationSchema)
   .handler(async (req, res) => {
     const transaction = await req.database.beginTransaction();
@@ -680,7 +706,7 @@ app.post('/complex-operation')
       const results = await Promise.all([
         transaction.insert('table1', req.body.data1),
         transaction.insert('table2', req.body.data2),
-        transaction.update('table3', { id: req.body.id }, req.body.updates)
+        transaction.update('table3', { id: req.body.id }, req.body.updates),
       ]);
 
       await transaction.commit();
@@ -710,14 +736,14 @@ if (cluster.isMaster) {
     cluster.fork();
   }
 
-  cluster.on('exit', (worker) => {
+  cluster.on('exit', worker => {
     console.log(`Worker ${worker.process.pid} died`);
     cluster.fork(); // Restart worker
   });
 } else {
-  const app = createApp({
+  const app = await createApp({
     cluster: true,
-    workerId: cluster.worker.id
+    workerId: cluster.worker.id,
   });
 
   app.listen(3000);
@@ -728,26 +754,27 @@ if (cluster.isMaster) {
 
 ```typescript
 // Edge-optimized configuration
-const app = createAppEdge({
+const app = await createAppEdge({
   regions: ['iad1', 'sfo1'], // Deploy to specific regions
-  streaming: true,           // Enable streaming responses
+  streaming: true, // Enable streaming responses
   cache: {
-    edge: true,             // Use edge caching
-    maxAge: 3600
-  }
+    edge: true, // Use edge caching
+    maxAge: 3600,
+  },
 });
 
 // Optimized for edge
-app.get('/api/geo-data')
+app
+  .get('/api/geo-data')
   .cache({
     ttl: 3600,
     strategy: 'edge',
-    vary: ['CF-IPCountry'] // Cache per country
+    vary: ['CF-IPCountry'], // Cache per country
   })
   .handler((req, res) => {
     return {
       country: req.headers['cf-ipcountry'],
-      region: req.headers['cf-region']
+      region: req.headers['cf-region'],
     };
   });
 ```
@@ -756,11 +783,11 @@ app.get('/api/geo-data')
 
 ```typescript
 // Lambda-optimized configuration
-const app = createAppLambda({
-  memorySize: 1024,      // Optimize memory allocation
-  timeout: 30,           // Set appropriate timeout
+const app = await createAppLambda({
+  memorySize: 1024, // Optimize memory allocation
+  timeout: 30, // Set appropriate timeout
   coldStartOptimization: true,
-  connectionReuse: true  // Reuse database connections
+  connectionReuse: true, // Reuse database connections
 });
 
 // Warm-up handler to prevent cold starts
@@ -773,30 +800,29 @@ app.get('/_warmup', (req, res) => {
 
 ```typescript
 // Workers-optimized configuration
-const app = createAppWorker({
+const app = await createAppWorker({
   kv: {
     enabled: true,
-    namespace: 'API_CACHE'
+    namespace: 'API_CACHE',
   },
   durableObjects: true,
-  webSockets: true
+  webSockets: true,
 });
 
 // Use KV storage for caching
-app.get('/api/config')
-  .handler(async (req, res, env) => {
-    const cached = await env.API_CACHE.get('config');
-    if (cached) {
-      return JSON.parse(cached);
-    }
+app.get('/api/config').handler(async (req, res, env) => {
+  const cached = await env.API_CACHE.get('config');
+  if (cached) {
+    return JSON.parse(cached);
+  }
 
-    const config = await fetchConfig();
-    await env.API_CACHE.put('config', JSON.stringify(config), {
-      expirationTtl: 3600
-    });
-
-    return config;
+  const config = await fetchConfig();
+  await env.API_CACHE.put('config', JSON.stringify(config), {
+    expirationTtl: 3600,
   });
+
+  return config;
+});
 ```
 
 ---
@@ -807,12 +833,12 @@ app.get('/api/config')
 
 ```typescript
 // Enable built-in monitoring
-const app = createApp({
+const app = await createApp({
   monitoring: {
     enabled: true,
     metrics: ['requests', 'latency', 'errors', 'memory'],
-    endpoint: '/metrics' // Prometheus format
-  }
+    endpoint: '/metrics', // Prometheus format
+  },
 });
 
 // Custom metrics
@@ -824,7 +850,7 @@ app.use((req, res, next) => {
     req.metrics.histogram('request_duration', duration, {
       method: req.method,
       route: req.route?.path,
-      status: res.statusCode
+      status: res.statusCode,
     });
   });
 
@@ -844,7 +870,8 @@ app.use(async (req, res, next) => {
   const end = process.hrtime.bigint();
   const duration = Number(end - start) / 1000000; // Convert to ms
 
-  if (duration > 1000) { // Log slow requests
+  if (duration > 1000) {
+    // Log slow requests
     console.warn(`Slow request: ${req.method} ${req.path} took ${duration}ms`);
   }
 });
@@ -860,7 +887,7 @@ app.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    version: process.env.npm_package_version
+    version: process.env.npm_package_version,
   };
 
   // Check database connectivity
@@ -896,65 +923,61 @@ app.get('/health', async (req, res) => {
 
 ```typescript
 // ❌ Memory leak - event listeners not cleaned up
-app.post('/subscribe')
-  .handler((req, res) => {
-    const listener = (data) => {
-      // Process data
-    };
-    eventEmitter.on('data', listener);
-    // Listener never removed!
+app.post('/subscribe').handler((req, res) => {
+  const listener = data => {
+    // Process data
+  };
+  eventEmitter.on('data', listener);
+  // Listener never removed!
 
-    return { subscribed: true };
-  });
+  return { subscribed: true };
+});
 
 // ✅ Proper cleanup
-app.post('/subscribe')
-  .handler((req, res) => {
-    const listener = (data) => {
-      // Process data
-    };
+app.post('/subscribe').handler((req, res) => {
+  const listener = data => {
+    // Process data
+  };
 
-    eventEmitter.on('data', listener);
+  eventEmitter.on('data', listener);
 
-    // Clean up on client disconnect
-    req.on('close', () => {
-      eventEmitter.removeListener('data', listener);
-    });
-
-    return { subscribed: true };
+  // Clean up on client disconnect
+  req.on('close', () => {
+    eventEmitter.removeListener('data', listener);
   });
+
+  return { subscribed: true };
+});
 ```
 
 #### 2. Blocking Operations
 
 ```typescript
 // ❌ Blocking the event loop
-app.get('/cpu-intensive')
-  .handler((req, res) => {
-    // Synchronous CPU-intensive operation
-    let result = 0;
-    for (let i = 0; i < 10000000; i++) {
-      result += Math.random();
-    }
-    return { result };
-  });
+app.get('/cpu-intensive').handler((req, res) => {
+  // Synchronous CPU-intensive operation
+  let result = 0;
+  for (let i = 0; i < 10000000; i++) {
+    result += Math.random();
+  }
+  return { result };
+});
 
 // ✅ Non-blocking approach
-app.get('/cpu-intensive')
-  .handler(async (req, res) => {
-    // Offload to worker thread or use setImmediate
-    const result = await new Promise((resolve) => {
-      setImmediate(() => {
-        let result = 0;
-        for (let i = 0; i < 10000000; i++) {
-          result += Math.random();
-        }
-        resolve(result);
-      });
+app.get('/cpu-intensive').handler(async (req, res) => {
+  // Offload to worker thread or use setImmediate
+  const result = await new Promise(resolve => {
+    setImmediate(() => {
+      let result = 0;
+      for (let i = 0; i < 10000000; i++) {
+        result += Math.random();
+      }
+      resolve(result);
     });
-
-    return { result };
   });
+
+  return { result };
+});
 ```
 
 #### 3. Database Connection Issues
@@ -968,7 +991,7 @@ app.events.on('database:connection:error', ({ error, pool }) => {
   console.log('Pool status:', {
     total: pool.totalConnections,
     active: pool.activeConnections,
-    idle: pool.idleConnections
+    idle: pool.idleConnections,
   });
 
   // Alert if pool is exhausted
@@ -988,16 +1011,16 @@ app.use(async (req, res, next) => {
     const timers = {};
 
     req.timer = {
-      start: (name) => {
+      start: name => {
         timers[name] = process.hrtime.bigint();
       },
-      end: (name) => {
+      end: name => {
         if (timers[name]) {
           const duration = Number(process.hrtime.bigint() - timers[name]) / 1000000;
           console.log(`${name}: ${duration}ms`);
           return duration;
         }
-      }
+      },
     };
   }
 
@@ -1011,22 +1034,22 @@ app.use(async (req, res, next) => {
 // Integrate with monitoring services
 import { prometheus, newrelic, datadog } from 'monitoring-integrations';
 
-const app = createApp({
+const app = await createApp({
   monitoring: {
     prometheus: {
       enabled: true,
-      endpoint: '/metrics'
+      endpoint: '/metrics',
     },
     newrelic: {
       enabled: process.env.NEW_RELIC_LICENSE_KEY,
-      appName: 'moro-api'
+      appName: 'moro-api',
     },
     datadog: {
       enabled: process.env.DD_API_KEY,
       service: 'moro-api',
-      env: process.env.NODE_ENV
-    }
-  }
+      env: process.env.NODE_ENV,
+    },
+  },
 });
 ```
 

@@ -328,7 +328,7 @@ With Pooling:
 import { createApp } from '@morojs/moro';
 import { ObjectPoolManager } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const poolManager = ObjectPoolManager.getInstance();
 
 // Pre-warm pools for better performance
@@ -590,7 +590,7 @@ app.post('/admin/maintenance/clear-pools', async (req, res) => {
 import { createApp } from '@morojs/moro';
 import { ObjectPoolManager, ObjectPool } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const poolManager = ObjectPoolManager.getInstance();
 
 // Custom result pool

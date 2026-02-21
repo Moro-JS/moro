@@ -33,13 +33,13 @@ MoroJS includes a production-ready message queue system with support for multipl
 
 ### Supported Adapters
 
-| Adapter | Use Case | Backend Required |
-|---------|----------|------------------|
-| `memory` | Development, testing | None |
-| `bull` | Redis-based queue | Redis |
-| `rabbitmq` | Message broker | RabbitMQ |
-| `sqs` | AWS cloud | AWS SQS |
-| `kafka` | Event streaming | Apache Kafka |
+| Adapter    | Use Case             | Backend Required |
+| ---------- | -------------------- | ---------------- |
+| `memory`   | Development, testing | None             |
+| `bull`     | Redis-based queue    | Redis            |
+| `rabbitmq` | Message broker       | RabbitMQ         |
+| `sqs`      | AWS cloud            | AWS SQS          |
+| `kafka`    | Event streaming      | Apache Kafka     |
 
 ---
 
@@ -70,14 +70,14 @@ The easiest way to use queues in MoroJS is with the built-in `app.queueInit()` m
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Configure queue - synchronous, no await needed!
 app.queueInit('emails', {
   adapter: 'bull',
   connection: {
     host: 'localhost',
-    port: 6379
+    port: 6379,
   },
   concurrency: 5,
   defaultJobOptions: {
@@ -86,13 +86,13 @@ app.queueInit('emails', {
     attempts: 3,
     backoff: {
       type: 'exponential',
-      delay: 2000
-    }
-  }
+      delay: 2000,
+    },
+  },
 });
 
 // Process jobs
-await app.processQueue('emails', async (job) => {
+await app.processQueue('emails', async job => {
   await sendEmail(job.data);
   return { sent: true };
 });
@@ -102,7 +102,7 @@ app.post('/send-email').handler(async (req, res) => {
   await app.addToQueue('emails', {
     to: req.body.email,
     subject: 'Welcome',
-    body: 'Welcome to our platform!'
+    body: 'Welcome to our platform!',
   });
 
   return { queued: true };
@@ -126,19 +126,19 @@ await queueManager.registerQueue('emails', {
   concurrency: 5,
   defaultJobOptions: {
     removeOnComplete: true,
-    removeOnFail: false
-  }
+    removeOnFail: false,
+  },
 });
 
 // Add a job
 await queueManager.addToQueue('emails', {
   to: 'user@example.com',
   subject: 'Welcome',
-  body: 'Welcome to our platform!'
+  body: 'Welcome to our platform!',
 });
 
 // Process jobs
-await queueManager.process('emails', async (job) => {
+await queueManager.process('emails', async job => {
   await sendEmail(job.data);
   return { sent: true };
 });
@@ -155,11 +155,12 @@ In-memory queue for development and testing.
 ```typescript
 await queueManager.registerQueue('tasks', {
   adapter: 'memory',
-  concurrency: 5
+  concurrency: 5,
 });
 ```
 
 **Characteristics:**
+
 - No external dependencies
 - Data lost on restart
 - Suitable for development only
@@ -174,13 +175,14 @@ await queueManager.registerQueue('tasks', {
   connection: {
     host: 'localhost',
     port: 6379,
-    password: 'redis-password'
+    password: 'redis-password',
   },
-  concurrency: 10
+  concurrency: 10,
 });
 ```
 
 **Characteristics:**
+
 - Persistent storage
 - Job scheduling and delays
 - Priority queues
@@ -198,13 +200,14 @@ await queueManager.registerQueue('tasks', {
     host: 'localhost',
     port: 5672,
     username: 'guest',
-    password: 'guest'
+    password: 'guest',
   },
-  concurrency: 20
+  concurrency: 20,
 });
 ```
 
 **Characteristics:**
+
 - Message persistence
 - Routing and exchanges
 - Acknowledgments
@@ -220,13 +223,14 @@ await queueManager.registerQueue('tasks', {
   adapter: 'sqs',
   connection: {
     region: 'us-east-1',
-    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue'
+    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue',
   },
-  concurrency: 10
+  concurrency: 10,
 });
 ```
 
 **Characteristics:**
+
 - Managed service (no infrastructure)
 - Automatic scaling
 - Message retention (up to 14 days)
@@ -242,13 +246,14 @@ await queueManager.registerQueue('events', {
   adapter: 'kafka',
   connection: {
     brokers: ['localhost:9092'],
-    groupId: 'my-consumer-group'
+    groupId: 'my-consumer-group',
   },
-  concurrency: 50
+  concurrency: 50,
 });
 ```
 
 **Characteristics:**
+
 - High throughput
 - Event streaming
 - Partition-based processing
@@ -269,7 +274,7 @@ await queueManager.registerQueue('events', {
 // Add a job to the queue
 const jobId = await app.addToQueue('emails', {
   to: 'user@example.com',
-  template: 'welcome'
+  template: 'welcome',
 });
 
 console.log('Job queued:', jobId);
@@ -280,7 +285,7 @@ console.log('Job queued:', jobId);
 ```typescript
 const job = await queueManager.addToQueue('emails', {
   to: 'user@example.com',
-  template: 'welcome'
+  template: 'welcome',
 });
 
 console.log(`Job added: ${job.id}`);
@@ -294,7 +299,7 @@ console.log(`Job added: ${job.id}`);
 const jobIds = await app.addBulkToQueue('notifications', [
   { data: { userId: 1, message: 'Update available' }, options: { priority: 10 } },
   { data: { userId: 2, message: 'New features' }, options: { priority: 5 } },
-  { data: { userId: 3, message: 'Maintenance scheduled' }, options: { delay: 60000 } }
+  { data: { userId: 3, message: 'Maintenance scheduled' }, options: { delay: 60000 } },
 ]);
 
 console.log(`${jobIds.length} jobs queued`);
@@ -306,7 +311,7 @@ console.log(`${jobIds.length} jobs queued`);
 const jobs = await queueManager.addBulk('notifications', [
   { userId: 1, message: 'Update available' },
   { userId: 2, message: 'New features' },
-  { userId: 3, message: 'Maintenance scheduled' }
+  { userId: 3, message: 'Maintenance scheduled' },
 ]);
 
 console.log(`${jobs.length} jobs added`);
@@ -315,19 +320,20 @@ console.log(`${jobs.length} jobs added`);
 #### Job Options
 
 ```typescript
-await queueManager.addToQueue('reports',
+await queueManager.addToQueue(
+  'reports',
   { reportId: 123, format: 'pdf' },
   {
-    priority: 10,           // Higher priority
-    delay: 60000,           // Delay 1 minute
-    attempts: 3,            // Retry 3 times
+    priority: 10, // Higher priority
+    delay: 60000, // Delay 1 minute
+    attempts: 3, // Retry 3 times
     backoff: {
       type: 'exponential',
-      delay: 5000
+      delay: 5000,
     },
     removeOnComplete: true,
     removeOnFail: false,
-    timeout: 30000          // 30 second timeout
+    timeout: 30000, // 30 second timeout
   }
 );
 ```
@@ -374,13 +380,14 @@ await queueManager.registerQueue('tasks', {
     attempts: 5,
     backoff: {
       type: 'exponential',
-      delay: 2000    // Start at 2 seconds
-    }
-  }
+      delay: 2000, // Start at 2 seconds
+    },
+  },
 });
 ```
 
 **Backoff Strategies:**
+
 - `fixed` - Same delay between retries
 - `exponential` - Doubles delay each retry (2s, 4s, 8s, 16s...)
 - `linear` - Increases delay linearly (2s, 4s, 6s, 8s...)
@@ -393,8 +400,8 @@ await queueManager.registerQueue('payments', {
   deadLetterQueue: {
     enabled: true,
     queueName: 'payments-failed',
-    maxRetries: 3
-  }
+    maxRetries: 3,
+  },
 });
 ```
 
@@ -406,9 +413,9 @@ Failed jobs after max retries move to dead letter queue for manual inspection.
 await queueManager.registerQueue('api-calls', {
   adapter: 'bull',
   rateLimiter: {
-    max: 100,          // 100 jobs
-    duration: 60000    // per minute
-  }
+    max: 100, // 100 jobs
+    duration: 60000, // per minute
+  },
 });
 ```
 
@@ -419,7 +426,7 @@ await queueManager.registerQueue('api-calls', {
 ### Basic Processor
 
 ```typescript
-await queueManager.process('emails', async (job) => {
+await queueManager.process('emails', async job => {
   const { to, subject, body } = job.data;
 
   await sendEmail(to, subject, body);
@@ -431,7 +438,7 @@ await queueManager.process('emails', async (job) => {
 ### Progress Tracking
 
 ```typescript
-await queueManager.process('video-encoding', async (job) => {
+await queueManager.process('video-encoding', async job => {
   const { videoId, format } = job.data;
 
   // Report progress
@@ -453,7 +460,7 @@ await queueManager.process('video-encoding', async (job) => {
 ### Error Handling
 
 ```typescript
-await queueManager.process('tasks', async (job) => {
+await queueManager.process('tasks', async job => {
   try {
     const result = await processTask(job.data);
     return result;
@@ -493,10 +500,10 @@ import { createRateLimitMiddleware } from '@morojs/moro';
 const rateLimiter = createRateLimitMiddleware({
   max: 100,
   window: 60000,
-  keyGenerator: (job) => job.data.userId
+  keyGenerator: job => job.data.userId,
 });
 
-await queueManager.process('api-calls', rateLimiter, async (job) => {
+await queueManager.process('api-calls', rateLimiter, async job => {
   return await callAPI(job.data);
 });
 ```
@@ -508,10 +515,10 @@ import { createPriorityMiddleware } from '@morojs/moro';
 
 const prioritizer = createPriorityMiddleware({
   levels: 10,
-  default: 5
+  default: 5,
 });
 
-await queueManager.process('tasks', prioritizer, async (job) => {
+await queueManager.process('tasks', prioritizer, async job => {
   return await processTask(job.data);
 });
 ```
@@ -523,13 +530,13 @@ import { createMonitoringMiddleware } from '@morojs/moro';
 
 const monitor = createMonitoringMiddleware({
   collectMetrics: true,
-  slowJobThreshold: 5000,  // 5 seconds
+  slowJobThreshold: 5000, // 5 seconds
   onSlowJob: (job, duration) => {
     console.warn(`Slow job detected: ${job.id} took ${duration}ms`);
-  }
+  },
 });
 
-await queueManager.process('reports', monitor, async (job) => {
+await queueManager.process('reports', monitor, async job => {
   return await generateReport(job.data);
 });
 ```
@@ -576,15 +583,15 @@ if (health.healthy) {
 
 ```typescript
 // Listen to queue events
-queueManager.on('queue:job:completed', (event) => {
+queueManager.on('queue:job:completed', event => {
   console.log(`Job ${event.jobId} completed`);
 });
 
-queueManager.on('queue:job:failed', (event) => {
+queueManager.on('queue:job:failed', event => {
   console.error(`Job ${event.jobId} failed:`, event.error);
 });
 
-queueManager.on('queue:job:progress', (event) => {
+queueManager.on('queue:job:progress', event => {
   console.log(`Job ${event.jobId} progress: ${event.progress}%`);
 });
 ```
@@ -602,16 +609,16 @@ await queueManager.registerQueue('tasks', {
     attempts: 5,
     backoff: {
       type: 'exponential',
-      delay: 1000
-    }
-  }
+      delay: 1000,
+    },
+  },
 });
 ```
 
 ### Failed Job Handler
 
 ```typescript
-queueManager.on('queue:job:failed', async (event) => {
+queueManager.on('queue:job:failed', async event => {
   const { queueName, jobId, error, job } = event;
 
   // Log to monitoring service
@@ -620,7 +627,7 @@ queueManager.on('queue:job:failed', async (event) => {
     jobId,
     error: error.message,
     data: job.data,
-    attempts: job.attempts
+    attempts: job.attempts,
   });
 
   // Send alert if max attempts reached
@@ -634,7 +641,7 @@ queueManager.on('queue:job:failed', async (event) => {
 
 ```typescript
 // Process failed jobs from DLQ
-await queueManager.process('emails-failed', async (job) => {
+await queueManager.process('emails-failed', async job => {
   console.log(`Handling failed job: ${job.id}`);
   console.log(`Original error: ${job.failedReason}`);
   console.log(`Attempts: ${job.attempts}`);
@@ -656,19 +663,19 @@ await queueManager.process('emails-failed', async (job) => {
 // High-priority queue
 await queueManager.registerQueue('critical', {
   adapter: 'bull',
-  concurrency: 20
+  concurrency: 20,
 });
 
 // Normal queue
 await queueManager.registerQueue('standard', {
   adapter: 'bull',
-  concurrency: 10
+  concurrency: 10,
 });
 
 // Background queue
 await queueManager.registerQueue('background', {
   adapter: 'bull',
-  concurrency: 5
+  concurrency: 5,
 });
 ```
 
@@ -676,18 +683,20 @@ await queueManager.registerQueue('background', {
 
 ```typescript
 // Run job in 1 hour
-await queueManager.addToQueue('reminders',
+await queueManager.addToQueue(
+  'reminders',
   { userId: 123, message: 'Meeting in 10 minutes' },
   { delay: 3600000 }
 );
 
 // Recurring jobs using cron-like syntax
-await queueManager.addToQueue('daily-report',
+await queueManager.addToQueue(
+  'daily-report',
   { reportType: 'sales' },
   {
     repeat: {
-      cron: '0 9 * * *'  // Every day at 9 AM
-    }
+      cron: '0 9 * * *', // Every day at 9 AM
+    },
   }
 );
 ```
@@ -696,16 +705,14 @@ await queueManager.addToQueue('daily-report',
 
 ```typescript
 // High priority
-await queueManager.addToQueue('orders',
+await queueManager.addToQueue(
+  'orders',
   { orderId: 123 },
-  { priority: 1 }  // Lower number = higher priority
+  { priority: 1 } // Lower number = higher priority
 );
 
 // Low priority
-await queueManager.addToQueue('analytics',
-  { eventData: {} },
-  { priority: 10 }
-);
+await queueManager.addToQueue('analytics', { eventData: {} }, { priority: 10 });
 ```
 
 ### Queue Lifecycle
@@ -736,12 +743,12 @@ await queueManager.shutdown();
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const queueManager = new QueueManager();
 
 await queueManager.registerQueue('emails', {
   adapter: 'bull',
-  connection: { host: 'localhost', port: 6379 }
+  connection: { host: 'localhost', port: 6379 },
 });
 
 // Add jobs from route handler
@@ -750,7 +757,7 @@ app.post('/api/send-email', async (req, res) => {
 
   return {
     jobId: job.id,
-    status: 'queued'
+    status: 'queued',
   };
 });
 
@@ -766,7 +773,7 @@ app.get('/api/jobs/:id', async (req, res) => {
     id: job.id,
     status: job.status,
     progress: job.progress,
-    result: job.result
+    result: job.result,
   };
 });
 
@@ -778,12 +785,12 @@ app.listen(3000);
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
-app.on('user:registered', async (event) => {
+app.on('user:registered', async event => {
   await queueManager.addToQueue('welcome-emails', {
     userId: event.userId,
-    email: event.email
+    email: event.email,
   });
 });
 ```
@@ -805,13 +812,13 @@ app.on('user:registered', async (event) => {
 // CPU-bound tasks: lower concurrency
 await queueManager.registerQueue('video-encoding', {
   adapter: 'bull',
-  concurrency: 2  // Based on CPU cores
+  concurrency: 2, // Based on CPU cores
 });
 
 // I/O-bound tasks: higher concurrency
 await queueManager.registerQueue('api-calls', {
   adapter: 'bull',
-  concurrency: 50  // Many concurrent I/O operations
+  concurrency: 50, // Many concurrent I/O operations
 });
 ```
 
@@ -821,12 +828,12 @@ await queueManager.registerQueue('api-calls', {
 await queueManager.registerQueue('payments', {
   adapter: 'bull',
   defaultJobOptions: {
-    attempts: 3,           // Limited retries for critical operations
+    attempts: 3, // Limited retries for critical operations
     backoff: {
       type: 'exponential',
-      delay: 5000
-    }
-  }
+      delay: 5000,
+    },
+  },
 });
 ```
 
@@ -838,8 +845,8 @@ await queueManager.registerQueue('orders', {
   deadLetterQueue: {
     enabled: true,
     queueName: 'orders-failed',
-    maxRetries: 5
-  }
+    maxRetries: 5,
+  },
 });
 ```
 
@@ -897,6 +904,7 @@ setInterval(async () => {
 Configure a queue (synchronous, lazy initialization).
 
 **Parameters:**
+
 - `name` (string) - Queue name
 - `options` (object) - Queue configuration
   - `adapter` (string) - Queue adapter ('memory', 'bull', 'rabbitmq', 'sqs', 'kafka')
@@ -913,22 +921,23 @@ Configure a queue (synchronous, lazy initialization).
 **Returns:** `this` (chainable)
 
 **Example:**
+
 ```typescript
 app.queueInit('emails', {
   adapter: 'bull',
   connection: {
     host: 'localhost',
-    port: 6379
+    port: 6379,
   },
   concurrency: 10,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
       type: 'exponential',
-      delay: 2000
+      delay: 2000,
     },
-    removeOnComplete: true
-  }
+    removeOnComplete: true,
+  },
 });
 ```
 
@@ -937,6 +946,7 @@ app.queueInit('emails', {
 Add a job to a queue.
 
 **Parameters:**
+
 - `queueName` (string) - Queue name
 - `data` (any) - Job data
 - `options` (object, optional) - Job-specific options
@@ -949,15 +959,20 @@ Add a job to a queue.
 **Returns:** `Promise<string>` - Job ID
 
 **Example:**
+
 ```typescript
-const jobId = await app.addToQueue('emails', {
-  to: 'user@example.com',
-  subject: 'Welcome',
-  body: 'Hello!'
-}, {
-  priority: 10,
-  delay: 5000  // Send after 5 seconds
-});
+const jobId = await app.addToQueue(
+  'emails',
+  {
+    to: 'user@example.com',
+    subject: 'Welcome',
+    body: 'Hello!',
+  },
+  {
+    priority: 10,
+    delay: 5000, // Send after 5 seconds
+  }
+);
 ```
 
 ### `app.addBulkToQueue(queueName, jobs)`
@@ -965,6 +980,7 @@ const jobId = await app.addToQueue('emails', {
 Add multiple jobs to a queue.
 
 **Parameters:**
+
 - `queueName` (string) - Queue name
 - `jobs` (array) - Array of job objects
   - `data` (any) - Job data
@@ -973,16 +989,17 @@ Add multiple jobs to a queue.
 **Returns:** `Promise<string[]>` - Array of job IDs
 
 **Example:**
+
 ```typescript
 const jobIds = await app.addBulkToQueue('notifications', [
   {
     data: { userId: 1, message: 'Update 1' },
-    options: { priority: 10 }
+    options: { priority: 10 },
   },
   {
     data: { userId: 2, message: 'Update 2' },
-    options: { delay: 60000 }
-  }
+    options: { delay: 60000 },
+  },
 ]);
 ```
 
@@ -991,6 +1008,7 @@ const jobIds = await app.addBulkToQueue('notifications', [
 Register a processor for a queue.
 
 **Parameters:**
+
 - `queueName` (string) - Queue name
 - `concurrencyOrHandler` (number | function) - Concurrency or handler function
 - `handler` (function, optional) - Job handler (if concurrency provided)
@@ -1000,15 +1018,16 @@ Register a processor for a queue.
 **Returns:** `Promise<void>`
 
 **Example:**
+
 ```typescript
 // Simple processor
-await app.processQueue('emails', async (job) => {
+await app.processQueue('emails', async job => {
   await sendEmail(job.data);
   return { sent: true };
 });
 
 // With concurrency
-await app.processQueue('images', 5, async (job) => {
+await app.processQueue('images', 5, async job => {
   await processImage(job.data);
   job.progress(100);
   return { processed: true };
@@ -1020,17 +1039,20 @@ await app.processQueue('images', 5, async (job) => {
 Get queue statistics.
 
 **Parameters:**
+
 - `queueName` (string) - Queue name
 
 **Returns:** `Promise<object>` - Queue stats
-  - `waiting` (number) - Jobs waiting
-  - `active` (number) - Jobs in progress
-  - `completed` (number) - Completed jobs
-  - `failed` (number) - Failed jobs
-  - `delayed` (number) - Delayed jobs
-  - `paused` (boolean) - Queue paused status
+
+- `waiting` (number) - Jobs waiting
+- `active` (number) - Jobs in progress
+- `completed` (number) - Completed jobs
+- `failed` (number) - Failed jobs
+- `delayed` (number) - Delayed jobs
+- `paused` (boolean) - Queue paused status
 
 **Example:**
+
 ```typescript
 const stats = await app.getQueueStats('emails');
 console.log(`Waiting: ${stats.waiting}, Active: ${stats.active}`);
@@ -1053,6 +1075,7 @@ Resume a paused queue.
 Clean old jobs from a queue.
 
 **Parameters:**
+
 - `queueName` (string) - Queue name
 - `grace` (number) - Grace period in ms
 - `status` (string) - Job status ('completed', 'failed', 'delayed', 'active', 'wait')
@@ -1060,6 +1083,7 @@ Clean old jobs from a queue.
 **Returns:** `Promise<number>` - Number of jobs removed
 
 **Example:**
+
 ```typescript
 // Remove completed jobs older than 24 hours
 await app.cleanQueue('emails', 24 * 60 * 60 * 1000, 'completed');
@@ -1070,10 +1094,10 @@ await app.cleanQueue('emails', 24 * 60 * 60 * 1000, 'completed');
 ## API Reference
 
 For complete type definitions and API details, see:
+
 - [API Reference](./API.md) - Complete API documentation
 - [Types Reference](../src/core/queue/types.ts) - TypeScript type definitions
 
 ---
 
 **Need help?** Join our [Discord community](https://morojs.com/discord) or [open an issue](https://github.com/Moro-JS/moro/issues).
-

@@ -52,23 +52,15 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
-  testMatch: [
-    '**/tests/**/*.test.ts',
-    '**/src/**/*.test.ts'
-  ],
+  testMatch: ['**/tests/**/*.test.ts', '**/src/**/*.test.ts'],
   transform: {
     '^.+\\.ts$': 'ts-jest',
   },
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.ts',
-    '!src/**/index.ts'
-  ],
+  collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts', '!src/**/*.test.ts', '!src/**/index.ts'],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
-  testTimeout: 10000
+  testTimeout: 10000,
 };
 ```
 
@@ -128,18 +120,19 @@ Unit tests focus on testing individual components in isolation.
 import { validate, body, query, z } from '../../src/core/validation';
 
 describe('Validation System', () => {
-  const mockRequest = (data: any) => ({
-    body: data.body || {},
-    query: data.query || {},
-    params: data.params || {},
-    headers: data.headers || {}
-  } as any);
+  const mockRequest = (data: any) =>
+    ({
+      body: data.body || {},
+      query: data.query || {},
+      params: data.params || {},
+      headers: data.headers || {},
+    }) as any;
 
   const mockResponse = () => {
     const res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
-      headersSent: false
+      headersSent: false,
     };
     return res as any;
   };
@@ -148,14 +141,14 @@ describe('Validation System', () => {
     it('should validate valid data', async () => {
       const schema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const handler = jest.fn().mockResolvedValue({ success: true });
       const wrappedHandler = validate({ body: schema }, handler);
 
       const req = mockRequest({
-        body: { name: 'John Doe', email: 'john@example.com' }
+        body: { name: 'John Doe', email: 'john@example.com' },
       });
       const res = mockResponse();
 
@@ -163,7 +156,7 @@ describe('Validation System', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: { name: 'John Doe', email: 'john@example.com' }
+          body: { name: 'John Doe', email: 'john@example.com' },
         }),
         res
       );
@@ -172,14 +165,14 @@ describe('Validation System', () => {
     it('should reject invalid data', async () => {
       const schema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const handler = jest.fn();
       const wrappedHandler = validate({ body: schema }, handler);
 
       const req = mockRequest({
-        body: { name: 'J', email: 'invalid-email' }
+        body: { name: 'J', email: 'invalid-email' },
       });
       const res = mockResponse();
 
@@ -189,7 +182,7 @@ describe('Validation System', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           success: false,
-          error: 'Validation failed for body'
+          error: 'Validation failed for body',
         })
       );
       expect(handler).not.toHaveBeenCalled();
@@ -200,14 +193,14 @@ describe('Validation System', () => {
     it('should validate and coerce query parameters', async () => {
       const schema = z.object({
         limit: z.coerce.number().min(1).max(100).default(10),
-        search: z.string().optional()
+        search: z.string().optional(),
       });
 
       const handler = jest.fn().mockResolvedValue({ success: true });
       const wrappedHandler = validate({ query: schema }, handler);
 
       const req = mockRequest({
-        query: { limit: '25', search: 'test' }
+        query: { limit: '25', search: 'test' },
       });
       const res = mockResponse();
 
@@ -215,7 +208,7 @@ describe('Validation System', () => {
 
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
-          query: { limit: 25, search: 'test' }
+          query: { limit: 25, search: 'test' },
         }),
         res
       );
@@ -303,9 +296,9 @@ describe('Module System', () => {
           {
             method: 'GET' as const,
             path: '/',
-            handler: async () => ({ success: true })
-          }
-        ]
+            handler: async () => ({ success: true }),
+          },
+        ],
       };
 
       const config = defineModule(definition);
@@ -319,7 +312,7 @@ describe('Module System', () => {
     it('should handle modules with validation', () => {
       const userSchema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
       const definition = {
@@ -330,9 +323,9 @@ describe('Module System', () => {
             method: 'POST' as const,
             path: '/users',
             validation: { body: userSchema },
-            handler: async (req: any) => ({ success: true, data: req.body })
-          }
-        ]
+            handler: async (req: any) => ({ success: true, data: req.body }),
+          },
+        ],
       };
 
       const config = defineModule(definition);
@@ -347,9 +340,9 @@ describe('Module System', () => {
         sockets: [
           {
             event: 'message',
-            handler: async () => ({ success: true })
-          }
-        ]
+            handler: async () => ({ success: true }),
+          },
+        ],
       };
 
       const config = defineModule(definition);
@@ -378,8 +371,8 @@ describe('HTTP Routes Integration', () => {
   let server: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp();
+  beforeEach(async () => {
+    app = await createApp();
     port = createTestPort();
   });
 
@@ -397,9 +390,7 @@ describe('HTTP Routes Integration', () => {
       server = app.core.listen(port);
       await delay(100);
 
-      const response = await request(`http://localhost:${port}`)
-        .get('/test')
-        .expect(200);
+      const response = await request(`http://localhost:${port}`).get('/test').expect(200);
 
       expect(response.body).toEqual({ message: 'Hello World' });
     });
@@ -407,7 +398,7 @@ describe('HTTP Routes Integration', () => {
     it('should handle POST requests with body', async () => {
       app.post('/users', (req: any) => ({
         success: true,
-        data: req.body
+        data: req.body,
       }));
 
       server = app.core.listen(port);
@@ -421,7 +412,7 @@ describe('HTTP Routes Integration', () => {
 
       expect(response.body).toEqual({
         success: true,
-        data: userData
+        data: userData,
       });
     });
   });
@@ -430,14 +421,15 @@ describe('HTTP Routes Integration', () => {
     it('should validate request data', async () => {
       const userSchema = z.object({
         name: z.string().min(2),
-        email: z.string().email()
+        email: z.string().email(),
       });
 
-      app.post('/api/users')
+      app
+        .post('/api/users')
         .body(userSchema)
         .handler((req: any) => ({
           success: true,
-          user: req.body
+          user: req.body,
         }));
 
       server = app.core.listen(port);
@@ -445,30 +437,25 @@ describe('HTTP Routes Integration', () => {
 
       // Valid data
       const validUser = { name: 'John Doe', email: 'john@example.com' };
-      await request(`http://localhost:${port}`)
-        .post('/api/users')
-        .send(validUser)
-        .expect(200);
+      await request(`http://localhost:${port}`).post('/api/users').send(validUser).expect(200);
 
       // Invalid data
       const invalidUser = { name: 'J', email: 'invalid' };
-      await request(`http://localhost:${port}`)
-        .post('/api/users')
-        .send(invalidUser)
-        .expect(400);
+      await request(`http://localhost:${port}`).post('/api/users').send(invalidUser).expect(400);
     });
 
     it('should handle query parameter validation', async () => {
       const querySchema = z.object({
         limit: z.coerce.number().min(1).max(100).default(10),
-        search: z.string().optional()
+        search: z.string().optional(),
       });
 
-      app.get('/api/search')
+      app
+        .get('/api/search')
         .query(querySchema)
         .handler((req: any) => ({
           success: true,
-          query: req.query
+          query: req.query,
         }));
 
       server = app.core.listen(port);
@@ -480,12 +467,13 @@ describe('HTTP Routes Integration', () => {
 
       expect(response.body).toEqual({
         success: true,
-        query: { limit: 25, search: 'test' }
+        query: { limit: 25, search: 'test' },
       });
     });
 
     it('should apply rate limiting', async () => {
-      app.post('/limited')
+      app
+        .post('/limited')
         .rateLimit({ requests: 2, window: 60000 })
         .handler(() => ({ success: true }));
 
@@ -512,9 +500,7 @@ describe('HTTP Routes Integration', () => {
       server = app.core.listen(port);
       await delay(100);
 
-      const response = await request(`http://localhost:${port}`)
-        .get('/error')
-        .expect(500);
+      const response = await request(`http://localhost:${port}`).get('/error').expect(500);
 
       expect(response.body).toHaveProperty('success', false);
       expect(response.body).toHaveProperty('error');
@@ -524,9 +510,7 @@ describe('HTTP Routes Integration', () => {
       server = app.core.listen(port);
       await delay(100);
 
-      await request(`http://localhost:${port}`)
-        .get('/non-existent')
-        .expect(404);
+      await request(`http://localhost:${port}`).get('/non-existent').expect(404);
     });
   });
 
@@ -542,7 +526,7 @@ describe('HTTP Routes Integration', () => {
 
       app.get('/middleware-test', (req: any) => ({
         middlewareApplied: req.middlewareApplied,
-        middlewareCalled
+        middlewareCalled,
       }));
 
       server = app.core.listen(port);
@@ -572,8 +556,8 @@ describe('Module Integration', () => {
   let server: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp();
+  beforeEach(async () => {
+    app = await createApp();
     port = createTestPort();
   });
 
@@ -594,8 +578,8 @@ describe('Module Integration', () => {
           path: '/test',
           handler: async () => ({
             success: true,
-            module: 'test-module'
-          })
+            module: 'test-module',
+          }),
         },
         {
           method: 'POST',
@@ -603,15 +587,15 @@ describe('Module Integration', () => {
           validation: {
             body: z.object({
               name: z.string().min(2),
-              value: z.number()
-            })
+              value: z.number(),
+            }),
           },
           handler: async (req: any) => ({
             success: true,
-            data: req.body
-          })
-        }
-      ]
+            data: req.body,
+          }),
+        },
+      ],
     });
 
     await app.loadModule(TestModule);
@@ -625,7 +609,7 @@ describe('Module Integration', () => {
 
     expect(response.body).toEqual({
       success: true,
-      module: 'test-module'
+      module: 'test-module',
     });
 
     // Test module validation
@@ -637,7 +621,7 @@ describe('Module Integration', () => {
 
     expect(validateResponse.body).toEqual({
       success: true,
-      data: validData
+      data: validData,
     });
   });
 });
@@ -660,8 +644,8 @@ describe('End-to-End Application Tests', () => {
   let server: any;
   let port: number;
 
-  beforeEach(() => {
-    app = createApp();
+  beforeEach(async () => {
+    app = await createApp();
     port = createTestPort();
   });
 
@@ -687,14 +671,14 @@ describe('End-to-End Application Tests', () => {
           path: '/users',
           validation: {
             query: z.object({
-              limit: z.coerce.number().min(1).max(100).default(10)
-            })
+              limit: z.coerce.number().min(1).max(100).default(10),
+            }),
           },
           handler: async (req: any) => ({
             success: true,
             data: users.slice(0, req.query.limit),
-            total: users.length
-          })
+            total: users.length,
+          }),
         },
         {
           method: 'POST',
@@ -702,25 +686,25 @@ describe('End-to-End Application Tests', () => {
           validation: {
             body: z.object({
               name: z.string().min(2).max(50),
-              email: z.string().email()
-            })
+              email: z.string().email(),
+            }),
           },
           rateLimit: { requests: 10, window: 60000 },
           handler: async (req: any) => {
             const user = {
               id: nextId++,
               ...req.body,
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
             };
             users.push(user);
             return { success: true, data: user };
-          }
+          },
         },
         {
           method: 'GET',
           path: '/users/:id',
           validation: {
-            params: z.object({ id: z.coerce.number() })
+            params: z.object({ id: z.coerce.number() }),
           },
           handler: async (req: any) => {
             const user = users.find(u => u.id === req.params.id);
@@ -728,13 +712,13 @@ describe('End-to-End Application Tests', () => {
               return { success: false, error: 'User not found' };
             }
             return { success: true, data: user };
-          }
-        }
-      ]
+          },
+        },
+      ],
     });
 
     await app.loadModule(UsersModule);
-    
+
     // Add health check
     app.get('/health', () => ({ status: 'ok' }));
 
@@ -744,19 +728,17 @@ describe('End-to-End Application Tests', () => {
     const baseUrl = `http://localhost:${port}`;
 
     // 1. Check health
-    await request(baseUrl)
-      .get('/health')
-      .expect(200, { status: 'ok' });
+    await request(baseUrl).get('/health').expect(200, { status: 'ok' });
 
     // 2. Get empty users list
     await request(baseUrl)
       .get('/api/v1.0.0/users/users')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body).toEqual({
           success: true,
           data: [],
-          total: 0
+          total: 0,
         });
       });
 
@@ -784,7 +766,7 @@ describe('End-to-End Application Tests', () => {
     await request(baseUrl)
       .get('/api/v1.0.0/users/users')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.data).toHaveLength(2);
         expect(res.body.total).toBe(2);
@@ -794,7 +776,7 @@ describe('End-to-End Application Tests', () => {
     await request(baseUrl)
       .get('/api/v1.0.0/users/users/1')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.data).toMatchObject(user1);
       });
@@ -803,7 +785,7 @@ describe('End-to-End Application Tests', () => {
     await request(baseUrl)
       .get('/api/v1.0.0/users/users/999')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(false);
         expect(res.body.error).toBe('User not found');
       });
@@ -814,14 +796,14 @@ describe('End-to-End Application Tests', () => {
       .post('/api/v1.0.0/users/users')
       .send(invalidUser)
       .expect(400)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(false);
         expect(res.body).toHaveProperty('error');
         expect(res.body).toHaveProperty('details');
       });
 
     // 9. Test rate limiting (create multiple users quickly)
-    const promises = Array.from({ length: 12 }, (_, i) => 
+    const promises = Array.from({ length: 12 }, (_, i) =>
       request(baseUrl)
         .post('/api/v1.0.0/users/users')
         .send({ name: `User ${i}`, email: `user${i}@example.com` })
@@ -851,8 +833,8 @@ describe('WebSocket Integration', () => {
   let port: number;
   let clientSocket: Socket;
 
-  beforeEach(() => {
-    app = createApp();
+  beforeEach(async () => {
+    app = await createApp();
     port = createTestPort();
   });
 
@@ -877,33 +859,33 @@ describe('WebSocket Integration', () => {
       'join-room': {
         validation: z.object({
           room: z.string().min(1),
-          username: z.string().min(2)
+          username: z.string().min(2),
         }),
         handler: (socket: any, data: any) => {
           socket.join(data.room);
           socket.username = data.username;
           return { success: true, room: data.room };
-        }
+        },
       },
 
       'send-message': {
         validation: z.object({
           room: z.string(),
-          message: z.string().min(1).max(500)
+          message: z.string().min(1).max(500),
         }),
         handler: (socket: any, data: any) => {
           messages.push({
             username: socket.username,
             message: data.message,
-            room: data.room
+            room: data.room,
           });
           socket.to(data.room).emit('new-message', {
             username: socket.username,
-            message: data.message
+            message: data.message,
           });
           return { success: true };
-        }
-      }
+        },
+      },
     });
 
     server = app.core.listen(port);
@@ -913,31 +895,39 @@ describe('WebSocket Integration', () => {
     clientSocket = io(`http://localhost:${port}/chat`);
 
     // Wait for connection
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       clientSocket.on('connect', () => resolve());
     });
 
     // Test welcome message
-    const welcomeMessage = await new Promise((resolve) => {
+    const welcomeMessage = await new Promise(resolve => {
       clientSocket.on('welcome', resolve);
     });
     expect(welcomeMessage).toEqual({ message: 'Welcome!' });
 
     // Test join room
-    const joinResponse = await new Promise((resolve) => {
-      clientSocket.emit('join-room', {
-        room: 'test-room',
-        username: 'TestUser'
-      }, resolve);
+    const joinResponse = await new Promise(resolve => {
+      clientSocket.emit(
+        'join-room',
+        {
+          room: 'test-room',
+          username: 'TestUser',
+        },
+        resolve
+      );
     });
     expect(joinResponse).toEqual({ success: true, room: 'test-room' });
 
     // Test send message
-    const messageResponse = await new Promise((resolve) => {
-      clientSocket.emit('send-message', {
-        room: 'test-room',
-        message: 'Hello World!'
-      }, resolve);
+    const messageResponse = await new Promise(resolve => {
+      clientSocket.emit(
+        'send-message',
+        {
+          room: 'test-room',
+          message: 'Hello World!',
+        },
+        resolve
+      );
     });
     expect(messageResponse).toEqual({ success: true });
 
@@ -946,7 +936,7 @@ describe('WebSocket Integration', () => {
     expect(messages[0]).toEqual({
       username: 'TestUser',
       message: 'Hello World!',
-      room: 'test-room'
+      room: 'test-room',
     });
   });
 
@@ -955,13 +945,13 @@ describe('WebSocket Integration', () => {
       'test-event': {
         validation: z.object({
           name: z.string().min(2),
-          value: z.number()
+          value: z.number(),
         }),
         handler: (socket: any, data: any) => ({
           success: true,
-          data
-        })
-      }
+          data,
+        }),
+      },
     });
 
     server = app.core.listen(port);
@@ -969,28 +959,36 @@ describe('WebSocket Integration', () => {
 
     clientSocket = io(`http://localhost:${port}/chat`);
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       clientSocket.on('connect', () => resolve());
     });
 
     // Test valid data
-    const validResponse = await new Promise((resolve) => {
-      clientSocket.emit('test-event', {
-        name: 'test',
-        value: 42
-      }, resolve);
+    const validResponse = await new Promise(resolve => {
+      clientSocket.emit(
+        'test-event',
+        {
+          name: 'test',
+          value: 42,
+        },
+        resolve
+      );
     });
     expect(validResponse).toEqual({
       success: true,
-      data: { name: 'test', value: 42 }
+      data: { name: 'test', value: 42 },
     });
 
     // Test invalid data
-    const invalidResponse = await new Promise((resolve) => {
-      clientSocket.emit('test-event', {
-        name: 'x', // Too short
-        value: 'not-a-number' // Wrong type
-      }, resolve);
+    const invalidResponse = await new Promise(resolve => {
+      clientSocket.emit(
+        'test-event',
+        {
+          name: 'x', // Too short
+          value: 'not-a-number', // Wrong type
+        },
+        resolve
+      );
     });
     expect(invalidResponse).toHaveProperty('success', false);
   });
@@ -1027,7 +1025,7 @@ class MockDatabaseAdapter {
     return {
       query: this.query.bind(this),
       commit: async () => {},
-      rollback: async () => {}
+      rollback: async () => {},
     };
   }
 }
@@ -1038,8 +1036,8 @@ describe('Database Integration', () => {
   let port: number;
   let mockDb: MockDatabaseAdapter;
 
-  beforeEach(() => {
-    app = createApp();
+  beforeEach(async () => {
+    app = await createApp();
     port = createTestPort();
     mockDb = new MockDatabaseAdapter();
     app.database(mockDb);
@@ -1053,25 +1051,27 @@ describe('Database Integration', () => {
   });
 
   it('should integrate with database in routes', async () => {
-    app.get('/users')
-      .handler(async (req: any) => {
-        const users = await req.database.query('SELECT * FROM users');
-        return { success: true, data: users };
-      });
+    app.get('/users').handler(async (req: any) => {
+      const users = await req.database.query('SELECT * FROM users');
+      return { success: true, data: users };
+    });
 
-    app.post('/users')
-      .body(z.object({
-        name: z.string(),
-        email: z.string().email()
-      }))
+    app
+      .post('/users')
+      .body(
+        z.object({
+          name: z.string(),
+          email: z.string().email(),
+        })
+      )
       .handler(async (req: any) => {
-        const result = await req.database.query(
-          'INSERT INTO users (name, email) VALUES (?, ?)',
-          [req.body.name, req.body.email]
-        );
+        const result = await req.database.query('INSERT INTO users (name, email) VALUES (?, ?)', [
+          req.body.name,
+          req.body.email,
+        ]);
         return {
           success: true,
-          data: { id: result.insertId, ...req.body }
+          data: { id: result.insertId, ...req.body },
         };
       });
 
@@ -1084,7 +1084,7 @@ describe('Database Integration', () => {
       .post('/users')
       .send(userData)
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.data).toMatchObject(userData);
         expect(res.body.data).toHaveProperty('id');
@@ -1093,7 +1093,7 @@ describe('Database Integration', () => {
     await request(`http://localhost:${port}`)
       .get('/users')
       .expect(200)
-      .expect((res) => {
+      .expect(res => {
         expect(res.body.success).toBe(true);
         expect(res.body.data).toHaveLength(1);
         expect(res.body.data[0]).toMatchObject(userData);
@@ -1113,8 +1113,8 @@ import { EmailService } from '../../src/services/email';
 // Mock external email service
 jest.mock('nodemailer', () => ({
   createTransporter: jest.fn(() => ({
-    sendMail: jest.fn().mockResolvedValue({ messageId: 'test-id' })
-  }))
+    sendMail: jest.fn().mockResolvedValue({ messageId: 'test-id' }),
+  })),
 }));
 
 describe('EmailService', () => {
@@ -1124,7 +1124,7 @@ describe('EmailService', () => {
     emailService = new EmailService({
       host: 'smtp.test.com',
       port: 587,
-      auth: { user: 'test', pass: 'test' }
+      auth: { user: 'test', pass: 'test' },
     });
   });
 
@@ -1132,7 +1132,7 @@ describe('EmailService', () => {
     const result = await emailService.sendEmail({
       to: 'test@example.com',
       subject: 'Test',
-      text: 'Test message'
+      text: 'Test message',
     });
 
     expect(result).toHaveProperty('messageId', 'test-id');
@@ -1152,15 +1152,15 @@ describe('Users API with Database Stubs', () => {
   let server: any;
   let dbStub: any;
 
-  beforeEach(() => {
-    app = createApp();
-    
+  beforeEach(async () => {
+    app = await createApp();
+
     // Create database stub
     dbStub = {
       query: jest.fn(),
-      beginTransaction: jest.fn()
+      beginTransaction: jest.fn(),
     };
-    
+
     app.database(dbStub);
   });
 
@@ -1175,9 +1175,7 @@ describe('Users API with Database Stubs', () => {
 
     server = app.core.listen(0);
 
-    await request(server)
-      .get('/users')
-      .expect(500);
+    await request(server).get('/users').expect(500);
 
     expect(dbStub.query).toHaveBeenCalledWith('SELECT * FROM users');
   });
@@ -1186,7 +1184,7 @@ describe('Users API with Database Stubs', () => {
     const transactionMock = {
       query: jest.fn().mockResolvedValue({ affectedRows: 1 }),
       commit: jest.fn().mockResolvedValue(undefined),
-      rollback: jest.fn().mockResolvedValue(undefined)
+      rollback: jest.fn().mockResolvedValue(undefined),
     };
 
     dbStub.beginTransaction.mockResolvedValue(transactionMock);
@@ -1206,9 +1204,7 @@ describe('Users API with Database Stubs', () => {
 
     server = app.core.listen(0);
 
-    await request(server)
-      .post('/transfer')
-      .expect(200);
+    await request(server).post('/transfer').expect(200);
 
     expect(dbStub.beginTransaction).toHaveBeenCalled();
     expect(transactionMock.query).toHaveBeenCalledTimes(2);
@@ -1248,14 +1244,14 @@ export const createUserData = (overrides: Partial<any> = {}) => ({
   email: 'john@example.com',
   age: 25,
   role: 'user',
-  ...overrides
+  ...overrides,
 });
 
 export const createUser = (overrides: Partial<any> = {}) => ({
   id: 1,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
-  ...createUserData(overrides)
+  ...createUserData(overrides),
 });
 
 // Usage in tests
@@ -1272,7 +1268,8 @@ it('should create admin user', async () => {
 // tests/matchers.ts
 expect.extend({
   toBeValidUser(received) {
-    const pass = received &&
+    const pass =
+      received &&
       typeof received.id === 'number' &&
       typeof received.name === 'string' &&
       typeof received.email === 'string' &&
@@ -1280,9 +1277,9 @@ expect.extend({
 
     return {
       pass,
-      message: () => `Expected ${received} to be a valid user object`
+      message: () => `Expected ${received} to be a valid user object`,
     };
-  }
+  },
 });
 
 // Usage
@@ -1310,7 +1307,7 @@ export const waitFor = (condition: () => boolean, timeout = 5000) => {
 };
 
 export const createTestApp = (options: any = {}) => {
-  const app = createApp(options);
+  const app = await createApp(options);
   const cleanup = () => {
     // Cleanup logic
   };
@@ -1330,9 +1327,9 @@ export const createTestApp = (options: any = {}) => {
 // tests/performance/load.test.ts
 describe('Performance Tests', () => {
   it('should handle concurrent requests', async () => {
-    const app = createApp();
+    const app = await createApp();
     app.get('/test', () => ({ success: true }));
-    
+
     const server = app.core.listen(0);
     const port = server.address().port;
 
@@ -1375,7 +1372,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v3
         with:
@@ -1419,4 +1416,4 @@ jobs:
 }
 ```
 
-This comprehensive testing guide provides you with everything needed to thoroughly test your MoroJS applications. Remember to maintain good test coverage and follow testing best practices for reliable, maintainable code. 
+This comprehensive testing guide provides you with everything needed to thoroughly test your MoroJS applications. Remember to maintain good test coverage and follow testing best practices for reliable, maintainable code.

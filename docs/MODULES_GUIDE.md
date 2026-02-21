@@ -48,7 +48,7 @@ export const userModule = defineModule({
 import { createApp } from '@morojs/moro';
 import { userModule } from './modules/user';
 
-const app = createApp();
+const app = await createApp();
 
 // Load module manually
 await app.loadModule(userModule);
@@ -693,7 +693,7 @@ Automatically discover and load modules from a directory:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   modules: {
     directory: './src/modules',
     autoLoad: true,
@@ -906,7 +906,7 @@ export const lifecycleModule = defineModule({
 });
 
 // Application setup
-const app = createApp();
+const app = await createApp();
 
 app.on('moduleLoaded', moduleName => {
   console.log(`Module ${moduleName} loaded`);
@@ -1012,7 +1012,7 @@ export const userModule = defineModule({
 ### 4. Lazy Load Heavy Modules
 
 ```typescript
-const app = createApp();
+const app = await createApp();
 
 // Load core modules immediately
 await app.loadModule(coreModule);
@@ -1038,7 +1038,7 @@ describe('User Module', () => {
   let app;
 
   beforeEach(async () => {
-    app = createApp();
+    app = await createApp();
 
     // Register mock services
     const container = app.getContainer();
@@ -1169,7 +1169,7 @@ export const orderModule = defineModule({
 });
 
 // app.ts
-const app = createApp();
+const app = await createApp();
 
 // Load modules in dependency order
 await app.loadModule(sharedModule);

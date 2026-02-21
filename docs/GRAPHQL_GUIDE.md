@@ -1,6 +1,7 @@
 # GraphQL Integration for MoroJS
 
 MoroJS includes powerful built-in GraphQL support that is **completely optional**:
+
 - **Pothos support** for TypeScript-first, code-first schema building
 - **GraphQL-JIT** for 5-10x query execution performance boost
 - **WebSocket subscriptions** for real-time data
@@ -37,7 +38,7 @@ npm install dataloader
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 app.graphqlInit({
   typeDefs: `
@@ -99,7 +100,7 @@ import { createApp } from '@morojs/moro';
 // Import Pothos directly for full TypeScript support
 import SchemaBuilder from '@pothos/core';
 
-const app = createApp();
+const app = await createApp();
 
 // Create Pothos schema builder
 const builder = new SchemaBuilder<{
@@ -112,7 +113,7 @@ const builder = new SchemaBuilder<{
 const User = builder.objectRef<{ id: string; name: string; email: string }>('User');
 
 User.implement({
-  fields: (t) => ({
+  fields: t => ({
     id: t.exposeID('id'),
     name: t.exposeString('name'),
     email: t.exposeString('email'),
@@ -121,7 +122,7 @@ User.implement({
 
 // Define Query type
 builder.queryType({
-  fields: (t) => ({
+  fields: t => ({
     hello: t.string({
       args: {
         name: t.arg.string(),
@@ -152,7 +153,7 @@ builder.queryType({
 
 // Define Mutation type
 builder.mutationType({
-  fields: (t) => ({
+  fields: t => ({
     createUser: t.field({
       type: User,
       args: {
@@ -186,7 +187,7 @@ app.listen(3000);
 ```typescript
 import { createApp, createPothosBuilder } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   websocket: true, // Enable WebSocket support
 });
 
@@ -194,14 +195,14 @@ const builder = createPothosBuilder();
 
 // Define subscription type
 builder.subscriptionType({
-  fields: (t) => ({
+  fields: t => ({
     messageAdded: t.field({
       type: 'String',
       subscribe: async function* () {
         // Simulate real-time events
         let count = 0;
         while (true) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 1000));
           yield `Message ${++count}`;
         }
       },
@@ -238,7 +239,7 @@ app.graphqlInit({
 ```typescript
 import { createApp, auth, providers } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Setup authentication
 app.use(
@@ -290,7 +291,7 @@ app.listen(3000);
 ```typescript
 import { createApp, createPothosBuilder, createDataLoader } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 const builder = createPothosBuilder();
 
 // Create DataLoader for batching user queries
@@ -302,11 +303,11 @@ const createUserLoader = () =>
     });
 
     // Return in same order as requested
-    return userIds.map((id) => users.find((u) => u.id === id) || new Error('Not found'));
+    return userIds.map(id => users.find(u => u.id === id) || new Error('Not found'));
   });
 
 builder.queryType({
-  fields: (t) => ({
+  fields: t => ({
     posts: t.field({
       type: [Post],
       resolve: async () => db.posts.findMany(),
@@ -317,7 +318,7 @@ builder.queryType({
 const Post = builder.objectRef<{ id: string; authorId: string; title: string }>('Post');
 
 Post.implement({
-  fields: (t) => ({
+  fields: t => ({
     id: t.exposeID('id'),
     title: t.exposeString('title'),
     author: t.field({
@@ -373,7 +374,7 @@ app.graphqlInit({
   enableBatching: true, // Query batching
 
   // Error handling
-  formatError: (error) => ({
+  formatError: error => ({
     message: error.message,
     // Hide internal errors in production
   }),
@@ -418,10 +419,10 @@ app.graphqlInit({
 ## Examples
 
 See the `/examples/graphql` directory for complete examples:
+
 - Basic GraphQL server
 - Pothos TypeScript-first schema
 - Authentication with GraphQL
 - Real-time subscriptions
 - DataLoader integration
 - Production-ready setup
-

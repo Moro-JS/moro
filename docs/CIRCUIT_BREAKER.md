@@ -62,7 +62,7 @@ Jobs automatically use circuit breakers to prevent repeated failures:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Circuit breaker is automatically configured
 app.scheduleJob({
@@ -515,7 +515,7 @@ app.post('/admin/circuit-breaker/:name/reset', (req, res) => {
 ```typescript
 import { createApp, CircuitBreaker } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Create circuit breakers for different services
 const breakers = {

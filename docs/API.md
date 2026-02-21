@@ -32,7 +32,7 @@ Creates a new MoroJS application instance.
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   cors: true,
   compression: true,
   helmet: true,
@@ -65,7 +65,7 @@ Creates a Node.js application (default runtime).
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 app.listen(3000); // Traditional HTTP server
 ```
 
@@ -76,7 +76,7 @@ Creates a Vercel Edge Functions application.
 ```typescript
 import { createAppEdge } from '@morojs/moro';
 
-const app = createAppEdge();
+const app = await createAppEdge();
 
 app.get('/api/hello', (req, res) => {
   return { message: 'Hello from the Edge!' };
@@ -92,7 +92,7 @@ Creates an AWS Lambda application.
 ```typescript
 import { createAppLambda } from '@morojs/moro';
 
-const app = createAppLambda();
+const app = await createAppLambda();
 
 app.get('/api/users/:id', (req, res) => {
   return { userId: req.params.id, lambda: true };
@@ -108,7 +108,7 @@ Creates a Cloudflare Workers application.
 ```typescript
 import { createAppWorker } from '@morojs/moro';
 
-const app = createAppWorker();
+const app = await createAppWorker();
 
 app.get('/api/geo', (req, res) => {
   return {
@@ -131,7 +131,7 @@ You can also specify runtime configuration explicitly:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   runtime: {
     type: 'vercel-edge', // 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers'
     options: {
@@ -148,7 +148,7 @@ const app = createApp({
 Returns the current runtime type.
 
 ```typescript
-const app = createAppEdge();
+const app = await createAppEdge();
 console.log(app.getRuntimeType()); // 'vercel-edge'
 ```
 
@@ -157,7 +157,7 @@ console.log(app.getRuntimeType()); // 'vercel-edge'
 Returns the runtime adapter instance.
 
 ```typescript
-const app = createAppLambda();
+const app = await createAppLambda();
 const adapter = app.getRuntime();
 console.log(adapter.type); // 'aws-lambda'
 ```
@@ -167,10 +167,10 @@ console.log(adapter.type); // 'aws-lambda'
 Returns a runtime-specific handler function. Only available for non-Node.js runtimes.
 
 ```typescript
-const app = createAppEdge();
+const app = await createAppEdge();
 const handler = app.getHandler(); // Function for Vercel Edge
 
-const nodeApp = createApp();
+const nodeApp = await createApp();
 // nodeApp.getHandler() // Available but use listen() instead
 ```
 
@@ -179,12 +179,12 @@ const nodeApp = createApp();
 Starts the HTTP server. Only available for Node.js runtime.
 
 ```typescript
-const app = createApp();
+const app = await createApp();
 app.listen(3000, () => {
   console.log('Server running on port 3000');
 });
 
-const edgeApp = createAppEdge();
+const edgeApp = await createAppEdge();
 // edgeApp.listen(3000); // Throws error - use getHandler() instead
 ```
 
@@ -2517,7 +2517,7 @@ const emailConfig = createModuleConfig(
 ### Configuration Usage
 
 ```typescript
-const app = createApp();
+const app = await createApp();
 
 // Access configuration
 const config = app.getConfig();
@@ -2762,7 +2762,7 @@ const workers = new WorkerManager({
 });
 
 // Or use with createApp
-const app = createApp({
+const app = await createApp({
   workers: {
     count: 4,
     maxQueueSize: 1000,

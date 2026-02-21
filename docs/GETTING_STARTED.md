@@ -93,7 +93,7 @@ Create `src/server.ts`:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Simple route
 app.get('/', (req, res) => {
@@ -130,7 +130,7 @@ MoroJS applications can run on multiple environments with the same codebase. Her
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 app.get('/', (req, res) => {
   return { message: 'Hello from Node.js!' };
@@ -148,7 +148,7 @@ Create `api/[...slug].ts`:
 ```typescript
 import { createAppEdge } from '@morojs/moro';
 
-const app = createAppEdge();
+const app = await createAppEdge();
 
 app.get('/api/hello', (req, res) => {
   return {
@@ -165,7 +165,7 @@ export default app.getHandler();
 ```typescript
 import { createAppLambda } from '@morojs/moro';
 
-const app = createAppLambda();
+const app = await createAppLambda();
 
 app.get('/api/users/:id', (req, res) => {
   return {
@@ -185,7 +185,7 @@ Create `worker.ts`:
 ```typescript
 import { createAppWorker } from '@morojs/moro';
 
-const app = createAppWorker();
+const app = await createAppWorker();
 
 app.get('/api/geo', (req, res) => {
   return {
@@ -219,7 +219,7 @@ MoroJS features intelligent routing that automatically orders middleware executi
 ```typescript
 import { createApp, z } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Chainable API - order doesn't matter!
 app
@@ -339,7 +339,7 @@ Modify your `src/server.ts` to use the configuration:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Configuration is automatically loaded from moro.config.js and .env
 const config = app.getConfig();
@@ -484,7 +484,7 @@ Let's build a complete REST API for managing users:
 ```typescript
 import { createApp, z } from '@morojs/moro';
 
-const app = createApp({
+const app = await createApp({
   cors: true,
   compression: true,
   helmet: true,
@@ -772,7 +772,7 @@ Update `src/server.ts`:
 import { createApp } from '@morojs/moro';
 import UsersModule from './modules/users';
 
-const app = createApp();
+const app = await createApp();
 
 // Load the users module
 await app.loadModule(UsersModule);
@@ -896,7 +896,7 @@ npm install mysql2
 ```typescript
 import { createApp, MySQLAdapter } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // Setup database
 const db = new MySQLAdapter({
@@ -975,7 +975,7 @@ Add real-time functionality to your application:
 ```typescript
 import { createApp, z } from '@morojs/moro';
 
-const app = createApp();
+const app = await createApp();
 
 // WebSocket with validation
 app.websocket('/chat', {
@@ -1119,8 +1119,8 @@ describe('MoroJS Application', () => {
   let app: any;
   let server: any;
 
-  beforeAll(() => {
-    app = createApp();
+  beforeAll(async () => {
+    app = await createApp();
 
     app.get('/test', () => ({ message: 'Hello Test!' }));
 
