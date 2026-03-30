@@ -1,3 +1,10 @@
+## [1.7.22] - 2026-03-30
+
+### Fixed
+
+- fix: allow CompiledRoute (defineRoute output) in defineModule routes
+- fix: await createApp in all documentation examples for async support
+
 ## [1.7.21] - 2026-02-19
 
 ### Fixed
