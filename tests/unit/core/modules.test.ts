@@ -1,7 +1,7 @@
 /* eslint-disable */
 // Unit Tests - Module System
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { defineModule, z } from '../../../src/index.js';
+import { defineModule, defineRoute, z } from '../../../src/index.js';
 import type { ModuleDefinition } from '../../../src/index.js';
 
 describe('Module System', () => {
@@ -152,6 +152,78 @@ describe('Module System', () => {
         timeout: 5000,
         retries: 3,
       });
+    });
+
+    it('should accept CompiledRoute (defineRoute) in routes array', () => {
+      const handler = async () => ({ success: true });
+
+      const compiled = defineRoute({
+        method: 'GET',
+        path: '/health',
+        handler,
+      });
+
+      const module = defineModule({
+        name: 'health-module',
+        version: '1.0.0',
+        routes: [compiled],
+      });
+
+      expect(module.routes).toHaveLength(1);
+      expect(module.routes![0].method).toBe('GET');
+      expect(module.routes![0].path).toBe('/health');
+      expect(module.routes![0].handler).toBe('route_handler_0');
+      expect(module.routeHandlers).toHaveProperty('route_handler_0');
+      expect(module.routeHandlers!['route_handler_0']).toBe(handler);
+    });
+
+    it('should accept mixed CompiledRoute and plain ModuleRoute in routes array', () => {
+      const compiledHandler = async () => ({ compiled: true });
+      const plainHandler = async () => ({ plain: true });
+
+      const compiled = defineRoute({
+        method: 'GET',
+        path: '/compiled',
+        handler: compiledHandler,
+      });
+
+      const module = defineModule({
+        name: 'mixed-module',
+        version: '1.0.0',
+        routes: [compiled, { method: 'POST', path: '/plain', handler: plainHandler }],
+      });
+
+      expect(module.routes).toHaveLength(2);
+      expect(module.routes![0].method).toBe('GET');
+      expect(module.routes![0].path).toBe('/compiled');
+      expect(module.routes![1].method).toBe('POST');
+      expect(module.routes![1].path).toBe('/plain');
+      expect(module.routeHandlers!['route_handler_0']).toBe(compiledHandler);
+      expect(module.routeHandlers!['route_handler_1']).toBe(plainHandler);
+    });
+
+    it('should preserve validation and auth from a CompiledRoute', () => {
+      const schema = z.object({ email: z.string().email() });
+
+      const compiled = defineRoute({
+        method: 'POST',
+        path: '/sign-in',
+        validation: { body: schema },
+        auth: { roles: ['admin'], optional: false },
+        rateLimit: { requests: 5, window: 60000 },
+        handler: async () => ({ ok: true }),
+      });
+
+      const module = defineModule({
+        name: 'auth-module',
+        version: '1.0.0',
+        routes: [compiled],
+      });
+
+      const route = module.routes![0];
+      expect(route.validation).toEqual({ body: schema });
+      expect(route.auth).toEqual({ roles: ['admin'], optional: false });
+      expect(route.rateLimit).toEqual({ requests: 5, window: 60000 });
     });
 
     it('should create a complex enterprise module', () => {
