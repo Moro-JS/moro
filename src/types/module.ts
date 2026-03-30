@@ -1,6 +1,7 @@
 // Module Definition Types
 
 import type { ValidationErrorHandler } from './config.js';
+import type { CompiledRoute } from '../core/routing/index.js';
 
 // Middleware can be a string name (resolved from built-in) or actual function
 export type ModuleMiddleware =
@@ -43,7 +44,7 @@ export interface ModuleDefinition {
     };
     [key: string]: any;
   };
-  routes?: ModuleRoute[];
+  routes?: (ModuleRoute | CompiledRoute)[];
   sockets?: ModuleSocket[];
   dependencies?: string[];
   middleware?: ModuleMiddleware[]; // Module-level middleware (applied to all routes)

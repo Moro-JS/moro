@@ -2,10 +2,29 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Container } from '../utilities/index.js';
-import { ModuleConfig } from '../../types/module.js';
-import { ModuleDefinition } from '../../types/module.js';
+import { ModuleConfig, ModuleDefinition, ModuleRoute } from '../../types/module.js';
+import { CompiledRoute } from '../routing/index.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { filePathToImportURL } from '../utilities/package-utils.js';
+
+function isCompiledRoute(route: ModuleRoute | CompiledRoute): route is CompiledRoute {
+  return 'schema' in route && 'execute' in route;
+}
+
+function normalizeRoute(route: ModuleRoute | CompiledRoute): ModuleRoute {
+  if (!isCompiledRoute(route)) return route;
+  return {
+    method: route.schema.method as ModuleRoute['method'],
+    path: route.schema.path,
+    handler: route.schema.handler as ModuleRoute['handler'],
+    validation: route.schema.validation,
+    auth: route.schema.auth,
+    cache: route.schema.cache,
+    rateLimit: route.schema.rateLimit
+      ? { requests: route.schema.rateLimit.requests, window: route.schema.rateLimit.window }
+      : undefined,
+  };
+}
 
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {
@@ -22,7 +41,9 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
 
   // Store route definitions and handlers
   if (definition.routes) {
-    moduleConfig.routes = definition.routes.map((route, index) => ({
+    const normalizedRoutes = definition.routes.map(normalizeRoute);
+
+    moduleConfig.routes = normalizedRoutes.map((route, index) => ({
       method: route.method,
       path: route.path,
       handler: `route_handler_${index}`, // Standardized naming
@@ -48,7 +69,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
     }));
 
     // Store the actual route handler functions
-    moduleConfig.routeHandlers = definition.routes.reduce(
+    moduleConfig.routeHandlers = normalizedRoutes.reduce(
       (acc, route, index) => {
         acc[`route_handler_${index}`] = route.handler;
         return acc;
