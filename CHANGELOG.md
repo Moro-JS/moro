@@ -1,3 +1,14 @@
+## [1.7.23] - 2026-04-09
+
+### Added
+
+- feat: enhance security and performance across various components
+- test: add unit tests for CompiledRoute integration in defineModule
+
+### Changed
+
+- refactor: optimize SQL query generation and enhance event bus audit logging
+
 ## [1.7.22] - 2026-03-30
 
 ### Fixed
