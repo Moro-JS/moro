@@ -16,12 +16,13 @@ export const defaultValidationErrorHandler: ValidationErrorHandler = (
   errors: ValidationErrorDetail[],
   context: ValidationErrorContext
 ): ValidationErrorResponse => {
+  const isProduction = process.env.NODE_ENV === 'production';
   return {
     status: 400,
     body: {
       success: false,
       error: `Validation failed for ${context.field}`,
-      details: errors,
+      ...(isProduction ? {} : { details: errors }),
       requestId: (context.request as any).requestId,
     },
   };

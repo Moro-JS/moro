@@ -62,6 +62,18 @@ export class StaticCore {
         return true;
       }
 
+      // Security: resolve symlinks and re-check path to prevent symlink-based traversal
+      try {
+        const realPath = await fs.realpath(filePath);
+        if (!realPath.startsWith(this.root)) {
+          res.status(403).json({ success: false, error: 'Forbidden' });
+          return true;
+        }
+        filePath = realPath;
+      } catch {
+        // realpath fails if file doesn't exist — handled by stat below
+      }
+
       // Handle dotfiles
       const basename = path.basename(filePath);
       if (basename.startsWith('.')) {

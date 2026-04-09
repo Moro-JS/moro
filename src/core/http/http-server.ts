@@ -702,7 +702,8 @@ export class MoroHttpServer {
     httpRes.redirect = (url: string, status: number = 302) => {
       if (httpRes.headersSent) return;
       httpRes.statusCode = status;
-      httpRes.setHeader('Location', url);
+      const safeUrl = url.replace(/[\r\n]/g, '');
+      httpRes.setHeader('Location', safeUrl);
       httpRes.end();
     };
 

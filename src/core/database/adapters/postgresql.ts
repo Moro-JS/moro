@@ -2,6 +2,12 @@
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 import { resolveUserPackage } from '../../utilities/package-utils.js';
+import {
+  quoteIdentifier as qi,
+  quoteColumns,
+  buildSetClause,
+  buildWhereClause,
+} from './sql-safety.js';
 
 interface PostgreSQLConfig {
   host?: string;
@@ -102,7 +108,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     const values = Object.values(data);
     const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+    const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
     const result = await this.pool.query(sql, values);
 
     return result.rows[0] as T;
@@ -119,12 +125,10 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
 
-    const setClause = dataKeys.map((key, index) => `${key} = $${index + 1}`).join(', ');
-    const whereClause = whereKeys
-      .map((key, index) => `${key} = $${dataKeys.length + index + 1}`)
-      .join(' AND ');
+    const setClause = buildSetClause(dataKeys, qi, 'dollar');
+    const whereClause = buildWhereClause(whereKeys, qi, 'dollar', dataKeys.length + 1);
 
-    const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
     const params = [...dataValues, ...whereValues];
 
     const result = await this.pool.query(sql, params);
@@ -135,9 +139,9 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
     await this.initPromise;
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
-    const whereClause = whereKeys.map((key, index) => `${key} = $${index + 1}`).join(' AND ');
+    const whereClause = buildWhereClause(whereKeys, qi, 'dollar');
 
-    const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+    const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
     const result = await this.pool.query(sql, whereValues);
 
     return result.rowCount || 0;
@@ -182,7 +186,7 @@ class PostgreSQLTransaction implements DatabaseTransaction {
     const values = Object.values(data);
     const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
 
-    const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+    const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
     const result = await this.client.query(sql, values);
 
     return result.rows[0] as T;
@@ -198,12 +202,10 @@ class PostgreSQLTransaction implements DatabaseTransaction {
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
 
-    const setClause = dataKeys.map((key, index) => `${key} = $${index + 1}`).join(', ');
-    const whereClause = whereKeys
-      .map((key, index) => `${key} = $${dataKeys.length + index + 1}`)
-      .join(' AND ');
+    const setClause = buildSetClause(dataKeys, qi, 'dollar');
+    const whereClause = buildWhereClause(whereKeys, qi, 'dollar', dataKeys.length + 1);
 
-    const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
     const params = [...dataValues, ...whereValues];
 
     const result = await this.client.query(sql, params);
@@ -213,9 +215,9 @@ class PostgreSQLTransaction implements DatabaseTransaction {
   async delete(table: string, where: Record<string, any>): Promise<number> {
     const whereKeys = Object.keys(where);
     const whereValues = Object.values(where);
-    const whereClause = whereKeys.map((key, index) => `${key} = $${index + 1}`).join(' AND ');
+    const whereClause = buildWhereClause(whereKeys, qi, 'dollar');
 
-    const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+    const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
     const result = await this.client.query(sql, whereValues);
 
     return result.rowCount || 0;

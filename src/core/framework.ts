@@ -1,4 +1,5 @@
 import { Server } from 'http';
+import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
@@ -563,7 +564,7 @@ export class Moro extends EventEmitter {
     const handlerKey = `${config.name}.${route.handler}`;
 
     return async (req: HttpRequest, res: HttpResponse) => {
-      const requestId = req.headers['x-request-id'] || Math.random().toString(36);
+      const requestId = req.headers['x-request-id'] || crypto.randomBytes(8).toString('hex');
 
       try {
         // Apply module-level middleware first

@@ -75,6 +75,12 @@ export class RangeCore {
     range: string,
     fileSize: number
   ): Array<{ start: number; end: number }> | null {
+    // Validate range count before parsing to prevent DoS via excessive commas
+    const commaCount = (range.match(/,/g) || []).length;
+    if (commaCount + 1 > this.maxRanges) {
+      return null;
+    }
+
     const ranges = range
       .replace(/bytes=/, '')
       .split(',')

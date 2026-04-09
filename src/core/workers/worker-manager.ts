@@ -1,5 +1,6 @@
 // Worker Thread Manager - Offload CPU-intensive operations
 import { Worker } from 'worker_threads';
+import crypto from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { cpus } from 'os';
 import { join } from 'path';
@@ -321,7 +322,7 @@ export const workerTasks = {
       );
     }
     return executeOnWorker({
-      id: `jwt-verify-${Date.now()}-${Math.random()}`,
+      id: `jwt-verify-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
       type: WORKER_TASKS.JWT_VERIFY,
       data: { token, secret, options },
       priority: 'high',
@@ -339,7 +340,7 @@ export const workerTasks = {
       );
     }
     return executeOnWorker({
-      id: `jwt-sign-${Date.now()}-${Math.random()}`,
+      id: `jwt-sign-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
       type: WORKER_TASKS.JWT_SIGN,
       data: { payload, secret, options },
       priority: 'high',
@@ -352,7 +353,7 @@ export const workerTasks = {
    */
   async hash(data: string, algorithm = 'sha256'): Promise<string> {
     return executeOnWorker({
-      id: `crypto-hash-${Date.now()}-${Math.random()}`,
+      id: `crypto-hash-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
       type: WORKER_TASKS.CRYPTO_HASH,
       data: { data, algorithm },
       priority: 'normal',
@@ -365,7 +366,7 @@ export const workerTasks = {
    */
   async heavyComputation(data: any): Promise<any> {
     return executeOnWorker({
-      id: `computation-${Date.now()}-${Math.random()}`,
+      id: `computation-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
       type: WORKER_TASKS.HEAVY_COMPUTATION,
       data,
       priority: 'normal',
@@ -378,7 +379,7 @@ export const workerTasks = {
    */
   async transformJSON(data: any, transformer: (data: any) => any): Promise<any> {
     return executeOnWorker({
-      id: `json-transform-${Date.now()}-${Math.random()}`,
+      id: `json-transform-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
       type: WORKER_TASKS.JSON_TRANSFORM,
       data: { data, transformer: transformer.toString() },
       priority: 'normal',

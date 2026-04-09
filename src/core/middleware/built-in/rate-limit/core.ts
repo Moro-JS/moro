@@ -26,15 +26,38 @@ interface RateLimitStore {
  */
 export class RateLimitCore {
   private store = new Map<string, RateLimitStore>();
+  private static readonly MAX_STORE_SIZE = 100000;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   // Monotonic timestamp optimization
   private static readonly startTime = Date.now();
+
+  constructor() {
+    // Periodic cleanup of expired entries to prevent unbounded memory growth
+    this.cleanupTimer = setInterval(() => this.evictExpired(), 60000);
+    // Allow the timer to not keep the process alive
+    if (this.cleanupTimer && typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
+  }
 
   /**
    * Get monotonic timestamp (smaller integers for better JIT optimization)
    */
   private static getTime(): number {
     return Date.now() - RateLimitCore.startTime;
+  }
+
+  /**
+   * Evict expired entries from the store
+   */
+  private evictExpired(): void {
+    const now = RateLimitCore.getTime();
+    for (const [key, data] of this.store) {
+      if (now > data.resetTime) {
+        this.store.delete(key);
+      }
+    }
   }
 
   /**
@@ -73,6 +96,15 @@ export class RateLimitCore {
 
     const limitData = this.store.get(key);
     if (!limitData) {
+      // Safety cap: evict oldest entries if store exceeds max size
+      if (this.store.size >= RateLimitCore.MAX_STORE_SIZE) {
+        this.evictExpired();
+        // If still over limit after eviction, remove oldest entry
+        if (this.store.size >= RateLimitCore.MAX_STORE_SIZE) {
+          const firstKey = this.store.keys().next().value;
+          if (firstKey) this.store.delete(firstKey);
+        }
+      }
       this.store.set(key, { count: 1, resetTime: now + window });
       return true;
     }
@@ -113,10 +145,14 @@ export class RateLimitCore {
   }
 
   /**
-   * Clear all rate limit data
+   * Clear all rate limit data and stop cleanup timer
    */
   clear(): void {
     this.store.clear();
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 }
 

@@ -2,6 +2,12 @@
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 import { resolveUserPackage } from '../../utilities/package-utils.js';
+import {
+  quoteIdentifier as qi,
+  quoteColumns,
+  buildSetClause,
+  buildWhereClause,
+} from './sql-safety.js';
 
 // Cache the drizzle-orm module
 let drizzleOrm: any = null;
@@ -98,7 +104,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
         const values = Object.values(data);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
 
-        const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+        const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
         const result = await this.query<T>(sql, values);
         return result[0];
       }
@@ -137,28 +143,30 @@ export class DrizzleAdapter implements DatabaseAdapter {
           return result[0] as T;
         } catch {
           // Fallback to raw SQL if drizzle-orm is not available
-          const setClause = Object.keys(data)
-            .map((key, i) => `${key} = $${i + 1}`)
-            .join(', ');
-          const whereClause = Object.keys(where)
-            .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-            .join(' AND ');
+          const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
+          const whereClause = buildWhereClause(
+            Object.keys(where),
+            qi,
+            'dollar',
+            Object.keys(data).length + 1
+          );
 
-          const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+          const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
           const params = [...Object.values(data), ...Object.values(where)];
           const result = await this.query<T>(sql, params);
           return result[0];
         }
       } else {
         // Fallback to raw SQL
-        const setClause = Object.keys(data)
-          .map((key, i) => `${key} = $${i + 1}`)
-          .join(', ');
-        const whereClause = Object.keys(where)
-          .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-          .join(' AND ');
+        const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
+        const whereClause = buildWhereClause(
+          Object.keys(where),
+          qi,
+          'dollar',
+          Object.keys(data).length + 1
+        );
 
-        const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+        const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
         const result = await this.query<T>(sql, params);
         return result[0];
@@ -191,19 +199,15 @@ export class DrizzleAdapter implements DatabaseAdapter {
           );
         } catch {
           // Fallback to raw SQL if drizzle-orm is not available
-          const whereClause = Object.keys(where)
-            .map((key, i) => `${key} = $${i + 1}`)
-            .join(' AND ');
-          const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+          const whereClause = buildWhereClause(Object.keys(where), qi, 'dollar');
+          const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
           await this.query(sql, Object.values(where));
           return 1; // Can't determine exact count without result metadata
         }
       } else {
         // Fallback to raw SQL
-        const whereClause = Object.keys(where)
-          .map((key, i) => `${key} = $${i + 1}`)
-          .join(' AND ');
-        const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+        const whereClause = buildWhereClause(Object.keys(where), qi, 'dollar');
+        const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
         await this.query(sql, Object.values(where));
         return 1; // Can't determine exact count without result metadata
       }
@@ -313,7 +317,7 @@ class DrizzleTransaction implements DatabaseTransaction {
       const values = Object.values(data);
       const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
 
-      const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+      const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
       const result = await this.query<T>(sql, values);
       return result[0];
     }
@@ -342,27 +346,29 @@ class DrizzleTransaction implements DatabaseTransaction {
         return result[0] as T;
       } catch {
         // Fallback to raw SQL
-        const setClause = Object.keys(data)
-          .map((key, i) => `${key} = $${i + 1}`)
-          .join(', ');
-        const whereClause = Object.keys(where)
-          .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-          .join(' AND ');
+        const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
+        const whereClause = buildWhereClause(
+          Object.keys(where),
+          qi,
+          'dollar',
+          Object.keys(data).length + 1
+        );
 
-        const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+        const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
         const result = await this.query<T>(sql, params);
         return result[0];
       }
     } else {
-      const setClause = Object.keys(data)
-        .map((key, i) => `${key} = $${i + 1}`)
-        .join(', ');
-      const whereClause = Object.keys(where)
-        .map((key, i) => `${key} = $${Object.keys(data).length + i + 1}`)
-        .join(' AND ');
+      const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
+      const whereClause = buildWhereClause(
+        Object.keys(where),
+        qi,
+        'dollar',
+        Object.keys(data).length + 1
+      );
 
-      const sql = `UPDATE ${table} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+      const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
       const params = [...Object.values(data), ...Object.values(where)];
       const result = await this.query<T>(sql, params);
       return result[0];
@@ -386,18 +392,14 @@ class DrizzleTransaction implements DatabaseTransaction {
         );
       } catch {
         // Fallback to raw SQL
-        const whereClause = Object.keys(where)
-          .map((key, i) => `${key} = $${i + 1}`)
-          .join(' AND ');
-        const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+        const whereClause = buildWhereClause(Object.keys(where), qi, 'dollar');
+        const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
         await this.query(sql, Object.values(where));
         return 1; // Can't determine exact count
       }
     } else {
-      const whereClause = Object.keys(where)
-        .map((key, i) => `${key} = $${i + 1}`)
-        .join(' AND ');
-      const sql = `DELETE FROM ${table} WHERE ${whereClause}`;
+      const whereClause = buildWhereClause(Object.keys(where), qi, 'dollar');
+      const sql = `DELETE FROM ${qi(table)} WHERE ${whereClause}`;
       await this.query(sql, Object.values(where));
       return 1; // Can't determine exact count
     }

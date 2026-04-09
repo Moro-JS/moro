@@ -3,7 +3,6 @@ import crypto from 'crypto';
 import { createFrameworkLogger } from '../../../logger/index.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const logger = createFrameworkLogger('CSRFCore');
 
 // ===== Types =====
@@ -33,7 +32,16 @@ export class CSRFCore {
   private sameSite: boolean;
 
   constructor(options: CSRFOptions = {}) {
-    this.secret = options.secret || 'moro-csrf-secret';
+    this.secret =
+      options.secret ||
+      (() => {
+        const generated = crypto.randomBytes(32).toString('hex');
+        logger.warn(
+          '[MoroJS Security] No secret configured for CSRF. A random secret was generated — CSRF tokens will NOT survive restarts. Set an explicit secret for production use.',
+          'CSRFCore'
+        );
+        return generated;
+      })();
     this.tokenLength = options.tokenLength || 32;
     this.cookieName = options.cookieName || '_csrf';
     this.headerName = options.headerName || 'x-csrf-token';
@@ -46,7 +54,14 @@ export class CSRFCore {
   }
 
   verifyToken(token: string, sessionToken: string): boolean {
-    return !!(token && sessionToken && token === sessionToken);
+    if (!token || !sessionToken || token.length !== sessionToken.length) {
+      return false;
+    }
+    try {
+      return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(sessionToken));
+    } catch {
+      return false;
+    }
   }
 
   async attachToken(req: HttpRequest, res: HttpResponse): Promise<string> {

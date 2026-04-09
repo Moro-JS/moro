@@ -1,4 +1,5 @@
 // File Upload Core Logic
+import * as path from 'path';
 import { HttpRequest } from '../../../../types/http.js';
 
 export interface UploadOptions {
@@ -65,6 +66,15 @@ export class UploadCore {
 
   attachFiles(req: HttpRequest): void {
     if (req.body && req.body.files) {
+      // Sanitize filenames to prevent path traversal when writing to disk
+      for (const [, file] of Object.entries(req.body.files)) {
+        const f = file as UploadedFile;
+        if (f.filename) {
+          (f as any).originalFilename = f.filename;
+          // eslint-disable-next-line no-control-regex -- strip ASCII control chars from basename
+          f.filename = path.basename(f.filename).replace(/[\x00-\x1f]/g, '');
+        }
+      }
       req.files = req.body.files;
     }
   }

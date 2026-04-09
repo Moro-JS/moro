@@ -443,7 +443,18 @@ async function initializeAuthJS(config: AuthOptions): Promise<AuthInstance> {
     },
 
     verifyJWT: async (token: string) => {
-      const secret = process.env.JWT_SECRET || config.jwt?.secret || config.secret || '';
+      const secret =
+        process.env.JWT_SECRET ||
+        config.jwt?.secret ||
+        config.secret ||
+        (() => {
+          const generated = crypto.randomBytes(32).toString('hex');
+          logger.warn(
+            '[MoroJS Security] No JWT secret configured. A random secret was generated — JWTs will NOT survive restarts. Set JWT_SECRET for production use.',
+            'AuthCore'
+          );
+          return generated;
+        })();
       const result = await safeVerifyJWT(token, secret);
 
       if (!result.success) {
@@ -498,7 +509,17 @@ export class AuthCore {
 
   constructor(options: AuthOptions) {
     this.config = {
-      secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || 'default-secret',
+      secret:
+        process.env.NEXTAUTH_SECRET ||
+        process.env.AUTH_SECRET ||
+        (() => {
+          const generated = crypto.randomBytes(32).toString('hex');
+          logger.warn(
+            '[MoroJS Security] No secret configured for auth. A random secret was generated — sessions will NOT survive restarts. Set an explicit secret for production use.',
+            'AuthCore'
+          );
+          return generated;
+        })(),
       session: {
         strategy: 'jwt',
         maxAge: 30 * 24 * 60 * 60, // 30 days

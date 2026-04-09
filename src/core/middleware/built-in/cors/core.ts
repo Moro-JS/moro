@@ -1,5 +1,8 @@
 // CORS Core - Reusable CORS logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
+import { createFrameworkLogger } from '../../../logger/index.js';
+
+const logger = createFrameworkLogger('CORSCore');
 
 // ===== Types =====
 
@@ -102,9 +105,17 @@ export class CORSCore {
       : this.options.allowedHeaders || 'Content-Type,Authorization';
     res.setHeader('Access-Control-Allow-Headers', allowedHeaders);
 
-    // Credentials
+    // Credentials — guard against invalid credentials + wildcard combination (CORS spec violation)
     if (this.options.credentials) {
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      if (originHeader === '*') {
+        logger.warn(
+          '[MoroJS Security] CORS credentials:true with origin:* is a spec violation — browsers will reject this. ' +
+            'Forcing credentials:false. Configure specific allowed origins for credential support.',
+          'CORSCore'
+        );
+      } else {
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
     }
 
     // Max Age

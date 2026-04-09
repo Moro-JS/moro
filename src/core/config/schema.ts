@@ -138,7 +138,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     csrf: {
       enabled: false, // Opt-in
-      secret: 'moro-csrf-secret',
+      secret: '',
       tokenLength: 32,
       cookieName: '_csrf',
       headerName: 'x-csrf-token',

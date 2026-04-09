@@ -2,6 +2,7 @@
 // Implements the WebSocket adapter interface using uWebSockets.js
 // High-performance C++ WebSocket implementation with native Node.js bindings
 
+import crypto from 'crypto';
 import { resolveUserPackage } from '../../utilities/package-utils.js';
 import {
   WebSocketAdapter,
@@ -64,7 +65,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
 
       // Setup WebSocket route with configurable path
       const wsPath = options.path || '/*';
-      const maxPayloadLength = options.maxPayloadLength || 100 * 1024 * 1024; // 100MB default
+      const maxPayloadLength = options.maxPayloadLength || 16 * 1024 * 1024; // 16MB default
       const idleTimeout = options.idleTimeout || 120; // 2 minutes default
 
       // Configure compression if enabled
@@ -225,7 +226,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
     if (this.customIdGenerator) {
       return this.customIdGenerator();
     }
-    return `uws_${++this.connectionCounter}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `uws_${++this.connectionCounter}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   }
 
   createNamespace(namespace: string): WebSocketNamespace {

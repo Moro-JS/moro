@@ -2,6 +2,7 @@
 // Supports file-based and Redis-based locking for K8s and clustered environments
 
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import { Logger } from '../../types/logger.js';
 import fs from 'fs';
 import path from 'path';
@@ -63,7 +64,7 @@ export class LeaderElection extends EventEmitter {
     // Generate unique instance ID
     this.instanceId =
       options.instanceId ||
-      `${os.hostname()}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      `${os.hostname()}-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 
     // Setup lock path for file-based strategy
     if (this.strategy === 'file') {
