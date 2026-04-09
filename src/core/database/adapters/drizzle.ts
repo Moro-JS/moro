@@ -143,13 +143,10 @@ export class DrizzleAdapter implements DatabaseAdapter {
           return result[0] as T;
         } catch {
           // Fallback to raw SQL if drizzle-orm is not available
-          const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
-          const whereClause = buildWhereClause(
-            Object.keys(where),
-            qi,
-            'dollar',
-            Object.keys(data).length + 1
-          );
+          const dataKeys = Object.keys(data);
+          const whereKeys = Object.keys(where);
+          const setClause = buildSetClause(dataKeys, qi, 'dollar');
+          const whereClause = buildWhereClause(whereKeys, qi, 'dollar', dataKeys.length + 1);
 
           const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
           const params = [...Object.values(data), ...Object.values(where)];
@@ -158,13 +155,10 @@ export class DrizzleAdapter implements DatabaseAdapter {
         }
       } else {
         // Fallback to raw SQL
-        const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
-        const whereClause = buildWhereClause(
-          Object.keys(where),
-          qi,
-          'dollar',
-          Object.keys(data).length + 1
-        );
+        const dataKeys = Object.keys(data);
+        const whereKeys = Object.keys(where);
+        const setClause = buildSetClause(dataKeys, qi, 'dollar');
+        const whereClause = buildWhereClause(whereKeys, qi, 'dollar', dataKeys.length + 1);
 
         const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];

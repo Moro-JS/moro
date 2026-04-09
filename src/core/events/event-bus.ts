@@ -23,7 +23,9 @@ export class MoroEventBus implements GlobalEventBus {
     errorRate: 0,
   };
   private auditEnabled = false;
-  private auditLog: EventPayload[] = [];
+  private auditBuffer: EventPayload[] = new Array(1000);
+  private auditHead = 0;
+  private auditCount = 0;
   private latencySum = 0;
   private errorCount = 0;
   private logger = createFrameworkLogger('EventBus');
@@ -62,10 +64,9 @@ export class MoroEventBus implements GlobalEventBus {
 
       // Audit logging - early exit if disabled
       if (this.auditEnabled) {
-        this.auditLog.push(payload);
-        if (this.auditLog.length > 1000) {
-          this.auditLog = this.auditLog.slice(-500); // Keep last 500 events
-        }
+        this.auditBuffer[this.auditHead] = payload;
+        this.auditHead = (this.auditHead + 1) % 1000;
+        if (this.auditCount < 1000) this.auditCount++;
       }
 
       // Emit to global listeners
@@ -155,13 +156,23 @@ export class MoroEventBus implements GlobalEventBus {
 
   disableAuditLog(): void {
     this.auditEnabled = false;
-    this.auditLog = [];
+    this.auditBuffer = new Array(1000);
+    this.auditHead = 0;
+    this.auditCount = 0;
     this.logger.info('Event audit logging disabled', 'Audit');
   }
 
   // Get audit log for compliance reporting
   getAuditLog(): EventPayload[] {
-    return [...this.auditLog];
+    if (this.auditCount === 0) return [];
+    if (this.auditCount < 1000) {
+      return this.auditBuffer.slice(0, this.auditCount);
+    }
+    // Ring buffer is full — return in chronological order
+    return [
+      ...this.auditBuffer.slice(this.auditHead),
+      ...this.auditBuffer.slice(0, this.auditHead),
+    ];
   }
 
   private updateMetrics(event: string, moduleId?: string): void {
@@ -180,43 +191,47 @@ export class MoroEventBus implements GlobalEventBus {
 
 // Module-isolated event bus implementation
 class ModuleEventBusImpl implements ModuleEventBus {
+  private nameCache = new Map<string, string>();
+
   constructor(
     private moduleId: string,
     private globalBus: MoroEventBus
   ) {}
 
-  async emit<T = any>(event: string, data: T): Promise<boolean> {
-    // Module events are namespaced to prevent conflicts
-    const namespacedEvent = `module:${this.moduleId}:${event}`;
+  private namespaced(event: string): string {
+    let cached = this.nameCache.get(event);
+    if (!cached) {
+      cached = `module:${this.moduleId}:${event}`;
+      this.nameCache.set(event, cached);
+    }
+    return cached;
+  }
 
-    return this.globalBus.emit(namespacedEvent, data, {
+  async emit<T = any>(event: string, data: T): Promise<boolean> {
+    return this.globalBus.emit(this.namespaced(event), data, {
       source: 'module',
       moduleId: this.moduleId,
     });
   }
 
   on<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this {
-    const namespacedEvent = `module:${this.moduleId}:${event}`;
-    this.globalBus.on(namespacedEvent, listener);
+    this.globalBus.on(this.namespaced(event), listener);
     return this;
   }
 
   once<T = any>(event: string, listener: (payload: EventPayload<T>) => void | Promise<void>): this {
-    const namespacedEvent = `module:${this.moduleId}:${event}`;
-    this.globalBus.once(namespacedEvent, listener);
+    this.globalBus.once(this.namespaced(event), listener);
     return this;
   }
 
   off(event: string, listener: CallableFunction): this {
-    const namespacedEvent = `module:${this.moduleId}:${event}`;
-    this.globalBus.off(namespacedEvent, listener);
+    this.globalBus.off(this.namespaced(event), listener);
     return this;
   }
 
   removeAllListeners(event?: string): this {
     if (event) {
-      const namespacedEvent = `module:${this.moduleId}:${event}`;
-      this.globalBus.removeAllListeners(namespacedEvent);
+      this.globalBus.removeAllListeners(this.namespaced(event));
     } else {
       // Remove all module events - would need access to globalBus emitter
       // For now, this is a simplified implementation
@@ -230,7 +245,6 @@ class ModuleEventBusImpl implements ModuleEventBus {
   }
 
   listenerCount(event: string): number {
-    const namespacedEvent = `module:${this.moduleId}:${event}`;
-    return this.globalBus.listenerCount(namespacedEvent);
+    return this.globalBus.listenerCount(this.namespaced(event));
   }
 }

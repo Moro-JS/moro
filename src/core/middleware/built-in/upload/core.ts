@@ -2,6 +2,10 @@
 import * as path from 'path';
 import { HttpRequest } from '../../../../types/http.js';
 
+// Pre-compiled regex — avoids recompilation per file
+// eslint-disable-next-line no-control-regex
+const RE_CONTROL_CHARS = /[\x00-\x1f]/g;
+
 export interface UploadOptions {
   dest?: string;
   maxFileSize?: number;
@@ -71,8 +75,7 @@ export class UploadCore {
         const f = file as UploadedFile;
         if (f.filename) {
           (f as any).originalFilename = f.filename;
-          // eslint-disable-next-line no-control-regex -- strip ASCII control chars from basename
-          f.filename = path.basename(f.filename).replace(/[\x00-\x1f]/g, '');
+          f.filename = path.basename(f.filename).replace(RE_CONTROL_CHARS, '');
         }
       }
       req.files = req.body.files;

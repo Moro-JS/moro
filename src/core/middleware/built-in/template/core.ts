@@ -18,6 +18,18 @@ function escapeHtml(str: string): string {
   return str.replace(/[&<>"']/g, char => ESCAPE_MAP[char]);
 }
 
+// Pre-compiled regex patterns — avoids recompilation on every render call
+const RE_ESCAPED_VAR = /\{\{=([\w.]+)\}\}/g;
+const RE_SIMPLE_VAR = /\{\{(\w+)\}\}/g;
+const RE_NESTED_VAR = /\{\{([\w.]+)\}\}/g;
+const RE_EACH_BLOCK = /\{\{#each (\w+)\}\}(.*?)\{\{\/each\}\}/gs;
+const RE_IF_BLOCK = /\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/gs;
+
+function resolveNestedValue(obj: any, path: string): any {
+  if (!path.includes('.')) return obj?.[path];
+  return path.split('.').reduce((o: any, p: string) => o?.[p], obj);
+}
+
 export interface TemplateOptions {
   views: string;
   engine?: 'moro' | 'handlebars' | 'ejs';
@@ -85,13 +97,13 @@ export class TemplateCore {
     let rendered = content;
 
     // Handle HTML-escaped variable substitution: {{=variable}} (safe output)
-    rendered = rendered.replace(/\{\{=([\w.]+)\}\}/g, (match: string, key: string) => {
-      const value = key.split('.').reduce((obj: any, prop: string) => obj?.[prop], data);
+    rendered = rendered.replace(RE_ESCAPED_VAR, (match: string, key: string) => {
+      const value = resolveNestedValue(data, key);
       return value !== undefined ? escapeHtml(String(value)) : match;
     });
 
     // Handle basic variable substitution (unescaped — existing behavior preserved)
-    rendered = rendered.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
+    rendered = rendered.replace(RE_SIMPLE_VAR, (match: string, key: string) => {
       if (data[key] !== undefined) {
         if (!this.deprecationWarned) {
           logger.warn(
@@ -110,46 +122,37 @@ export class TemplateCore {
     });
 
     // Handle nested object properties like {{user.name}} (unescaped — existing behavior)
-    rendered = rendered.replace(/\{\{([\w.]+)\}\}/g, (match: string, key: string) => {
-      const value = key.split('.').reduce((obj: any, prop: string) => obj?.[prop], data);
+    rendered = rendered.replace(RE_NESTED_VAR, (match: string, key: string) => {
+      const value = resolveNestedValue(data, key);
       return value !== undefined ? String(value) : match;
     });
 
     // Handle loops: {{#each items}}{{name}}{{/each}}
-    rendered = rendered.replace(
-      /\{\{#each (\w+)\}\}(.*?)\{\{\/each\}\}/gs,
-      (match, arrayKey, template) => {
-        const array = data[arrayKey];
-        if (!Array.isArray(array)) return '';
+    rendered = rendered.replace(RE_EACH_BLOCK, (match, arrayKey, template) => {
+      const array = data[arrayKey];
+      if (!Array.isArray(array)) return '';
 
-        return array
-          .map(item => {
-            let itemTemplate = template;
-            // Support {{=key}} (escaped) inside loops
-            itemTemplate = itemTemplate.replace(
-              /\{\{=([\w.]+)\}\}/g,
-              (match: string, key: string) => {
-                return item[key] !== undefined ? escapeHtml(String(item[key])) : match;
-              }
-            );
-            // Support {{key}} (unescaped) inside loops
-            itemTemplate = itemTemplate.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-              return item[key] !== undefined ? String(item[key]) : match;
-            });
-            return itemTemplate;
-          })
-          .join('');
-      }
-    );
+      return array
+        .map(item => {
+          let itemTemplate = template;
+          // Support {{=key}} (escaped) inside loops
+          itemTemplate = itemTemplate.replace(RE_ESCAPED_VAR, (match: string, key: string) => {
+            return item[key] !== undefined ? escapeHtml(String(item[key])) : match;
+          });
+          // Support {{key}} (unescaped) inside loops
+          itemTemplate = itemTemplate.replace(RE_SIMPLE_VAR, (match: string, key: string) => {
+            return item[key] !== undefined ? String(item[key]) : match;
+          });
+          return itemTemplate;
+        })
+        .join('');
+    });
 
     // Handle conditionals: {{#if condition}}content{{/if}}
-    rendered = rendered.replace(
-      /\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/gs,
-      (match, conditionKey, content) => {
-        const condition = data[conditionKey];
-        return condition ? content : '';
-      }
-    );
+    rendered = rendered.replace(RE_IF_BLOCK, (match, conditionKey, content) => {
+      const condition = data[conditionKey];
+      return condition ? content : '';
+    });
 
     return rendered;
   }

@@ -1,6 +1,5 @@
 // Worker Thread Manager - Offload CPU-intensive operations
 import { Worker } from 'worker_threads';
-import crypto from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { cpus } from 'os';
 import { join } from 'path';
@@ -10,6 +9,12 @@ import { isPackageAvailable } from '../utilities/package-utils.js';
 const jwtAvailable = isPackageAvailable('jsonwebtoken');
 
 const logger = createFrameworkLogger('WorkerManager');
+
+// Hoisted constants — avoids object allocation inside sort comparator on every call
+const PRIORITY_ORDER: Record<string, number> = { high: 3, normal: 2, low: 1 };
+
+// Simple counter for task IDs — avoids expensive crypto.randomBytes for non-security IDs
+let taskIdCounter = 0;
 
 /**
  * Worker task definitions
@@ -189,10 +194,9 @@ export class WorkerManager {
    */
   private processQueue(): void {
     // Sort queue by priority (high first)
-    this.taskQueue.sort((a, b) => {
-      const priorityOrder = { high: 3, normal: 2, low: 1 };
-      return priorityOrder[b.priority || 'normal'] - priorityOrder[a.priority || 'normal'];
-    });
+    this.taskQueue.sort(
+      (a, b) => PRIORITY_ORDER[b.priority || 'normal'] - PRIORITY_ORDER[a.priority || 'normal']
+    );
 
     // Assign tasks to available workers
     for (const [threadId, worker] of this.workers.entries()) {
@@ -322,7 +326,7 @@ export const workerTasks = {
       );
     }
     return executeOnWorker({
-      id: `jwt-verify-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+      id: `jwt-verify-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.JWT_VERIFY,
       data: { token, secret, options },
       priority: 'high',
@@ -340,7 +344,7 @@ export const workerTasks = {
       );
     }
     return executeOnWorker({
-      id: `jwt-sign-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+      id: `jwt-sign-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.JWT_SIGN,
       data: { payload, secret, options },
       priority: 'high',
@@ -353,7 +357,7 @@ export const workerTasks = {
    */
   async hash(data: string, algorithm = 'sha256'): Promise<string> {
     return executeOnWorker({
-      id: `crypto-hash-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+      id: `crypto-hash-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.CRYPTO_HASH,
       data: { data, algorithm },
       priority: 'normal',
@@ -366,7 +370,7 @@ export const workerTasks = {
    */
   async heavyComputation(data: any): Promise<any> {
     return executeOnWorker({
-      id: `computation-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+      id: `computation-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.HEAVY_COMPUTATION,
       data,
       priority: 'normal',
@@ -379,7 +383,7 @@ export const workerTasks = {
    */
   async transformJSON(data: any, transformer: (data: any) => any): Promise<any> {
     return executeOnWorker({
-      id: `json-transform-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+      id: `json-transform-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.JSON_TRANSFORM,
       data: { data, transformer: transformer.toString() },
       priority: 'normal',

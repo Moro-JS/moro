@@ -506,6 +506,7 @@ async function initializeAuthJS(config: AuthOptions): Promise<AuthInstance> {
 export class AuthCore {
   private config: AuthOptions;
   private authInstance: AuthInstance | null = null;
+  private cachedProviderMap: Record<string, AuthProvider> | null = null;
 
   constructor(options: AuthOptions) {
     this.config = {
@@ -665,10 +666,13 @@ export class AuthCore {
         return this.authInstance.getCsrfToken();
       },
       getProviders: async () => {
-        return this.config.providers.reduce((acc: Record<string, AuthProvider>, provider) => {
-          acc[provider.id] = provider;
-          return acc;
-        }, {});
+        if (!this.cachedProviderMap) {
+          this.cachedProviderMap = {};
+          for (const provider of this.config.providers) {
+            this.cachedProviderMap[provider.id] = provider;
+          }
+        }
+        return this.cachedProviderMap;
       },
     };
 

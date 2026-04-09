@@ -3,7 +3,12 @@
 // High-performance C++ WebSocket implementation with native Node.js bindings
 
 import crypto from 'crypto';
+import { TextDecoder } from 'util';
 import { resolveUserPackage } from '../../utilities/package-utils.js';
+
+// Reusable TextDecoder instance — avoids Buffer allocation per WS message
+const textDecoder = new TextDecoder('utf-8');
+
 import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
@@ -188,7 +193,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
 
     try {
       // Parse message - expect JSON format for compatibility with socket.io-like behavior
-      const messageStr = Buffer.from(message).toString('utf-8');
+      const messageStr = textDecoder.decode(message);
       const data = JSON.parse(messageStr);
 
       // Handle message in connection wrapper
@@ -366,11 +371,19 @@ class UWSNamespaceWrapper implements WebSocketNamespace {
   }
 
   getSockets(): WebSocketConnection[] {
-    return Array.from(this.connections.values()).filter(conn => conn.connected);
+    const result: WebSocketConnection[] = [];
+    for (const conn of this.connections.values()) {
+      if (conn.connected) result.push(conn);
+    }
+    return result;
   }
 
   getConnectionCount(): number {
-    return Array.from(this.connections.values()).filter(conn => conn.connected).length;
+    let count = 0;
+    for (const conn of this.connections.values()) {
+      if (conn.connected) count++;
+    }
+    return count;
   }
 
   use(middleware: WebSocketMiddleware): void {
@@ -522,17 +535,16 @@ class UWSConnectionWrapper implements WebSocketConnection {
   }
 
   get broadcast(): WebSocketEmitter {
-    return new UWSEmitterWrapper(
-      this.namespaces
-        .get('/')
-        ?.getSockets()
-        .filter(s => s.id !== this.id)
-        .reduce((map, conn) => {
-          map.set(conn.id, conn as UWSConnectionWrapper);
-          return map;
-        }, new Map<string, UWSConnectionWrapper>()) || new Map(),
-      {}
-    );
+    const filtered = new Map<string, UWSConnectionWrapper>();
+    const namespace = this.namespaces.get('/');
+    if (namespace) {
+      for (const conn of (namespace as any).connections.values()) {
+        if (conn.connected && conn.id !== this.id) {
+          filtered.set(conn.id, conn as UWSConnectionWrapper);
+        }
+      }
+    }
+    return new UWSEmitterWrapper(filtered, {});
   }
 
   getRooms(): Set<string> {

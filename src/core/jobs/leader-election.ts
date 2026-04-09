@@ -220,7 +220,7 @@ export class LeaderElection extends EventEmitter {
         metadata: this.getInstanceMetadata(),
       };
 
-      await fs.promises.writeFile(this.lockPath, JSON.stringify(lockInfo, null, 2), 'utf-8');
+      await fs.promises.writeFile(this.lockPath, JSON.stringify(lockInfo), 'utf-8');
 
       this.leaderInfo = lockInfo;
       return true;
@@ -382,7 +382,7 @@ export class LeaderElection extends EventEmitter {
     this.leaderInfo.lastHeartbeat = new Date();
 
     if (this.strategy === 'file' && this.lockPath) {
-      await fs.promises.writeFile(this.lockPath, JSON.stringify(this.leaderInfo, null, 2), 'utf-8');
+      await fs.promises.writeFile(this.lockPath, JSON.stringify(this.leaderInfo), 'utf-8');
     } else if (this.strategy === 'redis' && this.redisClient) {
       const lockKey = 'moro:jobs:leader:lock';
       await this.redisClient.set(lockKey, JSON.stringify(this.leaderInfo), 'PX', this.lockTimeout);

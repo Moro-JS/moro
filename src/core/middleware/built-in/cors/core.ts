@@ -30,6 +30,8 @@ export interface CORSOptions {
  */
 export class CORSCore {
   private options: CORSOptions;
+  private cachedMethods: string;
+  private cachedAllowedHeaders: string;
 
   constructor(options: CORSOptions = {}) {
     this.options = {
@@ -39,6 +41,12 @@ export class CORSCore {
       credentials: false,
       ...options,
     };
+    this.cachedMethods = Array.isArray(this.options.methods)
+      ? this.options.methods.join(',')
+      : this.options.methods || 'GET,POST,PUT,DELETE,OPTIONS';
+    this.cachedAllowedHeaders = Array.isArray(this.options.allowedHeaders)
+      ? this.options.allowedHeaders.join(',')
+      : this.options.allowedHeaders || 'Content-Type,Authorization';
   }
 
   /**
@@ -94,16 +102,10 @@ export class CORSCore {
     res.setHeader('Access-Control-Allow-Origin', originHeader);
 
     // Methods
-    const methods = Array.isArray(this.options.methods)
-      ? this.options.methods.join(',')
-      : this.options.methods || 'GET,POST,PUT,DELETE,OPTIONS';
-    res.setHeader('Access-Control-Allow-Methods', methods);
+    res.setHeader('Access-Control-Allow-Methods', this.cachedMethods);
 
     // Headers
-    const allowedHeaders = Array.isArray(this.options.allowedHeaders)
-      ? this.options.allowedHeaders.join(',')
-      : this.options.allowedHeaders || 'Content-Type,Authorization';
-    res.setHeader('Access-Control-Allow-Headers', allowedHeaders);
+    res.setHeader('Access-Control-Allow-Headers', this.cachedAllowedHeaders);
 
     // Credentials — guard against invalid credentials + wildcard combination (CORS spec violation)
     if (this.options.credentials) {
