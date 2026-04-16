@@ -1,3 +1,9 @@
+## [1.7.24] - 2026-04-16
+
+### Other
+
+- # Route Groups, Auto-Loading & Developer Experience
+
 ## [1.7.23] - 2026-04-09
 
 ### Added
