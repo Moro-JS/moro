@@ -68,6 +68,87 @@ let GraphQLCore: any;
 let GraphQLSubscriptionManager: any;
 let setupGraphQLSubscriptions: any;
 
+/**
+ * Route group — prefixes all registered paths with a common base path.
+ *
+ * @example
+ * app.group('/api/v1', (group) => {
+ *   group.get('/users').handler(getUsersHandler);
+ *   group.post('/users').handler(createUserHandler);
+ *   group.get('/users/:id').handler(getUserHandler);
+ * });
+ */
+export class RouteGroup {
+  private prefix: string;
+  private app: Moro;
+
+  constructor(prefix: string, app: Moro) {
+    this.prefix = prefix;
+    this.app = app;
+  }
+
+  private prefixPath(path: string): string {
+    if (path === '/' || path === '') return this.prefix;
+    return this.prefix + (path.startsWith('/') ? path : `/${path}`);
+  }
+
+  get(path: string): UnifiedRouteBuilder;
+  get(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  get(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('GET', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.get(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  post(path: string): UnifiedRouteBuilder;
+  post(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  post(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('POST', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.post(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  put(path: string): UnifiedRouteBuilder;
+  put(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  put(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('PUT', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.put(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  delete(path: string): UnifiedRouteBuilder;
+  delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  delete(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('DELETE', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.delete(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  patch(path: string): UnifiedRouteBuilder;
+  patch(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  patch(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('PATCH', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.patch(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  group(prefix: string, callback: (group: RouteGroup) => void): this {
+    const nested = new RouteGroup(this.prefixPath(prefix), this.app);
+    callback(nested);
+    return this;
+  }
+}
+
 export class Moro extends EventEmitter {
   private coreFramework!: MoroCore;
   private routes: InternalRouteDefinition[] = [];
@@ -384,6 +465,85 @@ export class Moro extends EventEmitter {
   route(schema: RouteSchema): void {
     // Use unified router for schema-first registration
     this.unifiedRouter.route(schema);
+  }
+
+  // Route grouping with common prefix
+  group(prefix: string, callback: (group: RouteGroup) => void): this {
+    const normalizedPrefix = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+    const group = new RouteGroup(normalizedPrefix, this);
+    callback(group);
+    return this;
+  }
+
+  /**
+   * Auto-load route files from a directory.
+   *
+   * Loads top-level .ts/.js files and index.ts from subdirectories.
+   * Other files in subdirectories are ignored — they get pulled in
+   * when their index.ts imports them.
+   *
+   * @example
+   * await app.loadRoutes('./src/routes');
+   *
+   * // routes/
+   * //   health.ts         → loaded
+   * //   auth/
+   * //     index.ts        → loaded
+   * //     actions.ts      → ignored (imported by index.ts)
+   */
+  async loadRoutes(dir: string): Promise<void> {
+    const { readdirSync, statSync } = await import('fs');
+    const { join, extname, resolve } = await import('path');
+    const { filePathToImportURL } = await import('./core/utilities/package-utils.js');
+
+    const fullPath = resolve(dir);
+    const extensions = ['.ts', '.js'];
+
+    let items: string[];
+    try {
+      items = readdirSync(fullPath);
+    } catch {
+      return;
+    }
+
+    for (const item of items) {
+      const itemPath = join(fullPath, item);
+
+      try {
+        const stat = statSync(itemPath);
+
+        if (stat.isDirectory()) {
+          // Subdirectory — only load index.ts or index.js
+          for (const ext of extensions) {
+            const indexPath = join(itemPath, `index${ext}`);
+            try {
+              if (statSync(indexPath).isFile()) {
+                const importURL = filePathToImportURL(indexPath);
+                await import(importURL);
+                this.logger.info(`Auto-loaded route: ${item}/index${ext}`, 'RouteLoader');
+                break;
+              }
+            } catch {
+              // No index file with this extension, try next
+            }
+          }
+          continue;
+        }
+
+        // Top-level file
+        const ext = extname(item);
+        if (!extensions.includes(ext)) continue;
+        if (item.includes('.test.') || item.includes('.spec.')) continue;
+
+        const importURL = filePathToImportURL(itemPath);
+        await import(importURL);
+        this.logger.info(`Auto-loaded route: ${item}`, 'RouteLoader');
+      } catch (error) {
+        this.logger.warn(`Failed to load route file: ${item}`, 'RouteLoader', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   // Enable automatic API documentation
@@ -3167,6 +3327,31 @@ export class Moro extends EventEmitter {
   }
 }
 
+let currentApp: Moro | null = null;
+
+/**
+ * Get the current Moro application instance.
+ *
+ * Returns the app created by the most recent createApp() call.
+ * Use this in standalone route files so they can register routes
+ * without needing the app to be passed in.
+ *
+ * @example
+ * // routes/health.routes.ts
+ * import { getApp } from '@morojs/moro';
+ * const app = getApp();
+ *
+ * app.get('/health', (req, res) => {
+ *   res.json({ status: 'healthy' });
+ * });
+ */
+export function getApp(): Moro {
+  if (!currentApp) {
+    throw new Error('No app instance available. Call createApp() before getApp().');
+  }
+  return currentApp;
+}
+
 /**
  * Create and fully initialise a Moro application.
  *
@@ -3180,7 +3365,9 @@ export class Moro extends EventEmitter {
  */
 export async function createApp(options?: MoroOptions): Promise<Moro> {
   const config = await initializeConfigAsync(options);
-  return new Moro(options, config);
+  const app = new Moro(options, config);
+  currentApp = app;
+  return app;
 }
 
 /**

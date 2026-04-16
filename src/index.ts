@@ -7,6 +7,8 @@ export {
   createAppEdge,
   createAppLambda,
   createAppWorker,
+  getApp,
+  RouteGroup,
 } from './moro.js';
 
 export type { MoroOptions } from './core/framework.js';
