@@ -1,4 +1,3 @@
- 
 // Unit Tests - WebSocket config merge (moro.config.ts + createApp() options)
 import { describe, it, expect } from '@jest/globals';
 import { mergeWebSocketConfig } from '../../../src/core/networking/websocket-adapter.js';
