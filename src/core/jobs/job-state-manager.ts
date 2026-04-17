@@ -597,6 +597,10 @@ export class JobStateManager extends EventEmitter {
       await this.persistState();
     }
 
+    this.states.clear();
+    this.history.clear();
+    this.runningExecutions.clear();
+
     this.removeAllListeners();
     this.logger.info('JobStateManager shutdown complete', this.loggerContext);
   }

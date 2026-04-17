@@ -780,6 +780,8 @@ export class JobScheduler extends EventEmitter {
     ]);
 
     this.started = false;
+    this.jobs.clear();
+    this.pendingQueue = [];
     this.removeAllListeners();
 
     this.logger.info('JobScheduler shutdown complete', this.loggerContext);

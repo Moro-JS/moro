@@ -588,8 +588,9 @@ export class JobExecutor extends EventEmitter {
       this.cancelAllExecutions();
     }
 
-    // Cleanup circuit breakers
+    // Cleanup state
     this.circuitBreakers.clear();
+    this.activeExecutions.clear();
 
     this.removeAllListeners();
     this.logger.info('JobExecutor shutdown complete');
