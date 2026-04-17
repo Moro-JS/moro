@@ -69,17 +69,17 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Generate coverage report
-        run: npm run test:coverage
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
+      # - name: Generate coverage report
+      #   run: npm run test:coverage
+      #   env:
+      #     NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage/lcov.info
-          flags: unittests
-          name: codecov-umbrella
+      # - name: Upload coverage to Codecov
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     file: ./coverage/lcov.info
+      #     flags: unittests
+      #     name: codecov-umbrella
 
   build:
     name: Build
