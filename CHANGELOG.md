@@ -1,3 +1,13 @@
+## [1.7.25] - 2026-04-17
+
+### Added
+
+- - Added `applyEarlyLogLevel` function to set the logging level based on `LOG_LEVEL` or `MORO_LOG_LEVEL` environment variables before loading the app configuration. - Integrated early logging setup in `createApp`, `createAppNode`, `createAppEdge`, `createAppLambda`, and `createAppWorker` functions to ensure consistent logging behavior across different app runtimes. - Introduced `mergeWebSocketConfig` function to merge WebSocket configurations from `moro.config.ts` and `createApp()` options, allowing for flexible configuration management. - Added unit tests for `mergeWebSocketConfig` to validate merging logic and ensure correct behavior in various scenarios.
+
+### Other
+
+- Remove unnecessary whitespace from the WebSocket config merge unit test file for cleaner code formatting.
+
 ## [1.7.24] - 2026-04-16
 
 ### Other
