@@ -215,3 +215,25 @@ export type WebSocketEventHandler = (
   data: any,
   callback?: (response?: any) => void
 ) => void | Promise<void>;
+
+/**
+ * Merge WebSocket config from moro.config.ts with per-call createApp() options.
+ * createApp() options take precedence over config for top-level and nested keys,
+ * so `options.path` overrides `config.options.path` and same for cors fields.
+ * @internal
+ */
+export function mergeWebSocketConfig(cfg: any, opts: any): any {
+  const c = cfg || {};
+  const o = opts || {};
+  const cOpts = c.options || {};
+  const oOpts = o.options || {};
+  return {
+    ...c,
+    ...o,
+    options: {
+      ...cOpts,
+      ...oOpts,
+      cors: { ...(cOpts.cors || {}), ...(oOpts.cors || {}) },
+    },
+  };
+}

@@ -14,7 +14,11 @@ import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
 import { MoroOptions as CoreMoroOptions } from '../types/core.js';
-import { WebSocketAdapter, WebSocketAdapterOptions } from './networking/websocket-adapter.js';
+import {
+  WebSocketAdapter,
+  WebSocketAdapterOptions,
+  mergeWebSocketConfig,
+} from './networking/websocket-adapter.js';
 import { cors, helmet, compression, bodySize } from './middleware/built-in/index.js';
 
 // Extended MoroOptions that includes both core options and framework-specific options
@@ -150,7 +154,9 @@ export class Moro extends EventEmitter {
       (options.websocket && typeof options.websocket === 'object')
     ) {
       // Store the promise so we can await it before using websockets
-      this.websocketSetupPromise = this.setupWebSockets(options.websocket || {});
+      this.websocketSetupPromise = this.setupWebSockets(
+        mergeWebSocketConfig(this.config.websocket, options.websocket)
+      );
     }
 
     // Initialize enterprise event bus
@@ -243,7 +249,7 @@ export class Moro extends EventEmitter {
         );
       } else {
         // Use provided adapter or try to auto-detect
-        if (wsConfig.adapter) {
+        if (wsConfig.adapter && typeof wsConfig.adapter === 'object') {
           this.websocketAdapter = wsConfig.adapter;
         } else {
           this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;

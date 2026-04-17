@@ -3363,7 +3363,22 @@ export function getApp(): Moro {
  * const app = await createApp({ server: { port: 3000 } });
  * app.listen();
  */
+/**
+ * Apply LOG_LEVEL / MORO_LOG_LEVEL env var and options.logger to the global logger
+ * before config loading runs, so config-system debug logs respect the user's level.
+ */
+function applyEarlyLogLevel(options?: MoroOptions): void {
+  const envLevel = process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL;
+  if (envLevel) {
+    applyLoggingConfiguration({ level: envLevel }, undefined);
+  }
+  if (options?.logger !== undefined) {
+    applyLoggingConfiguration(undefined, options.logger);
+  }
+}
+
 export async function createApp(options?: MoroOptions): Promise<Moro> {
+  applyEarlyLogLevel(options);
   const config = await initializeConfigAsync(options);
   const app = new Moro(options, config);
   currentApp = app;
@@ -3376,6 +3391,7 @@ export async function createApp(options?: MoroOptions): Promise<Moro> {
  */
 export async function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'node' as const } };
+  applyEarlyLogLevel(mergedOptions);
   const config = await initializeConfigAsync(mergedOptions);
   return new Moro(mergedOptions, config);
 }
@@ -3386,6 +3402,7 @@ export async function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Pro
  */
 export async function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'vercel-edge' as const } };
+  applyEarlyLogLevel(mergedOptions);
   const config = await initializeConfigAsync(mergedOptions);
   return new Moro(mergedOptions, config);
 }
@@ -3396,6 +3413,7 @@ export async function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Pro
  */
 export async function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'aws-lambda' as const } };
+  applyEarlyLogLevel(mergedOptions);
   const config = await initializeConfigAsync(mergedOptions);
   return new Moro(mergedOptions, config);
 }
@@ -3406,6 +3424,7 @@ export async function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): P
  */
 export async function createAppWorker(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'cloudflare-workers' as const } };
+  applyEarlyLogLevel(mergedOptions);
   const config = await initializeConfigAsync(mergedOptions);
   return new Moro(mergedOptions, config);
 }

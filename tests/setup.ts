@@ -12,10 +12,12 @@ process.env.MORO_SERVER_HOST = 'localhost';
 
 // In CI or when running coverage, use fatal level to minimize logging and save memory
 // Otherwise use error level for minimal output
+// Note: we intentionally do NOT set MORO_LOG_LEVEL env var here — config-sources
+// writes it into config.logging.level, which leaks into tests that assert on
+// the resolved config's default values. Using logger.setLevel() directly is
+// enough to silence output without polluting the config system.
 if (process.env.CI === 'true' || process.argv.includes('--coverage')) {
-  process.env.MORO_LOGGER_LEVEL = 'fatal';
-  // Also disable the logger outputs completely to save memory
-  process.env.MORO_LOGGER_ENABLED = 'false';
+  logger.setLevel('fatal');
 
   // Completely disable the global logger to prevent memory accumulation
   // This won't affect tests because they don't assert on logger behavior
@@ -26,7 +28,7 @@ if (process.env.CI === 'true' || process.argv.includes('--coverage')) {
   logger.error = jest.fn();
   logger.fatal = jest.fn();
 } else {
-  process.env.MORO_LOGGER_LEVEL = 'error';
+  logger.setLevel('error');
 }
 
 // Extend Jest timeout for integration tests
