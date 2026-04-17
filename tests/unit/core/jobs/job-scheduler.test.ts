@@ -16,6 +16,7 @@ describe('JobScheduler', () => {
         maxRetries: 1,
         retryDelay: 50,
         timeout: 2000,
+        enableMemoryMonitoring: false, // process heap includes Jest + istanbul, not job work
       },
     });
   });
@@ -266,6 +267,7 @@ describe('JobScheduler', () => {
       const scheduler = new JobScheduler(logger, {
         maxConcurrentJobs: 1,
         enableLeaderElection: false,
+        executor: { enableMemoryMonitoring: false },
       });
 
       const lowJob = scheduler.registerJob(
