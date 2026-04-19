@@ -14,3 +14,4 @@ dist
 coverage/
 docs-*
 sampleApp
+retag-lastcommit.sh
