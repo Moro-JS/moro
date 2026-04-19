@@ -32,6 +32,7 @@ export class CORSCore {
   private options: CORSOptions;
   private cachedMethods: string;
   private cachedAllowedHeaders: string;
+  private wildcardCredentialsWarned = false;
 
   constructor(options: CORSOptions = {}) {
     this.options = {
@@ -110,11 +111,14 @@ export class CORSCore {
     // Credentials — guard against invalid credentials + wildcard combination (CORS spec violation)
     if (this.options.credentials) {
       if (originHeader === '*') {
-        logger.warn(
-          '[MoroJS Security] CORS credentials:true with origin:* is a spec violation — browsers will reject this. ' +
-            'Forcing credentials:false. Configure specific allowed origins for credential support.',
-          'CORSCore'
-        );
+        if (!this.wildcardCredentialsWarned) {
+          this.wildcardCredentialsWarned = true;
+          logger.warn(
+            '[MoroJS Security] CORS credentials:true with origin:* is a spec violation — browsers will reject this. ' +
+              'Forcing credentials:false. Configure specific allowed origins for credential support.',
+            'CORSCore'
+          );
+        }
       } else {
         res.setHeader('Access-Control-Allow-Credentials', 'true');
       }
