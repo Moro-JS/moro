@@ -25,6 +25,7 @@ export { http2 } from './http2/index.js';
 export { helmet } from './helmet/index.js';
 export { compression } from './compression/index.js';
 export { bodySize } from './body-size/index.js';
+export { json, urlencoded } from './body-parsers/index.js';
 export { staticFiles } from './static/index.js';
 export { upload } from './upload/index.js';
 export { template } from './template/index.js';

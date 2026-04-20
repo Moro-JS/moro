@@ -26,6 +26,9 @@ export class MoroHttpServer {
   private logger = createFrameworkLogger('HttpServer');
   private hookManager: any;
   private requestCounter = 0;
+  private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
+  private requestDecorations: Record<string, any> = {};
+  private responseDecorations: Record<string, any> = {};
 
   // Body size limits - defaults overridden by config in constructor
   private maxBodySize: number = 10 * 1024 * 1024; // Default 10MB (overridden by server.bodySizeLimit config)
@@ -94,6 +97,20 @@ export class MoroHttpServer {
   // Configure request tracking (ID generation)
   setRequestTracking(enabled: boolean): void {
     this.requestTrackingEnabled = enabled;
+  }
+
+  // Register a global error handler (called from Moro.setErrorHandler)
+  setErrorHandler(fn: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>): void {
+    this.errorHandler = fn;
+  }
+
+  // Apply per-request/response decoration maps (called from Moro.decorateRequest/Reply)
+  setRequestDecorations(decorations: Record<string, any>): void {
+    this.requestDecorations = decorations;
+  }
+
+  setResponseDecorations(decorations: Record<string, any>): void {
+    this.responseDecorations = decorations;
   }
 
   // Middleware management
@@ -289,6 +306,21 @@ export class MoroHttpServer {
         method: req.method,
         path: req.url,
       });
+
+      // User-registered global error handler takes precedence over the default 500.
+      if (this.errorHandler && !httpRes.headersSent) {
+        try {
+          const handlerResult = this.errorHandler(error, httpReq, httpRes);
+          if (handlerResult && typeof (handlerResult as any).then === 'function') {
+            await handlerResult;
+          }
+          if (httpRes.headersSent) return;
+        } catch (handlerErr) {
+          this.logger.error('Error handler itself threw', 'RequestHandler', {
+            error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+          });
+        }
+      }
 
       if (!httpRes.headersSent) {
         // Ensure response is properly enhanced before using custom methods
@@ -518,6 +550,110 @@ export class MoroHttpServer {
     } else {
       httpReq.cookies = {};
     }
+
+    // Per-request typed context bag
+    httpReq.context = {};
+
+    // Apply user-registered request decorations
+    for (const key in this.requestDecorations) {
+      (httpReq as any)[key] = this.requestDecorations[key];
+    }
+
+    // Express-compatible request helpers
+    httpReq.get = httpReq.header = (name: string): string | undefined => {
+      const lower = name.toLowerCase();
+      if (lower === 'referer' || lower === 'referrer') {
+        return (httpReq.headers.referer || httpReq.headers.referrer) as string | undefined;
+      }
+      const v = httpReq.headers[lower];
+      return Array.isArray(v) ? v[0] : v;
+    };
+
+    httpReq.is = (type: string): boolean => {
+      const ct = (httpReq.headers['content-type'] || '') as string;
+      if (!ct) return false;
+      const mime = ct.split(';')[0].trim().toLowerCase();
+      const t = type.toLowerCase();
+      if (t.indexOf('/') === -1) {
+        // e.g. 'json' → match */json or +json suffix
+        return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
+      }
+      if (t.endsWith('/*')) {
+        return mime.startsWith(t.slice(0, -1));
+      }
+      return mime === t;
+    };
+
+    httpReq.accepts = (types?: string | string[]): string | false => {
+      const accept = (httpReq.headers.accept || '*/*') as string;
+      if (!types) return accept;
+      const wanted = Array.isArray(types) ? types : [types];
+      if (accept === '*/*' || accept === '') return wanted[0] || false;
+      const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+      for (const w of wanted) {
+        const wl = w.toLowerCase();
+        const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
+        for (const at of acceptTypes) {
+          if (at === '*/*') return w;
+          if (at === wMime) return w;
+          if (at.endsWith('/*') && wMime.startsWith(at.slice(0, -1))) return w;
+        }
+      }
+      return false;
+    };
+
+    httpReq.acceptsLanguages = (langs?: string | string[]): string | false => {
+      const acceptLang = (httpReq.headers['accept-language'] || '') as string;
+      if (!langs) return acceptLang || false;
+      const wanted = Array.isArray(langs) ? langs : [langs];
+      if (!acceptLang) return wanted[0] || false;
+      // Parse with q values; sort by q desc to match Express's "best match wins"
+      const accepted = acceptLang
+        .split(',')
+        .map(s => {
+          const parts = s.trim().split(';');
+          const tag = parts[0].toLowerCase();
+          const qPart = parts.find(p => p.trim().startsWith('q='));
+          const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
+          return { tag, q: isNaN(q) ? 0 : q };
+        })
+        .filter(a => a.q > 0)
+        .sort((a, b) => b.q - a.q);
+      for (const { tag } of accepted) {
+        for (const w of wanted) {
+          const wl = w.toLowerCase();
+          if (tag === '*' || tag === wl || tag.split('-')[0] === wl.split('-')[0]) return w;
+        }
+      }
+      return false;
+    };
+
+    const host = (httpReq.headers.host || '') as string;
+    httpReq.hostname = host ? host.split(':')[0] : '';
+    const forwardedProto = httpReq.headers['x-forwarded-proto'] as string | undefined;
+    httpReq.protocol = forwardedProto
+      ? forwardedProto.split(',')[0].trim()
+      : (req.socket as any).encrypted
+        ? 'https'
+        : 'http';
+    httpReq.secure = httpReq.protocol === 'https';
+    const xrw = httpReq.headers['x-requested-with'] as string | undefined;
+    httpReq.xhr = !!xrw && xrw.toLowerCase() === 'xmlhttprequest';
+
+    httpReq.originalUrl = req.url || '';
+
+    const forwardedFor = httpReq.headers['x-forwarded-for'] as string | undefined;
+    httpReq.ips = forwardedFor
+      ? forwardedFor
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      : [];
+
+    const hostnameParts = httpReq.hostname.split('.');
+    // Matches Express: subdomains are parts before the last two (domain + tld),
+    // reversed (closest subdomain first).
+    httpReq.subdomains = hostnameParts.length > 2 ? hostnameParts.slice(0, -2).reverse() : [];
 
     return httpReq;
   }
@@ -930,6 +1066,171 @@ export class MoroHttpServer {
         httpRes.setHeader(name, [...values, ...newValues]);
       } else {
         httpRes.setHeader(name, value);
+      }
+      return httpRes;
+    };
+
+    // Per-response typed state bag (Express-compatible)
+    httpRes.locals = {};
+
+    // Apply user-registered response decorations
+    for (const key in this.responseDecorations) {
+      (httpRes as any)[key] = this.responseDecorations[key];
+    }
+
+    // Express-compatible response helpers
+    httpRes.set = (
+      field: string | Record<string, string | string[] | number>,
+      value?: string | string[] | number
+    ) => {
+      if (httpRes.headersSent) return httpRes;
+      if (typeof field === 'string') {
+        if (value !== undefined) {
+          httpRes.setHeader(field, value as any);
+        }
+      } else {
+        for (const key in field) {
+          httpRes.setHeader(key, field[key] as any);
+        }
+      }
+      return httpRes;
+    };
+
+    httpRes.get = (field: string) => {
+      return httpRes.getHeader(field) as any;
+    };
+
+    httpRes.append = (field: string, value: string | string[]) => {
+      return httpRes.appendHeader(field, value);
+    };
+
+    httpRes.type = (contentType: string) => {
+      if (httpRes.headersSent) return httpRes;
+      // If no "/" treat as shorthand (e.g. "json" → "application/json")
+      let ct = contentType;
+      if (ct.indexOf('/') === -1) {
+        const shorthands: Record<string, string> = {
+          json: 'application/json; charset=utf-8',
+          html: 'text/html; charset=utf-8',
+          text: 'text/plain; charset=utf-8',
+          txt: 'text/plain; charset=utf-8',
+          xml: 'application/xml',
+          js: 'application/javascript',
+          css: 'text/css; charset=utf-8',
+          form: 'application/x-www-form-urlencoded',
+        };
+        ct = shorthands[ct.toLowerCase()] || `application/${ct}`;
+      }
+      httpRes.setHeader('Content-Type', ct);
+      return httpRes;
+    };
+
+    httpRes.sendStatus = (code: number) => {
+      if (httpRes.headersSent) return;
+      httpRes.statusCode = code;
+      const messages: Record<number, string> = {
+        200: 'OK',
+        201: 'Created',
+        202: 'Accepted',
+        204: 'No Content',
+        301: 'Moved Permanently',
+        302: 'Found',
+        304: 'Not Modified',
+        400: 'Bad Request',
+        401: 'Unauthorized',
+        403: 'Forbidden',
+        404: 'Not Found',
+        409: 'Conflict',
+        410: 'Gone',
+        422: 'Unprocessable Entity',
+        429: 'Too Many Requests',
+        500: 'Internal Server Error',
+        502: 'Bad Gateway',
+        503: 'Service Unavailable',
+      };
+      const body = messages[code] || String(code);
+      httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      httpRes.end(body);
+    };
+
+    httpRes.location = (url: string) => {
+      if (httpRes.headersSent) return httpRes;
+      const safe = url.replace(/[\r\n]/g, '');
+      httpRes.setHeader('Location', safe);
+      return httpRes;
+    };
+
+    httpRes.vary = (field: string | string[]) => {
+      if (httpRes.headersSent) return httpRes;
+      const existing = httpRes.getHeader('Vary');
+      const existingList = existing
+        ? String(existing)
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+        : [];
+      const incoming = Array.isArray(field) ? field : [field];
+      for (const f of incoming) {
+        if (!existingList.some(e => e.toLowerCase() === f.toLowerCase())) {
+          existingList.push(f);
+        }
+      }
+      httpRes.setHeader('Vary', existingList.join(', '));
+      return httpRes;
+    };
+
+    httpRes.attachment = (filename?: string) => {
+      if (httpRes.headersSent) return httpRes;
+      if (filename) {
+        const safeName = filename.replace(/[\r\n"]/g, '');
+        httpRes.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+        // Set Content-Type from extension if not already set
+        if (!httpRes.getHeader('Content-Type')) {
+          // fire-and-forget mime lookup; not awaited to keep signature chainable
+          this.getMimeType(filename.substring(filename.lastIndexOf('.'))).then(mime => {
+            if (!httpRes.getHeader('Content-Type') && !httpRes.headersSent) {
+              httpRes.setHeader('Content-Type', mime);
+            }
+          });
+        }
+      } else {
+        httpRes.setHeader('Content-Disposition', 'attachment');
+      }
+      return httpRes;
+    };
+
+    httpRes.download = async (filePath: string, filename?: string) => {
+      httpRes.attachment(filename || filePath.split('/').pop());
+      return httpRes.sendFile(filePath);
+    };
+
+    httpRes.format = (handlers: Record<string, () => any | Promise<any>>) => {
+      const types = Object.keys(handlers).filter(k => k !== 'default');
+      const matched = req.accepts(types);
+      const chosen = matched ? handlers[matched as string] : handlers.default;
+      if (!chosen) {
+        httpRes.statusCode = 406;
+        httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        httpRes.end('Not Acceptable');
+        return;
+      }
+      httpRes.vary('Accept');
+      if (matched && typeof matched === 'string') {
+        httpRes.type(matched);
+      }
+      chosen();
+    };
+
+    httpRes.links = (links: Record<string, string>) => {
+      if (httpRes.headersSent) return httpRes;
+      const parts: string[] = [];
+      for (const rel in links) {
+        parts.push(`<${links[rel]}>; rel="${rel}"`);
+      }
+      if (parts.length > 0) {
+        const existing = httpRes.getHeader('Link');
+        const combined = existing ? `${existing}, ${parts.join(', ')}` : parts.join(', ');
+        httpRes.setHeader('Link', combined);
       }
       return httpRes;
     };
@@ -1383,50 +1684,61 @@ export class MoroHttpServer {
     return route;
   }
 
-  // Optimized middleware execution with reduced Promise allocation
+  // Middleware execution with Express-compatible error propagation.
+  // Supports: 3-arg (req, res, next), 4-arg (err, req, res, next) error middlewares,
+  // and next(err) to skip forward to the next error middleware.
   private async executeMiddleware(
     middleware: Middleware[],
     req: HttpRequest,
     res: HttpResponse
   ): Promise<void> {
     const len = middleware.length;
+    let activeError: any = undefined;
+
     for (let i = 0; i < len; i++) {
-      // Short-circuit if response already sent
       if (res.headersSent) return;
 
-      const mw = middleware[i];
+      const mw = middleware[i] as any;
+      const isErrorHandler = mw.length >= 4;
 
-      await new Promise<void>((resolve, reject) => {
+      // Non-error middleware is skipped while an error is active; error middleware
+      // is skipped while no error is active. Matches Express semantics.
+      if (activeError !== undefined && !isErrorHandler) continue;
+      if (activeError === undefined && isErrorHandler) continue;
+
+      activeError = await new Promise<any>(resolve => {
         let resolved = false;
 
-        // Reuse next function to reduce allocations
-        const next = () => {
+        const next = (err?: any) => {
           if (resolved) return;
           resolved = true;
-          resolve();
+          resolve(err);
         };
 
         try {
-          const result = mw(req, res, next);
+          const result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
 
-          // Handle async middleware - optimized with early check
-          if (result && typeof result.then === 'function') {
+          if (result && typeof (result as any).then === 'function') {
             (result as Promise<void>)
               .then(() => {
                 if (!resolved) next();
               })
-              .catch(reject);
+              .catch((err: any) => {
+                if (!resolved) next(err);
+              });
           } else if (!resolved) {
-            // Sync middleware that didn't call next
             next();
           }
-        } catch (error) {
-          if (!resolved) {
-            resolved = true;
-            reject(error);
-          }
+        } catch (err) {
+          if (!resolved) next(err);
         }
       });
+    }
+
+    // If an error is still unhandled after the chain, re-throw so the top-level
+    // catch in handleRequest can invoke the registered errorHandler / default 500.
+    if (activeError !== undefined) {
+      throw activeError;
     }
   }
 

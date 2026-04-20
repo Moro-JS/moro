@@ -318,6 +318,14 @@ export type {
 export { MiddlewareManager } from './core/middleware/index.js';
 export type { MiddlewareInterface, MoroMiddleware } from './core/middleware/index.js';
 
+// Body parsers
+export { json, urlencoded } from './core/middleware/built-in/body-parsers/index.js';
+
+// Standalone router — `createRouter()` is the canonical factory; `Router` is an
+// alias kept callable without `new` so Express-style named imports
+// (`import { Router } from '...'`; `const r = Router();`) work unchanged.
+export { createRouter, createRouter as Router, MoroRouter } from './core/routing/create-router.js';
+
 // Types
 export type * from './types/core.js';
 export type * from './types/http.js';

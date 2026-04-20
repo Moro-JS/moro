@@ -142,6 +142,32 @@ export class RouteGroup {
     return this.app.patch(this.prefixPath(path)) as UnifiedRouteBuilder;
   }
 
+  head(path: string): UnifiedRouteBuilder;
+  head(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  head(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('HEAD', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.head(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  options(path: string): UnifiedRouteBuilder;
+  options(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  options(path: string, ...args: any[]): UnifiedRouteBuilder | this {
+    if (args.length > 0) {
+      (this.app as any).addRoute('OPTIONS', this.prefixPath(path), args[0], args[1]);
+      return this;
+    }
+    return this.app.options(this.prefixPath(path)) as UnifiedRouteBuilder;
+  }
+
+  /** Register a handler for all HTTP methods on the given path (Express-compatible). */
+  all(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this {
+    this.app.all(this.prefixPath(path), handler, options);
+    return this;
+  }
+
   group(prefix: string, callback: (group: RouteGroup) => void): this {
     const nested = new RouteGroup(this.prefixPath(prefix), this.app);
     callback(nested);
@@ -210,6 +236,13 @@ export class Moro extends EventEmitter {
   private mailManager?: any; // Use any to avoid import dependency
   private mailInitialized = false;
   private mailConfig?: any; // Store config for lazy initialization
+  // User-registered shutdown hooks (run during close())
+  private closeHooks: Array<() => any | Promise<any>> = [];
+  // User-registered global error handler
+  private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
+  // Decorations applied to every request/response/app
+  private requestDecorations: Record<string, any> = {};
+  private responseDecorations: Record<string, any> = {};
 
   constructor(options: MoroOptions = {}, preloadedConfig?: Readonly<AppConfig>) {
     super(); // Call EventEmitter constructor
@@ -461,6 +494,45 @@ export class Moro extends EventEmitter {
     return this.unifiedRouter.patch(path);
   }
 
+  head(path: string): UnifiedRouteBuilder;
+  head(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  head(
+    path: string,
+    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    options?: any
+  ): UnifiedRouteBuilder | this {
+    if (handler) {
+      return this.addRoute('HEAD', path, handler, options);
+    }
+    return this.unifiedRouter.head(path);
+  }
+
+  options(path: string): UnifiedRouteBuilder;
+  options(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  options(
+    path: string,
+    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    options?: any
+  ): UnifiedRouteBuilder | this {
+    if (handler) {
+      return this.addRoute('OPTIONS', path, handler, options);
+    }
+    return this.unifiedRouter.options(path);
+  }
+
+  /**
+   * Register a handler for all HTTP methods on the given path (Express-compatible).
+   * Handler is required — unlike the single-method registrations, there's no builder
+   * form since `all()` fans out across methods.
+   */
+  all(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this {
+    const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
+    for (const method of methods) {
+      this.addRoute(method, path, handler, options);
+    }
+    return this;
+  }
+
   // Schema-first route method
   route(schema: RouteSchema): void {
     // Use unified router for schema-first registration
@@ -576,6 +648,29 @@ export class Moro extends EventEmitter {
 
   // Universal middleware system - seamlessly handles standard and advanced middleware
   async use(middlewareOrFunction: any, config?: any) {
+    // `app.use(pathPrefix, router)` — mount a createRouter() instance at the given prefix
+    if (
+      typeof middlewareOrFunction === 'string' &&
+      config &&
+      typeof config === 'object' &&
+      config._morojsRouter === true &&
+      typeof config.mount === 'function'
+    ) {
+      config.mount(this, middlewareOrFunction);
+      return this;
+    }
+
+    // `app.use(router)` — mount a createRouter() instance at the root
+    if (
+      middlewareOrFunction &&
+      typeof middlewareOrFunction === 'object' &&
+      middlewareOrFunction._morojsRouter === true &&
+      typeof middlewareOrFunction.mount === 'function'
+    ) {
+      middlewareOrFunction.mount(this, '');
+      return this;
+    }
+
     // Standard middleware integration (req, res, next pattern)
     if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length >= 3) {
       this.coreFramework.addMiddleware(middlewareOrFunction);
@@ -627,6 +722,72 @@ export class Moro extends EventEmitter {
   // Plugin compatibility layer - unified middleware interface
   async plugin(middleware: any, options?: any): Promise<this> {
     return this.use(middleware, options);
+  }
+
+  /**
+   * Register a shutdown hook. Hooks run (in registration order) during app.close(),
+   * before Moro tears down its own subsystems. Use for closing DB pools, external
+   * connections, flushing metrics, etc.
+   */
+  onClose(fn: () => any | Promise<any>): this {
+    this.closeHooks.push(fn);
+    return this;
+  }
+
+  /**
+   * Register a global error handler. Invoked when a middleware/handler throws or
+   * calls next(err), and no 4-arg error middleware has already handled it. Coexists
+   * with Express-style 4-arg error middlewares.
+   */
+  setErrorHandler(fn: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>): this {
+    this.errorHandler = fn;
+    const httpServer = (this.coreFramework as any)?.httpServer;
+    if (httpServer?.setErrorHandler) {
+      httpServer.setErrorHandler(fn);
+    }
+    this.unifiedRouter.setErrorHandler(fn as any);
+    return this;
+  }
+
+  /** Internal: retrieve the registered error handler (used by the HTTP server). */
+  getErrorHandler():
+    | ((err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>)
+    | undefined {
+    return this.errorHandler;
+  }
+
+  /**
+   * Decorate every request with a property. The value is assigned by reference to
+   * each incoming request (use a per-request middleware to set per-request values).
+   */
+  decorateRequest(name: string, value: any): this {
+    this.requestDecorations[name] = value;
+    const httpServer = (this.coreFramework as any)?.httpServer;
+    if (httpServer?.setRequestDecorations) {
+      httpServer.setRequestDecorations(this.requestDecorations);
+    }
+    return this;
+  }
+
+  /** Decorate every response with a property (see decorateRequest). */
+  decorateReply(name: string, value: any): this {
+    this.responseDecorations[name] = value;
+    const httpServer = (this.coreFramework as any)?.httpServer;
+    if (httpServer?.setResponseDecorations) {
+      httpServer.setResponseDecorations(this.responseDecorations);
+    }
+    return this;
+  }
+
+  /** Alias for decorateReply (Fastify-compatible name). */
+  decorateResponse(name: string, value: any): this {
+    return this.decorateReply(name, value);
+  }
+
+  /** Decorate the app instance itself. */
+  decorate(name: string, value: any): this {
+    (this as any)[name] = value;
+    return this;
   }
 
   // Module loading with events
@@ -1380,6 +1541,20 @@ export class Moro extends EventEmitter {
             res.json(result);
           }
         } catch (error) {
+          // Route through user-registered error handler first, if any.
+          if (this.errorHandler && !res.headersSent) {
+            try {
+              const handlerResult = this.errorHandler(error, req, res);
+              if (handlerResult && typeof (handlerResult as any).then === 'function') {
+                await handlerResult;
+              }
+              if (res.headersSent) return;
+            } catch (handlerErr) {
+              this.logger.error('Error handler itself threw', 'RequestHandler', {
+                error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+              });
+            }
+          }
           if (!res.headersSent) {
             res.status(500).json({
               success: false,
@@ -1988,6 +2163,18 @@ export class Moro extends EventEmitter {
    */
   async close(): Promise<void> {
     this.logger.debug('Closing Moro application...');
+
+    // Run user-registered onClose hooks first, while subsystems are still alive.
+    // Failures in one hook don't prevent subsequent hooks or Moro's own teardown.
+    if (this.closeHooks.length > 0) {
+      for (const hook of this.closeHooks) {
+        try {
+          await hook();
+        } catch (err) {
+          this.logger.error(`onClose hook failed: ${String(err)}`);
+        }
+      }
+    }
 
     // Shutdown worker threads first (fastest)
     try {

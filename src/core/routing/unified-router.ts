@@ -248,6 +248,34 @@ export class UnifiedRouter {
     logger.debug('UnifiedRouter initialized', 'Initialization');
   }
 
+  // User-registered global error handler (set via Moro.setErrorHandler)
+  private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
+
+  setErrorHandler(fn: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>): void {
+    this.errorHandler = fn;
+  }
+
+  // Invoke the registered error handler (if any). Returns true if it produced a response.
+  private async invokeErrorHandler(
+    err: any,
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<boolean> {
+    if (!this.errorHandler || res.headersSent) return false;
+    try {
+      const result = this.errorHandler(err, req, res);
+      if (result && typeof (result as any).then === 'function') {
+        await result;
+      }
+      return res.headersSent;
+    } catch (handlerErr) {
+      logger.error('Error handler itself threw', 'Execution', {
+        error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+      });
+      return false;
+    }
+  }
+
   /**
    * Get singleton instance (optional - can still create new instances)
    */
@@ -522,8 +550,9 @@ export class UnifiedRouter {
                   }
                   return true;
                 })
-                .catch(() => {
-                  if (!res.headersSent) {
+                .catch(async err => {
+                  const handled = await this.invokeErrorHandler(err, req, res);
+                  if (!handled && !res.headersSent) {
                     res.status(500).json({ error: 'Internal server error' });
                   }
                   return true;
@@ -534,11 +563,14 @@ export class UnifiedRouter {
               }
               return true;
             }
-          } catch {
-            if (!res.headersSent) {
-              res.status(500).json({ error: 'Internal server error' });
-            }
-            return true;
+          } catch (err) {
+            return (async () => {
+              const handled = await this.invokeErrorHandler(err, req, res);
+              if (!handled && !res.headersSent) {
+                res.status(500).json({ error: 'Internal server error' });
+              }
+              return true;
+            })();
           }
         }
 
@@ -569,8 +601,9 @@ export class UnifiedRouter {
                 }
                 return true;
               })
-              .catch(() => {
-                if (!res.headersSent) {
+              .catch(async err => {
+                const handled = await this.invokeErrorHandler(err, req, res);
+                if (!handled && !res.headersSent) {
                   res.status(500).json({ error: 'Internal server error' });
                 }
                 return true;
@@ -581,11 +614,14 @@ export class UnifiedRouter {
             }
             return true;
           }
-        } catch {
-          if (!res.headersSent) {
-            res.status(500).json({ error: 'Internal server error' });
-          }
-          return true;
+        } catch (err) {
+          return (async () => {
+            const handled = await this.invokeErrorHandler(err, req, res);
+            if (!handled && !res.headersSent) {
+              res.status(500).json({ error: 'Internal server error' });
+            }
+            return true;
+          })();
         }
       }
 
@@ -643,7 +679,8 @@ export class UnifiedRouter {
         route: `${route.schema.method} ${route.schema.path}`,
       });
 
-      if (!res.headersSent) {
+      const handled = await this.invokeErrorHandler(error, req, res);
+      if (!handled && !res.headersSent) {
         res.status(500).json({
           success: false,
           error: 'Internal server error',

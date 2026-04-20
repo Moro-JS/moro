@@ -11,6 +11,24 @@ export interface HttpRequest extends IncomingMessage {
   requestId: string;
   cookies?: Record<string, string>;
   files?: Record<string, any>;
+
+  // Per-request typed context (pass data between middlewares without monkey-patching req)
+  context: Record<string, any>;
+
+  // Express-compatible helpers
+  get(name: string): string | undefined;
+  header(name: string): string | undefined;
+  is(type: string): boolean;
+  accepts(types?: string | string[]): string | false;
+  acceptsLanguages(langs?: string | string[]): string | false;
+  hostname: string;
+  protocol: string;
+  secure: boolean;
+  xhr: boolean;
+  originalUrl: string;
+  ips: string[];
+  subdomains: string[];
+
   [key: string]: any;
 }
 
@@ -44,6 +62,25 @@ export interface MoroResponseMethods {
   redirect(url: string, status?: number): void;
   sendFile(filePath: string): Promise<void>;
   render?(template: string, data?: any): Promise<void>;
+
+  // Per-response typed state bag (Express-compatible res.locals)
+  locals: Record<string, any>;
+
+  // Express-compatible response helpers
+  set(
+    field: string | Record<string, string | string[] | number>,
+    value?: string | string[] | number
+  ): HttpResponse;
+  get(field: string): string | number | string[] | undefined;
+  append(field: string, value: string | string[]): HttpResponse;
+  type(contentType: string): HttpResponse;
+  sendStatus(code: number): void;
+  location(url: string): HttpResponse;
+  vary(field: string | string[]): HttpResponse;
+  links(links: Record<string, string>): HttpResponse;
+  attachment(filename?: string): HttpResponse;
+  download(filePath: string, filename?: string): Promise<void>;
+  format(handlers: Record<string, () => any | Promise<any>>): void;
 
   // Header management utilities
   hasHeader(name: string): boolean;
