@@ -203,12 +203,6 @@
 
 - feat: add standardized response methods with performance optimization
 
-## [1.8.0] - 2025-11-10
-
-### Maintenance
-
-- Version bump to 1.8.0
-
 ## [1.7.0] - 2025-11-10
 
 ### Added
