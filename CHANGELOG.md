@@ -1,3 +1,50 @@
+## [1.7.26] - 2026-04-20
+
+### Added
+
+#### Request & response helpers
+
+- `req.get(name)` / `req.header(name)` — header accessor
+- `req.is(type)` — content-type matcher
+- `req.accepts(types?)` / `req.acceptsLanguages(langs?)` — content/language negotiation (respects `q` quality values)
+- `req.hostname`, `req.protocol`, `req.secure`, `req.xhr`
+- `req.originalUrl`, `req.ips` (parsed `X-Forwarded-For`), `req.subdomains`
+- `res.set` / `res.get` / `res.append` — unified header helpers
+- `res.type(ct)` — content-type shorthand (`'json'`, `'html'`, `'text'`, …)
+- `res.sendStatus(code)`, `res.location(url)`, `res.vary(field)`, `res.links({ rel: url })`
+- `res.attachment(filename?)`, `res.download(path, filename?)`
+- `res.format({ 'text/html': fn, 'application/json': fn, default: fn })` — content negotiation with a 406 fallback
+
+#### Routing
+
+- `app.head(path, ...)` and `app.options(path, ...)` route methods
+- `app.all(path, handler)` — registers a handler across all 7 HTTP methods
+- `createRouter()` and `MoroRouter` — standalone router mountable via `app.use(prefix, router)` or `router.mount(app, prefix)`
+- `Router` exported as an alias for `createRouter` (callable without `new`)
+- `json()` and `urlencoded()` body-parser middlewares in `src/core/middleware/built-in/body-parsers/`
+
+#### Error propagation
+
+- 4-arg error middleware support: `(err, req, res, next) => {}`
+- `next(err)` inside a middleware routes forward to the next error middleware
+- `app.setErrorHandler((err, req, res) => {})` — dedicated typed global error handler, integrates with all three request paths (UnifiedRouter fast/slow paths, direct-route wrapper, HTTP-server top-level catch)
+
+#### Native lifecycle & state
+
+- `req.context: Record<string, any>` — per-request typed state bag, fresh per request
+- `res.locals: Record<string, any>` — per-response typed state bag
+- `app.onClose(fn)` — register shutdown hooks; run in registration order inside `app.close()` before Moro tears down its own subsystems
+- `app.decorate(name, value)`, `app.decorateRequest(name, value)`, `app.decorateReply(name, value)` (+ `decorateResponse` alias) — typed extension pattern applied to every request/response
+
+### Tests
+
+- 20 new integration cases in `tests/integration/compat/express-signatures.test.ts`
+- Full suite: 766 passing, no regressions
+
+### Migration notes
+
+Existing MoroJS code is unaffected. Express users migrating to MoroJS now have a near-mechanical path — most diffs reduce to swapping the import source and the `express()` / `express.Router()` / `express.json()` tokens.
+
 ## [1.7.25] - 2026-04-17
 
 ### Added
