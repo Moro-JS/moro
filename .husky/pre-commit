@@ -1,5 +1,12 @@
 #!/bin/sh
 
+# nvm refuses to load when npm_config_prefix is set (npm sets this when
+# running scripts under a Homebrew-installed node). Clear it before sourcing
+# nvm so commits triggered from `npm run` (e.g. release scripts) don't fail
+# with "nvm is not compatible with the npm_config_prefix environment variable".
+unset npm_config_prefix
+unset PREFIX
+
 # Load nvm if it exists
 if [ -f ~/.nvm/nvm.sh ]; then
   . ~/.nvm/nvm.sh
