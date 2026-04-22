@@ -1,10 +1,7 @@
 // Template Rendering Core Logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import { createFrameworkLogger } from '../../../logger/index.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-
-const logger = createFrameworkLogger('TemplateCore');
 
 const ESCAPE_MAP: Record<string, string> = {
   '&': '&amp;',
@@ -18,10 +15,11 @@ function escapeHtml(str: string): string {
   return str.replace(/[&<>"']/g, char => ESCAPE_MAP[char]);
 }
 
-// Pre-compiled regex patterns — avoids recompilation on every render call
-const RE_ESCAPED_VAR = /\{\{=([\w.]+)\}\}/g;
-const RE_SIMPLE_VAR = /\{\{(\w+)\}\}/g;
-const RE_NESTED_VAR = /\{\{([\w.]+)\}\}/g;
+// Pre-compiled regex patterns — avoids recompilation on every render call.
+// Triple-brace {{{var}}} is raw output; double-brace {{var}} is HTML-escaped.
+// Triple MUST be matched before double to avoid double consuming its braces.
+const RE_RAW_VAR = /\{\{\{([\w.]+)\}\}\}/g;
+const RE_VAR = /\{\{([\w.]+)\}\}/g;
 const RE_EACH_BLOCK = /\{\{#each (\w+)\}\}(.*?)\{\{\/each\}\}/gs;
 const RE_IF_BLOCK = /\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/gs;
 
@@ -43,7 +41,6 @@ export class TemplateCore {
   private cache: boolean;
   private defaultLayout?: string;
   private templateCache = new Map<string, string>();
-  private deprecationWarned = false;
 
   constructor(options: TemplateOptions) {
     this.views = path.resolve(options.views);
@@ -56,6 +53,13 @@ export class TemplateCore {
     res.render = async (template: string, data: any = {}) => {
       try {
         const templatePath = path.join(this.views, `${template}.html`);
+
+        // Security: prevent directory traversal via user-controlled template names.
+        const viewsWithSep = this.views.endsWith(path.sep) ? this.views : this.views + path.sep;
+        if (!templatePath.startsWith(viewsWithSep)) {
+          res.status(403).json({ success: false, error: 'Forbidden' });
+          return;
+        }
 
         let templateContent: string;
 
@@ -96,35 +100,17 @@ export class TemplateCore {
   private renderTemplate(content: string, data: any): string {
     let rendered = content;
 
-    // Handle HTML-escaped variable substitution: {{=variable}} (safe output)
-    rendered = rendered.replace(RE_ESCAPED_VAR, (match: string, key: string) => {
-      const value = resolveNestedValue(data, key);
-      return value !== undefined ? escapeHtml(String(value)) : match;
-    });
-
-    // Handle basic variable substitution (unescaped — existing behavior preserved)
-    rendered = rendered.replace(RE_SIMPLE_VAR, (match: string, key: string) => {
-      if (data[key] !== undefined) {
-        if (!this.deprecationWarned) {
-          logger.warn(
-            '[MoroJS Security] Template uses unescaped interpolation {{' +
-              key +
-              '}}. Use {{=' +
-              key +
-              '}} for HTML-escaped output. Raw interpolation will be deprecated in a future major version.',
-            'TemplateCore'
-          );
-          this.deprecationWarned = true;
-        }
-        return String(data[key]);
-      }
-      return match;
-    });
-
-    // Handle nested object properties like {{user.name}} (unescaped — existing behavior)
-    rendered = rendered.replace(RE_NESTED_VAR, (match: string, key: string) => {
+    // Raw output: {{{variable}}} — inserted verbatim. Must run before {{var}}
+    // so the outer braces of the triple form aren't consumed as a double match.
+    rendered = rendered.replace(RE_RAW_VAR, (match: string, key: string) => {
       const value = resolveNestedValue(data, key);
       return value !== undefined ? String(value) : match;
+    });
+
+    // Default: {{variable}} is HTML-escaped (Mustache/Handlebars convention).
+    rendered = rendered.replace(RE_VAR, (match: string, key: string) => {
+      const value = resolveNestedValue(data, key);
+      return value !== undefined ? escapeHtml(String(value)) : match;
     });
 
     // Handle loops: {{#each items}}{{name}}{{/each}}
@@ -135,13 +121,15 @@ export class TemplateCore {
       return array
         .map(item => {
           let itemTemplate = template;
-          // Support {{=key}} (escaped) inside loops
-          itemTemplate = itemTemplate.replace(RE_ESCAPED_VAR, (match: string, key: string) => {
-            return item[key] !== undefined ? escapeHtml(String(item[key])) : match;
+          // {{{key}}} raw inside loops
+          itemTemplate = itemTemplate.replace(RE_RAW_VAR, (match: string, key: string) => {
+            const value = resolveNestedValue(item, key);
+            return value !== undefined ? String(value) : match;
           });
-          // Support {{key}} (unescaped) inside loops
-          itemTemplate = itemTemplate.replace(RE_SIMPLE_VAR, (match: string, key: string) => {
-            return item[key] !== undefined ? String(item[key]) : match;
+          // {{key}} escaped inside loops
+          itemTemplate = itemTemplate.replace(RE_VAR, (match: string, key: string) => {
+            const value = resolveNestedValue(item, key);
+            return value !== undefined ? escapeHtml(String(value)) : match;
           });
           return itemTemplate;
         })

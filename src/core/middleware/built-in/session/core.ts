@@ -185,7 +185,6 @@ export class SessionCore {
     this.options = {
       store: 'memory',
       name: 'connect.sid',
-      secret: 'moro-session-secret',
       rolling: false,
       resave: false,
       saveUninitialized: false,

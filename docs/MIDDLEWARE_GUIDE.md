@@ -684,10 +684,15 @@ app.use(
 
 **Template Syntax (Moro Engine):**
 
+Values are **HTML-escaped by default** (Mustache/Handlebars convention). Use the triple-brace form `{{{var}}}` to emit raw HTML when you trust the source.
+
 ```html
-<!-- variables -->
+<!-- variables (HTML-escaped) -->
 <h1>{{title}}</h1>
 <p>{{user.name}}</p>
+
+<!-- raw output — only use with trusted, pre-sanitized HTML -->
+<div>{{{trustedHtml}}}</div>
 
 <!-- loops -->
 {{#each items}}
@@ -697,8 +702,6 @@ app.use(
 <!-- conditionals -->
 {{#if user}}
 <p>Welcome, {{user.name}}</p>
-{{else}}
-<p>Please log in</p>
 {{/if}}
 ```
 

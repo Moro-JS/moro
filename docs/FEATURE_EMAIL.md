@@ -20,6 +20,7 @@ Add production-ready email support to MoroJS following the framework's adapter p
 ## Core Architecture
 
 ### File Structure
+
 ```
 src/core/mail/
 ├── index.ts                      # Public exports (ESM)
@@ -43,26 +44,31 @@ Note: All imports use .js extension (e.g., './mail-manager.js')
 ### Adapters
 
 **NodemailerAdapter** (Default)
+
 - Package: `nodemailer`
 - Use case: SMTP, Gmail, custom mail servers
 - Features: Universal SMTP support
 
 **SendGridAdapter**
+
 - Package: `@sendgrid/mail`
 - Use case: SendGrid service
 - Features: Templates, analytics, deliverability
 
 **SESAdapter**
+
 - Package: `@aws-sdk/client-ses`
 - Use case: AWS ecosystem
 - Features: High volume, cost-effective
 
 **ResendAdapter**
+
 - Package: `resend`
 - Use case: Modern email API
 - Features: Simple API, developer-friendly
 
 **ConsoleAdapter** (Built-in)
+
 - Package: None (built-in)
 - Use case: Development and testing
 - Features: Logs to console
@@ -78,7 +84,7 @@ app.mailInit({
   adapter: 'nodemailer',
   from: {
     name: 'My App',
-    email: 'noreply@myapp.com'
+    email: 'noreply@myapp.com',
   },
   connection: {
     host: 'smtp.gmail.com',
@@ -86,18 +92,18 @@ app.mailInit({
     secure: false,
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD
-    }
+      pass: process.env.EMAIL_PASSWORD,
+    },
   },
   templates: {
     path: './emails',
     engine: 'moro', // or 'handlebars', 'ejs'
-    cache: true
+    cache: true,
   },
   queue: {
     enabled: true,
-    name: 'emails'
-  }
+    name: 'emails',
+  },
 });
 ```
 
@@ -109,7 +115,7 @@ await app.sendMail({
   to: 'user@example.com',
   subject: 'Welcome',
   text: 'Welcome to our app!',
-  html: '<h1>Welcome to our app!</h1>'
+  html: '<h1>Welcome to our app!</h1>',
 });
 
 // With template
@@ -119,8 +125,8 @@ await app.sendMail({
   template: 'password-reset',
   data: {
     name: 'John',
-    resetUrl: 'https://myapp.com/reset/token123'
-  }
+    resetUrl: 'https://myapp.com/reset/token123',
+  },
 });
 
 // With attachments
@@ -132,22 +138,23 @@ await app.sendMail({
   attachments: [
     {
       filename: 'invoice.pdf',
-      content: pdfBuffer
-    }
-  ]
+      content: pdfBuffer,
+    },
+  ],
 });
 
 // Batch emails
 await app.sendBulkMail([
   { to: 'user1@example.com', subject: 'Hello', text: 'Hi!' },
-  { to: 'user2@example.com', subject: 'Hello', text: 'Hi!' }
+  { to: 'user2@example.com', subject: 'Hello', text: 'Hi!' },
 ]);
 ```
 
 ### Template System
 
 ```typescript
-// Built-in Moro template syntax
+// Built-in Moro template syntax.
+// Values are HTML-escaped by default; use {{{var}}} for raw output.
 // emails/welcome.html
 `
 <h1>Welcome {{name}}!</h1>
@@ -160,7 +167,7 @@ await app.sendBulkMail([
 {{#each features}}
   <li>{{name}}: {{description}}</li>
 {{/each}}
-`
+`;
 
 // Use template
 await app.sendMail({
@@ -170,8 +177,8 @@ await app.sendMail({
     name: user.name,
     appName: 'My App',
     isPremium: user.plan === 'premium',
-    features: user.features
-  }
+    features: user.features,
+  },
 });
 ```
 
@@ -180,6 +187,7 @@ await app.sendMail({
 ## Optional Dependencies
 
 ### package.json
+
 ```json
 {
   "peerDependencies": {
@@ -202,6 +210,7 @@ await app.sendMail({
 ```
 
 ### Dependency Detection (ESM)
+
 - Use `isPackageAvailable('nodemailer')` before loading
 - Throw helpful error with install instructions if missing
 - Lazy load with `resolveUserPackage()` and **dynamic import** (`await import()`)
@@ -225,6 +234,7 @@ async function loadNodemailer() {
 ## Features
 
 ### Core Capabilities
+
 - ✅ Multiple provider support
 - ✅ Template rendering (Moro, Handlebars, EJS)
 - ✅ Attachment support
@@ -234,6 +244,7 @@ async function loadNodemailer() {
 - ✅ Reply-to configuration
 
 ### Template Features
+
 - ✅ Variable interpolation
 - ✅ Conditionals (if/else)
 - ✅ Loops (each)
@@ -242,6 +253,7 @@ async function loadNodemailer() {
 - ✅ Custom helpers
 
 ### Async Processing
+
 - ✅ Queue integration
 - ✅ Retry on failure
 - ✅ Batch sending
@@ -249,12 +261,14 @@ async function loadNodemailer() {
 - ✅ Scheduled sending
 
 ### Monitoring
+
 - ✅ Send success/failure tracking
 - ✅ Delivery status (if supported by provider)
 - ✅ Event emission
 - ✅ Error logging
 
 ### Moro Integration
+
 - ✅ Works with message queue
 - ✅ Event bus integration
 - ✅ Logger integration
@@ -266,8 +280,10 @@ async function loadNodemailer() {
 ## Use Cases
 
 ### User Registration
+
 ```typescript
-app.post('/register')
+app
+  .post('/register')
   .body(RegisterSchema)
   .handler(async (req, res) => {
     const user = await createUser(req.body);
@@ -278,8 +294,8 @@ app.post('/register')
       template: 'welcome',
       data: {
         name: user.name,
-        verifyUrl: generateVerifyUrl(user)
-      }
+        verifyUrl: generateVerifyUrl(user),
+      },
     });
 
     return { success: true };
@@ -287,8 +303,10 @@ app.post('/register')
 ```
 
 ### Password Reset
+
 ```typescript
-app.post('/forgot-password')
+app
+  .post('/forgot-password')
   .body(z.object({ email: z.string().email() }))
   .handler(async (req, res) => {
     const user = await findUser(req.body.email);
@@ -300,8 +318,8 @@ app.post('/forgot-password')
       data: {
         name: user.name,
         resetUrl: `https://myapp.com/reset/${token}`,
-        expiresIn: '1 hour'
-      }
+        expiresIn: '1 hour',
+      },
     });
 
     return { success: true };
@@ -309,6 +327,7 @@ app.post('/forgot-password')
 ```
 
 ### Transactional Emails
+
 ```typescript
 // Order confirmation
 await app.sendMail({
@@ -318,18 +337,19 @@ await app.sendMail({
     orderNumber: order.id,
     items: order.items,
     total: order.total,
-    trackingUrl: order.trackingUrl
+    trackingUrl: order.trackingUrl,
   },
   attachments: [
     {
       filename: 'invoice.pdf',
-      content: await generateInvoice(order)
-    }
-  ]
+      content: await generateInvoice(order),
+    },
+  ],
 });
 ```
 
 ### Bulk/Newsletter Emails
+
 ```typescript
 // Send to subscribers (queued in batches)
 const subscribers = await getSubscribers();
@@ -341,8 +361,8 @@ for (const batch of chunk(subscribers, 100)) {
       template: 'newsletter',
       data: {
         name: sub.name,
-        unsubscribeUrl: generateUnsubUrl(sub)
-      }
+        unsubscribeUrl: generateUnsubUrl(sub),
+      },
     }))
   );
 }
@@ -353,23 +373,27 @@ for (const batch of chunk(subscribers, 100)) {
 ## Adapter-Specific Features
 
 ### Nodemailer (SMTP)
+
 - Works with any SMTP server
 - Gmail, Outlook, custom servers
 - OAuth2 authentication support
 
 ### SendGrid
+
 - Template management in SendGrid
 - Click/open tracking
 - Suppression list management
 - Webhook integration
 
 ### AWS SES
+
 - Configuration sets
 - Bounce/complaint handling
 - Email verification
 - High volume sending
 
 ### Resend
+
 - Modern REST API
 - Simple authentication
 - Domain verification
@@ -398,22 +422,25 @@ morojs-cli mail:queue-status
 ## Testing Strategy
 
 ### Unit Tests
+
 - Test template rendering
 - Mock email adapters
 - Validate email content
 
 ### Integration Tests
+
 - Use console adapter
 - Test full email flow
 - Verify queue integration
 
 ### Example
+
 ```typescript
 describe('Email System', () => {
   beforeAll(() => {
     app.mailInit({
       adapter: 'console',
-      templates: { path: './test-emails' }
+      templates: { path: './test-emails' },
     });
   });
 
@@ -421,7 +448,7 @@ describe('Email System', () => {
     const result = await app.sendMail({
       to: 'test@example.com',
       template: 'welcome',
-      data: { name: 'Test User' }
+      data: { name: 'Test User' },
     });
 
     expect(result.success).toBe(true);
@@ -434,30 +461,38 @@ describe('Email System', () => {
 ## Template Examples
 
 ### Welcome Email
+
 ```html
 <!-- emails/welcome.html -->
 <!DOCTYPE html>
 <html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; }
-    .button { background: #007bff; color: white; padding: 10px 20px; }
-  </style>
-</head>
-<body>
-  <h1>Welcome {{name}}!</h1>
-  <p>Thanks for joining {{appName}}. We're excited to have you.</p>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+      }
+      .button {
+        background: #007bff;
+        color: white;
+        padding: 10px 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Welcome {{name}}!</h1>
+    <p>Thanks for joining {{appName}}. We're excited to have you.</p>
 
-  {{#if verifyUrl}}
+    {{#if verifyUrl}}
     <a href="{{verifyUrl}}" class="button">Verify Your Email</a>
-  {{/if}}
+    {{/if}}
 
-  <p>Best regards,<br>The {{appName}} Team</p>
-</body>
+    <p>Best regards,<br />The {{appName}} Team</p>
+  </body>
 </html>
 ```
 
 ### Password Reset
+
 ```html
 <!-- emails/password-reset.html -->
 <h1>Password Reset Request</h1>
@@ -473,6 +508,7 @@ describe('Email System', () => {
 ## Documentation Requirements
 
 ### User Guide
+
 - Getting started with email
 - Choosing an email provider
 - Template creation
@@ -481,6 +517,7 @@ describe('Email System', () => {
 - Best practices
 
 ### API Reference
+
 - Configuration options
 - Send API
 - Template API
@@ -507,12 +544,14 @@ describe('Email System', () => {
 ## ESM Requirements
 
 ### Module System
+
 - **Pure ESM** - No CommonJS support
 - All imports use `.js` extension (TypeScript compiles .ts → .js)
 - Dynamic imports for lazy loading: `await import()`
 - No `require()` - use `import` only
 
 ### Import Examples
+
 ```typescript
 // Static imports (types, interfaces)
 import type { MailOptions, MailAdapter } from './types.js';
@@ -528,6 +567,7 @@ const nodemailer = await import(nodemailerPath);
 ```
 
 ### Package.json
+
 ```json
 {
   "type": "module",
@@ -541,7 +581,9 @@ const nodemailer = await import(nodemailerPath);
 ```
 
 ### Adapter ESM Compatibility
+
 All email adapters must be ESM-compatible:
+
 - ✅ `nodemailer` - ESM support (v7+)
 - ✅ `@sendgrid/mail` - Pure ESM
 - ✅ `@aws-sdk/client-ses` - Pure ESM
@@ -562,25 +604,28 @@ All email adapters must be ESM-compatible:
 ## Implementation Priority
 
 **Phase 1: Core**
+
 - Adapter interface
 - Nodemailer adapter
 - Basic sending API
 - Console adapter for testing
 
 **Phase 2: Templates**
+
 - Template engine integration
 - Moro template syntax
 - Template caching
 - Partial support
 
 **Phase 3: Additional Adapters**
+
 - SendGrid adapter
 - SES adapter
 - Resend adapter
 
 **Phase 4: Integration**
+
 - Queue integration
 - Event bus integration
 - Rate limiting
 - CLI tools
-

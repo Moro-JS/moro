@@ -1,3 +1,18 @@
+## [1.7.27] - 2026-04-22
+
+### Security
+
+- **Static file path traversal**: containment check now uses `root + path.sep`. Previous `startsWith(root)` allowed escape into sibling directories whose paths prefix-matched `root` (e.g. `root=/app/static` → `/app/static-backups`). No legitimate request path is affected. ([src/core/middleware/built-in/static/core.ts](src/core/middleware/built-in/static/core.ts))
+- **Template path traversal**: `res.render(userInput)` now rejects template names that escape the configured `views` directory. ([src/core/middleware/built-in/template/core.ts](src/core/middleware/built-in/template/core.ts))
+- **JWT algorithm pinning**: `safeVerifyJWT` now defaults `algorithms: ['HS256']` to prevent algorithm-confusion attacks. Callers using RS256/ES256 can override via the `options` argument. ([src/core/middleware/built-in/auth/jwt-helpers.ts](src/core/middleware/built-in/auth/jwt-helpers.ts))
+- **Removed hardcoded session secret default** (`'moro-session-secret'`). The `secret` option is now unset by default. ([src/core/middleware/built-in/session/core.ts](src/core/middleware/built-in/session/core.ts))
+
+### Breaking
+
+- **Template engine: variables are now HTML-escaped by default** (Mustache/Handlebars convention). Use `{{{var}}}` for raw/unescaped output. The previous `{{=var}}` escape syntax has been removed.
+  - Before: `{{name}}` → raw, `{{=name}}` → escaped
+  - After: `{{name}}` → escaped, `{{{name}}}` → raw
+
 ## [1.7.26] - 2026-04-20
 
 ### Added

@@ -56,8 +56,11 @@ export class StaticCore {
     try {
       let filePath = path.join(this.root, req.path);
 
-      // Security: prevent directory traversal
-      if (!filePath.startsWith(this.root)) {
+      // Security: prevent directory traversal. The trailing separator is required —
+      // a bare prefix check would allow sibling dirs like `/app/static-backups` to
+      // satisfy `startsWith('/app/static')` and escape the root.
+      const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
+      if (filePath !== this.root && !filePath.startsWith(rootWithSep)) {
         res.status(403).json({ success: false, error: 'Forbidden' });
         return true;
       }
@@ -65,7 +68,7 @@ export class StaticCore {
       // Security: resolve symlinks and re-check path to prevent symlink-based traversal
       try {
         const realPath = await fs.realpath(filePath);
-        if (!realPath.startsWith(this.root)) {
+        if (realPath !== this.root && !realPath.startsWith(rootWithSep)) {
           res.status(403).json({ success: false, error: 'Forbidden' });
           return true;
         }

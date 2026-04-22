@@ -977,14 +977,14 @@ session({
 
 #### Session Options
 
-| Property            | Type                                            | Default                 | Description                        |
-| ------------------- | ----------------------------------------------- | ----------------------- | ---------------------------------- |
-| `store`             | `'memory' \| 'redis' \| 'file' \| CacheAdapter` | `'memory'`              | Session store type                 |
-| `secret`            | `string`                                        | `'moro-session-secret'` | Session signing secret             |
-| `name`              | `string`                                        | `'connect.sid'`         | Session cookie name                |
-| `rolling`           | `boolean`                                       | `false`                 | Reset expiry on each request       |
-| `resave`            | `boolean`                                       | `false`                 | Save session even if not modified  |
-| `saveUninitialized` | `boolean`                                       | `false`                 | Save new but not modified sessions |
+| Property            | Type                                            | Default         | Description                                             |
+| ------------------- | ----------------------------------------------- | --------------- | ------------------------------------------------------- |
+| `store`             | `'memory' \| 'redis' \| 'file' \| CacheAdapter` | `'memory'`      | Session store type                                      |
+| `secret`            | `string`                                        | _(none)_        | Session signing secret (required when used for signing) |
+| `name`              | `string`                                        | `'connect.sid'` | Session cookie name                                     |
+| `rolling`           | `boolean`                                       | `false`         | Reset expiry on each request                            |
+| `resave`            | `boolean`                                       | `false`         | Save session even if not modified                       |
+| `saveUninitialized` | `boolean`                                       | `false`         | Save new but not modified sessions                      |
 
 #### Cookie Configuration
 

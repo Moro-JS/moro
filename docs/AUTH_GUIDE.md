@@ -720,6 +720,14 @@ The `safeVerifyJWT` utility handles all JWT error types gracefully:
 - **Missing Dependencies**: Returns helpful installation instructions
 - **Missing Secret**: Returns configuration error message
 
+### Algorithm Pinning
+
+`safeVerifyJWT` pins `algorithms: ['HS256']` by default to prevent algorithm-confusion attacks (e.g. an attacker forging an HS256 token signed with the server's RS256 public key). If you sign tokens with a different algorithm, override it via the `options` argument:
+
+```typescript
+const result = await safeVerifyJWT(token, publicKey, { algorithms: ['RS256'] });
+```
+
 ### Migration from Raw JWT Verification
 
 If you're currently using raw `jwt.verify()` and experiencing crashes from expired tokens:

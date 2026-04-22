@@ -61,7 +61,11 @@ export async function safeVerifyJWT(
   }
 
   try {
-    const payload = jwt.verify(token, secret, options);
+    // Pin algorithms to prevent algorithm-confusion attacks (e.g. RS→HS where an
+    // attacker forges an HS256 token signed with the server's RS256 public key).
+    // Callers can override by passing their own `algorithms` in options.
+    const verifyOptions = { algorithms: ['HS256'], ...options };
+    const payload = jwt.verify(token, secret, verifyOptions);
     return {
       success: true,
       payload,
