@@ -201,6 +201,12 @@ export interface LoggingConfig {
   enableColors: boolean;
   enableTimestamp: boolean;
   enableContext: boolean;
+  // Opt-in: appends a JSON metadata object (e.g. {"framework":"moro",...}) to pretty log lines.
+  // Has no effect on 'json' format - structured output always includes metadata.
+  enableMetadata: boolean;
+  // Opt-in: collects and renders per-log performance data such as memory usage (e.g. "(210MB)").
+  // Disabling skips the process.memoryUsage() call on every log line.
+  enablePerformance: boolean;
   outputs: {
     console: boolean;
     file: {

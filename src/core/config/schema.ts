@@ -92,6 +92,11 @@ export const DEFAULT_CONFIG: AppConfig = {
     enableColors: true,
     enableTimestamp: true,
     enableContext: true,
+    // Opt-in: appends JSON metadata tail in pretty logs. Off by default to avoid noise.
+    enableMetadata: false,
+    // Opt-in: includes (memory) perf info per log. Off by default to avoid the
+    // process.memoryUsage() call and the "(210MB)" suffix.
+    enablePerformance: false,
     outputs: {
       console: true,
       file: {

@@ -106,8 +106,10 @@ export class MoroLogger implements Logger {
       enableColors: true,
       enableTimestamp: true,
       enableContext: true,
-      enableMetadata: true,
-      enablePerformance: true,
+      // Opt-in: appends JSON metadata tail in pretty logs. Off by default to keep lines clean.
+      enableMetadata: false,
+      // Opt-in: per-log perf data. Off by default to skip process.memoryUsage() per log.
+      enablePerformance: false,
       format: 'pretty',
       outputs: [],
       filters: [],
@@ -1038,22 +1040,70 @@ const initialLogLevel =
   process.env.MORO_LOG_LEVEL ||
   (process.env.NODE_ENV === 'production' ? 'warn' : 'debug');
 
+// Local boolean env parser - kept here so the global logger can be configured
+// from env vars before any framework code (createApp) runs.
+const parseGlobalBoolEnv = (raw: string | undefined): boolean | undefined => {
+  if (raw === undefined) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === '') return undefined;
+  if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
+  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
+  return undefined;
+};
+
+const envMetadata = parseGlobalBoolEnv(process.env.LOG_METADATA ?? process.env.MORO_LOG_METADATA);
+const envPerformance = parseGlobalBoolEnv(
+  process.env.LOG_PERFORMANCE ?? process.env.MORO_LOG_PERFORMANCE
+);
+
 export const logger = new MoroLogger({
   level: initialLogLevel as LogLevel,
   enableColors: !process.env.NO_COLOR,
   format: (process.env.LOG_FORMAT as any) || 'pretty',
+  // Opt-in flags - only override defaults when env var is explicitly set.
+  ...(envMetadata !== undefined ? { enableMetadata: envMetadata } : {}),
+  ...(envPerformance !== undefined ? { enablePerformance: envPerformance } : {}),
 });
 
 /**
- * Configure the global logger with new settings
- * This allows runtime configuration of the logger
+ * Configure the global logger with new settings.
+ * This allows runtime configuration of the logger.
+ *
+ * The presentation flags (enableMetadata, enablePerformance, enableTimestamp,
+ * enableContext, enableColors, format) are read live from this.options on every
+ * log call, so reassigning them on the existing instance takes effect immediately
+ * without rebuilding the logger.
  */
 export function configureGlobalLogger(options: Partial<LoggerOptions>): void {
   if (options.level) {
     logger.setLevel(options.level);
   }
-  // Additional configuration options can be added here as needed
-  // For now, focusing on level which is the most critical
+
+  // Apply presentation toggles directly onto the live options object.
+  // We touch this.options via a typed accessor to keep it explicit.
+  const liveOptions = (logger as unknown as { options: LoggerOptions }).options;
+  if (liveOptions === undefined || liveOptions === null) {
+    return;
+  }
+
+  if (options.enableMetadata !== undefined) {
+    liveOptions.enableMetadata = options.enableMetadata;
+  }
+  if (options.enablePerformance !== undefined) {
+    liveOptions.enablePerformance = options.enablePerformance;
+  }
+  if (options.enableTimestamp !== undefined) {
+    liveOptions.enableTimestamp = options.enableTimestamp;
+  }
+  if (options.enableContext !== undefined) {
+    liveOptions.enableContext = options.enableContext;
+  }
+  if (options.enableColors !== undefined) {
+    liveOptions.enableColors = options.enableColors;
+  }
+  if (options.format !== undefined) {
+    liveOptions.format = options.format;
+  }
 }
 
 /**
@@ -1071,9 +1121,34 @@ export function applyLoggingConfiguration(
   configLogging?: any,
   appOptions?: Partial<LoggerOptions> | boolean
 ): void {
-  // First apply config system settings (from environment variables)
-  if (configLogging?.level) {
-    configureGlobalLogger({ level: configLogging.level });
+  // First apply config system settings (from environment variables / config files).
+  // Pluck any presentation flags that map directly onto LoggerOptions.
+  if (configLogging) {
+    const fromConfig: Partial<LoggerOptions> = {};
+    if (configLogging.level) {
+      fromConfig.level = configLogging.level;
+    }
+    if (configLogging.format !== undefined) {
+      fromConfig.format = configLogging.format;
+    }
+    if (configLogging.enableColors !== undefined) {
+      fromConfig.enableColors = configLogging.enableColors;
+    }
+    if (configLogging.enableTimestamp !== undefined) {
+      fromConfig.enableTimestamp = configLogging.enableTimestamp;
+    }
+    if (configLogging.enableContext !== undefined) {
+      fromConfig.enableContext = configLogging.enableContext;
+    }
+    if (configLogging.enableMetadata !== undefined) {
+      fromConfig.enableMetadata = configLogging.enableMetadata;
+    }
+    if (configLogging.enablePerformance !== undefined) {
+      fromConfig.enablePerformance = configLogging.enablePerformance;
+    }
+    if (Object.keys(fromConfig).length > 0) {
+      configureGlobalLogger(fromConfig);
+    }
   }
 
   // Then apply createApp options (these take precedence)

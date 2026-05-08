@@ -214,6 +214,23 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
   }
 
   // Logging configuration
+  const ensureLoggingBlock = (): NonNullable<DeepPartial<AppConfig>['logging']> => {
+    if (!config.logging) config.logging = {} as any;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return config.logging!;
+  };
+
+  // Parses common boolean-ish env strings; returns undefined if not set so we
+  // never accidentally clobber a default with `false`.
+  const parseBoolEnv = (raw: string | undefined): boolean | undefined => {
+    if (raw === undefined) return undefined;
+    const v = raw.trim().toLowerCase();
+    if (v === '') return undefined;
+    if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
+    if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
+    return undefined;
+  };
+
   if (process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL) {
     const level = process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL;
     if (
@@ -223,10 +240,45 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
       level === 'error' ||
       level === 'fatal'
     ) {
-      if (!config.logging) config.logging = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      config.logging!.level = level;
+      ensureLoggingBlock().level = level;
     }
+  }
+
+  if (process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT) {
+    const fmt = (process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT) as
+      | 'pretty'
+      | 'json'
+      | 'compact';
+    if (fmt === 'pretty' || fmt === 'json' || fmt === 'compact') {
+      ensureLoggingBlock().format = fmt;
+    }
+  }
+
+  const colorsEnv = parseBoolEnv(process.env.LOG_COLORS ?? process.env.MORO_LOG_COLORS);
+  if (colorsEnv !== undefined) {
+    ensureLoggingBlock().enableColors = colorsEnv;
+  }
+
+  const timestampEnv = parseBoolEnv(process.env.LOG_TIMESTAMP ?? process.env.MORO_LOG_TIMESTAMP);
+  if (timestampEnv !== undefined) {
+    ensureLoggingBlock().enableTimestamp = timestampEnv;
+  }
+
+  const contextEnv = parseBoolEnv(process.env.LOG_CONTEXT ?? process.env.MORO_LOG_CONTEXT);
+  if (contextEnv !== undefined) {
+    ensureLoggingBlock().enableContext = contextEnv;
+  }
+
+  // Opt-in: appends "{...}" JSON tail to pretty log lines.
+  const metadataEnv = parseBoolEnv(process.env.LOG_METADATA ?? process.env.MORO_LOG_METADATA);
+  if (metadataEnv !== undefined) {
+    ensureLoggingBlock().enableMetadata = metadataEnv;
+  }
+
+  // Opt-in: collects/renders memory + duration on each log line.
+  const perfEnv = parseBoolEnv(process.env.LOG_PERFORMANCE ?? process.env.MORO_LOG_PERFORMANCE);
+  if (perfEnv !== undefined) {
+    ensureLoggingBlock().enablePerformance = perfEnv;
   }
 
   // External services - only include if configured
