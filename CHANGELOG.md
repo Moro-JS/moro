@@ -1,3 +1,14 @@
+## [1.7.28] - 2026-06-03
+
+### Added
+
+- feat: add file-based auto routing configuration and validation
+- feat: enhance logging configuration with new environment variables
+
+### Fixed
+
+- fix: clear npm_config_prefix before loading nvm in pre-commit hook to prevent compatibility issues
+
 ## [1.7.27] - 2026-04-22
 
 ### Security
