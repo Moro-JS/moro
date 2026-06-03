@@ -385,12 +385,24 @@ export interface JobsConfig {
   };
 }
 
+// File-based routing configuration. When enabled, route files under the
+// configured directories are imported during startup (after module discovery)
+// so their `getApp().get(...)` registrations execute automatically.
+export interface RoutingConfig {
+  enabled: boolean;
+  // Directories scanned via loadRoutes(). Defaults to ./src/routes in
+  // development and ./dist/(src/)routes in production when omitted.
+  paths?: string[];
+}
+
 // Main configuration interface
 export interface AppConfig {
   server: ServerConfig;
   serviceDiscovery: ServiceDiscoveryConfig;
   database: DatabaseConfig;
   modules: ModuleDefaultsConfig;
+  // Enable file-based auto routing (./src/routes). Defaults to true.
+  routing: boolean | RoutingConfig;
   logging: LoggingConfig;
   security: SecurityConfig;
   external: ExternalServicesConfig;

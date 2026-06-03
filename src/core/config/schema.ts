@@ -86,6 +86,9 @@ export const DEFAULT_CONFIG: AppConfig = {
       maxDepth: 5,
     },
   },
+  // File-based auto routing: import route files under ./src/routes on startup.
+  // Enabled by default; a no-op when the directory doesn't exist.
+  routing: true,
   logging: {
     level: 'info',
     format: 'pretty',

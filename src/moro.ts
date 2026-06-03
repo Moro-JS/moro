@@ -186,6 +186,9 @@ export class Moro extends EventEmitter {
   private autoDiscoveryOptions: MoroOptions | null = null;
   private autoDiscoveryInitialized = false;
   private autoDiscoveryPromise: Promise<void> | null = null;
+  // File-based auto routing state
+  private routesLoaded = false;
+  private routesLoadedPromise: Promise<void> | null = null;
   // Enterprise event system integration
   private eventBus!: MoroEventBus;
   // Application logger
@@ -1066,8 +1069,13 @@ export class Moro extends EventEmitter {
       }
     };
 
-    // Ensure auto-discovery and WebSocket setup is complete before starting server
-    Promise.all([this.ensureAutoDiscoveryComplete(), this.processQueuedWebSocketRegistrations()])
+    // Ensure auto-discovery and WebSocket setup is complete before starting server.
+    // Routes load after modules so DB/services/middleware set up during discovery
+    // are available to route files.
+    Promise.all([
+      this.ensureAutoDiscoveryComplete().then(() => this.ensureRoutesLoaded()),
+      this.processQueuedWebSocketRegistrations(),
+    ])
       .then(() => {
         startServer();
       })
@@ -1091,6 +1099,49 @@ export class Moro extends EventEmitter {
   // Useful for ensuring auth middleware is registered before auto-discovery
   async initializeAutoDiscoveryNow(): Promise<void> {
     return this.ensureAutoDiscoveryComplete();
+  }
+
+  // Load file-based routes from the configured directories (config.routing).
+  // Runs once during listen() after module discovery. Idempotent and safe to
+  // call alongside a manual app.loadRoutes() — the ES module cache prevents a
+  // file from registering twice even if both resolve to the same path.
+  private async ensureRoutesLoaded(): Promise<void> {
+    if (this.routesLoaded) return;
+    if (this.routesLoadedPromise) return this.routesLoadedPromise;
+
+    const routing = this.config.routing;
+    const disabled =
+      routing === false || (typeof routing === 'object' && routing.enabled === false);
+    if (disabled) {
+      this.routesLoaded = true;
+      return;
+    }
+
+    this.routesLoadedPromise = (async () => {
+      const isProd = process.env.NODE_ENV === 'production';
+      const defaultPaths = isProd ? ['./dist/routes', './dist/src/routes'] : ['./src/routes'];
+      const paths =
+        typeof routing === 'object' && Array.isArray(routing.paths) && routing.paths.length > 0
+          ? routing.paths
+          : defaultPaths;
+
+      for (const dir of paths) {
+        try {
+          await this.loadRoutes(dir);
+        } catch (error) {
+          this.logger.warn(`Failed to auto-load routes from ${dir}`, 'RouteLoader', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    })();
+
+    try {
+      await this.routesLoadedPromise;
+      this.routesLoaded = true;
+    } finally {
+      this.routesLoadedPromise = null;
+    }
   }
 
   // Public API: Initialize modules explicitly after middleware setup

@@ -537,6 +537,20 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
     }
   }
 
+  // File-based auto routing (config.routing). MORO_ROUTING=false disables it;
+  // MORO_ROUTING_PATHS is a comma-separated list of directories to scan.
+  const routingEnabled = parseBoolEnv(process.env.MORO_ROUTING ?? process.env.MORO_AUTO_ROUTING);
+  const routingPaths = (process.env.MORO_ROUTING_PATHS || '')
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean);
+  if (routingEnabled !== undefined || routingPaths.length > 0) {
+    config.routing = {
+      enabled: routingEnabled ?? true,
+      ...(routingPaths.length > 0 ? { paths: routingPaths } : {}),
+    };
+  }
+
   return config;
 }
 

@@ -38,6 +38,7 @@ export function validateConfig(config: any): AppConfig {
       serviceDiscovery: validateServiceDiscoveryConfig(config.serviceDiscovery, 'serviceDiscovery'),
       database: validateDatabaseConfig(config.database, 'database'),
       modules: validateModuleDefaultsConfig(config.modules, 'modules'),
+      routing: validateRoutingConfig(config.routing, 'routing'),
       logging: validateLoggingConfig(config.logging, 'logging'),
       security: validateSecurityConfig(config.security, 'security'),
       external: validateExternalServicesConfig(config.external, 'external'),
@@ -404,6 +405,42 @@ function validateModuleDefaultsConfig(config: any, path: string) {
 }
 
 /**
+ * Validate file-based routing configuration.
+ * Accepts a boolean shorthand (routing: true/false) or an object
+ * ({ enabled, paths }). Defaults to enabled when omitted.
+ */
+function validateRoutingConfig(
+  config: any,
+  path: string
+): boolean | { enabled: boolean; paths?: string[] } {
+  if (config === undefined || config === null) {
+    return true; // Enabled by default
+  }
+
+  if (typeof config === 'boolean') {
+    return config;
+  }
+
+  if (typeof config === 'object' && !Array.isArray(config)) {
+    const result: { enabled: boolean; paths?: string[] } = {
+      enabled:
+        config.enabled !== undefined ? validateBoolean(config.enabled, `${path}.enabled`) : true,
+    };
+    if (config.paths !== undefined) {
+      result.paths = validateStringArray(config.paths, `${path}.paths`);
+    }
+    return result;
+  }
+
+  throw new ConfigValidationError(
+    path,
+    config,
+    'boolean | { enabled: boolean; paths?: string[] }',
+    'Routing must be a boolean or an object with enabled/paths'
+  );
+}
+
+/**
  * Validate auto-discovery configuration
  */
 function validateAutoDiscoveryConfig(config: any, path: string) {
@@ -596,6 +633,8 @@ function validateLoggingConfig(config: any, path: string) {
     enableColors: validateBoolean(config.enableColors, `${path}.enableColors`),
     enableTimestamp: validateBoolean(config.enableTimestamp, `${path}.enableTimestamp`),
     enableContext: validateBoolean(config.enableContext, `${path}.enableContext`),
+    enableMetadata: validateBoolean(config.enableMetadata, `${path}.enableMetadata`),
+    enablePerformance: validateBoolean(config.enablePerformance, `${path}.enablePerformance`),
     outputs: validateLoggingOutputsConfig(config.outputs, `${path}.outputs`),
   };
 }
