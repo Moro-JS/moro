@@ -1,5 +1,6 @@
 // Request Logger Middleware
 import { createFrameworkLogger } from '../../../logger/index.js';
+import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
 const logger = createFrameworkLogger('RequestLogger');
 
@@ -14,14 +15,15 @@ const logger = createFrameworkLogger('RequestLogger');
  * app.use(requestLogger);
  * ```
  */
-export const requestLogger = async (context: any): Promise<void> => {
+export const requestLogger = (req: HttpRequest, res: HttpResponse, next: () => void): void => {
   const startTime = Date.now();
 
-  logger.info(`${context.request?.method} ${context.request?.path}`, 'RequestLogger');
+  logger.info(`${req.method} ${req.path}`, 'RequestLogger');
 
-  // Log completion after response
-  context.onComplete = () => {
+  res.on('finish', () => {
     const duration = Date.now() - startTime;
     logger.info(`Request completed in ${duration}ms`, 'RequestLogger');
-  };
+  });
+
+  next();
 };

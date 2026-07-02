@@ -1,5 +1,6 @@
 // Performance Monitor Middleware
 import { createFrameworkLogger } from '../../../logger/index.js';
+import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
 const logger = createFrameworkLogger('PerformanceMonitor');
 
@@ -14,23 +15,21 @@ const logger = createFrameworkLogger('PerformanceMonitor');
  * app.use(performanceMonitor);
  * ```
  */
-export const performanceMonitor = async (context: any): Promise<void> => {
+export const performanceMonitor = (req: HttpRequest, res: HttpResponse, next: () => void): void => {
   const startTime = Date.now();
 
-  context.onComplete = () => {
+  res.on('finish', () => {
     const duration = Date.now() - startTime;
 
     // Log slow requests
     if (duration > 1000) {
-      logger.warn(
-        `Slow request detected: ${context.request?.path} took ${duration}ms`,
-        'SlowRequest',
-        {
-          path: context.request?.path,
-          method: context.request?.method,
-          duration,
-        }
-      );
+      logger.warn(`Slow request detected: ${req.path} took ${duration}ms`, 'SlowRequest', {
+        path: req.path,
+        method: req.method,
+        duration,
+      });
     }
-  };
+  });
+
+  next();
 };

@@ -16,7 +16,9 @@ export const DEFAULT_CONFIG: AppConfig = {
       enabled: true, // Enable by default for debugging
     },
     requestLogging: {
-      enabled: true, // Enable by default - logs requests independently
+      // Enabled in development; disabled in production where a per-request
+      // stdout write is a real throughput cost. Set explicitly to override.
+      enabled: process.env.NODE_ENV !== 'production',
     },
     errorBoundary: {
       enabled: true, // Always enabled for safety

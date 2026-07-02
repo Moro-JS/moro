@@ -24,6 +24,10 @@ export class HookManager extends EventEmitter {
   // Track if hooks are synchronous to avoid Promise overhead
   private hookSyncStatus = new Map<string, boolean>();
 
+  // Events that currently have at least one hook registered - lets callers skip
+  // execute() entirely (no context object, no promise) when nothing is registered
+  private activeEvents = new Set<string>();
+
   constructor() {
     super();
     // Initialize hook arrays
@@ -49,8 +53,11 @@ export class HookManager extends EventEmitter {
     if (beforeHooks.length === 0 && hooks.length === 0 && afterHooks.length === 0) {
       this.executeCache.set(event, async (context: HookContext) => context);
       this.hookSyncStatus.set(event, true); // Mark as sync (noop)
+      this.activeEvents.delete(event);
       return;
     }
+
+    this.activeEvents.add(event);
 
     // Detect if all hooks are synchronous
     const allSync = this.areHooksSynchronous(beforeHooks, hooks, afterHooks);
@@ -238,6 +245,14 @@ export class HookManager extends EventEmitter {
     this.afterHooks.get(event)!.push(fn);
     this.updateExecuteCache(event); // Update cache
     return this;
+  }
+
+  // O(1) check that lets hot paths skip execute() (and its context/promise
+  // allocation) entirely when no hooks are registered for an event.
+  // Note: EventEmitter listeners attached via .on(event) also count, since the
+  // cached executors emit the event after running hooks.
+  hasHooks(event: string): boolean {
+    return this.activeEvents.has(event) || this.listenerCount(event) > 0;
   }
 
   // Execute hooks for an event - optimized with cached functions

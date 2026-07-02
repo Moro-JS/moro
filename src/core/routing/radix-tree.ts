@@ -10,6 +10,8 @@ export interface RadixNode {
   handler: any;
   // Store parameter names for this specific handler/route
   paramPath: string[] | null;
+  // Sibling chain for FNV hash collisions (segments with equal hash, different text)
+  collisionNext: RadixNode | null;
 }
 
 export interface MatchResult {
@@ -30,6 +32,25 @@ function fastHash(str: string): number {
   return hash;
 }
 
+// Same hash computed over a path slice without allocating the substring
+function fastHashRange(path: string, start: number, end: number): number {
+  let hash = 0x811c9dc5;
+  for (let i = start; i < end; i++) {
+    hash ^= path.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+// Compare a stored segment against a path slice without allocating
+function segmentEqualsRange(segment: string, path: string, start: number, end: number): boolean {
+  if (segment.length !== end - start) return false;
+  for (let i = start; i < end; i++) {
+    if (segment.charCodeAt(i - start) !== path.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
 export class RadixTree {
   private root: RadixNode;
 
@@ -42,6 +63,7 @@ export class RadixTree {
       paramName: null,
       handler: null,
       paramPath: null,
+      collisionNext: null,
     };
   }
 
@@ -89,6 +111,7 @@ export class RadixTree {
             paramName: paramName,
             handler: null,
             paramPath: null,
+            collisionNext: null,
           };
         }
 
@@ -110,7 +133,7 @@ export class RadixTree {
       // Lazy initialization of staticChildren (hash-based)
       if (!node.staticChildren) {
         node.staticChildren = new Map();
-        const child = {
+        const child: RadixNode = {
           segmentHash,
           segment,
           staticChildren: null,
@@ -118,6 +141,7 @@ export class RadixTree {
           paramName: null,
           handler: null,
           paramPath: null,
+          collisionNext: null,
         };
         node.staticChildren.set(segmentHash, child);
         node = child;
@@ -132,14 +156,26 @@ export class RadixTree {
             paramName: null,
             handler: null,
             paramPath: null,
+            collisionNext: null,
           };
           node.staticChildren.set(segmentHash, child);
         } else {
-          // Verify segment matches (hash collision check)
-          if (child.segment !== segment) {
-            // Hash collision - fall back to slower string comparison
-            // This is rare but we need to handle it
-            continue; // Skip this route for now (simplified handling)
+          // FNV hash collision: walk the sibling chain for a true segment match,
+          // appending a new node if this exact segment isn't chained yet
+          while (child.segment !== segment) {
+            if (!child.collisionNext) {
+              child.collisionNext = {
+                segmentHash,
+                segment,
+                staticChildren: null,
+                paramChild: null,
+                paramName: null,
+                handler: null,
+                paramPath: null,
+                collisionNext: null,
+              };
+            }
+            child = child.collisionNext;
           }
         }
         node = child;
@@ -200,12 +236,15 @@ export class RadixTree {
       while (segEnd < len && path.charCodeAt(segEnd) !== slashCode) {
         segEnd++;
       }
-      const segment = path.slice(idx, segEnd);
-      const segmentHash = fastHash(segment);
+      // Hash and compare in place - no substring allocation per segment
+      const segmentHash = fastHashRange(path, idx, segEnd);
 
-      // Direct hash lookup (O(1))
-      const child = node.staticChildren.get(segmentHash);
-      if (child && child.segment === segment) {
+      // Direct hash lookup (O(1)), walking the collision chain if needed
+      let child: RadixNode | null | undefined = node.staticChildren.get(segmentHash);
+      while (child && !segmentEqualsRange(child.segment, path, idx, segEnd)) {
+        child = child.collisionNext;
+      }
+      if (child) {
         const result = this.searchNode(child, path, segEnd, paramValues);
         if (result) {
           return result;
@@ -251,6 +290,7 @@ export class RadixTree {
       paramName: null,
       handler: null,
       paramPath: null,
+      collisionNext: null,
     };
   }
 }

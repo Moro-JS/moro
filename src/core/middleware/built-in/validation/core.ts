@@ -27,6 +27,38 @@ export interface ValidationErrorDetail {
   code: string;
 }
 
+type SchemaRunResult = { success: boolean; data?: any; error?: any };
+
+// Schemas that threw from safeParse (async refinements) - always use parseAsync for these
+const asyncOnlySchemas = new WeakSet<object>();
+
+/**
+ * Run a schema against data, preferring the synchronous safeParse fast path
+ * (no promise, no exception-based control flow) when the library supports it.
+ * Falls back to parseAsync for libraries without safeParse (Joi/Yup adapters)
+ * and for schemas with async refinements.
+ */
+function runSchema(
+  schema: ValidationSchema,
+  data: unknown
+): SchemaRunResult | Promise<SchemaRunResult> {
+  const s: any = schema;
+  if (typeof s.safeParse === 'function' && !asyncOnlySchemas.has(s)) {
+    try {
+      const r = s.safeParse(data);
+      return r.success ? { success: true, data: r.data } : { success: false, error: r.error };
+    } catch {
+      // safeParse throws (rather than failing) only when the schema requires
+      // async parsing (e.g. zod async refinements) - remember and fall through
+      asyncOnlySchemas.add(s);
+    }
+  }
+  return s.parseAsync(data).then(
+    (d: any) => ({ success: true, data: d }),
+    (e: any) => ({ success: false, error: e })
+  );
+}
+
 // ===== Core Logic =====
 
 /**
@@ -41,16 +73,6 @@ export class ValidationCore {
       return false;
     }
 
-    // Get global validation config
-    let globalHandler: ValidationErrorHandler | undefined;
-    try {
-      const globalConfig = getGlobalConfig();
-      globalHandler = globalConfig.modules.validation.onError;
-    } catch {
-      // Config not initialized yet, use default handler
-      globalHandler = undefined;
-    }
-
     try {
       // Order by likelihood and cost: params > query > body > headers
       // Params are fastest (already parsed, small) and most common in REST APIs
@@ -63,17 +85,18 @@ export class ValidationCore {
           break;
         }
         if (hasParams) {
-          try {
-            (req as any).validatedParams = await config.params.parseAsync(req.params);
+          let result = runSchema(config.params, req.params);
+          if (typeof (result as any).then === 'function') result = await result;
+          if ((result as SchemaRunResult).success) {
+            (req as any).validatedParams = (result as SchemaRunResult).data;
             req.params = (req as any).validatedParams;
-          } catch (error: any) {
+          } else {
             this.handleValidationError(
-              error,
+              (result as SchemaRunResult).error,
               'params',
               req,
               res,
-              config.onValidationError,
-              globalHandler
+              config.onValidationError
             );
             return false;
           }
@@ -90,17 +113,18 @@ export class ValidationCore {
           break;
         }
         if (hasQuery) {
-          try {
-            (req as any).validatedQuery = await config.query.parseAsync(req.query);
+          let result = runSchema(config.query, req.query);
+          if (typeof (result as any).then === 'function') result = await result;
+          if ((result as SchemaRunResult).success) {
+            (req as any).validatedQuery = (result as SchemaRunResult).data;
             req.query = (req as any).validatedQuery;
-          } catch (error: any) {
+          } else {
             this.handleValidationError(
-              error,
+              (result as SchemaRunResult).error,
               'query',
               req,
               res,
-              config.onValidationError,
-              globalHandler
+              config.onValidationError
             );
             return false;
           }
@@ -109,17 +133,18 @@ export class ValidationCore {
 
       // Body is expensive (POST/PUT/PATCH only, requires parsing)
       if (config.body !== undefined && req.body !== undefined) {
-        try {
-          (req as any).validatedBody = await config.body.parseAsync(req.body);
+        let result = runSchema(config.body, req.body);
+        if (typeof (result as any).then === 'function') result = await result;
+        if ((result as SchemaRunResult).success) {
+          (req as any).validatedBody = (result as SchemaRunResult).data;
           req.body = (req as any).validatedBody;
-        } catch (error: any) {
+        } else {
           this.handleValidationError(
-            error,
+            (result as SchemaRunResult).error,
             'body',
             req,
             res,
-            config.onValidationError,
-            globalHandler
+            config.onValidationError
           );
           return false;
         }
@@ -127,16 +152,17 @@ export class ValidationCore {
 
       // Headers are rarely validated
       if (config.headers !== undefined && req.headers !== undefined) {
-        try {
-          (req as any).validatedHeaders = await config.headers.parseAsync(req.headers);
-        } catch (error: any) {
+        let result = runSchema(config.headers, req.headers);
+        if (typeof (result as any).then === 'function') result = await result;
+        if ((result as SchemaRunResult).success) {
+          (req as any).validatedHeaders = (result as SchemaRunResult).data;
+        } else {
           this.handleValidationError(
-            error,
+            (result as SchemaRunResult).error,
             'headers',
             req,
             res,
-            config.onValidationError,
-            globalHandler
+            config.onValidationError
           );
           return false;
         }
@@ -164,12 +190,20 @@ export class ValidationCore {
     field: 'body' | 'query' | 'params' | 'headers',
     req: HttpRequest,
     res: HttpResponse,
-    customHandler?: ValidationErrorHandler,
-    globalHandler?: ValidationErrorHandler
+    customHandler?: ValidationErrorHandler
   ): void {
     // Don't send error if headers already sent
     if (res.headersSent) {
       return;
+    }
+
+    // Resolve the global handler on the error path only - the success path
+    // (the overwhelming majority of requests) never touches config
+    let globalHandler: ValidationErrorHandler | undefined;
+    try {
+      globalHandler = getGlobalConfig().modules.validation.onError;
+    } catch {
+      globalHandler = undefined;
     }
 
     const normalizedError = normalizeValidationError(error);

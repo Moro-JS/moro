@@ -644,12 +644,10 @@ export class UnifiedRouter {
     res: HttpResponse,
     matchResult: { params: Record<string, string> }
   ): Promise<void> {
-    // Set params from pool - manual assignment instead of Object.assign
-    req.params = this.poolManager.acquireParams();
-    const params = matchResult.params;
-    for (const key in params) {
-      req.params[key] = params[key];
-    }
+    // The matcher already built a fresh params object - use it directly.
+    // (No pooling: handlers may retain req past the response, so recycling
+    // the object would alias params across requests.)
+    req.params = matchResult.params;
 
     try {
       // Performance: Skip empty executionOrder array iteration
@@ -686,11 +684,6 @@ export class UnifiedRouter {
           error: 'Internal server error',
           requestId: req.requestId,
         });
-      }
-    } finally {
-      // Release params back to pool
-      if (req.params) {
-        this.poolManager.releaseParams(req.params);
       }
     }
   }
@@ -887,6 +880,51 @@ export class UnifiedRouter {
 
   getAllRoutes(): RouteSchema[] {
     return this.allRoutes.map(r => r.schema);
+  }
+
+  /**
+   * Fast-path routes (no middleware/auth/validation/rateLimit/cache) in a shape
+   * suitable for registering directly on a native server router (e.g. uWS).
+   */
+  getNativeFastPathRoutes(): Array<{
+    method: string;
+    path: string;
+    paramNames: string[] | null;
+    handler: (req: HttpRequest, res: HttpResponse) => any;
+  }> {
+    const result: Array<{
+      method: string;
+      path: string;
+      paramNames: string[] | null;
+      handler: (req: HttpRequest, res: HttpResponse) => any;
+    }> = [];
+    for (const route of this.allRoutes) {
+      if (!route.isFastPath) continue;
+      const path = route.schema.path;
+      let paramNames: string[] | null = null;
+      if (path.indexOf(':') !== -1) {
+        paramNames = [];
+        for (const seg of path.split('/')) {
+          if (seg.charCodeAt(0) === 58) paramNames.push(seg.slice(1));
+        }
+      }
+      result.push({
+        method: route.schema.method,
+        path,
+        paramNames,
+        handler: route.schema.handler,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Public wrapper around the registered error handler so native fast paths
+   * share the exact same error semantics as router-dispatched routes.
+   * Returns true if the handler produced a response.
+   */
+  handleRouteError(err: any, req: HttpRequest, res: HttpResponse): Promise<boolean> {
+    return this.invokeErrorHandler(err, req, res);
   }
 
   getRouteCount(): number {

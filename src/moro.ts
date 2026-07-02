@@ -58,7 +58,6 @@ import type {
   GrpcClientOptions,
 } from './core/grpc/types.js';
 // Built-in middleware integration
-import { cors, helmet, compression, bodySize } from './core/middleware/built-in/index.js';
 // Mail System Integration (lazy loaded)
 import type { MailConfig, MailOptions, MailResult } from './core/mail/types.js';
 
@@ -992,29 +991,8 @@ export class Moro extends EventEmitter {
       this.logger.debug('Documentation not enabled', 'Documentation');
     }
 
-    // Add unified routing middleware (handles both chainable and direct routes)
-    // Call router without extra async wrapper when possible
-    this.coreFramework.addMiddleware(
-      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-        // Try unified router first (handles all route types)
-
-        const handled = this.unifiedRouter.handleRequest(req, res);
-
-        // Check if it's a promise (async route) or sync (fast-path)
-        if (handled && typeof (handled as any).then === 'function') {
-          // Async - await the result
-          const isHandled = await (handled as Promise<boolean>);
-          if (!isHandled) {
-            next();
-          }
-        } else {
-          // Sync - check immediately
-          if (!(handled as boolean)) {
-            next();
-          }
-        }
-      }
-    );
+    // Attach the unified router (handles both chainable and direct routes)
+    this.attachUnifiedRouter();
 
     // Register legacy direct routes with the HTTP server (for backward compatibility)
     if (this.routes.length > 0) {
@@ -1487,6 +1465,53 @@ export class Moro extends EventEmitter {
     }
   }
 
+  // Attach the unified router to the HTTP server. Servers that support direct
+  // dispatch (setRouterHandler) get the router called straight from
+  // handleRequest - after global middleware, with no per-request promise
+  // wrapper. Older/custom servers fall back to the middleware adapter.
+  private attachUnifiedRouter(): void {
+    const httpServer = (this.coreFramework as any).httpServer;
+
+    if (httpServer && typeof httpServer.setRouterHandler === 'function') {
+      const router = this.unifiedRouter;
+      httpServer.setRouterHandler((req: HttpRequest, res: HttpResponse) =>
+        router.handleRequest(req, res)
+      );
+
+      // Servers with a native router (uWS) additionally get fast-path routes
+      // registered directly on it - evaluated at listen so late-loaded routes
+      // are included; error handling shares the unified router's semantics
+      if (typeof httpServer.setNativeRouteProvider === 'function') {
+        httpServer.setNativeRouteProvider(
+          () => router.getNativeFastPathRoutes(),
+          (req: HttpRequest, res: HttpResponse, err: any) => router.handleRouteError(err, req, res)
+        );
+      }
+      return;
+    }
+
+    this.coreFramework.addMiddleware(
+      async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+        // Try unified router first (handles all route types)
+        const handled = this.unifiedRouter.handleRequest(req, res);
+
+        // Check if it's a promise (async route) or sync (fast-path)
+        if (handled && typeof (handled as any).then === 'function') {
+          // Async - await the result
+          const isHandled = await (handled as Promise<boolean>);
+          if (!isHandled) {
+            next();
+          }
+        } else {
+          // Sync - check immediately
+          if (!(handled as boolean)) {
+            next();
+          }
+        }
+      }
+    );
+  }
+
   private registerDirectRoutes() {
     // Register routes directly with the HTTP server for optimal performance
     // This provides the intuitive developer experience users expect
@@ -1647,39 +1672,10 @@ export class Moro extends EventEmitter {
     return true;
   }
 
-  private setupDefaultMiddleware(options: MoroOptions) {
-    // CORS - check config enabled property OR options.security.cors.enabled === true
-    if (this.config.security.cors.enabled || options.security?.cors?.enabled === true) {
-      const corsOptions =
-        typeof options.cors === 'object'
-          ? options.cors
-          : this.config.security.cors
-            ? this.config.security.cors
-            : {};
-      this.use(cors(corsOptions));
-    }
-
-    // Helmet - check config enabled property OR options.security.helmet.enabled === true
-    if (this.config.security.helmet.enabled || options.security?.helmet?.enabled === true) {
-      this.use(helmet());
-    }
-
-    // Compression - check config enabled property OR options.performance.compression.enabled === true
-    if (
-      this.config.performance.compression.enabled ||
-      options.performance?.compression?.enabled === true
-    ) {
-      const compressionOptions =
-        typeof options.compression === 'object'
-          ? options.compression
-          : this.config.performance.compression
-            ? this.config.performance.compression
-            : {};
-      this.use(compression(compressionOptions));
-    }
-
-    // Body size limiting
-    this.use(bodySize({ limit: '10mb' }));
+  private setupDefaultMiddleware(_options: MoroOptions) {
+    // cors/helmet/compression/bodySize are installed once by MoroCore.setupCore()
+    // (config-driven, with the configured bodySizeLimit). Registering them here
+    // again made every request run each of them twice.
   }
 
   // Enhanced auto-discovery initialization
@@ -2128,28 +2124,8 @@ export class Moro extends EventEmitter {
         // Documentation not enabled, that's fine
       }
 
-      // Add unified routing middleware (handles both chainable and direct routes)
-      // Call router without extra async wrapper when possible
-      this.coreFramework.addMiddleware(
-        async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-          // Try unified router first (handles all route types)
-          const handled = this.unifiedRouter.handleRequest(req, res);
-
-          // Check if it's a promise (async route) or sync (fast-path)
-          if (handled && typeof (handled as any).then === 'function') {
-            // Async - await the result
-            const isHandled = await (handled as Promise<boolean>);
-            if (!isHandled) {
-              next();
-            }
-          } else {
-            // Sync - check immediately
-            if (!(handled as boolean)) {
-              next();
-            }
-          }
-        }
-      );
+      // Attach the unified router (handles both chainable and direct routes)
+      this.attachUnifiedRouter();
 
       // Register legacy direct routes with the HTTP server (for backward compatibility)
       if (this.routes.length > 0) {

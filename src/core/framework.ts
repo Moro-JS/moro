@@ -19,7 +19,7 @@ import {
   WebSocketAdapterOptions,
   mergeWebSocketConfig,
 } from './networking/websocket-adapter.js';
-import { cors, helmet, compression, bodySize } from './middleware/built-in/index.js';
+import { cors, helmet, compression } from './middleware/built-in/index.js';
 
 // Extended MoroOptions that includes both core options and framework-specific options
 export interface MoroOptions extends CoreMoroOptions {
@@ -91,7 +91,11 @@ export class Moro extends EventEmitter {
       try {
         // Try to use uWebSockets for high performance HTTP and WebSocket
         const sslOptions = this.config.server?.ssl || options.https;
-        this.httpServer = new UWebSocketsHttpServer({ ssl: sslOptions });
+        this.httpServer = new UWebSocketsHttpServer({
+          ssl: sslOptions,
+          maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
+          maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+        });
         this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
         this.usingUWebSockets = true;
         this.logger.info('uWebSockets HTTP+WebSocket server created', 'ServerInit');
@@ -210,8 +214,9 @@ export class Moro extends EventEmitter {
       this.httpServer.use(compression(compressionOptions));
     }
 
-    // Body size middleware - always enabled with configurable limit
-    this.httpServer.use(bodySize({ limit: this.config.server.bodySizeLimit }));
+    // Body size limits are enforced inside the HTTP server's parseBody
+    // (configured via maxBodySize/maxUploadSize above), which responds 413.
+    // No per-request middleware needed - keeps the default chain empty.
 
     // Configure request tracking (ID generation) in HTTP server
     if (this.httpServer.setRequestTracking) {
@@ -223,10 +228,11 @@ export class Moro extends EventEmitter {
       this.httpServer.use(this.requestLoggingMiddleware());
     }
 
-    // Error boundary middleware - configurable but recommended to keep enabled
-    if (this.config.server.errorBoundary.enabled) {
-      this.httpServer.use(this.errorBoundaryMiddleware());
-    }
+    // Error boundary: handled by the HTTP server's top-level catch in
+    // handleRequest (which invokes the registered errorHandler / default 500).
+    // The old errorBoundaryMiddleware wrapped a callback-style next() in
+    // try/catch, which can never observe downstream errors - it cost a promise
+    // per request and caught nothing, so it is no longer installed.
   }
 
   /**
@@ -370,24 +376,6 @@ export class Moro extends EventEmitter {
       });
 
       next();
-    };
-  }
-
-  private errorBoundaryMiddleware() {
-    return async (req: HttpRequest, res: HttpResponse, next: () => void) => {
-      try {
-        next();
-      } catch (error: any) {
-        this.logger.error('Error:', error.message, error.stack);
-
-        if (!res.headersSent) {
-          res.status(500).json({
-            success: false,
-            error: 'Internal server error',
-            requestId: req.requestId,
-          });
-        }
-      }
     };
   }
 

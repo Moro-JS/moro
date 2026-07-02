@@ -1,4 +1,3 @@
- 
 // Integration Tests - compression middleware.
 //
 // Covers correctness (large responses compress and still decode, small responses are

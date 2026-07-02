@@ -2,6 +2,7 @@
 import { IncomingMessage, ServerResponse, createServer, Server } from 'http';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
+import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import {
   HttpRequest,
@@ -16,19 +17,932 @@ import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 const gzip = promisify(zlib.gzip);
 const deflate = promisify(zlib.deflate);
 
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
+
+const STATUS_MESSAGES: Record<number, string> = {
+  200: 'OK',
+  201: 'Created',
+  202: 'Accepted',
+  204: 'No Content',
+  301: 'Moved Permanently',
+  302: 'Found',
+  304: 'Not Modified',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  409: 'Conflict',
+  410: 'Gone',
+  422: 'Unprocessable Entity',
+  429: 'Too Many Requests',
+  500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+};
+
+const TYPE_SHORTHANDS: Record<string, string> = {
+  json: 'application/json; charset=utf-8',
+  html: 'text/html; charset=utf-8',
+  text: 'text/plain; charset=utf-8',
+  txt: 'text/plain; charset=utf-8',
+  xml: 'application/xml',
+  js: 'application/javascript',
+  css: 'text/css; charset=utf-8',
+  form: 'application/x-www-form-urlencoded',
+};
+
+function parseQueryString(queryString: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!queryString) return result;
+
+  const pairs = queryString.split('&');
+  const pairsLen = pairs.length;
+  for (let i = 0; i < pairsLen; i++) {
+    const pair = pairs[i];
+    const equalIndex = pair.indexOf('=');
+    if (equalIndex === -1) {
+      result[decodeURIComponent(pair)] = '';
+    } else {
+      const key = decodeURIComponent(pair.substring(0, equalIndex));
+      const value = decodeURIComponent(pair.substring(equalIndex + 1));
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function parseCookieHeader(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+
+  const cookieParts = cookieHeader.split(';');
+  const cookiePartsLen = cookieParts.length;
+  for (let i = 0; i < cookiePartsLen; i++) {
+    const cookie = cookieParts[i];
+    const equalIndex = cookie.indexOf('=');
+    if (equalIndex > 0) {
+      const name = cookie.substring(0, equalIndex).trim();
+      const value = cookie.substring(equalIndex + 1);
+      if (name && value) {
+        try {
+          cookies[name] = decodeURIComponent(value);
+        } catch {
+          // Malformed percent-encoding: keep the raw value rather than throwing a 500
+          cookies[name] = value;
+        }
+      }
+    }
+  }
+  return cookies;
+}
+
+// ---------------------------------------------------------------------------
+// Prototype-based request/response enhancement.
+//
+// All helper methods live on shared prototypes (defined once per process)
+// instead of being re-created as ~40 closures on every request, and derived
+// request fields (query, cookies, hostname, ips, ...) are lazy memoized
+// getters so a request only pays for what its handler actually reads.
+// Each MoroHttpServer binds per-instance subclasses whose prototype carries
+// the `_server` back-reference, so methods can reach server config (logger,
+// compression settings) without any per-request allocation.
+// ---------------------------------------------------------------------------
+
+export class MoroIncomingMessage extends IncomingMessage {
+  /** Bound on the per-server subclass prototype - no per-request write needed */
+  declare _server: MoroHttpServer;
+
+  // Hot per-request fields (assigned in handleRequest; declared here for stable shape)
+  params: Record<string, string> = {};
+  body: any = null;
+  path = '';
+
+  // Lazy backing fields - single hidden-class shape, created at construction
+  _queryString: string | null = null;
+  _query: Record<string, string> | undefined = undefined;
+  _cookies: Record<string, string> | undefined = undefined;
+  _context: Record<string, any> | undefined = undefined;
+  _requestId: string | undefined = undefined;
+  _ip: string | undefined = undefined;
+  _originalUrl: string | undefined = undefined;
+  _hostname: string | undefined = undefined;
+  _protocol: string | undefined = undefined;
+  _secure: boolean | undefined = undefined;
+  _xhr: boolean | undefined = undefined;
+  _ips: string[] | undefined = undefined;
+  _subdomains: string[] | undefined = undefined;
+
+  get query(): Record<string, string> {
+    let q = this._query;
+    if (q === undefined) {
+      const qs = this._queryString;
+      q = qs ? parseQueryString(qs) : {};
+      this._query = q;
+    }
+    return q;
+  }
+  set query(value: Record<string, string>) {
+    this._query = value;
+  }
+
+  get cookies(): Record<string, string> {
+    let c = this._cookies;
+    if (c === undefined) {
+      const header = this.headers.cookie;
+      c = header ? parseCookieHeader(header) : {};
+      this._cookies = c;
+    }
+    return c;
+  }
+  set cookies(value: Record<string, string>) {
+    this._cookies = value;
+  }
+
+  get context(): Record<string, any> {
+    let ctx = this._context;
+    if (ctx === undefined) {
+      ctx = {};
+      this._context = ctx;
+    }
+    return ctx;
+  }
+  set context(value: Record<string, any>) {
+    this._context = value;
+  }
+
+  get requestId(): string {
+    let id = this._requestId;
+    if (id === undefined) {
+      const server = this._server;
+      id = server && server.requestTrackingEnabled ? randomUUID() : '';
+      this._requestId = id;
+    }
+    return id;
+  }
+  set requestId(value: string) {
+    this._requestId = value;
+  }
+
+  get ip(): string {
+    let v = this._ip;
+    if (v === undefined) {
+      v = (this.socket && this.socket.remoteAddress) || '';
+      this._ip = v;
+    }
+    return v;
+  }
+  set ip(value: string) {
+    this._ip = value;
+  }
+
+  get originalUrl(): string {
+    const v = this._originalUrl;
+    return v !== undefined ? v : this.url || '';
+  }
+  set originalUrl(value: string) {
+    this._originalUrl = value;
+  }
+
+  get hostname(): string {
+    let v = this._hostname;
+    if (v === undefined) {
+      const host = (this.headers.host || '') as string;
+      v = host ? host.split(':')[0] : '';
+      this._hostname = v;
+    }
+    return v;
+  }
+  set hostname(value: string) {
+    this._hostname = value;
+  }
+
+  get protocol(): string {
+    let v = this._protocol;
+    if (v === undefined) {
+      const forwardedProto = this.headers['x-forwarded-proto'] as string | undefined;
+      v = forwardedProto
+        ? forwardedProto.split(',')[0].trim()
+        : (this.socket as any)?.encrypted
+          ? 'https'
+          : 'http';
+      this._protocol = v;
+    }
+    return v;
+  }
+  set protocol(value: string) {
+    this._protocol = value;
+  }
+
+  get secure(): boolean {
+    const v = this._secure;
+    return v !== undefined ? v : this.protocol === 'https';
+  }
+  set secure(value: boolean) {
+    this._secure = value;
+  }
+
+  get xhr(): boolean {
+    let v = this._xhr;
+    if (v === undefined) {
+      const xrw = this.headers['x-requested-with'] as string | undefined;
+      v = !!xrw && xrw.toLowerCase() === 'xmlhttprequest';
+      this._xhr = v;
+    }
+    return v;
+  }
+  set xhr(value: boolean) {
+    this._xhr = value;
+  }
+
+  get ips(): string[] {
+    let v = this._ips;
+    if (v === undefined) {
+      const forwardedFor = this.headers['x-forwarded-for'] as string | undefined;
+      v = forwardedFor
+        ? forwardedFor
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+        : [];
+      this._ips = v;
+    }
+    return v;
+  }
+  set ips(value: string[]) {
+    this._ips = value;
+  }
+
+  get subdomains(): string[] {
+    let v = this._subdomains;
+    if (v === undefined) {
+      const hostnameParts = this.hostname.split('.');
+      // Matches Express: subdomains are parts before the last two (domain + tld),
+      // reversed (closest subdomain first).
+      v = hostnameParts.length > 2 ? hostnameParts.slice(0, -2).reverse() : [];
+      this._subdomains = v;
+    }
+    return v;
+  }
+  set subdomains(value: string[]) {
+    this._subdomains = value;
+  }
+
+  // Express-compatible request helpers (shared prototype methods, not closures)
+  get(name: string): string | undefined {
+    const lower = name.toLowerCase();
+    if (lower === 'referer' || lower === 'referrer') {
+      return (this.headers.referer || (this.headers as any).referrer) as string | undefined;
+    }
+    const v = this.headers[lower];
+    return Array.isArray(v) ? v[0] : (v as string | undefined);
+  }
+
+  header(name: string): string | undefined {
+    return this.get(name);
+  }
+
+  is(type: string): boolean {
+    const ct = (this.headers['content-type'] || '') as string;
+    if (!ct) return false;
+    const mime = ct.split(';')[0].trim().toLowerCase();
+    const t = type.toLowerCase();
+    if (t.indexOf('/') === -1) {
+      // e.g. 'json' → match */json or +json suffix
+      return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
+    }
+    if (t.endsWith('/*')) {
+      return mime.startsWith(t.slice(0, -1));
+    }
+    return mime === t;
+  }
+
+  accepts(types?: string | string[]): string | false {
+    const accept = (this.headers.accept || '*/*') as string;
+    if (!types) return accept;
+    const wanted = Array.isArray(types) ? types : [types];
+    if (accept === '*/*' || accept === '') return wanted[0] || false;
+    const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+    for (const w of wanted) {
+      const wl = w.toLowerCase();
+      const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
+      for (const at of acceptTypes) {
+        if (at === '*/*') return w;
+        if (at === wMime) return w;
+        if (at.endsWith('/*') && wMime.startsWith(at.slice(0, -1))) return w;
+      }
+    }
+    return false;
+  }
+
+  acceptsLanguages(langs?: string | string[]): string | false {
+    const acceptLang = (this.headers['accept-language'] || '') as string;
+    if (!langs) return acceptLang || false;
+    const wanted = Array.isArray(langs) ? langs : [langs];
+    if (!acceptLang) return wanted[0] || false;
+    // Parse with q values; sort by q desc to match Express's "best match wins"
+    const accepted = acceptLang
+      .split(',')
+      .map(s => {
+        const parts = s.trim().split(';');
+        const tag = parts[0].toLowerCase();
+        const qPart = parts.find(p => p.trim().startsWith('q='));
+        const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
+        return { tag, q: isNaN(q) ? 0 : q };
+      })
+      .filter(a => a.q > 0)
+      .sort((a, b) => b.q - a.q);
+    for (const { tag } of accepted) {
+      for (const w of wanted) {
+        const wl = w.toLowerCase();
+        if (tag === '*' || tag === wl || tag.split('-')[0] === wl.split('-')[0]) return w;
+      }
+    }
+    return false;
+  }
+}
+
+export class MoroServerResponse extends ServerResponse {
+  /** Bound on the per-server subclass prototype - no per-request write needed */
+  declare _server: MoroHttpServer;
+
+  _locals: Record<string, any> | undefined = undefined;
+
+  get locals(): Record<string, any> {
+    let l = this._locals;
+    if (l === undefined) {
+      l = {};
+      this._locals = l;
+    }
+    return l;
+  }
+  set locals(value: Record<string, any>) {
+    this._locals = value;
+  }
+
+  status(code: number): this {
+    this.statusCode = code;
+    return this;
+  }
+
+  json(data: any): void {
+    if (this.headersSent) return;
+
+    const jsonString = JSON.stringify(data);
+    const server = this._server;
+
+    // Compression - EARLY EXIT if disabled or below threshold
+    if (server && server.compressionEnabled && jsonString.length > server.compressionThreshold) {
+      const acceptEncoding = (this as any).req?.headers['accept-encoding'];
+
+      if (acceptEncoding && acceptEncoding.includes('gzip')) {
+        const buffer = Buffer.from(jsonString, 'utf8');
+        gzip(buffer)
+          .then(compressed => {
+            if (this.headersSent) return;
+            this.writeHead(this.statusCode || 200, {
+              'Content-Type': JSON_CONTENT_TYPE,
+              'Content-Encoding': 'gzip',
+              Vary: 'Accept-Encoding',
+              'Content-Length': compressed.length,
+            });
+            this.end(compressed);
+          })
+          .catch(err => {
+            server.logger.error('Response compression failed', 'HttpServer', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            if (!this.headersSent) {
+              this.writeHead(this.statusCode || 200, {
+                'Content-Type': JSON_CONTENT_TYPE,
+                'Content-Length': Buffer.byteLength(jsonString),
+              });
+              this.end(jsonString);
+            } else {
+              this.end();
+            }
+          });
+        return;
+      } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
+        const buffer = Buffer.from(jsonString, 'utf8');
+        deflate(buffer)
+          .then(compressed => {
+            if (this.headersSent) return;
+            this.writeHead(this.statusCode || 200, {
+              'Content-Type': JSON_CONTENT_TYPE,
+              'Content-Encoding': 'deflate',
+              Vary: 'Accept-Encoding',
+              'Content-Length': compressed.length,
+            });
+            this.end(compressed);
+          })
+          .catch(err => {
+            server.logger.error('Response compression failed', 'HttpServer', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            if (!this.headersSent) {
+              this.writeHead(this.statusCode || 200, {
+                'Content-Type': JSON_CONTENT_TYPE,
+                'Content-Length': Buffer.byteLength(jsonString),
+              });
+              this.end(jsonString);
+            } else {
+              this.end();
+            }
+          });
+        return;
+      }
+    }
+
+    // SYNC PATH - no compression: single serialize, single write, no Buffer copy
+    this.writeHead(this.statusCode || 200, {
+      'Content-Type': JSON_CONTENT_TYPE,
+      'Content-Length': Buffer.byteLength(jsonString),
+    });
+    this.end(jsonString);
+  }
+
+  send(data: string | Buffer): void {
+    if (this.headersSent) return;
+
+    // Auto-detect content type if not already set
+    if (!this.getHeader('Content-Type')) {
+      if (typeof data === 'string') {
+        // Cheap JSON sniff: first non-whitespace char is '{', '[' or '"'
+        // (replaces a full JSON.parse of the body just to pick a content type)
+        let i = 0;
+        const len = data.length;
+        while (i < len) {
+          const c = data.charCodeAt(i);
+          if (c !== 32 && c !== 9 && c !== 10 && c !== 13) break;
+          i++;
+        }
+        const first = i < len ? data.charCodeAt(i) : 0;
+        if (first === 123 /* { */ || first === 91 /* [ */ || first === 34 /* " */) {
+          this.setHeader('Content-Type', JSON_CONTENT_TYPE);
+        } else {
+          this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        }
+      } else {
+        this.setHeader('Content-Type', 'application/octet-stream');
+      }
+    }
+
+    this.end(data);
+  }
+
+  cookie(name: string, value: string, options: any = {}): this {
+    if (this.headersSent) {
+      const isCritical =
+        options.critical ||
+        name.includes('session') ||
+        name.includes('auth') ||
+        name.includes('csrf');
+      const message = `Cookie '${name}' could not be set - headers already sent`;
+
+      if (isCritical || options.throwOnLateSet) {
+        throw new Error(`${message}. This may cause authentication or security issues.`);
+      } else {
+        this._server?.logger.warn(message, 'CookieWarning', {
+          cookieName: name,
+          critical: isCritical,
+          stackTrace: new Error().stack,
+        });
+      }
+      return this;
+    }
+
+    const cookieValue = encodeURIComponent(value);
+    let cookieString = `${name}=${cookieValue}`;
+
+    if (options.maxAge) cookieString += `; Max-Age=${options.maxAge}`;
+    if (options.expires) cookieString += `; Expires=${options.expires.toUTCString()}`;
+    if (options.httpOnly) cookieString += '; HttpOnly';
+    if (options.secure) cookieString += '; Secure';
+    if (options.sameSite) cookieString += `; SameSite=${options.sameSite}`;
+    if (options.domain) cookieString += `; Domain=${options.domain}`;
+    if (options.path) cookieString += `; Path=${options.path}`;
+
+    const existingCookies = this.getHeader('Set-Cookie') || [];
+    // Avoid spread operator - direct array manipulation
+    const cookies = Array.isArray(existingCookies) ? existingCookies : [existingCookies as string];
+    cookies.push(cookieString);
+    this.setHeader('Set-Cookie', cookies);
+
+    return this;
+  }
+
+  clearCookie(name: string, options: any = {}): this {
+    // Avoid spread operator - manually set properties
+    const clearOptions: any = {
+      expires: new Date(0),
+      maxAge: 0,
+    };
+    // Copy other options manually
+    if (options.path !== undefined) clearOptions.path = options.path;
+    if (options.domain !== undefined) clearOptions.domain = options.domain;
+    if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
+    if (options.secure !== undefined) clearOptions.secure = options.secure;
+    if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
+    return this.cookie(name, '', clearOptions);
+  }
+
+  redirect(url: string, status: number = 302): void {
+    if (this.headersSent) return;
+    this.statusCode = status;
+    const safeUrl = url.replace(/[\r\n]/g, '');
+    this.setHeader('Location', safeUrl);
+    this.end();
+  }
+
+  async sendFile(filePath: string): Promise<void> {
+    if (this.headersSent) return;
+
+    try {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const extension = path.extname(filePath);
+      const mime = await this._server.getMimeType(extension);
+
+      const stats = await fs.stat(filePath);
+      const data = await fs.readFile(filePath);
+
+      // Add charset for text-based files
+      const contentType = this._server.addCharsetIfNeeded(mime);
+      this.setHeader('Content-Type', contentType);
+      this.setHeader('Content-Length', stats.size);
+
+      // Add security headers for file downloads
+      this.setHeader('X-Content-Type-Options', 'nosniff');
+
+      // Add caching headers
+      this.setHeader('Last-Modified', stats.mtime.toUTCString());
+      this.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year for static files
+
+      this.end(data);
+    } catch {
+      this.status(404).json({ success: false, error: 'File not found' });
+    }
+  }
+
+  // Standardized response helpers
+  success<T = any>(data: T, message?: string): void {
+    const response: any = {
+      success: true,
+      data,
+    };
+    if (message !== undefined) {
+      response.message = message;
+    }
+    this.json(response);
+  }
+
+  error(error: string, code?: string, message?: string): void {
+    const response: any = {
+      success: false,
+      error,
+    };
+    if (code !== undefined) {
+      response.code = code;
+    }
+    if (message !== undefined) {
+      response.message = message;
+    }
+    this.json(response);
+  }
+
+  // Common HTTP error helpers (automatically set status code)
+  unauthorized(message: string = 'Authentication required'): void {
+    this.statusCode = 401;
+    this.json({
+      success: false,
+      error: 'Unauthorized',
+      code: 'UNAUTHORIZED',
+      message,
+    });
+  }
+
+  forbidden(message: string = 'Insufficient permissions'): void {
+    this.statusCode = 403;
+    this.json({
+      success: false,
+      error: 'Forbidden',
+      code: 'FORBIDDEN',
+      message,
+    });
+  }
+
+  notFound(resource: string = 'Resource'): void {
+    this.statusCode = 404;
+    this.json({
+      success: false,
+      error: 'Not Found',
+      code: 'NOT_FOUND',
+      message: `${resource} not found`,
+    });
+  }
+
+  badRequest(message: string = 'Invalid request'): void {
+    this.statusCode = 400;
+    this.json({
+      success: false,
+      error: 'Bad Request',
+      code: 'BAD_REQUEST',
+      message,
+    });
+  }
+
+  conflict(message: string): void {
+    this.statusCode = 409;
+    this.json({
+      success: false,
+      error: 'Conflict',
+      code: 'CONFLICT',
+      message,
+    });
+  }
+
+  internalError(message: string = 'Internal server error'): void {
+    this.statusCode = 500;
+    this.json({
+      success: false,
+      error: 'Internal Server Error',
+      code: 'INTERNAL_ERROR',
+      message,
+    });
+  }
+
+  validationError(errors: Array<{ field: string; message: string; code?: string }>): void {
+    this.statusCode = 422;
+    this.json({
+      success: false,
+      error: 'Validation Failed',
+      code: 'VALIDATION_ERROR',
+      errors,
+    });
+  }
+
+  rateLimited(retryAfter?: number): void {
+    this.statusCode = 429;
+    if (retryAfter) {
+      this.setHeader('Retry-After', retryAfter.toString());
+    }
+    this.json({
+      success: false,
+      error: 'Rate Limit Exceeded',
+      code: 'RATE_LIMITED',
+      message: retryAfter
+        ? `Too many requests. Retry after ${retryAfter} seconds.`
+        : 'Too many requests',
+      retryAfter,
+    });
+  }
+
+  // Common success patterns
+  created<T = any>(data: T, location?: string): void {
+    this.statusCode = 201;
+    if (location) {
+      this.setHeader('Location', location);
+    }
+    this.json({
+      success: true,
+      data,
+    });
+  }
+
+  noContent(): void {
+    this.statusCode = 204;
+    this.end();
+  }
+
+  paginated<T = any>(data: T[], pagination: { page: number; limit: number; total: number }): void {
+    const totalPages = Math.ceil(pagination.total / pagination.limit);
+    this.json({
+      success: true,
+      data,
+      pagination: {
+        page: pagination.page,
+        limit: pagination.limit,
+        total: pagination.total,
+        totalPages,
+        hasNext: pagination.page < totalPages,
+        hasPrev: pagination.page > 1,
+      },
+    });
+  }
+
+  // Header management utilities
+  hasHeader(name: string): boolean {
+    return this.getHeader(name) !== undefined;
+  }
+
+  setBulkHeaders(headers: Record<string, string | number>): this {
+    if (this.headersSent) {
+      // Only enumerate keys for warning if headers were already sent
+      const attemptedHeaderKeys = [];
+      for (const key in headers) {
+        attemptedHeaderKeys.push(key);
+      }
+      this._server?.logger.warn('Cannot set headers - headers already sent', 'HeaderWarning', {
+        attemptedHeaders: attemptedHeaderKeys,
+      });
+      return this;
+    }
+
+    for (const key in headers) {
+      this.setHeader(key, headers[key]);
+    }
+    return this;
+  }
+
+  appendHeader(name: string, value: string | string[]): this {
+    if (this.headersSent) {
+      this._server?.logger.warn(
+        `Cannot append to header '${name}' - headers already sent`,
+        'HeaderWarning'
+      );
+      return this;
+    }
+
+    const existing = this.getHeader(name);
+    if (existing) {
+      const values = Array.isArray(existing) ? existing : [existing.toString()];
+      const newValues = Array.isArray(value) ? value : [value];
+      this.setHeader(name, [...values, ...newValues]);
+    } else {
+      this.setHeader(name, value);
+    }
+    return this;
+  }
+
+  // Express-compatible response helpers
+  set(
+    field: string | Record<string, string | string[] | number>,
+    value?: string | string[] | number
+  ): this {
+    if (this.headersSent) return this;
+    if (typeof field === 'string') {
+      if (value !== undefined) {
+        this.setHeader(field, value as any);
+      }
+    } else {
+      for (const key in field) {
+        this.setHeader(key, field[key] as any);
+      }
+    }
+    return this;
+  }
+
+  get(field: string): any {
+    return this.getHeader(field) as any;
+  }
+
+  append(field: string, value: string | string[]): this {
+    return this.appendHeader(field, value);
+  }
+
+  type(contentType: string): this {
+    if (this.headersSent) return this;
+    // If no "/" treat as shorthand (e.g. "json" → "application/json")
+    let ct = contentType;
+    if (ct.indexOf('/') === -1) {
+      ct = TYPE_SHORTHANDS[ct.toLowerCase()] || `application/${ct}`;
+    }
+    this.setHeader('Content-Type', ct);
+    return this;
+  }
+
+  sendStatus(code: number): void {
+    if (this.headersSent) return;
+    this.statusCode = code;
+    const body = STATUS_MESSAGES[code] || String(code);
+    this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    this.end(body);
+  }
+
+  location(url: string): this {
+    if (this.headersSent) return this;
+    const safe = url.replace(/[\r\n]/g, '');
+    this.setHeader('Location', safe);
+    return this;
+  }
+
+  vary(field: string | string[]): this {
+    if (this.headersSent) return this;
+    const existing = this.getHeader('Vary');
+    const existingList = existing
+      ? String(existing)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      : [];
+    const incoming = Array.isArray(field) ? field : [field];
+    for (const f of incoming) {
+      if (!existingList.some(e => e.toLowerCase() === f.toLowerCase())) {
+        existingList.push(f);
+      }
+    }
+    this.setHeader('Vary', existingList.join(', '));
+    return this;
+  }
+
+  attachment(filename?: string): this {
+    if (this.headersSent) return this;
+    if (filename) {
+      const safeName = filename.replace(/[\r\n"]/g, '');
+      this.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      // Set Content-Type from extension if not already set
+      if (!this.getHeader('Content-Type')) {
+        // fire-and-forget mime lookup; not awaited to keep signature chainable
+        this._server.getMimeType(filename.substring(filename.lastIndexOf('.'))).then(mime => {
+          if (!this.getHeader('Content-Type') && !this.headersSent) {
+            this.setHeader('Content-Type', mime);
+          }
+        });
+      }
+    } else {
+      this.setHeader('Content-Disposition', 'attachment');
+    }
+    return this;
+  }
+
+  async download(filePath: string, filename?: string): Promise<void> {
+    this.attachment(filename || filePath.split('/').pop());
+    return this.sendFile(filePath);
+  }
+
+  format(handlers: Record<string, () => any | Promise<any>>): void {
+    const types = Object.keys(handlers).filter(k => k !== 'default');
+    const matched = ((this as any).req as HttpRequest).accepts(types);
+    const chosen = matched ? handlers[matched as string] : handlers.default;
+    if (!chosen) {
+      this.statusCode = 406;
+      this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      this.end('Not Acceptable');
+      return;
+    }
+    this.vary('Accept');
+    if (matched && typeof matched === 'string') {
+      this.type(matched);
+    }
+    chosen();
+  }
+
+  links(links: Record<string, string>): this {
+    if (this.headersSent) return this;
+    const parts: string[] = [];
+    for (const rel in links) {
+      parts.push(`<${links[rel]}>; rel="${rel}"`);
+    }
+    if (parts.length > 0) {
+      const existing = this.getHeader('Link');
+      const combined = existing ? `${existing}, ${parts.join(', ')}` : parts.join(', ');
+      this.setHeader('Link', combined);
+    }
+    return this;
+  }
+
+  // Response state utilities
+  canSetHeaders(): boolean {
+    return !this.headersSent;
+  }
+
+  getResponseState() {
+    return {
+      headersSent: this.headersSent,
+      statusCode: this.statusCode,
+      headers: this.getHeaders ? this.getHeaders() : {},
+      finished: this.finished || false,
+      writable: this.writable,
+    };
+  }
+}
+
 export class MoroHttpServer {
   private server: Server;
   private routes: RouteEntry[] = [];
   private globalMiddleware: Middleware[] = [];
-  private compressionEnabled = true;
-  private compressionThreshold = 1024;
-  private requestTrackingEnabled = true; // Generate request IDs
-  private logger = createFrameworkLogger('HttpServer');
+  /** @internal read by MoroServerResponse prototype methods */
+  compressionEnabled = true;
+  /** @internal read by MoroServerResponse prototype methods */
+  compressionThreshold = 1024;
+  /** @internal read by MoroIncomingMessage prototype methods */
+  requestTrackingEnabled = true; // Generate request IDs
+  /** @internal read by MoroServerResponse prototype methods */
+  logger = createFrameworkLogger('HttpServer');
   private hookManager: any;
   private requestCounter = 0;
   private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
   private requestDecorations: Record<string, any> = {};
   private responseDecorations: Record<string, any> = {};
+
+  // Per-server request/response subclasses; their prototype carries the
+  // `_server` back-reference plus user decorations (applied once, not per request)
+  private RequestClass!: typeof MoroIncomingMessage;
+  private ResponseClass!: typeof MoroServerResponse;
+
+  // Direct router dispatch slot - runs after global middleware without the
+  // per-middleware promise machinery (set from Moro.listen via setRouterHandler)
+  private routerHandler?: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>;
 
   // Body size limits - defaults overridden by config in constructor
   private maxBodySize: number = 10 * 1024 * 1024; // Default 10MB (overridden by server.bodySizeLimit config)
@@ -57,7 +971,21 @@ export class MoroHttpServer {
   };
 
   constructor(options?: { maxBodySize?: number; maxUploadSize?: number }) {
-    this.server = createServer(this.handleRequest.bind(this));
+    // Per-instance subclasses so prototype methods can reach this server's
+    // config (logger, compression) with zero per-request allocation.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const boundServer = this;
+    class BoundRequest extends MoroIncomingMessage {}
+    class BoundResponse extends MoroServerResponse {}
+    BoundRequest.prototype._server = boundServer;
+    BoundResponse.prototype._server = boundServer;
+    this.RequestClass = BoundRequest;
+    this.ResponseClass = BoundResponse;
+
+    this.server = createServer(
+      { IncomingMessage: BoundRequest as any, ServerResponse: BoundResponse as any },
+      this.handleRequest.bind(this) as any
+    );
 
     // Configure body size limits from options
     if (options?.maxBodySize) {
@@ -71,6 +999,12 @@ export class MoroHttpServer {
     this.server.keepAliveTimeout = 5000; // 5 seconds
     this.server.headersTimeout = 6000; // 6 seconds
     this.server.timeout = 30000; // 30 seconds request timeout
+  }
+
+  // Direct router dispatch - called after global middleware, before the legacy
+  // route table. Returning true (or a promise of true) means the request was handled.
+  setRouterHandler(fn: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>): void {
+    this.routerHandler = fn;
   }
 
   // Configure server for maximum performance (can disable all overhead)
@@ -104,13 +1038,31 @@ export class MoroHttpServer {
     this.errorHandler = fn;
   }
 
-  // Apply per-request/response decoration maps (called from Moro.decorateRequest/Reply)
+  // Apply request/response decoration maps (called from Moro.decorateRequest/Reply).
+  // Decorations are installed on the per-server prototypes once, so requests pay
+  // nothing for them; per-request writes to the same key simply shadow the prototype.
   setRequestDecorations(decorations: Record<string, any>): void {
     this.requestDecorations = decorations;
+    for (const key in decorations) {
+      Object.defineProperty(this.RequestClass.prototype, key, {
+        value: decorations[key],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
 
   setResponseDecorations(decorations: Record<string, any>): void {
     this.responseDecorations = decorations;
+    for (const key in decorations) {
+      Object.defineProperty(this.ResponseClass.prototype, key, {
+        value: decorations[key],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
 
   // Middleware management
@@ -205,29 +1157,50 @@ export class MoroHttpServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const httpReq = this.enhanceRequest(req);
-    const httpRes = this.enhanceResponse(res, httpReq);
-
-    // Store original params for efficient cleanup
-    const originalParams = httpReq.params;
+    // req/res arrive as the per-server subclasses (MoroIncomingMessage /
+    // MoroServerResponse) - all helpers are already on their prototypes.
+    const httpReq = req as unknown as HttpRequest & MoroIncomingMessage;
+    const httpRes = res as unknown as HttpResponse & MoroServerResponse;
 
     try {
-      // Optimized URL and query parsing with object pooling
+      // URL split - query string parsing is lazy (MoroIncomingMessage#query getter)
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const urlString = req.url!;
       const queryIndex = urlString.indexOf('?');
 
       if (queryIndex === -1) {
-        // No query string
         httpReq.path = urlString;
-        httpReq.query = {};
       } else {
-        // Has query string - parse efficiently with pooled object
         httpReq.path = urlString.substring(0, queryIndex);
-        httpReq.query = this.parseQueryStringPooled(urlString.substring(queryIndex + 1));
+        httpReq._queryString = urlString.substring(queryIndex + 1);
       }
 
-      // Method checking - use reference equality for interned strings (50-100% faster)
+      // Intern method string for fast reference equality comparison (50-100% faster)
+      switch (req.method) {
+        case 'POST':
+          httpReq.method = MoroHttpServer.METHOD_POST;
+          break;
+        case 'PUT':
+          httpReq.method = MoroHttpServer.METHOD_PUT;
+          break;
+        case 'PATCH':
+          httpReq.method = MoroHttpServer.METHOD_PATCH;
+          break;
+        case 'GET':
+          httpReq.method = MoroHttpServer.METHOD_GET;
+          break;
+        case 'DELETE':
+          httpReq.method = MoroHttpServer.METHOD_DELETE;
+          break;
+        case 'HEAD':
+          httpReq.method = MoroHttpServer.METHOD_HEAD;
+          break;
+        case 'OPTIONS':
+          httpReq.method = MoroHttpServer.METHOD_OPTIONS;
+          break;
+      }
+
+      // Method checking - use reference equality for interned strings
       if (
         httpReq.method === MoroHttpServer.METHOD_POST ||
         httpReq.method === MoroHttpServer.METHOD_PUT ||
@@ -236,18 +1209,22 @@ export class MoroHttpServer {
         httpReq.body = await this.parseBody(req);
       }
 
-      // Execute hooks before request processing - NOOP if no hookManager
-      if (this.hookManager) {
-        await this.hookManager.execute('request', {
+      // Execute hooks before request processing - skipped entirely (no context
+      // object, no promise) when no 'request' hooks are registered
+      const hookManager = this.hookManager;
+      if (hookManager && (hookManager.hasHooks === undefined || hookManager.hasHooks('request'))) {
+        await hookManager.execute('request', {
           request: httpReq,
           response: httpRes,
         });
       }
 
-      // Execute global middleware first - EARLY EXIT if none registered
-      const middlewareLen = this.globalMiddleware.length;
-      if (middlewareLen > 0) {
-        await this.executeMiddleware(this.globalMiddleware, httpReq, httpRes);
+      // Execute global middleware first - EARLY EXIT if none registered.
+      // executeMiddleware returns undefined when the whole chain completed
+      // synchronously, so a sync chain costs zero promise allocations.
+      if (this.globalMiddleware.length > 0) {
+        const mwResult = this.executeMiddleware(this.globalMiddleware, httpReq, httpRes);
+        if (mwResult) await mwResult;
       }
 
       // If middleware handled the request, don't continue
@@ -255,7 +1232,21 @@ export class MoroHttpServer {
         return;
       }
 
-      // Find matching route
+      // Unified router direct dispatch - no middleware-chain promise wrapper
+      const routerHandler = this.routerHandler;
+      if (routerHandler) {
+        const handled = routerHandler(httpReq, httpRes);
+        if (handled) {
+          if (typeof (handled as any).then === 'function') {
+            if (await handled) return;
+          } else {
+            return;
+          }
+        }
+        if (httpRes.headersSent) return;
+      }
+
+      // Find matching route (legacy direct-route table)
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const route = this.findRoute(req.method!, httpReq.path);
       if (!route) {
@@ -267,22 +1258,22 @@ export class MoroHttpServer {
         return;
       }
 
-      // Extract path parameters - optimized with object pooling
+      // Extract path parameters
       const matches = httpReq.path.match(route.pattern);
       if (matches) {
-        // Use pooled object for parameters
-        httpReq.params = this.acquireParamObject();
+        const params: Record<string, string> = {};
         const paramNames = route.paramNames;
         const paramNamesLen = paramNames.length;
         for (let i = 0; i < paramNamesLen; i++) {
-          httpReq.params[paramNames[i]] = matches[i + 1];
+          params[paramNames[i]] = matches[i + 1];
         }
+        httpReq.params = params;
       }
 
       // Execute middleware chain - EARLY EXIT if no route middleware
-      const routeMiddlewareLen = route.middleware.length;
-      if (routeMiddlewareLen > 0) {
-        await this.executeMiddleware(route.middleware, httpReq, httpRes);
+      if (route.middleware.length > 0) {
+        const mwResult = this.executeMiddleware(route.middleware, httpReq, httpRes);
+        if (mwResult) await mwResult;
       }
 
       // Execute handler - Don't await sync handlers
@@ -299,6 +1290,17 @@ export class MoroHttpServer {
         requestPath: req.url,
         requestMethod: req.method,
       });
+
+      // Payload-too-large from parseBody: respond 413 (matches the old bodySize
+      // middleware semantics, now enforced in-server)
+      if ((error as any)?.statusCode === 413 && !httpRes.headersSent) {
+        httpRes.statusCode = 413;
+        httpRes.json({
+          success: false,
+          error: 'Request entity too large',
+        });
+        return;
+      }
 
       this.logger.error('Request error', 'RequestHandler', {
         error: error instanceof Error ? error.message : String(error),
@@ -359,69 +1361,7 @@ export class MoroHttpServer {
           }
         }
       }
-    } finally {
-      // Always release pooled objects back to the pool
-      // This prevents memory leaks and ensures consistent performance
-      // Check if object is empty without Object.keys()
-      if (originalParams) {
-        let isEmpty = true;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const _key in originalParams) {
-          isEmpty = false;
-          break;
-        }
-        if (isEmpty) {
-          this.releaseParamObject(originalParams);
-        }
-      }
-      if (httpReq.params && httpReq.params !== originalParams) {
-        let isEmpty = true;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const _key in httpReq.params) {
-          isEmpty = false;
-          break;
-        }
-        if (isEmpty) {
-          this.releaseParamObject(httpReq.params);
-        }
-      }
     }
-
-    // Additional cleanup on response completion to ensure objects are returned to pool
-    res.once('finish', () => {
-      // Check if object is empty without Object.keys()
-      if (originalParams) {
-        let isEmpty = true;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const _key in originalParams) {
-          isEmpty = false;
-          break;
-        }
-        if (isEmpty) {
-          this.releaseParamObject(originalParams);
-        }
-      }
-      if (httpReq.params && httpReq.params !== originalParams) {
-        let isEmpty = true;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const _key in httpReq.params) {
-          isEmpty = false;
-          break;
-        }
-        if (isEmpty) {
-          this.releaseParamObject(httpReq.params);
-        }
-      }
-    });
-  }
-
-  // Use shared object pool for parameter objects
-  private acquireParamObject(): Record<string, string> {
-    return this.poolManager.acquireParams();
-  }
-
-  private releaseParamObject(params: Record<string, string>): void {
-    this.poolManager.releaseParams(params);
   }
 
   // Force cleanup of all pooled objects
@@ -504,756 +1444,8 @@ export class MoroHttpServer {
     return normalized;
   }
 
-  private enhanceRequest(req: IncomingMessage): HttpRequest {
-    const httpReq = req as HttpRequest;
-    httpReq.params = this.acquireParamObject();
-    httpReq.query = {};
-    httpReq.body = null;
-    httpReq.path = '';
-    httpReq.ip = req.socket.remoteAddress || '';
-    // Request ID generation using pool manager (if enabled)
-    httpReq.requestId = this.requestTrackingEnabled ? this.poolManager.generateRequestId() : '';
-    httpReq.headers = req.headers as Record<string, string>;
-
-    // Intern method string for fast reference equality comparison (50-100% faster)
-    const method = req.method;
-    switch (method) {
-      case 'POST':
-        httpReq.method = MoroHttpServer.METHOD_POST;
-        break;
-      case 'PUT':
-        httpReq.method = MoroHttpServer.METHOD_PUT;
-        break;
-      case 'PATCH':
-        httpReq.method = MoroHttpServer.METHOD_PATCH;
-        break;
-      case 'GET':
-        httpReq.method = MoroHttpServer.METHOD_GET;
-        break;
-      case 'DELETE':
-        httpReq.method = MoroHttpServer.METHOD_DELETE;
-        break;
-      case 'HEAD':
-        httpReq.method = MoroHttpServer.METHOD_HEAD;
-        break;
-      case 'OPTIONS':
-        httpReq.method = MoroHttpServer.METHOD_OPTIONS;
-        break;
-      default:
-        httpReq.method = method;
-    }
-
-    // Parse cookies - EARLY EXIT if no cookie header
-    const cookieHeader = req.headers.cookie;
-    if (cookieHeader) {
-      httpReq.cookies = this.parseCookies(cookieHeader);
-    } else {
-      httpReq.cookies = {};
-    }
-
-    // Per-request typed context bag
-    httpReq.context = {};
-
-    // Apply user-registered request decorations
-    for (const key in this.requestDecorations) {
-      (httpReq as any)[key] = this.requestDecorations[key];
-    }
-
-    // Express-compatible request helpers
-    httpReq.get = httpReq.header = (name: string): string | undefined => {
-      const lower = name.toLowerCase();
-      if (lower === 'referer' || lower === 'referrer') {
-        return (httpReq.headers.referer || httpReq.headers.referrer) as string | undefined;
-      }
-      const v = httpReq.headers[lower];
-      return Array.isArray(v) ? v[0] : v;
-    };
-
-    httpReq.is = (type: string): boolean => {
-      const ct = (httpReq.headers['content-type'] || '') as string;
-      if (!ct) return false;
-      const mime = ct.split(';')[0].trim().toLowerCase();
-      const t = type.toLowerCase();
-      if (t.indexOf('/') === -1) {
-        // e.g. 'json' → match */json or +json suffix
-        return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
-      }
-      if (t.endsWith('/*')) {
-        return mime.startsWith(t.slice(0, -1));
-      }
-      return mime === t;
-    };
-
-    httpReq.accepts = (types?: string | string[]): string | false => {
-      const accept = (httpReq.headers.accept || '*/*') as string;
-      if (!types) return accept;
-      const wanted = Array.isArray(types) ? types : [types];
-      if (accept === '*/*' || accept === '') return wanted[0] || false;
-      const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
-      for (const w of wanted) {
-        const wl = w.toLowerCase();
-        const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
-        for (const at of acceptTypes) {
-          if (at === '*/*') return w;
-          if (at === wMime) return w;
-          if (at.endsWith('/*') && wMime.startsWith(at.slice(0, -1))) return w;
-        }
-      }
-      return false;
-    };
-
-    httpReq.acceptsLanguages = (langs?: string | string[]): string | false => {
-      const acceptLang = (httpReq.headers['accept-language'] || '') as string;
-      if (!langs) return acceptLang || false;
-      const wanted = Array.isArray(langs) ? langs : [langs];
-      if (!acceptLang) return wanted[0] || false;
-      // Parse with q values; sort by q desc to match Express's "best match wins"
-      const accepted = acceptLang
-        .split(',')
-        .map(s => {
-          const parts = s.trim().split(';');
-          const tag = parts[0].toLowerCase();
-          const qPart = parts.find(p => p.trim().startsWith('q='));
-          const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
-          return { tag, q: isNaN(q) ? 0 : q };
-        })
-        .filter(a => a.q > 0)
-        .sort((a, b) => b.q - a.q);
-      for (const { tag } of accepted) {
-        for (const w of wanted) {
-          const wl = w.toLowerCase();
-          if (tag === '*' || tag === wl || tag.split('-')[0] === wl.split('-')[0]) return w;
-        }
-      }
-      return false;
-    };
-
-    const host = (httpReq.headers.host || '') as string;
-    httpReq.hostname = host ? host.split(':')[0] : '';
-    const forwardedProto = httpReq.headers['x-forwarded-proto'] as string | undefined;
-    httpReq.protocol = forwardedProto
-      ? forwardedProto.split(',')[0].trim()
-      : (req.socket as any).encrypted
-        ? 'https'
-        : 'http';
-    httpReq.secure = httpReq.protocol === 'https';
-    const xrw = httpReq.headers['x-requested-with'] as string | undefined;
-    httpReq.xhr = !!xrw && xrw.toLowerCase() === 'xmlhttprequest';
-
-    httpReq.originalUrl = req.url || '';
-
-    const forwardedFor = httpReq.headers['x-forwarded-for'] as string | undefined;
-    httpReq.ips = forwardedFor
-      ? forwardedFor
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean)
-      : [];
-
-    const hostnameParts = httpReq.hostname.split('.');
-    // Matches Express: subdomains are parts before the last two (domain + tld),
-    // reversed (closest subdomain first).
-    httpReq.subdomains = hostnameParts.length > 2 ? hostnameParts.slice(0, -2).reverse() : [];
-
-    return httpReq;
-  }
-
-  private parseCookies(cookieHeader: string): Record<string, string> {
-    const cookies: Record<string, string> = {};
-
-    // EARLY EXIT if no cookie header
-    if (!cookieHeader) return cookies;
-
-    const cookieParts = cookieHeader.split(';');
-    const cookiePartsLen = cookieParts.length;
-    for (let i = 0; i < cookiePartsLen; i++) {
-      const cookie = cookieParts[i];
-      const equalIndex = cookie.indexOf('=');
-      if (equalIndex > 0) {
-        const name = cookie.substring(0, equalIndex).trim();
-        const value = cookie.substring(equalIndex + 1);
-        if (name && value) {
-          cookies[name] = decodeURIComponent(value);
-        }
-      }
-    }
-
-    return cookies;
-  }
-
-  private enhanceResponse(res: ServerResponse, req: HttpRequest): HttpResponse {
-    const httpRes = res as HttpResponse;
-
-    // Store request reference for access to headers (needed for compression, logging, etc.)
-    (httpRes as any).req = req;
-
-    // BULLETPROOF status method - always works
-    httpRes.status = (code: number) => {
-      httpRes.statusCode = code;
-      return httpRes;
-    };
-
-    httpRes.json = async (data: any) => {
-      if (httpRes.headersSent) return;
-
-      // Simple, optimized JSON serialization - let V8 handle the optimization
-      const jsonString = JSON.stringify(data);
-
-      // Large response check - stream if needed
-      if (jsonString.length > 32768) {
-        // Large response - stream it
-        return this.streamLargeResponse(httpRes, data);
-      }
-
-      // Use efficient buffer allocation - let Node.js handle optimization
-      const finalBuffer = Buffer.from(jsonString, 'utf8');
-
-      // Optimized header setting - set multiple headers at once when possible
-      const headers: Record<string, string | number> = {
-        'Content-Type': 'application/json; charset=utf-8',
-      };
-
-      // Compression with buffer pool - EARLY EXIT if disabled or below threshold
-      // Only make this async if compression is actually happening
-      if (this.compressionEnabled && finalBuffer.length > this.compressionThreshold) {
-        const acceptEncoding = httpRes.req.headers['accept-encoding'];
-
-        if (acceptEncoding && acceptEncoding.includes('gzip')) {
-          // ASYNC PATH - compression needed
-          gzip(finalBuffer).then(compressed => {
-            headers['Content-Encoding'] = 'gzip';
-            headers['Content-Length'] = compressed.length;
-
-            // Batch write all headers at once (50-100% faster)
-            httpRes.writeHead(httpRes.statusCode || 200, headers);
-
-            httpRes.end(compressed);
-          });
-          return;
-        } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
-          // ASYNC PATH - compression needed
-          deflate(finalBuffer).then(compressed => {
-            headers['Content-Encoding'] = 'deflate';
-            headers['Content-Length'] = compressed.length;
-
-            // Batch write all headers at once
-            httpRes.writeHead(httpRes.statusCode || 200, headers);
-
-            httpRes.end(compressed);
-          });
-          return;
-        }
-      }
-
-      // SYNC PATH - no compression, fast path
-      headers['Content-Length'] = finalBuffer.length;
-
-      // Batch write all headers at once
-      httpRes.writeHead(httpRes.statusCode || 200, headers);
-
-      httpRes.end(finalBuffer);
-    };
-
-    httpRes.send = (data: string | Buffer) => {
-      if (httpRes.headersSent) return;
-
-      // Auto-detect content type if not already set
-      if (!httpRes.getHeader('Content-Type')) {
-        if (typeof data === 'string') {
-          // Check if it's JSON
-          try {
-            JSON.parse(data);
-            httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
-          } catch {
-            // Default to plain text
-            httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          }
-        } else {
-          // Buffer data - default to octet-stream
-          httpRes.setHeader('Content-Type', 'application/octet-stream');
-        }
-      }
-
-      httpRes.end(data);
-    };
-
-    httpRes.cookie = (name: string, value: string, options: any = {}) => {
-      if (httpRes.headersSent) {
-        const isCritical =
-          options.critical ||
-          name.includes('session') ||
-          name.includes('auth') ||
-          name.includes('csrf');
-        const message = `Cookie '${name}' could not be set - headers already sent`;
-
-        if (isCritical || options.throwOnLateSet) {
-          throw new Error(`${message}. This may cause authentication or security issues.`);
-        } else {
-          this.logger.warn(message, 'CookieWarning', {
-            cookieName: name,
-            critical: isCritical,
-            stackTrace: new Error().stack,
-          });
-        }
-        return httpRes;
-      }
-
-      const cookieValue = encodeURIComponent(value);
-      let cookieString = `${name}=${cookieValue}`;
-
-      if (options.maxAge) cookieString += `; Max-Age=${options.maxAge}`;
-      if (options.expires) cookieString += `; Expires=${options.expires.toUTCString()}`;
-      if (options.httpOnly) cookieString += '; HttpOnly';
-      if (options.secure) cookieString += '; Secure';
-      if (options.sameSite) cookieString += `; SameSite=${options.sameSite}`;
-      if (options.domain) cookieString += `; Domain=${options.domain}`;
-      if (options.path) cookieString += `; Path=${options.path}`;
-
-      const existingCookies = httpRes.getHeader('Set-Cookie') || [];
-      // Avoid spread operator - direct array manipulation
-      const cookies = Array.isArray(existingCookies)
-        ? existingCookies
-        : [existingCookies as string];
-      cookies.push(cookieString);
-      httpRes.setHeader('Set-Cookie', cookies);
-
-      return httpRes;
-    };
-
-    httpRes.clearCookie = (name: string, options: any = {}) => {
-      // Avoid spread operator - manually set properties
-      const clearOptions: any = {
-        expires: new Date(0),
-        maxAge: 0,
-      };
-      // Copy other options manually
-      if (options.path !== undefined) clearOptions.path = options.path;
-      if (options.domain !== undefined) clearOptions.domain = options.domain;
-      if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
-      if (options.secure !== undefined) clearOptions.secure = options.secure;
-      if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
-      return httpRes.cookie(name, '', clearOptions);
-    };
-
-    httpRes.redirect = (url: string, status: number = 302) => {
-      if (httpRes.headersSent) return;
-      httpRes.statusCode = status;
-      const safeUrl = url.replace(/[\r\n]/g, '');
-      httpRes.setHeader('Location', safeUrl);
-      httpRes.end();
-    };
-
-    httpRes.sendFile = async (filePath: string) => {
-      if (httpRes.headersSent) return;
-
-      try {
-        const fs = await import('fs/promises');
-        const path = await import('path');
-        const extension = path.extname(filePath);
-        const mime = await this.getMimeType(extension);
-
-        const stats = await fs.stat(filePath);
-        const data = await fs.readFile(filePath);
-
-        // Add charset for text-based files
-        const contentType = this.addCharsetIfNeeded(mime);
-        httpRes.setHeader('Content-Type', contentType);
-        httpRes.setHeader('Content-Length', stats.size);
-
-        // Add security headers for file downloads
-        httpRes.setHeader('X-Content-Type-Options', 'nosniff');
-
-        // Add caching headers
-        httpRes.setHeader('Last-Modified', stats.mtime.toUTCString());
-        httpRes.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year for static files
-
-        httpRes.end(data);
-      } catch {
-        httpRes.status(404).json({ success: false, error: 'File not found' });
-      }
-    };
-
-    // Standardized response helpers
-    httpRes.success = <T = any>(data: T, message?: string) => {
-      const response: any = {
-        success: true,
-        data,
-      };
-      if (message !== undefined) {
-        response.message = message;
-      }
-      httpRes.json(response);
-    };
-
-    httpRes.error = (error: string, code?: string, message?: string) => {
-      const response: any = {
-        success: false,
-        error,
-      };
-      if (code !== undefined) {
-        response.code = code;
-      }
-      if (message !== undefined) {
-        response.message = message;
-      }
-      httpRes.json(response);
-    };
-
-    // Common HTTP error helpers (automatically set status code)
-    httpRes.unauthorized = (message: string = 'Authentication required') => {
-      httpRes.statusCode = 401;
-      httpRes.json({
-        success: false,
-        error: 'Unauthorized',
-        code: 'UNAUTHORIZED',
-        message,
-      });
-    };
-
-    httpRes.forbidden = (message: string = 'Insufficient permissions') => {
-      httpRes.statusCode = 403;
-      httpRes.json({
-        success: false,
-        error: 'Forbidden',
-        code: 'FORBIDDEN',
-        message,
-      });
-    };
-
-    httpRes.notFound = (resource: string = 'Resource') => {
-      httpRes.statusCode = 404;
-      httpRes.json({
-        success: false,
-        error: 'Not Found',
-        code: 'NOT_FOUND',
-        message: `${resource} not found`,
-      });
-    };
-
-    httpRes.badRequest = (message: string = 'Invalid request') => {
-      httpRes.statusCode = 400;
-      httpRes.json({
-        success: false,
-        error: 'Bad Request',
-        code: 'BAD_REQUEST',
-        message,
-      });
-    };
-
-    httpRes.conflict = (message: string) => {
-      httpRes.statusCode = 409;
-      httpRes.json({
-        success: false,
-        error: 'Conflict',
-        code: 'CONFLICT',
-        message,
-      });
-    };
-
-    httpRes.internalError = (message: string = 'Internal server error') => {
-      httpRes.statusCode = 500;
-      httpRes.json({
-        success: false,
-        error: 'Internal Server Error',
-        code: 'INTERNAL_ERROR',
-        message,
-      });
-    };
-
-    httpRes.validationError = (
-      errors: Array<{ field: string; message: string; code?: string }>
-    ) => {
-      httpRes.statusCode = 422;
-      httpRes.json({
-        success: false,
-        error: 'Validation Failed',
-        code: 'VALIDATION_ERROR',
-        errors,
-      });
-    };
-
-    httpRes.rateLimited = (retryAfter?: number) => {
-      httpRes.statusCode = 429;
-      if (retryAfter) {
-        httpRes.setHeader('Retry-After', retryAfter.toString());
-      }
-      httpRes.json({
-        success: false,
-        error: 'Rate Limit Exceeded',
-        code: 'RATE_LIMITED',
-        message: retryAfter
-          ? `Too many requests. Retry after ${retryAfter} seconds.`
-          : 'Too many requests',
-        retryAfter,
-      });
-    };
-
-    // Common success patterns
-    httpRes.created = <T = any>(data: T, location?: string) => {
-      httpRes.statusCode = 201;
-      if (location) {
-        httpRes.setHeader('Location', location);
-      }
-      httpRes.json({
-        success: true,
-        data,
-      });
-    };
-
-    httpRes.noContent = () => {
-      httpRes.statusCode = 204;
-      httpRes.end();
-    };
-
-    httpRes.paginated = <T = any>(
-      data: T[],
-      pagination: { page: number; limit: number; total: number }
-    ) => {
-      const totalPages = Math.ceil(pagination.total / pagination.limit);
-      httpRes.json({
-        success: true,
-        data,
-        pagination: {
-          page: pagination.page,
-          limit: pagination.limit,
-          total: pagination.total,
-          totalPages,
-          hasNext: pagination.page < totalPages,
-          hasPrev: pagination.page > 1,
-        },
-      });
-    };
-
-    // Header management utilities
-    httpRes.hasHeader = (name: string): boolean => {
-      return httpRes.getHeader(name) !== undefined;
-    };
-
-    // Note: removeHeader is inherited from ServerResponse, we don't override it
-
-    httpRes.setBulkHeaders = (headers: Record<string, string | number>) => {
-      if (httpRes.headersSent) {
-        // Only enumerate keys for warning if headers were already sent
-        const attemptedHeaderKeys = [];
-        for (const key in headers) {
-          attemptedHeaderKeys.push(key);
-        }
-        this.logger.warn('Cannot set headers - headers already sent', 'HeaderWarning', {
-          attemptedHeaders: attemptedHeaderKeys,
-        });
-        return httpRes;
-      }
-
-      for (const key in headers) {
-        httpRes.setHeader(key, headers[key]);
-      }
-      return httpRes;
-    };
-
-    httpRes.appendHeader = (name: string, value: string | string[]) => {
-      if (httpRes.headersSent) {
-        this.logger.warn(
-          `Cannot append to header '${name}' - headers already sent`,
-          'HeaderWarning'
-        );
-        return httpRes;
-      }
-
-      const existing = httpRes.getHeader(name);
-      if (existing) {
-        const values = Array.isArray(existing) ? existing : [existing.toString()];
-        const newValues = Array.isArray(value) ? value : [value];
-        httpRes.setHeader(name, [...values, ...newValues]);
-      } else {
-        httpRes.setHeader(name, value);
-      }
-      return httpRes;
-    };
-
-    // Per-response typed state bag (Express-compatible)
-    httpRes.locals = {};
-
-    // Apply user-registered response decorations
-    for (const key in this.responseDecorations) {
-      (httpRes as any)[key] = this.responseDecorations[key];
-    }
-
-    // Express-compatible response helpers
-    httpRes.set = (
-      field: string | Record<string, string | string[] | number>,
-      value?: string | string[] | number
-    ) => {
-      if (httpRes.headersSent) return httpRes;
-      if (typeof field === 'string') {
-        if (value !== undefined) {
-          httpRes.setHeader(field, value as any);
-        }
-      } else {
-        for (const key in field) {
-          httpRes.setHeader(key, field[key] as any);
-        }
-      }
-      return httpRes;
-    };
-
-    httpRes.get = (field: string) => {
-      return httpRes.getHeader(field) as any;
-    };
-
-    httpRes.append = (field: string, value: string | string[]) => {
-      return httpRes.appendHeader(field, value);
-    };
-
-    httpRes.type = (contentType: string) => {
-      if (httpRes.headersSent) return httpRes;
-      // If no "/" treat as shorthand (e.g. "json" → "application/json")
-      let ct = contentType;
-      if (ct.indexOf('/') === -1) {
-        const shorthands: Record<string, string> = {
-          json: 'application/json; charset=utf-8',
-          html: 'text/html; charset=utf-8',
-          text: 'text/plain; charset=utf-8',
-          txt: 'text/plain; charset=utf-8',
-          xml: 'application/xml',
-          js: 'application/javascript',
-          css: 'text/css; charset=utf-8',
-          form: 'application/x-www-form-urlencoded',
-        };
-        ct = shorthands[ct.toLowerCase()] || `application/${ct}`;
-      }
-      httpRes.setHeader('Content-Type', ct);
-      return httpRes;
-    };
-
-    httpRes.sendStatus = (code: number) => {
-      if (httpRes.headersSent) return;
-      httpRes.statusCode = code;
-      const messages: Record<number, string> = {
-        200: 'OK',
-        201: 'Created',
-        202: 'Accepted',
-        204: 'No Content',
-        301: 'Moved Permanently',
-        302: 'Found',
-        304: 'Not Modified',
-        400: 'Bad Request',
-        401: 'Unauthorized',
-        403: 'Forbidden',
-        404: 'Not Found',
-        409: 'Conflict',
-        410: 'Gone',
-        422: 'Unprocessable Entity',
-        429: 'Too Many Requests',
-        500: 'Internal Server Error',
-        502: 'Bad Gateway',
-        503: 'Service Unavailable',
-      };
-      const body = messages[code] || String(code);
-      httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      httpRes.end(body);
-    };
-
-    httpRes.location = (url: string) => {
-      if (httpRes.headersSent) return httpRes;
-      const safe = url.replace(/[\r\n]/g, '');
-      httpRes.setHeader('Location', safe);
-      return httpRes;
-    };
-
-    httpRes.vary = (field: string | string[]) => {
-      if (httpRes.headersSent) return httpRes;
-      const existing = httpRes.getHeader('Vary');
-      const existingList = existing
-        ? String(existing)
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-        : [];
-      const incoming = Array.isArray(field) ? field : [field];
-      for (const f of incoming) {
-        if (!existingList.some(e => e.toLowerCase() === f.toLowerCase())) {
-          existingList.push(f);
-        }
-      }
-      httpRes.setHeader('Vary', existingList.join(', '));
-      return httpRes;
-    };
-
-    httpRes.attachment = (filename?: string) => {
-      if (httpRes.headersSent) return httpRes;
-      if (filename) {
-        const safeName = filename.replace(/[\r\n"]/g, '');
-        httpRes.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
-        // Set Content-Type from extension if not already set
-        if (!httpRes.getHeader('Content-Type')) {
-          // fire-and-forget mime lookup; not awaited to keep signature chainable
-          this.getMimeType(filename.substring(filename.lastIndexOf('.'))).then(mime => {
-            if (!httpRes.getHeader('Content-Type') && !httpRes.headersSent) {
-              httpRes.setHeader('Content-Type', mime);
-            }
-          });
-        }
-      } else {
-        httpRes.setHeader('Content-Disposition', 'attachment');
-      }
-      return httpRes;
-    };
-
-    httpRes.download = async (filePath: string, filename?: string) => {
-      httpRes.attachment(filename || filePath.split('/').pop());
-      return httpRes.sendFile(filePath);
-    };
-
-    httpRes.format = (handlers: Record<string, () => any | Promise<any>>) => {
-      const types = Object.keys(handlers).filter(k => k !== 'default');
-      const matched = req.accepts(types);
-      const chosen = matched ? handlers[matched as string] : handlers.default;
-      if (!chosen) {
-        httpRes.statusCode = 406;
-        httpRes.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        httpRes.end('Not Acceptable');
-        return;
-      }
-      httpRes.vary('Accept');
-      if (matched && typeof matched === 'string') {
-        httpRes.type(matched);
-      }
-      chosen();
-    };
-
-    httpRes.links = (links: Record<string, string>) => {
-      if (httpRes.headersSent) return httpRes;
-      const parts: string[] = [];
-      for (const rel in links) {
-        parts.push(`<${links[rel]}>; rel="${rel}"`);
-      }
-      if (parts.length > 0) {
-        const existing = httpRes.getHeader('Link');
-        const combined = existing ? `${existing}, ${parts.join(', ')}` : parts.join(', ');
-        httpRes.setHeader('Link', combined);
-      }
-      return httpRes;
-    };
-
-    // Response state utilities
-    httpRes.canSetHeaders = (): boolean => {
-      return !httpRes.headersSent;
-    };
-
-    httpRes.getResponseState = () => {
-      return {
-        headersSent: httpRes.headersSent,
-        statusCode: httpRes.statusCode,
-        headers: httpRes.getHeaders ? httpRes.getHeaders() : {},
-        finished: httpRes.finished || false,
-        writable: httpRes.writable,
-      };
-    };
-
-    return httpRes;
-  }
-
-  private async getMimeType(ext: string): Promise<string> {
+  /** @internal called by MoroServerResponse prototype methods */
+  async getMimeType(ext: string): Promise<string> {
     const mimeTypes: Record<string, string> = {
       '.html': 'text/html',
       '.css': 'text/css',
@@ -1273,7 +1465,8 @@ export class MoroHttpServer {
     return mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
   }
 
-  private addCharsetIfNeeded(mimeType: string): string {
+  /** @internal called by MoroServerResponse prototype methods */
+  addCharsetIfNeeded(mimeType: string): string {
     // Add charset for text-based content types - optimized with early exit
     // Check most common cases first
     if (
@@ -1302,6 +1495,15 @@ export class MoroHttpServer {
       ? this.maxUploadSize // Configurable file upload limit (default 100MB)
       : this.maxBodySize; // Configurable body size limit (default 10MB, from server.bodySizeLimit config)
 
+    // Early rejection from the declared Content-Length - nothing is read off the wire
+    if (contentLength > maxSize) {
+      const error: any = new Error('Request entity too large');
+      error.statusCode = 413;
+      error.limit = maxSize;
+      error.received = contentLength;
+      return Promise.reject(error);
+    }
+
     // For very large payloads, return a streaming interface instead of buffering
     if (contentLength > maxSize / 2) {
       // Stream for payloads > 50MB (uploads) or > 5MB (JSON/form)
@@ -1319,7 +1521,10 @@ export class MoroHttpServer {
           const errorMessage = isMultipart
             ? `File upload too large. Maximum ${Math.floor(maxSize / (1024 * 1024))}MB allowed.`
             : 'Request body too large';
-          reject(new Error(errorMessage));
+          const error: any = new Error(errorMessage);
+          error.statusCode = 413;
+          error.limit = maxSize;
+          reject(error);
           return;
         }
         chunks.push(chunk);
@@ -1327,7 +1532,9 @@ export class MoroHttpServer {
 
       req.on('end', () => {
         try {
-          const body = Buffer.concat(chunks);
+          // Single-chunk fast path (most JSON bodies arrive in one chunk);
+          // otherwise concat with the known total length to avoid a re-scan
+          const body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, totalLength);
 
           if (contentType.includes('application/json')) {
             resolve(JSON.parse(body.toString()));
@@ -1585,31 +1792,15 @@ export class MoroHttpServer {
     return result;
   }
 
-  // Legacy method for backward compatibility
+  // Legacy methods for backward compatibility - the hot path now parses query
+  // strings lazily via the MoroIncomingMessage#query getter (no pooling: a fresh
+  // object literal is cheaper than pool bookkeeping)
   private parseQueryString(queryString: string): Record<string, string> {
-    return this.parseQueryStringPooled(queryString);
+    return parseQueryString(queryString);
   }
 
-  // Optimized query string parser with object pooling
   private parseQueryStringPooled(queryString: string): Record<string, string> {
-    if (!queryString) return {};
-
-    const result = this.poolManager.acquireQuery();
-    const pairs = queryString.split('&');
-    const pairsLen = pairs.length;
-
-    for (let i = 0; i < pairsLen; i++) {
-      const pair = pairs[i];
-      const equalIndex = pair.indexOf('=');
-      if (equalIndex === -1) {
-        result[decodeURIComponent(pair)] = '';
-      } else {
-        const key = decodeURIComponent(pair.substring(0, equalIndex));
-        const value = decodeURIComponent(pair.substring(equalIndex + 1));
-        result[key] = value;
-      }
-    }
-    return result;
+    return parseQueryString(queryString);
   }
 
   // Advanced route optimization: cache + static routes + segment grouping
@@ -1687,18 +1878,35 @@ export class MoroHttpServer {
   // Middleware execution with Express-compatible error propagation.
   // Supports: 3-arg (req, res, next), 4-arg (err, req, res, next) error middlewares,
   // and next(err) to skip forward to the next error middleware.
-  private async executeMiddleware(
+  //
+  // Sync-aware dispatch: middleware that calls next() synchronously (or throws
+  // synchronously) advances the chain in a plain loop with ZERO promise
+  // allocations. A promise is only created when a middleware actually completes
+  // asynchronously. Returns undefined when the whole chain ran synchronously.
+  private executeMiddleware(
     middleware: Middleware[],
     req: HttpRequest,
     res: HttpResponse
-  ): Promise<void> {
-    const len = middleware.length;
-    let activeError: any = undefined;
+  ): void | Promise<void> {
+    return this.dispatchMiddleware(middleware, req, res, 0, undefined);
+  }
 
-    for (let i = 0; i < len; i++) {
+  private dispatchMiddleware(
+    middleware: Middleware[],
+    req: HttpRequest,
+    res: HttpResponse,
+    startIndex: number,
+    initialError: any
+  ): void | Promise<void> {
+    const len = middleware.length;
+    let activeError: any = initialError;
+    let i = startIndex;
+
+    while (i < len) {
       if (res.headersSent) return;
 
       const mw = middleware[i] as any;
+      i++;
       const isErrorHandler = mw.length >= 4;
 
       // Non-error middleware is skipped while an error is active; error middleware
@@ -1706,33 +1914,64 @@ export class MoroHttpServer {
       if (activeError !== undefined && !isErrorHandler) continue;
       if (activeError === undefined && isErrorHandler) continue;
 
-      activeError = await new Promise<any>(resolve => {
-        let resolved = false;
+      let settled = false;
+      let settledError: any = undefined;
+      let asyncResolve: ((err: any) => void) | undefined;
 
-        const next = (err?: any) => {
-          if (resolved) return;
-          resolved = true;
-          resolve(err);
-        };
+      const next = (err?: any) => {
+        if (settled) return;
+        settled = true;
+        settledError = err;
+        if (asyncResolve) asyncResolve(err);
+      };
 
-        try {
-          const result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
-
-          if (result && typeof (result as any).then === 'function') {
-            (result as Promise<void>)
-              .then(() => {
-                if (!resolved) next();
-              })
-              .catch((err: any) => {
-                if (!resolved) next(err);
-              });
-          } else if (!resolved) {
-            next();
-          }
-        } catch (err) {
-          if (!resolved) next(err);
+      let result: any;
+      try {
+        result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          settledError = err;
         }
-      });
+      }
+
+      const isThenable = result && typeof result.then === 'function';
+
+      if (settled) {
+        // Completed synchronously (next() called sync, or threw sync).
+        // Matches the old behavior: a still-pending returned promise no longer
+        // gates the chain once next() has been called; swallow late rejections.
+        if (isThenable) {
+          (result as Promise<void>).then(undefined, () => {});
+        }
+        activeError = settledError;
+        continue;
+      }
+
+      if (!isThenable) {
+        // Sync-looking middleware that neither called next() nor returned a
+        // promise: it will call next() later (e.g. from an event callback).
+        // Fall back to a promise for the remainder of the chain.
+        const resumeIndex = i;
+        return new Promise<any>(resolve => {
+          asyncResolve = resolve;
+        }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
+      }
+
+      // Async middleware: completion is next() OR promise settle, whichever
+      // happens first (same semantics as the previous implementation).
+      const resumeIndex = i;
+      return new Promise<any>(resolve => {
+        asyncResolve = resolve;
+        (result as Promise<void>).then(
+          () => {
+            if (!settled) next();
+          },
+          (err: any) => {
+            if (!settled) next(err);
+          }
+        );
+      }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
     }
 
     // If an error is still unhandled after the chain, re-throw so the top-level

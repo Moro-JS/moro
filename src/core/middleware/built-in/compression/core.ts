@@ -31,7 +31,6 @@ export class CompressionCore {
   }
 
   wrapResponse(req: HttpRequest, res: HttpResponse): void {
-    const originalJson = res.json;
     const originalSend = res.send;
     const acceptEncoding = (req.headers['accept-encoding'] as string) || '';
     const level = this.level;
@@ -46,14 +45,25 @@ export class CompressionCore {
 
     const compressResponse = (data: any, isJson: boolean) => {
       const content = isJson ? JSON.stringify(data) : data;
-      const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content ?? '');
+      const byteLength = Buffer.isBuffer(content)
+        ? content.length
+        : Buffer.byteLength(content ?? '');
       const encoding = pickEncoding();
 
-      // Below the threshold, or the client can't accept compression: fall back to the
-      // original (synchronous) response path unchanged.
-      if (buffer.length < threshold || !encoding) {
-        return isJson ? originalJson.call(res, data) : originalSend.call(res, data);
+      // Below the threshold, or the client can't accept compression: send directly.
+      // For JSON we already have the serialized string - ending with it here avoids
+      // re-entering res.json, which would JSON.stringify the same data a second time.
+      if (byteLength < threshold || !encoding) {
+        if (isJson) {
+          if (res.headersSent) return;
+          res.setHeader('Content-Length', byteLength);
+          res.end(content);
+          return;
+        }
+        return originalSend.call(res, data);
       }
+
+      const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content ?? '');
 
       // Commit the response headers synchronously, BEFORE the asynchronous gzip. This
       // marks the response as sent (`headersSent === true`) the moment `send`/`json` is
@@ -64,6 +74,7 @@ export class CompressionCore {
       // than carrying a Content-Length.
       if (!res.headersSent) {
         res.setHeader('Content-Encoding', encoding);
+        res.setHeader('Vary', 'Accept-Encoding');
         (res as any).writeHead((res as any).statusCode || 200);
       }
 

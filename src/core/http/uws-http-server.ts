@@ -2,9 +2,284 @@
 // Provides high-performance HTTP and WebSocket server using uWebSockets.js
 
 import cluster from 'cluster';
+import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
-import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 import { HttpRequest, HttpResponse, Middleware } from '../../types/http.js';
+
+function parseUwsQueryString(queryString: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!queryString) return result;
+  const pairs = queryString.split('&');
+  for (let i = 0; i < pairs.length; i++) {
+    const pair = pairs[i];
+    const eqIdx = pair.indexOf('=');
+    if (eqIdx > 0) {
+      const key = pair.substring(0, eqIdx);
+      const value = pair.substring(eqIdx + 1);
+      try {
+        result[decodeURIComponent(key)] = decodeURIComponent(value);
+      } catch {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Prototype-based request object for the uWS adapter.
+ *
+ * Headers/query/cookies/requestId are lazy: a synchronous handler that never
+ * reads them pays nothing (no header copy, no UUID). The underlying uWS
+ * request is only valid until the route callback returns to the event loop,
+ * so `materialize()` MUST be called before any `await` - it snapshots the
+ * headers and detaches the native reference.
+ */
+export class UwsRequest {
+  method: string;
+  path: string;
+  url: string;
+  params: Record<string, string> = {};
+  body: any = null;
+  ip = '';
+
+  _server: UWebSocketsHttpServer;
+  _uwsReq: any; // valid ONLY synchronously inside the uWS route callback
+  _queryString: string | null;
+  _query: Record<string, string> | undefined = undefined;
+  _headers: Record<string, string> | undefined = undefined;
+  _cookies: Record<string, string> | undefined = undefined;
+  _context: Record<string, any> | undefined = undefined;
+  _requestId: string | undefined = undefined;
+
+  constructor(
+    server: UWebSocketsHttpServer,
+    uwsReq: any,
+    method: string,
+    url: string,
+    queryString: string
+  ) {
+    this._server = server;
+    this._uwsReq = uwsReq;
+    this.method = method;
+    this.path = url;
+    this.url = url;
+    this._queryString = queryString || null;
+  }
+
+  /** Snapshot uWS-backed data and detach the native request. Idempotent.
+   *  Must be called before returning control to the event loop if the
+   *  request object outlives the synchronous route callback. */
+  materialize(): void {
+    if (this._headers === undefined) {
+      // Force the headers snapshot while the native request is still valid
+      void this.headers;
+    }
+    this._uwsReq = null;
+  }
+
+  get headers(): Record<string, string> {
+    let h = this._headers;
+    if (h === undefined) {
+      h = {};
+      const r = this._uwsReq;
+      if (r) {
+        try {
+          r.forEach((key: string, value: string) => {
+            (h as Record<string, string>)[key] = value;
+          });
+        } catch {
+          // Native request no longer valid - snapshot window was missed
+        }
+      }
+      this._headers = h;
+    }
+    return h;
+  }
+  set headers(value: Record<string, string>) {
+    this._headers = value;
+  }
+
+  get query(): Record<string, string> {
+    let q = this._query;
+    if (q === undefined) {
+      const qs = this._queryString;
+      q = qs ? parseUwsQueryString(qs) : {};
+      this._query = q;
+    }
+    return q;
+  }
+  set query(value: Record<string, string>) {
+    this._query = value;
+  }
+
+  get cookies(): Record<string, string> {
+    let c = this._cookies;
+    if (c === undefined) {
+      c = {};
+      const header = this.headers.cookie;
+      if (header) {
+        const parts = header.split(';');
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          const eq = part.indexOf('=');
+          if (eq > 0) {
+            const name = part.substring(0, eq).trim();
+            const value = part.substring(eq + 1);
+            if (name && value) {
+              try {
+                c[name] = decodeURIComponent(value);
+              } catch {
+                c[name] = value;
+              }
+            }
+          }
+        }
+      }
+      this._cookies = c;
+    }
+    return c;
+  }
+  set cookies(value: Record<string, string>) {
+    this._cookies = value;
+  }
+
+  get context(): Record<string, any> {
+    let ctx = this._context;
+    if (ctx === undefined) {
+      ctx = {};
+      this._context = ctx;
+    }
+    return ctx;
+  }
+  set context(value: Record<string, any>) {
+    this._context = value;
+  }
+
+  get requestId(): string {
+    let id = this._requestId;
+    if (id === undefined) {
+      const server = this._server;
+      id = server && (server as any).requestTrackingEnabled ? randomUUID() : '';
+      this._requestId = id;
+    }
+    return id;
+  }
+  set requestId(value: string) {
+    this._requestId = value;
+  }
+
+  // ==== Express-compatible request helpers (parity with the Node adapter) ====
+
+  get hostname(): string {
+    const host = this.headers.host || '';
+    return host ? host.split(':')[0] : '';
+  }
+
+  get protocol(): string {
+    const forwardedProto = this.headers['x-forwarded-proto'];
+    if (forwardedProto) return forwardedProto.split(',')[0].trim();
+    return this._server && (this._server as any).isSsl ? 'https' : 'http';
+  }
+
+  get secure(): boolean {
+    return this.protocol === 'https';
+  }
+
+  get xhr(): boolean {
+    const xrw = this.headers['x-requested-with'];
+    return !!xrw && xrw.toLowerCase() === 'xmlhttprequest';
+  }
+
+  get originalUrl(): string {
+    const qs = this._queryString;
+    return qs ? `${this.url}?${qs}` : this.url;
+  }
+
+  get ips(): string[] {
+    const forwardedFor = this.headers['x-forwarded-for'];
+    return forwardedFor
+      ? forwardedFor
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      : [];
+  }
+
+  get subdomains(): string[] {
+    const hostnameParts = this.hostname.split('.');
+    return hostnameParts.length > 2 ? hostnameParts.slice(0, -2).reverse() : [];
+  }
+
+  get(name: string): string | undefined {
+    const lower = name.toLowerCase();
+    if (lower === 'referer' || lower === 'referrer') {
+      return this.headers.referer || (this.headers as any).referrer;
+    }
+    return this.headers[lower];
+  }
+
+  header(name: string): string | undefined {
+    return this.get(name);
+  }
+
+  is(type: string): boolean {
+    const ct = this.headers['content-type'] || '';
+    if (!ct) return false;
+    const mime = ct.split(';')[0].trim().toLowerCase();
+    const t = type.toLowerCase();
+    if (t.indexOf('/') === -1) {
+      return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
+    }
+    if (t.endsWith('/*')) {
+      return mime.startsWith(t.slice(0, -1));
+    }
+    return mime === t;
+  }
+
+  accepts(types?: string | string[]): string | false {
+    const accept = this.headers.accept || '*/*';
+    if (!types) return accept;
+    const wanted = Array.isArray(types) ? types : [types];
+    if (accept === '*/*' || accept === '') return wanted[0] || false;
+    const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+    for (const w of wanted) {
+      const wl = w.toLowerCase();
+      const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
+      for (const at of acceptTypes) {
+        if (at === '*/*') return w;
+        if (at === wMime) return w;
+        if (at.endsWith('/*') && wMime.startsWith(at.slice(0, -1))) return w;
+      }
+    }
+    return false;
+  }
+
+  acceptsLanguages(langs?: string | string[]): string | false {
+    const acceptLang = this.headers['accept-language'] || '';
+    if (!langs) return acceptLang || false;
+    const wanted = Array.isArray(langs) ? langs : [langs];
+    if (!acceptLang) return wanted[0] || false;
+    const accepted = acceptLang
+      .split(',')
+      .map(s => {
+        const parts = s.trim().split(';');
+        const tag = parts[0].toLowerCase();
+        const qPart = parts.find(p => p.trim().startsWith('q='));
+        const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
+        return { tag, q: isNaN(q) ? 0 : q };
+      })
+      .filter(a => a.q > 0)
+      .sort((a, b) => b.q - a.q);
+    for (const { tag } of accepted) {
+      for (const w of wanted) {
+        const wl = w.toLowerCase();
+        if (tag === '*' || tag === wl || tag.split('-')[0] === wl.split('-')[0]) return w;
+      }
+    }
+    return false;
+  }
+}
 
 /**
  * uWebSockets HTTP Server Adapter
@@ -18,14 +293,31 @@ export class UWebSocketsHttpServer {
   private logger = createFrameworkLogger('UWSHttpServer');
   private hookManager: any;
   private requestCounter = 0;
-  private requestTrackingEnabled = true; // Generate request IDs
+  private requestTrackingEnabled = true; // Generate request IDs (read lazily by UwsRequest)
   private isListening = false;
   private port?: number;
   private host?: string;
   private initPromise: Promise<void>;
+  /** @internal read by UwsRequest#protocol */
+  isSsl = false;
 
-  // Performance optimizations - shared object pooling
-  private poolManager = ObjectPoolManager.getInstance();
+  // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
+  private maxBodySize: number = 10 * 1024 * 1024;
+  private maxUploadSize: number = 100 * 1024 * 1024;
+
+  // Direct router dispatch (set from Moro.listen via setRouterHandler)
+  private routerHandler?: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>;
+
+  // Provider of fast-path routes to register on uWS's native router at listen()
+  private nativeRouteProvider?: () => Array<{
+    method: string;
+    path: string;
+    paramNames: string[] | null;
+    handler: (req: HttpRequest, res: HttpResponse) => any;
+  }>;
+
+  // Shared error handling for native fast-path routes (unified router semantics)
+  private nativeErrorHandler?: (req: HttpRequest, res: HttpResponse, err: any) => Promise<boolean>;
 
   // String interning for common values
   private static readonly INTERNED_METHODS = new Map([
@@ -64,9 +356,36 @@ export class UWebSocketsHttpServer {
   constructor(
     options: {
       ssl?: { key_file_name?: string; cert_file_name?: string; passphrase?: string };
+      maxBodySize?: number;
+      maxUploadSize?: number;
     } = {}
   ) {
+    if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
+    if (options.maxUploadSize) this.maxUploadSize = options.maxUploadSize;
     this.initPromise = this.initialize(options);
+  }
+
+  // Direct router dispatch - called after global middleware without the
+  // per-middleware promise machinery (mirrors MoroHttpServer.setRouterHandler)
+  setRouterHandler(fn: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>): void {
+    this.routerHandler = fn;
+  }
+
+  // Fast-path routes get registered directly on uWS's native C++ router at
+  // listen() - zero middleware machinery, lazy headers, no promise for sync
+  // handlers. The provider is evaluated at listen time so file-based/late
+  // routes are included.
+  setNativeRouteProvider(
+    provider: () => Array<{
+      method: string;
+      path: string;
+      paramNames: string[] | null;
+      handler: (req: HttpRequest, res: HttpResponse) => any;
+    }>,
+    onError?: (req: HttpRequest, res: HttpResponse, err: any) => Promise<boolean>
+  ): void {
+    this.nativeRouteProvider = provider;
+    this.nativeErrorHandler = onError;
   }
 
   private async initialize(options: {
@@ -84,6 +403,7 @@ export class UWebSocketsHttpServer {
           cert_file_name: options.ssl.cert_file_name,
           passphrase: options.ssl.passphrase,
         });
+        this.isSsl = true;
         this.logger.info('uWebSockets SSL/TLS HTTP server created', 'Init');
       } else {
         this.app = this.uws.App();
@@ -108,60 +428,261 @@ export class UWebSocketsHttpServer {
   }
 
   private setupRouteHandlers(): void {
-    // Handle all HTTP methods through catchall
-    // All requests go through middleware chain (includes UnifiedRouter)
+    // Catchall fallback for everything that isn't a native fast-path route:
+    // middleware chains, hooks, non-fast-path routes, 404s. Native
+    // method-specific routes registered later take priority in uWS's router
+    // (static > parameter > wildcard).
     this.app.any('/*', (res: any, req: any) => {
       this.handleRequest(req, res);
     });
   }
 
+  // Register fast-path routes (no middleware/auth/validation) directly on
+  // uWS's native router. A sync GET handler completes with zero header copies,
+  // zero promises and a single corked write. Each wrapper carries a cheap
+  // dynamic guard: the moment global middleware or request hooks exist, it
+  // falls back to the full pipeline so no feature is ever bypassed.
+  private registerNativeFastPathRoutes(): void {
+    const provider = this.nativeRouteProvider;
+    if (!provider || !this.app) return;
+
+    let count = 0;
+    for (const route of provider()) {
+      const methodFn = route.method.toLowerCase();
+      if (typeof this.app[methodFn] !== 'function') continue;
+      // Only plain paths - uWS shares the :param syntax; anything exotic
+      // (wildcards etc.) stays on the catchall/unified-router path
+      if (!/^[A-Za-z0-9/_\-.:]*$/.test(route.path) || route.path.indexOf('*') !== -1) continue;
+
+      const handler = route.handler;
+      const paramNames = route.paramNames;
+      const methodInterned = route.method;
+      const needsBody =
+        methodInterned === 'POST' || methodInterned === 'PUT' || methodInterned === 'PATCH';
+
+      this.app[methodFn](route.path, (res: any, req: any) => {
+        // Dynamic feature guard - anything registered at runtime sends the
+        // request through the full pipeline instead
+        if (
+          this.globalMiddleware.length !== 0 ||
+          (this.hookManager &&
+            (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('request')))
+        ) {
+          this.handleRequest(req, res);
+          return;
+        }
+        this.handleNativeRoute(req, res, handler, methodInterned, paramNames, needsBody);
+      });
+      count++;
+    }
+
+    if (count > 0) {
+      this.logger.info(`${count} fast-path routes registered on native uWS router`, 'NativeRoutes');
+    }
+  }
+
+  private handleNativeRoute(
+    req: any,
+    res: any,
+    handler: (req: HttpRequest, res: HttpResponse) => any,
+    method: string,
+    paramNames: string[] | null,
+    needsBody: boolean
+  ): void {
+    res.aborted = false;
+
+    const httpReq = new UwsRequest(this, req, method, req.getUrl(), req.getQuery());
+    if (paramNames) {
+      const params: Record<string, string> = {};
+      for (let i = 0; i < paramNames.length; i++) {
+        params[paramNames[i]] = req.getParameter(i);
+      }
+      httpReq.params = params;
+    }
+    const httpRes = new UWebSocketsHttpServer.ResponsePrototype().init(
+      res,
+      req,
+      this.logger
+    ) as any as HttpResponse;
+
+    if (needsBody) {
+      // Body routes always go async: snapshot headers, arm the abort hook,
+      // read the body, then run the handler
+      httpReq.materialize();
+      res.onAborted(() => {
+        res.aborted = true;
+        const hook = res._abortHook;
+        if (hook) hook();
+      });
+      const contentLength = req.getHeader('content-length');
+      const bodyPromise =
+        contentLength && parseInt(contentLength) > 0
+          ? this.readBody(res, httpReq as any as HttpRequest)
+          : Promise.resolve();
+      bodyPromise
+        .then(() => {
+          if (res.aborted) return;
+          const result = handler(httpReq as any as HttpRequest, httpRes);
+          if (result && typeof (result as any).then === 'function') {
+            return (result as Promise<any>).then(r => {
+              if (r !== undefined && !httpRes.headersSent) httpRes.json(r);
+            });
+          }
+          if (result !== undefined && !httpRes.headersSent) httpRes.json(result);
+        })
+        .catch(err => this.handleNativeRouteError(err, httpReq, httpRes, res));
+      return;
+    }
+
+    try {
+      const result = handler(httpReq as any as HttpRequest, httpRes);
+
+      if (result && typeof (result as any).then === 'function') {
+        // Async handler: it is suspended at its first await - snapshot
+        // uWS-backed data and arm abort tracking before returning to the loop
+        httpReq.materialize();
+        res.onAborted(() => {
+          res.aborted = true;
+          const hook = res._abortHook;
+          if (hook) hook();
+        });
+        (result as Promise<any>).then(
+          r => {
+            if (r !== undefined && !httpRes.headersSent && !res.aborted) httpRes.json(r);
+          },
+          err => this.handleNativeRouteError(err, httpReq, httpRes, res)
+        );
+      } else if (result !== undefined && !httpRes.headersSent) {
+        // Fully synchronous: single corked write, no header copy, no promise
+        httpRes.json(result);
+      }
+    } catch (err) {
+      this.handleNativeRouteError(err, httpReq, httpRes, res);
+    }
+  }
+
+  private handleNativeRouteError(
+    err: any,
+    httpReq: UwsRequest,
+    httpRes: HttpResponse,
+    res: any
+  ): void {
+    if (err?.statusCode === 413 && !res.aborted && !httpRes.headersSent) {
+      httpRes.statusCode = 413;
+      httpRes.setHeader('Content-Type', 'application/json');
+      httpRes.end('{"success":false,"error":"Request entity too large"}');
+      return;
+    }
+
+    const sendFallback = () => {
+      if (!res.aborted && !httpRes.headersSent) {
+        // Same shape as the unified router's fast-path error response
+        (httpRes as any).status(500).json({ error: 'Internal server error' });
+      }
+    };
+
+    const errorHandler = this.nativeErrorHandler;
+    if (errorHandler) {
+      errorHandler(httpReq as any as HttpRequest, httpRes, err).then(
+        handled => {
+          if (!handled) sendFallback();
+        },
+        () => sendFallback()
+      );
+    } else {
+      this.logger.error(
+        `Route handler error: ${err instanceof Error ? err.message : String(err)}`,
+        'NativeRouteError'
+      );
+      sendFallback();
+    }
+  }
+
   private async handleRequest(req: any, res: any): Promise<void> {
     this.requestCounter++;
 
-    // Declare outside try block for cleanup in finally
+    // Single abort hook for the whole request lifecycle. uWS requires
+    // onAborted for any response finished after returning to the event loop;
+    // readBody chains onto res._abortHook rather than replacing this handler.
+    res.aborted = false;
+    res.onAborted(() => {
+      res.aborted = true;
+      const hook = res._abortHook;
+      if (hook) hook();
+    });
+
     let httpReq: any;
     let httpRes: any;
 
     try {
-      // Create Moro-compatible request object
+      // Create Moro-compatible request/response objects
       httpReq = this.createMoroRequest(req, res);
       httpRes = this.createMoroResponse(req, res);
 
-      // Parse body only if there's actually a body (check content-length)
-      const method = req.getMethod().toUpperCase();
-      const contentLength = req.getHeader('content-length');
+      const method = httpReq.method;
+
+      // Parse body only if there's actually a body (check content-length).
       // Check first char for early exit (all body methods start with 'P')
-      const firstChar = method.charCodeAt(0);
       if (
-        firstChar === 80 && // 'P' char code
-        (method === 'POST' || method === 'PUT' || method === 'PATCH') &&
-        contentLength &&
-        parseInt(contentLength) > 0
+        method.charCodeAt(0) === 80 && // 'P' char code
+        (method === 'POST' || method === 'PUT' || method === 'PATCH')
       ) {
-        await this.readBody(res, httpReq);
+        const contentLength = req.getHeader('content-length');
+        if (contentLength && parseInt(contentLength) > 0) {
+          // readBody awaits - snapshot uWS-backed data first
+          httpReq.materialize();
+          await this.readBody(res, httpReq);
+        }
       }
 
-      // Execute hooks before request processing
-      if (this.hookManager) {
-        await this.hookManager.execute('request', {
+      // Execute hooks before request processing - skipped entirely when none registered
+      const hookManager = this.hookManager;
+      if (hookManager && (hookManager.hasHooks === undefined || hookManager.hasHooks('request'))) {
+        httpReq.materialize();
+        await hookManager.execute('request', {
           request: httpReq,
           response: httpRes,
         });
       }
 
-      // Execute middleware chain (includes UnifiedRouter for routing)
-      // The UnifiedRouter will handle route matching, params extraction, and handler execution
+      // Execute global middleware chain
       if (this.globalMiddleware.length > 0) {
+        httpReq.materialize();
         await this.executeMiddleware(this.globalMiddleware, httpReq, httpRes);
-      } else {
-        // No middleware - send 404 (router middleware should be present)
-        if (!httpRes.headersSent) {
-          httpRes.statusCode = 404;
-          httpRes.setHeader('Content-Type', 'application/json');
-          httpRes.end('{"success":false,"error":"Not found"}');
+        if (httpRes.headersSent) return;
+      }
+
+      // Unified router direct dispatch
+      const routerHandler = this.routerHandler;
+      if (routerHandler) {
+        const handled = routerHandler(httpReq, httpRes);
+        if (handled) {
+          if (typeof (handled as any).then === 'function') {
+            // Async route: the handler is suspended at its first await - snapshot
+            // uWS-backed data now, while the native request is still valid
+            httpReq.materialize();
+            if (await handled) return;
+          } else {
+            return;
+          }
         }
       }
+
+      // No route matched
+      if (!httpRes.headersSent && !res.aborted) {
+        httpRes.statusCode = 404;
+        httpRes.setHeader('Content-Type', 'application/json');
+        httpRes.end('{"success":false,"error":"Not found"}');
+      }
     } catch (error) {
+      // Payload-too-large: respond 413 rather than a generic 500
+      if ((error as any)?.statusCode === 413 && !res.aborted && httpRes && !httpRes.headersSent) {
+        httpRes.statusCode = 413;
+        httpRes.setHeader('Content-Type', 'application/json');
+        httpRes.end('{"success":false,"error":"Request entity too large"}');
+        return;
+      }
+
       this.logger.error(
         `Request handling error: ${error instanceof Error ? error.message : String(error)}`,
         'RequestError'
@@ -179,41 +700,6 @@ export class UWebSocketsHttpServer {
           this.logger.error('Failed to send error response', 'ResponseError');
         }
       }
-    } finally {
-      // Release pooled objects back to pool
-      if (httpReq) {
-        const pooledQuery = (httpReq as any)._pooledQuery;
-        const pooledHeaders = (httpReq as any)._pooledHeaders;
-
-        // Only release if object has keys (avoid pool churn for empty objects)
-        if (pooledQuery) {
-          let hasKeys = false;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          for (const _key in pooledQuery) {
-            hasKeys = true;
-            break;
-          }
-          if (hasKeys) {
-            this.poolManager.releaseQuery(pooledQuery);
-          }
-        }
-
-        if (pooledHeaders) {
-          let hasKeys = false;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          for (const _key in pooledHeaders) {
-            hasKeys = true;
-            break;
-          }
-          if (hasKeys) {
-            this.poolManager.releaseHeaders(pooledHeaders);
-          }
-        }
-      }
-
-      if (httpRes) {
-        this.releaseResponse(httpRes);
-      }
     }
   }
 
@@ -225,48 +711,9 @@ export class UWebSocketsHttpServer {
     // Use interned method string if available
     const method = UWebSocketsHttpServer.INTERNED_METHODS.get(methodRaw) || methodRaw.toUpperCase();
 
-    // Optimized query parsing with pooled object
-    let queryParams: Record<string, string>;
-    if (queryString) {
-      queryParams = this.poolManager.acquireQuery();
-      // Query parsing without URLSearchParams overhead
-      const pairs = queryString.split('&');
-      for (let i = 0; i < pairs.length; i++) {
-        const pair = pairs[i];
-        const eqIdx = pair.indexOf('=');
-        if (eqIdx > 0) {
-          const key = pair.substring(0, eqIdx);
-          const value = pair.substring(eqIdx + 1);
-          queryParams[decodeURIComponent(key)] = decodeURIComponent(value);
-        }
-      }
-    } else {
-      queryParams = {};
-    }
-
-    // Optimized header parsing with pooled object
-    const headers = this.poolManager.acquireHeaders();
-    req.forEach((key: string, value: string) => {
-      headers[key] = value;
-    });
-
-    const httpReq = {
-      method,
-      path: url,
-      url: url,
-      query: queryParams,
-      params: {}, // Will be filled by route matching
-      headers,
-      body: null,
-      ip: '', // Lazy - only compute if accessed
-      requestId: this.requestTrackingEnabled ? this.poolManager.generateRequestId() : '', // ID generation (if enabled)
-    } as HttpRequest;
-
-    // Store pooled objects for cleanup
-    (httpReq as any)._pooledQuery = queryParams;
-    (httpReq as any)._pooledHeaders = headers;
-
-    return httpReq;
+    // Headers/query/cookies/requestId are lazy on the UwsRequest prototype -
+    // materialize() snapshots them before the first await
+    return new UwsRequest(this, req, method, url, queryString) as unknown as HttpRequest;
   }
 
   // Optimized helper to write headers
@@ -295,10 +742,9 @@ export class UWebSocketsHttpServer {
     init(res: any, req: any, logger: any) {
       this.headersSent = false;
       this.statusCode = 200;
-      // Clear headers object (reuse to avoid allocation)
-      for (const key in this.responseHeaders) {
-        delete this.responseHeaders[key];
-      }
+      // Fresh object (a delete-loop reset would push the object into V8
+      // dictionary mode, slowing every later header access)
+      this.responseHeaders = {};
       this._res = res;
       this._req = req;
       this._logger = logger;
@@ -331,7 +777,7 @@ export class UWebSocketsHttpServer {
       return this;
     }
 
-    async json(data: any) {
+    json(data: any) {
       if (this.headersSent || this._res.aborted) return;
 
       // Fast-path JSON serialization for common API patterns
@@ -644,74 +1090,247 @@ export class UWebSocketsHttpServer {
 
       return this;
     }
+
+    clearCookie(name: string, options: any = {}) {
+      const clearOptions: any = { expires: new Date(0), maxAge: 0 };
+      if (options.path !== undefined) clearOptions.path = options.path;
+      if (options.domain !== undefined) clearOptions.domain = options.domain;
+      if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
+      if (options.secure !== undefined) clearOptions.secure = options.secure;
+      if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
+      return this.cookie(name, '', clearOptions);
+    }
+
+    // ==== Express-compatible response helpers (parity with the Node adapter) ====
+
+    public locals: Record<string, any> = {};
+
+    set(field: string | Record<string, any>, value?: any) {
+      if (this.headersSent) return this;
+      if (typeof field === 'string') {
+        if (value !== undefined) this.setHeader(field, value);
+      } else {
+        for (const key in field) {
+          this.setHeader(key, field[key]);
+        }
+      }
+      return this;
+    }
+
+    get(field: string) {
+      return this.getHeader(field);
+    }
+
+    hasHeader(name: string): boolean {
+      return this.getHeader(name) !== undefined;
+    }
+
+    setBulkHeaders(headers: Record<string, string | number>) {
+      if (this.headersSent) return this;
+      for (const key in headers) {
+        this.setHeader(key, String(headers[key]));
+      }
+      return this;
+    }
+
+    appendHeader(name: string, value: string | string[]) {
+      if (this.headersSent) return this;
+      const lower = name.toLowerCase();
+      const existing = this.responseHeaders[lower];
+      if (existing) {
+        const values = Array.isArray(existing) ? existing : [existing as string];
+        const incoming = Array.isArray(value) ? value : [value];
+        this.responseHeaders[lower] = values.concat(incoming);
+      } else {
+        this.responseHeaders[lower] = value;
+      }
+      return this;
+    }
+
+    append(field: string, value: string | string[]) {
+      return this.appendHeader(field, value);
+    }
+
+    type(contentType: string) {
+      if (this.headersSent) return this;
+      let ct = contentType;
+      if (ct.indexOf('/') === -1) {
+        const shorthands: Record<string, string> = {
+          json: 'application/json; charset=utf-8',
+          html: 'text/html; charset=utf-8',
+          text: 'text/plain; charset=utf-8',
+          txt: 'text/plain; charset=utf-8',
+          xml: 'application/xml',
+          js: 'application/javascript',
+          css: 'text/css; charset=utf-8',
+          form: 'application/x-www-form-urlencoded',
+        };
+        ct = shorthands[ct.toLowerCase()] || `application/${ct}`;
+      }
+      this.setHeader('Content-Type', ct);
+      return this;
+    }
+
+    sendStatus(code: number) {
+      if (this.headersSent) return;
+      this.statusCode = code;
+      const statusString = UWebSocketsHttpServer.getStatusString(code);
+      const body = statusString.slice(String(code).length + 1) || String(code);
+      this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      this.end(body);
+    }
+
+    location(url: string) {
+      if (this.headersSent) return this;
+      this.setHeader('Location', url.replace(/[\r\n]/g, ''));
+      return this;
+    }
+
+    vary(field: string | string[]) {
+      if (this.headersSent) return this;
+      const existing = this.responseHeaders['vary'];
+      const existingList = existing
+        ? String(existing)
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+        : [];
+      const incoming = Array.isArray(field) ? field : [field];
+      for (const f of incoming) {
+        if (!existingList.some(e => e.toLowerCase() === f.toLowerCase())) {
+          existingList.push(f);
+        }
+      }
+      this.responseHeaders['vary'] = existingList.join(', ');
+      return this;
+    }
+
+    links(links: Record<string, string>) {
+      if (this.headersSent) return this;
+      const parts: string[] = [];
+      for (const rel in links) {
+        parts.push(`<${links[rel]}>; rel="${rel}"`);
+      }
+      if (parts.length > 0) {
+        const existing = this.responseHeaders['link'];
+        this.responseHeaders['link'] = existing
+          ? `${existing}, ${parts.join(', ')}`
+          : parts.join(', ');
+      }
+      return this;
+    }
+
+    canSetHeaders(): boolean {
+      return !this.headersSent;
+    }
+
+    getResponseState() {
+      return {
+        headersSent: this.headersSent,
+        statusCode: this.statusCode,
+        headers: this.responseHeaders,
+        finished: this.headersSent,
+        writable: !this.headersSent,
+      };
+    }
   };
 
-  // Object pool for response objects (further optimization)
-  private responsePool: InstanceType<typeof UWebSocketsHttpServer.ResponsePrototype>[] = [];
-  private readonly MAX_RESPONSE_POOL_SIZE = 100;
-
   private createMoroResponse(req: any, res: any): HttpResponse {
-    const httpRes =
-      this.responsePool.length > 0
-        ? (this.responsePool.pop() as InstanceType<typeof UWebSocketsHttpServer.ResponsePrototype>)
-        : new UWebSocketsHttpServer.ResponsePrototype();
-
+    // Fresh instance per request. Pooling these was a correctness hazard: a
+    // handler that responds after returning (timers, streams) would write into
+    // a recycled object already serving another request.
+    const httpRes = new UWebSocketsHttpServer.ResponsePrototype();
     httpRes.init(res, req, this.logger);
     return httpRes as any as HttpResponse;
   }
 
-  private releaseResponse(httpRes: HttpResponse) {
-    // Return response object to pool for reuse
-    if (this.responsePool.length < this.MAX_RESPONSE_POOL_SIZE) {
-      this.responsePool.push(httpRes as any);
-    }
-  }
-
   private async readBody(res: any, httpReq: HttpRequest): Promise<void> {
-    return new Promise(resolve => {
+    const contentType = httpReq.headers['content-type'] || '';
+    const isMultipart = contentType.includes('multipart/form-data');
+    const maxSize = isMultipart ? this.maxUploadSize : this.maxBodySize;
+
+    return new Promise((resolve, reject) => {
       // Collect chunks in array, concat once at end (faster than repeated Buffer.concat)
-      let buffer: Buffer | null = null;
       const chunks: Buffer[] = [];
       let totalLength = 0;
+      let settled = false;
+
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        res._abortHook = null;
+        fn();
+      };
 
       res.onData((chunk: ArrayBuffer, isLast: boolean) => {
-        const chunkBuffer = Buffer.from(chunk);
-        chunks.push(chunkBuffer);
-        totalLength += chunkBuffer.length;
+        if (settled) return;
 
-        if (isLast) {
-          // Concat all chunks at once (much faster than incremental concat)
-          buffer = totalLength === 0 ? Buffer.alloc(0) : Buffer.concat(chunks, totalLength);
+        // Buffer.from(ArrayBuffer) is a zero-copy VIEW of uWS-owned memory,
+        // which uWS recycles after this callback returns. The final chunk is
+        // consumed synchronously below, so the view is safe; earlier chunks
+        // must be copied or they alias reused memory (silent body corruption).
+        const view = Buffer.from(chunk);
+        totalLength += view.length;
 
-          try {
-            const contentType = httpReq.headers['content-type'] || '';
+        if (totalLength > maxSize) {
+          const error: any = new Error(
+            isMultipart ? 'File upload too large' : 'Request body too large'
+          );
+          error.statusCode = 413;
+          finish(() => reject(error));
+          return;
+        }
 
-            if (contentType.includes('application/json')) {
-              httpReq.body = JSON.parse(buffer.toString('utf-8'));
-            } else if (contentType.includes('application/x-www-form-urlencoded')) {
-              const params = new URLSearchParams(buffer.toString('utf-8'));
-              const body: Record<string, any> = {};
-              params.forEach((value, key) => {
-                body[key] = value;
-              });
-              httpReq.body = body;
-            } else {
-              httpReq.body = buffer.toString('utf-8');
-            }
+        if (!isLast) {
+          const copy = Buffer.allocUnsafe(view.length);
+          view.copy(copy);
+          chunks.push(copy);
+          return;
+        }
 
-            resolve();
-          } catch {
-            this.logger.error('Failed to parse request body', 'BodyParseError');
-            httpReq.body = null;
-            resolve();
+        // Final chunk: single-chunk bodies (the common case) parse straight
+        // from the view with zero copies
+        let buffer: Buffer;
+        if (chunks.length === 0) {
+          buffer = view;
+        } else {
+          chunks.push(view);
+          buffer = Buffer.concat(chunks, totalLength);
+        }
+
+        try {
+          if (contentType.includes('application/json')) {
+            httpReq.body = totalLength === 0 ? null : JSON.parse(buffer.toString('utf-8'));
+          } else if (contentType.includes('application/x-www-form-urlencoded')) {
+            const params = new URLSearchParams(buffer.toString('utf-8'));
+            const body: Record<string, any> = {};
+            params.forEach((value, key) => {
+              body[key] = value;
+            });
+            httpReq.body = body;
+          } else {
+            httpReq.body = buffer.toString('utf-8');
           }
+
+          finish(resolve);
+        } catch {
+          this.logger.error('Failed to parse request body', 'BodyParseError');
+          httpReq.body = null;
+          finish(resolve);
         }
       });
 
-      res.onAborted(() => {
+      // Chain onto the request-lifetime abort hook (registered in handleRequest
+      // or the native route wrapper) instead of replacing it
+      res._abortHook = () => {
         this.logger.debug('Request aborted', 'RequestAborted');
-        resolve();
-      });
+        finish(resolve);
+      };
+
+      // If the client already disconnected before we attached the hook
+      if (res.aborted) {
+        finish(resolve);
+      }
     });
   }
 
@@ -797,6 +1416,19 @@ export class UWebSocketsHttpServer {
 
         this.port = port;
         this.host = host;
+
+        // Register fast-path routes on the native router now that all routes
+        // (including file-based/auto-discovered ones) are loaded
+        try {
+          this.registerNativeFastPathRoutes();
+        } catch (error) {
+          this.logger.warn(
+            `Native fast-path route registration failed, falling back to catchall: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            'NativeRoutes'
+          );
+        }
 
         // Check if we're in a cluster environment
         const isClusterWorker = cluster.isWorker;

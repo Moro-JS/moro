@@ -267,6 +267,11 @@ export class MoroLogger implements Logger {
     }
   }
 
+  // Children created via child() - tracked (weakly) so setLevel propagates.
+  // Without this, a child created while level was 'warn' keeps noop info/debug
+  // methods forever, silently dropping logs after the level is raised.
+  private childRefs: Set<WeakRef<MoroLogger>> | null = null;
+
   child(context: string, metadata?: Record<string, any>): Logger {
     // Create child logger with current parent level (not original options level)
     const childOptions = { ...this.options, level: this.level };
@@ -278,6 +283,9 @@ export class MoroLogger implements Logger {
 
     // Keep reference to parent for level inheritance
     (childLogger as any).parent = this;
+
+    if (!this.childRefs) this.childRefs = new Set();
+    this.childRefs.add(new WeakRef(childLogger));
 
     return childLogger;
   }
@@ -291,6 +299,18 @@ export class MoroLogger implements Logger {
     this.warn = this.createLogMethod('warn');
     this.error = this.createLogMethod('error');
     this.fatal = this.createLogMethod('fatal');
+
+    // Propagate to children so their noop-swapped methods follow the new level
+    if (this.childRefs) {
+      for (const ref of this.childRefs) {
+        const childLogger = ref.deref();
+        if (childLogger) {
+          childLogger.setLevel(level);
+        } else {
+          this.childRefs.delete(ref);
+        }
+      }
+    }
   }
 
   getLevel(): LogLevel {
@@ -787,6 +807,12 @@ export class MoroLogger implements Logger {
     return clean;
   }
 
+  // Parallel to outputBuffer: whether each entry belongs on stderr.
+  // Tagged at push time from the actual level - avoids re-scanning every
+  // buffered line for 'ERROR' text (which also misrouted lines that merely
+  // contained the word).
+  private outputBufferIsError: boolean[] = [];
+
   // High-performance output with buffering
   private output(message: string, level: LogLevel = 'info'): void {
     // Prevent memory exhaustion
@@ -800,6 +826,7 @@ export class MoroLogger implements Logger {
     }
 
     this.outputBuffer.push(message);
+    this.outputBufferIsError.push(level === 'error' || level === 'fatal');
     this.bufferSize++;
 
     // Immediate flush for critical levels or full buffer
@@ -828,16 +855,15 @@ export class MoroLogger implements Logger {
       return;
     }
 
-    // Group messages by stream type
+    // Group messages by the stream tag recorded at push time
     const stdoutMessages: string[] = [];
     const stderrMessages: string[] = [];
 
-    for (const message of this.outputBuffer) {
-      // Determine stream based on message content or level
-      if (message.includes('ERROR') || message.includes('FATAL')) {
-        stderrMessages.push(message);
+    for (let i = 0; i < this.outputBuffer.length; i++) {
+      if (this.outputBufferIsError[i]) {
+        stderrMessages.push(this.outputBuffer[i]);
       } else {
-        stdoutMessages.push(message);
+        stdoutMessages.push(this.outputBuffer[i]);
       }
     }
 
@@ -861,6 +887,7 @@ export class MoroLogger implements Logger {
 
     // Clear buffer
     this.outputBuffer.length = 0;
+    this.outputBufferIsError.length = 0;
     this.bufferSize = 0;
 
     // Clear timeout
@@ -889,6 +916,7 @@ export class MoroLogger implements Logger {
       }
     } finally {
       this.outputBuffer.length = 0;
+      this.outputBufferIsError.length = 0;
       this.bufferSize = 0;
     }
   }
