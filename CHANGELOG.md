@@ -1,3 +1,17 @@
+## [1.7.29] - 2026-07-02
+
+### Added
+
+- feat: improve compression response handling and ensure headers are set correctly
+
+### Changed
+
+- refactor: remove benchmark server files for cleaner codebase
+
+### Other
+
+- feat(logger): enhance child logger level propagation and output buffering
+
 ## [1.7.28] - 2026-06-03
 
 ### Added
