@@ -1,3 +1,9 @@
+## [1.7.30] - 2026-07-06
+
+### Other
+
+- refactor(http-server): optimize lazy loading of request properties and improve request handling performance
+
 ## [1.7.29] - 2026-07-02
 
 ### Added
