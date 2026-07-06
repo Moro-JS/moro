@@ -9,7 +9,7 @@ import { Container, buildModuleBasePath } from './utilities/index.js';
 import { ModuleLoader } from './modules/index.js';
 import { WebSocketManager } from './networking/websocket-manager.js';
 import { CircuitBreaker } from './utilities/circuit-breaker.js';
-import { isPackageAvailable } from './utilities/package-utils.js';
+import { isPackageAvailable, createUserRequire } from './utilities/package-utils.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
@@ -84,8 +84,14 @@ export class Moro extends EventEmitter {
     // Initialize framework logger after global configuration
     this.logger = createFrameworkLogger('Core');
 
-    // Check if uWebSockets should be used for HTTP and WebSocket
-    const useUWebSockets = this.config.server?.useUWebSockets || false;
+    // Check if uWebSockets should be used for HTTP and WebSocket.
+    // IMPORTANT: uWS is a native optional dependency loaded ASYNCHRONOUSLY by
+    // UWebSocketsHttpServer's constructor, so a load failure (package missing,
+    // or no prebuilt binary for this Node ABI - e.g. Node 25 with uWS v20.52)
+    // does NOT throw here and the catch-based fallback below would never fire;
+    // the app would hang at listen() bound to nothing. Preflight the require
+    // synchronously so the fallback can actually happen.
+    const useUWebSockets = (this.config.server?.useUWebSockets || false) && this.preflightUws();
 
     if (useUWebSockets) {
       try {
@@ -1039,6 +1045,28 @@ export class Moro extends EventEmitter {
 
     limit.count++;
     return true;
+  }
+
+  // Synchronously verify that uWebSockets.js can actually load on this
+  // runtime: the package must be present AND ship a prebuilt binary for this
+  // Node ABI (e.g. uWS v20.52 has no binary for Node 25 / ABI 141). Loading
+  // it here is not wasted work - the CJS module cache shares the instance
+  // with the server's own import.
+  private preflightUws(): boolean {
+    try {
+      // cwd-based require (the repo's standard optional-dependency resolution,
+      // and safe under both ESM and the CJS test transform - import.meta is not)
+      createUserRequire()('uWebSockets.js');
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        'useUWebSockets is enabled but uWebSockets.js cannot load on this runtime - ' +
+          'falling back to Node.js http.Server. ' +
+          (error instanceof Error ? error.message.split('\n')[0] : String(error)),
+        'ServerInit'
+      );
+      return false;
+    }
   }
 
   /**

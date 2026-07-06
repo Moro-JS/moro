@@ -112,112 +112,113 @@ export class MoroIncomingMessage extends IncomingMessage {
   /** Bound on the per-server subclass prototype - no per-request write needed */
   declare _server: MoroHttpServer;
 
-  // Hot per-request fields (assigned in handleRequest; declared here for stable shape)
+  // Hot per-request fields (assigned in handleRequest; declared here for
+  // stable shape). Everything else lives behind the single `_lazy` slot -
+  // per-request construction pays 5 field initializations instead of 16.
   params: Record<string, string> = {};
   body: any = null;
   path = '';
-
-  // Lazy backing fields - single hidden-class shape, created at construction
   _queryString: string | null = null;
-  _query: Record<string, string> | undefined = undefined;
-  _cookies: Record<string, string> | undefined = undefined;
-  _context: Record<string, any> | undefined = undefined;
-  _requestId: string | undefined = undefined;
-  _ip: string | undefined = undefined;
-  _originalUrl: string | undefined = undefined;
-  _hostname: string | undefined = undefined;
-  _protocol: string | undefined = undefined;
-  _secure: boolean | undefined = undefined;
-  _xhr: boolean | undefined = undefined;
-  _ips: string[] | undefined = undefined;
-  _subdomains: string[] | undefined = undefined;
+
+  // Single slot for every lazily-computed/assigned helper value (query,
+  // cookies, requestId, hostname, ...). Allocated on first access - a plain
+  // JSON GET that never touches the helpers never allocates it, and the
+  // request object keeps one stable hidden-class shape either way.
+  _lazy: Record<string, any> | undefined = undefined;
 
   get query(): Record<string, string> {
-    let q = this._query;
+    const L = this._lazy ?? (this._lazy = {});
+    let q = L.query;
     if (q === undefined) {
       const qs = this._queryString;
       q = qs ? parseQueryString(qs) : {};
-      this._query = q;
+      L.query = q;
     }
     return q;
   }
   set query(value: Record<string, string>) {
-    this._query = value;
+    (this._lazy ?? (this._lazy = {})).query = value;
   }
 
   get cookies(): Record<string, string> {
-    let c = this._cookies;
+    const L = this._lazy ?? (this._lazy = {});
+    let c = L.cookies;
     if (c === undefined) {
       const header = this.headers.cookie;
       c = header ? parseCookieHeader(header) : {};
-      this._cookies = c;
+      L.cookies = c;
     }
     return c;
   }
   set cookies(value: Record<string, string>) {
-    this._cookies = value;
+    (this._lazy ?? (this._lazy = {})).cookies = value;
   }
 
   get context(): Record<string, any> {
-    let ctx = this._context;
+    const L = this._lazy ?? (this._lazy = {});
+    let ctx = L.context;
     if (ctx === undefined) {
       ctx = {};
-      this._context = ctx;
+      L.context = ctx;
     }
     return ctx;
   }
   set context(value: Record<string, any>) {
-    this._context = value;
+    (this._lazy ?? (this._lazy = {})).context = value;
   }
 
   get requestId(): string {
-    let id = this._requestId;
+    const L = this._lazy ?? (this._lazy = {});
+    let id = L.requestId;
     if (id === undefined) {
       const server = this._server;
       id = server && server.requestTrackingEnabled ? randomUUID() : '';
-      this._requestId = id;
+      L.requestId = id;
     }
     return id;
   }
   set requestId(value: string) {
-    this._requestId = value;
+    (this._lazy ?? (this._lazy = {})).requestId = value;
   }
 
   get ip(): string {
-    let v = this._ip;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.ip;
     if (v === undefined) {
       v = (this.socket && this.socket.remoteAddress) || '';
-      this._ip = v;
+      L.ip = v;
     }
     return v;
   }
   set ip(value: string) {
-    this._ip = value;
+    (this._lazy ?? (this._lazy = {})).ip = value;
   }
 
   get originalUrl(): string {
-    const v = this._originalUrl;
+    const v = this._lazy?.originalUrl;
     return v !== undefined ? v : this.url || '';
   }
   set originalUrl(value: string) {
-    this._originalUrl = value;
+    (this._lazy ?? (this._lazy = {})).originalUrl = value;
   }
 
   get hostname(): string {
-    let v = this._hostname;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.hostname;
     if (v === undefined) {
       const host = (this.headers.host || '') as string;
       v = host ? host.split(':')[0] : '';
-      this._hostname = v;
+      L.hostname = v;
     }
     return v;
   }
   set hostname(value: string) {
-    this._hostname = value;
+    (this._lazy ?? (this._lazy = {})).hostname = value;
   }
 
   get protocol(): string {
-    let v = this._protocol;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.protocol;
     if (v === undefined) {
       const forwardedProto = this.headers['x-forwarded-proto'] as string | undefined;
       v = forwardedProto
@@ -225,37 +226,39 @@ export class MoroIncomingMessage extends IncomingMessage {
         : (this.socket as any)?.encrypted
           ? 'https'
           : 'http';
-      this._protocol = v;
+      L.protocol = v;
     }
     return v;
   }
   set protocol(value: string) {
-    this._protocol = value;
+    (this._lazy ?? (this._lazy = {})).protocol = value;
   }
 
   get secure(): boolean {
-    const v = this._secure;
+    const v = this._lazy?.secure;
     return v !== undefined ? v : this.protocol === 'https';
   }
   set secure(value: boolean) {
-    this._secure = value;
+    (this._lazy ?? (this._lazy = {})).secure = value;
   }
 
   get xhr(): boolean {
-    let v = this._xhr;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.xhr;
     if (v === undefined) {
       const xrw = this.headers['x-requested-with'] as string | undefined;
       v = !!xrw && xrw.toLowerCase() === 'xmlhttprequest';
-      this._xhr = v;
+      L.xhr = v;
     }
     return v;
   }
   set xhr(value: boolean) {
-    this._xhr = value;
+    (this._lazy ?? (this._lazy = {})).xhr = value;
   }
 
   get ips(): string[] {
-    let v = this._ips;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.ips;
     if (v === undefined) {
       const forwardedFor = this.headers['x-forwarded-for'] as string | undefined;
       v = forwardedFor
@@ -264,27 +267,28 @@ export class MoroIncomingMessage extends IncomingMessage {
             .map(s => s.trim())
             .filter(Boolean)
         : [];
-      this._ips = v;
+      L.ips = v;
     }
     return v;
   }
   set ips(value: string[]) {
-    this._ips = value;
+    (this._lazy ?? (this._lazy = {})).ips = value;
   }
 
   get subdomains(): string[] {
-    let v = this._subdomains;
+    const L = this._lazy ?? (this._lazy = {});
+    let v = L.subdomains;
     if (v === undefined) {
       const hostnameParts = this.hostname.split('.');
       // Matches Express: subdomains are parts before the last two (domain + tld),
       // reversed (closest subdomain first).
       v = hostnameParts.length > 2 ? hostnameParts.slice(0, -2).reverse() : [];
-      this._subdomains = v;
+      L.subdomains = v;
     }
     return v;
   }
   set subdomains(value: string[]) {
-    this._subdomains = value;
+    (this._lazy ?? (this._lazy = {})).subdomains = value;
   }
 
   // Express-compatible request helpers (shared prototype methods, not closures)
@@ -998,7 +1002,12 @@ export class MoroHttpServer {
     // Optimize server for high performance (conservative settings for compatibility)
     this.server.keepAliveTimeout = 5000; // 5 seconds
     this.server.headersTimeout = 6000; // 6 seconds
-    this.server.timeout = 30000; // 30 seconds request timeout
+    // Socket inactivity timeout stays at Node's default (0 = disabled). A
+    // non-zero value arms/refreshes a timer on every request, which shows up
+    // in CPU profiles (setStreamTimeout + timer churn) under load; slowloris
+    // protection is already covered by headersTimeout + keepAliveTimeout, and
+    // this matches Node's own default connectionTimeout: 0.
+    this.server.timeout = 0;
   }
 
   // Direct router dispatch - called after global middleware, before the legacy
@@ -1156,70 +1165,123 @@ export class MoroHttpServer {
     };
   }
 
-  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // Request entry point. Deliberately NOT an async function: the common case
+  // (no body, no hooks, no global middleware, sync route handler) completes
+  // fully synchronously with zero promise allocations and zero microtask
+  // hops. Anything that genuinely needs to await routes through
+  // handleRequestSlow.
+  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
     // req/res arrive as the per-server subclasses (MoroIncomingMessage /
     // MoroServerResponse) - all helpers are already on their prototypes.
     const httpReq = req as unknown as HttpRequest & MoroIncomingMessage;
     const httpRes = res as unknown as HttpResponse & MoroServerResponse;
 
+    // URL split - query string parsing is lazy (MoroIncomingMessage#query getter)
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const urlString = req.url!;
+    const queryIndex = urlString.indexOf('?');
+
+    if (queryIndex === -1) {
+      httpReq.path = urlString;
+    } else {
+      httpReq.path = urlString.substring(0, queryIndex);
+      httpReq._queryString = urlString.substring(queryIndex + 1);
+    }
+
+    // Intern method string for fast reference equality comparison (50-100% faster)
+    switch (req.method) {
+      case 'POST':
+        httpReq.method = MoroHttpServer.METHOD_POST;
+        break;
+      case 'PUT':
+        httpReq.method = MoroHttpServer.METHOD_PUT;
+        break;
+      case 'PATCH':
+        httpReq.method = MoroHttpServer.METHOD_PATCH;
+        break;
+      case 'GET':
+        httpReq.method = MoroHttpServer.METHOD_GET;
+        break;
+      case 'DELETE':
+        httpReq.method = MoroHttpServer.METHOD_DELETE;
+        break;
+      case 'HEAD':
+        httpReq.method = MoroHttpServer.METHOD_HEAD;
+        break;
+      case 'OPTIONS':
+        httpReq.method = MoroHttpServer.METHOD_OPTIONS;
+        break;
+    }
+
+    const needsBody =
+      httpReq.method === MoroHttpServer.METHOD_POST ||
+      httpReq.method === MoroHttpServer.METHOD_PUT ||
+      httpReq.method === MoroHttpServer.METHOD_PATCH;
+    const hookManager = this.hookManager;
+    const hasHooks = !!(
+      hookManager &&
+      (hookManager.hasHooks === undefined || hookManager.hasHooks('request'))
+    );
+
+    if (needsBody || hasHooks || this.globalMiddleware.length > 0) {
+      // Slow path: real awaits ahead (body parse / hooks / middleware).
+      // Errors are fully handled inside - the returned promise never rejects.
+      void this.handleRequestSlow(httpReq, httpRes, req, needsBody, hasHooks);
+      return;
+    }
+
+    // FAST PATH - no promises unless the route handler itself is async
     try {
-      // URL split - query string parsing is lazy (MoroIncomingMessage#query getter)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const urlString = req.url!;
-      const queryIndex = urlString.indexOf('?');
-
-      if (queryIndex === -1) {
-        httpReq.path = urlString;
-      } else {
-        httpReq.path = urlString.substring(0, queryIndex);
-        httpReq._queryString = urlString.substring(queryIndex + 1);
+      const routerHandler = this.routerHandler;
+      if (routerHandler) {
+        const handled = routerHandler(httpReq, httpRes);
+        if (handled) {
+          if (typeof (handled as any).then === 'function') {
+            (handled as Promise<boolean>).then(
+              wasHandled => {
+                if (!wasHandled && !httpRes.headersSent) {
+                  try {
+                    this.dispatchLegacyRoute(httpReq, httpRes, req);
+                  } catch (error) {
+                    void this.onRequestError(error, httpReq, httpRes, req);
+                  }
+                }
+              },
+              error => void this.onRequestError(error, httpReq, httpRes, req)
+            );
+          }
+          return;
+        }
+        if (httpRes.headersSent) return;
       }
 
-      // Intern method string for fast reference equality comparison (50-100% faster)
-      switch (req.method) {
-        case 'POST':
-          httpReq.method = MoroHttpServer.METHOD_POST;
-          break;
-        case 'PUT':
-          httpReq.method = MoroHttpServer.METHOD_PUT;
-          break;
-        case 'PATCH':
-          httpReq.method = MoroHttpServer.METHOD_PATCH;
-          break;
-        case 'GET':
-          httpReq.method = MoroHttpServer.METHOD_GET;
-          break;
-        case 'DELETE':
-          httpReq.method = MoroHttpServer.METHOD_DELETE;
-          break;
-        case 'HEAD':
-          httpReq.method = MoroHttpServer.METHOD_HEAD;
-          break;
-        case 'OPTIONS':
-          httpReq.method = MoroHttpServer.METHOD_OPTIONS;
-          break;
-      }
+      this.dispatchLegacyRoute(httpReq, httpRes, req);
+    } catch (error) {
+      void this.onRequestError(error, httpReq, httpRes, req);
+    }
+  }
 
-      // Method checking - use reference equality for interned strings
-      if (
-        httpReq.method === MoroHttpServer.METHOD_POST ||
-        httpReq.method === MoroHttpServer.METHOD_PUT ||
-        httpReq.method === MoroHttpServer.METHOD_PATCH
-      ) {
+  // Full async pipeline for requests that need it: bodied methods, hook
+  // consumers, and apps with global middleware.
+  private async handleRequestSlow(
+    httpReq: HttpRequest & MoroIncomingMessage,
+    httpRes: HttpResponse & MoroServerResponse,
+    req: IncomingMessage,
+    needsBody: boolean,
+    hasHooks: boolean
+  ): Promise<void> {
+    try {
+      if (needsBody) {
         httpReq.body = await this.parseBody(req);
       }
 
-      // Execute hooks before request processing - skipped entirely (no context
-      // object, no promise) when no 'request' hooks are registered
-      const hookManager = this.hookManager;
-      if (hookManager && (hookManager.hasHooks === undefined || hookManager.hasHooks('request'))) {
-        await hookManager.execute('request', {
+      if (hasHooks) {
+        await this.hookManager.execute('request', {
           request: httpReq,
           response: httpRes,
         });
       }
 
-      // Execute global middleware first - EARLY EXIT if none registered.
       // executeMiddleware returns undefined when the whole chain completed
       // synchronously, so a sync chain costs zero promise allocations.
       if (this.globalMiddleware.length > 0) {
@@ -1246,42 +1308,74 @@ export class MoroHttpServer {
         if (httpRes.headersSent) return;
       }
 
-      // Find matching route (legacy direct-route table)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const route = this.findRoute(req.method!, httpReq.path);
-      if (!route) {
-        // 404 response with pre-compiled buffer
-        httpRes.statusCode = 404;
-        httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
-        httpRes.setHeader('Content-Length', MoroHttpServer.RESPONSE_TEMPLATES.notFound.length);
-        httpRes.end(MoroHttpServer.RESPONSE_TEMPLATES.notFound);
-        return;
-      }
+      this.dispatchLegacyRoute(httpReq, httpRes, req);
+    } catch (error) {
+      await this.onRequestError(error, httpReq, httpRes, req);
+    }
+  }
 
-      // Extract path parameters
-      const matches = httpReq.path.match(route.pattern);
-      if (matches) {
-        const params: Record<string, string> = {};
-        const paramNames = route.paramNames;
-        const paramNamesLen = paramNames.length;
-        for (let i = 0; i < paramNamesLen; i++) {
-          params[paramNames[i]] = matches[i + 1];
-        }
-        httpReq.params = params;
-      }
+  // Legacy direct-route table dispatch + 404 fallback. Synchronous; async
+  // route middleware/handlers are continued via promise callbacks wired to
+  // onRequestError so the sync fast path stays promise-free.
+  private dispatchLegacyRoute(
+    httpReq: HttpRequest & MoroIncomingMessage,
+    httpRes: HttpResponse & MoroServerResponse,
+    req: IncomingMessage
+  ): void {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const route = this.findRoute(req.method!, httpReq.path);
+    if (!route) {
+      // 404 response with pre-compiled buffer
+      httpRes.statusCode = 404;
+      httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
+      httpRes.setHeader('Content-Length', MoroHttpServer.RESPONSE_TEMPLATES.notFound.length);
+      httpRes.end(MoroHttpServer.RESPONSE_TEMPLATES.notFound);
+      return;
+    }
 
-      // Execute middleware chain - EARLY EXIT if no route middleware
-      if (route.middleware.length > 0) {
-        const mwResult = this.executeMiddleware(route.middleware, httpReq, httpRes);
-        if (mwResult) await mwResult;
+    // Extract path parameters
+    const matches = httpReq.path.match(route.pattern);
+    if (matches) {
+      const params: Record<string, string> = {};
+      const paramNames = route.paramNames;
+      const paramNamesLen = paramNames.length;
+      for (let i = 0; i < paramNamesLen; i++) {
+        params[paramNames[i]] = matches[i + 1];
       }
+      httpReq.params = params;
+    }
 
+    const runHandler = () => {
       // Execute handler - Don't await sync handlers
       const handlerResult = route.handler(httpReq, httpRes);
       if (handlerResult && typeof handlerResult.then === 'function') {
-        await handlerResult;
+        (handlerResult as Promise<void>).catch(
+          error => void this.onRequestError(error, httpReq, httpRes, req)
+        );
       }
-    } catch (error) {
+    };
+
+    // Execute middleware chain - EARLY EXIT if no route middleware
+    if (route.middleware.length > 0) {
+      const mwResult = this.executeMiddleware(route.middleware, httpReq, httpRes);
+      if (mwResult) {
+        mwResult.then(runHandler, error => void this.onRequestError(error, httpReq, httpRes, req));
+        return;
+      }
+    }
+
+    runHandler();
+  }
+
+  // Shared error handling for all request paths (sync throw, slow-path catch,
+  // and promise rejections from async handlers/middleware). Never throws.
+  private async onRequestError(
+    error: unknown,
+    httpReq: HttpRequest & MoroIncomingMessage,
+    httpRes: HttpResponse & MoroServerResponse,
+    req: IncomingMessage
+  ): Promise<void> {
+    try {
       // Debug: Log the actual error and where it came from
       this.logger.debug('Request error details', 'RequestHandler', {
         errorType: typeof error,
@@ -1361,6 +1455,12 @@ export class MoroHttpServer {
           }
         }
       }
+    } catch (fatalError) {
+      // Error handling itself failed (e.g. the connection died mid-response) -
+      // never let this escape as an unhandled rejection
+      this.logger.error('Failed while handling request error', 'RequestHandler', {
+        error: fatalError instanceof Error ? fatalError.message : String(fatalError),
+      });
     }
   }
 
