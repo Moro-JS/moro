@@ -2900,15 +2900,16 @@ app.get('/external-api').handler(async (req, res) => {
 
 ### Performance Benchmarks
 
-| Framework | Req/sec    | Latency   | Memory   |
-| --------- | ---------- | --------- | -------- |
-| **Moro**  | **52,400** | **1.8ms** | **24MB** |
-| Express   | 28,540     | 3.8ms     | 45MB     |
-| Fastify   | 38,120     | 2.9ms     | 35MB     |
-| NestJS    | 22,100     | 4.5ms     | 58MB     |
-| Koa       | 25,880     | 4.2ms     | 42MB     |
+| Framework                          | Req/sec     | Latency (avg) | p99    |
+| ---------------------------------- | ----------- | ------------- | ------ |
+| **Moro + Moro Engine** _(default)_ | **94,000+** | **1.1ms**     | 2.4ms  |
+| **Moro + uWebSockets.js**          | 91,000+     | 1.1ms         | 3.4ms  |
+| **Moro (Node http)**               | 58,000+     | 1.8ms         | 6.4ms  |
+| Fastify                            | 56,625      | 1.9ms         | 4.5ms  |
+| Koa                                | 48,238      | 2.3ms         | 11.5ms |
+| Express                            | 39,552      | 2.7ms         | 7.9ms  |
 
-_Benchmark: 50,000 requests, 100 concurrent connections, Node.js 20.x_
+_Benchmark: `wrk`, 100 connections, no pipelining, best of alternating rounds, Node.js 24, Apple M2 Ultra — same machine, same day, same tool for every row. Moro rows run the full framework (routing, validation pipeline, middleware)._
 
 ---
 

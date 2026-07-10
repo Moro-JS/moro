@@ -94,6 +94,65 @@ describe('Configuration System Validation', () => {
     });
   });
 
+  describe('HTTP Engine Selection', () => {
+    it('should leave engine unset in config (resolution defaults to moro)', () => {
+      // engine is intentionally not stored with a default, so the framework can
+      // distinguish an explicit choice from the 'moro' resolution default
+      const config = loadConfig();
+      expect(config.server.engine).toBeUndefined();
+      expect(config.server.useUWebSockets).toBe(false);
+    });
+
+    it('should accept engine via createApp options', () => {
+      for (const engine of ['moro', 'node', 'uws'] as const) {
+        resetConfig();
+        const config = loadConfigWithOptions({ server: { engine } });
+        expect(config.server.engine).toBe(engine);
+      }
+    });
+
+    it('should accept engine via MORO_SERVER_ENGINE', () => {
+      process.env.MORO_SERVER_ENGINE = 'uws';
+      const config = loadConfig();
+      expect(config.server.engine).toBe('uws');
+    });
+
+    it("should map legacy 'auto'/'native' to 'moro'", () => {
+      for (const legacy of ['auto', 'native'] as const) {
+        resetConfig();
+        const config = loadConfigWithOptions({ server: { engine: legacy as any } });
+        expect(config.server.engine).toBe('moro');
+      }
+    });
+
+    it('should reject invalid engine values', () => {
+      expect(() => loadConfigWithOptions({ server: { engine: 'turbo' as any } })).toThrow();
+    });
+
+    it('should ignore invalid MORO_SERVER_ENGINE values (engine selection never fails the boot)', () => {
+      process.env.MORO_SERVER_ENGINE = 'not-an-engine';
+      const config = loadConfig();
+      // Invalid env value is discarded: engine stays unset and resolution
+      // applies the 'moro' default at boot
+      expect(config.server.engine).toBeUndefined();
+    });
+
+    it('should normalize MORO_SERVER_ENGINE (trim, lowercase, legacy aliases)', () => {
+      process.env.MORO_SERVER_ENGINE = ' UWS ';
+      expect(loadConfig().server.engine).toBe('uws');
+      resetConfig();
+      process.env.MORO_SERVER_ENGINE = 'native';
+      expect(loadConfig().server.engine).toBe('moro');
+    });
+
+    it('should keep honoring the deprecated useUWebSockets flag', () => {
+      const config = loadConfigWithOptions({ server: { useUWebSockets: true } });
+      expect(config.server.useUWebSockets).toBe(true);
+      // engine stays unset; resolution turns useUWebSockets:true into 'uws'
+      expect(config.server.engine).toBeUndefined();
+    });
+  });
+
   describe('Issues Identified', () => {
     it('FIXED: MORO_ prefixed environment variables working correctly', () => {
       process.env.MORO_PORT = '9000';

@@ -32,12 +32,14 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+  # Runs WITHOUT the native engine on purpose: the Node-fallback path is a
+  # first-class product property and must stay green on its own.
   test:
     name: Test Suite
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 21]
+        node-version: [20, 22, 24]
 
     steps:
       - name: Checkout code
@@ -59,10 +61,13 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
+      # MORO_REQUIRE_ENGINE=1: the engine-path integration tests must RUN against
+      # the npm-installed engine, not describe.skip / fall back to Node's http.
       - name: Run integration tests
         run: npm run test:integration
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+          MORO_REQUIRE_ENGINE: '1'
 
       - name: Run e2e tests
         run: npm run test:e2e

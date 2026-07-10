@@ -12,9 +12,15 @@ if [ -f ~/.nvm/nvm.sh ]; then
   . ~/.nvm/nvm.sh
 fi
 
-# Check uWebSockets.js version
-echo "Checking uWebSockets.js version..."
-node scripts/check-uws-version.mjs --silent
+# GUI git clients (VS Code Source Control, etc.) launch hooks WITHOUT the
+# shell's PATH, and nvm only helps if its default alias resolves. If npx still
+# isn't found, fall back to the newest installed node (nvm dirs, then Homebrew
+# / system locations) so commits work from any client.
+if ! command -v npx >/dev/null 2>&1; then
+  for d in "$HOME/.nvm/versions/node"/*/bin /opt/homebrew/bin /usr/local/bin; do
+    [ -x "$d/npx" ] && NODE_BIN="$d"
+  done
+  [ -n "$NODE_BIN" ] && PATH="$NODE_BIN:$PATH"
+fi
 
-# Use npx which is more reliable in git hooks
 npx lint-staged

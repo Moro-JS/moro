@@ -1198,14 +1198,13 @@ const app = await createApp({
 
 ### Expected Performance Gains
 
-| Migration From | Req/sec Improvement         | Latency Improvement      | Memory Improvement     |
-| -------------- | --------------------------- | ------------------------ | ---------------------- |
-| Express        | **+84%** (28,540 → 52,400)  | **-53%** (3.8ms → 1.8ms) | **-47%** (45MB → 24MB) |
-| Fastify        | **+37%** (38,120 → 52,400)  | **-38%** (2.9ms → 1.8ms) | **-31%** (35MB → 24MB) |
-| NestJS         | **+137%** (22,100 → 52,400) | **-60%** (4.5ms → 1.8ms) | **-59%** (58MB → 24MB) |
-| Koa            | **+102%** (25,880 → 52,400) | **-57%** (4.2ms → 1.8ms) | **-43%** (42MB → 24MB) |
-| Next.js API    | **+156%** (20,400 → 52,400) | **-65%** (5.1ms → 1.8ms) | **-62%** (63MB → 24MB) |
-| SvelteKit      | **+128%** (23,000 → 52,400) | **-61%** (4.6ms → 1.8ms) | **-58%** (57MB → 24MB) |
+Measured against MoroJS on its default native engine (`wrk`, 100 connections, no pipelining, Node 24, Apple M2 Ultra — same machine, same tool, every row):
+
+| Migration From | Req/sec Improvement         | Latency Improvement      |
+| -------------- | --------------------------- | ------------------------ |
+| Express        | **+138%** (39,552 → 94,216) | **-59%** (2.7ms → 1.1ms) |
+| Koa            | **+95%** (48,238 → 94,216)  | **-52%** (2.3ms → 1.1ms) |
+| Fastify        | **+66%** (56,625 → 94,216)  | **-42%** (1.9ms → 1.1ms) |
 
 ### Performance Features You Get
 

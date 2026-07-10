@@ -20,6 +20,11 @@ import {
 } from '../../types/http.js';
 import { PathMatcher } from '../routing/path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
+import {
+  parseMultipart as parseMultipartBuffer,
+  type MultipartLimits,
+} from './utils/multipart-parser.js';
+import type { HttpRuntimeLimits } from './utils/size.js';
 
 const gzip = promisify(zlib.gzip);
 const deflate = promisify(zlib.deflate);
@@ -27,11 +32,13 @@ const deflate = promisify(zlib.deflate);
 export interface Http2ServerOptions {
   key?: string | Buffer;
   cert?: string | Buffer;
-  ca?: string | Buffer;
+  ca?: string | Buffer | Array<string | Buffer>;
   allowHTTP1?: boolean;
   maxSessionMemory?: number;
   maxBodySize?: number; // Maximum body size for JSON/form data
   maxUploadSize?: number; // Maximum size for file uploads
+  /** Flattened runtime limits (timeouts, maxConnections, multipart, ...). */
+  limits?: HttpRuntimeLimits;
   settings?: {
     headerTableSize?: number;
     enablePush?: boolean;
@@ -51,6 +58,8 @@ export class MoroHttp2Server {
   private compressionEnabled = true;
   private compressionThreshold = 1024;
   private requestTrackingEnabled = true;
+  private multipartLimits?: MultipartLimits;
+  private _limits?: HttpRuntimeLimits;
   private logger = createFrameworkLogger('Http2Server');
   private hookManager: any;
   private requestCounter = 0;
@@ -99,9 +108,12 @@ export class MoroHttp2Server {
     if (options.maxUploadSize) {
       this.maxUploadSize = options.maxUploadSize;
     }
+    if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
+    this._limits = options.limits;
 
     const serverOptions: any = {
       allowHTTP1: options.allowHTTP1 !== false,
+      ...(options.maxSessionMemory && { maxSessionMemory: options.maxSessionMemory }),
     };
 
     // Add SSL options if secure
@@ -143,8 +155,12 @@ export class MoroHttp2Server {
       this.logger.info('HTTP/2 server created', 'ServerInit');
     }
 
-    // Configure server settings
-    this.server.setTimeout(30000);
+    // Configure server settings. Socket idle timeout defaults to 30s (its
+    // historical hardcode) unless timeouts.idle is set (0 disables).
+    this.server.setTimeout(options.limits?.timeouts?.idle ?? 30000);
+    if (options.limits?.maxConnections && options.limits.maxConnections > 0) {
+      (this.server as any).maxConnections = options.limits.maxConnections;
+    }
 
     // Handle streams (HTTP/2 requests)
     this.server.on('stream', this.handleStream.bind(this));
@@ -950,7 +966,7 @@ export class MoroHttp2Server {
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
             resolve(this.parseUrlEncoded(body.toString()));
           } else if (contentType.includes('multipart/form-data')) {
-            resolve(this.parseMultipart(body, contentType));
+            resolve(parseMultipartBuffer(body, contentType, this.multipartLimits));
           } else {
             resolve(body.toString());
           }
@@ -970,99 +986,6 @@ export class MoroHttp2Server {
       result[key] = value;
     }
     return result;
-  }
-
-  /**
-   * Parse multipart/form-data without corrupting binary data
-   * Works directly with Buffers to preserve binary integrity
-   */
-  private parseMultipart(
-    buffer: Buffer,
-    contentType: string
-  ): { fields: Record<string, string>; files: Record<string, any> } {
-    const boundary = contentType.split('boundary=')[1];
-    if (!boundary) {
-      throw new Error('Invalid multipart boundary');
-    }
-
-    // Work with Buffer directly - don't convert to string (corrupts binary data)
-    const boundaryBuffer = Buffer.from(`--${boundary}`);
-    const parts = this.splitBuffer(buffer, boundaryBuffer);
-    const fields: Record<string, string> = {};
-    const files: Record<string, any> = {};
-
-    // Skip first (empty) and last (closing boundary) parts
-    const partsLen = parts.length - 1;
-    for (let i = 1; i < partsLen; i++) {
-      const part = parts[i];
-
-      // Find the double CRLF that separates headers from content
-      const headerEndPos = this.findBufferSequence(part, Buffer.from('\r\n\r\n'));
-      if (headerEndPos === -1) continue;
-
-      // Headers are always text - safe to convert to string
-      const headers = part.slice(0, headerEndPos).toString('utf8');
-      // Content stays as Buffer to preserve binary data
-      const content = part.slice(headerEndPos + 4); // Skip the \r\n\r\n
-
-      const nameMatch = headers.match(/name="([^"]+)"/);
-      const filenameMatch = headers.match(/filename="([^"]+)"/);
-      const contentTypeMatch = headers.match(/Content-Type: ([^\r\n]+)/);
-
-      if (nameMatch) {
-        const name = nameMatch[1];
-
-        if (filenameMatch) {
-          // This is a file - keep as Buffer to preserve binary data
-          const filename = filenameMatch[1];
-          const mimeType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
-
-          // Remove trailing \r\n (2 bytes) from the end
-          const fileData = content.slice(0, content.length - 2);
-
-          files[name] = {
-            filename,
-            mimetype: mimeType,
-            data: fileData, // Already a Buffer - preserves binary integrity
-            size: fileData.length,
-          };
-        } else {
-          // This is a regular field - convert to string
-          const fieldContent = content.slice(0, content.length - 2); // Remove trailing \r\n
-          fields[name] = fieldContent.toString('utf8');
-        }
-      }
-    }
-
-    return { fields, files };
-  }
-
-  /**
-   * Split a Buffer by a delimiter Buffer
-   * Used for multipart boundary splitting without corrupting binary data
-   */
-  private splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
-    const parts: Buffer[] = [];
-    let start = 0;
-    let pos = 0;
-
-    while ((pos = buffer.indexOf(delimiter, start)) !== -1) {
-      parts.push(buffer.slice(start, pos));
-      start = pos + delimiter.length;
-    }
-
-    // Add the remaining part
-    parts.push(buffer.slice(start));
-
-    return parts;
-  }
-
-  /**
-   * Find the position of a sequence within a Buffer
-   * Returns -1 if not found
-   */
-  private findBufferSequence(buffer: Buffer, sequence: Buffer): number {
-    return buffer.indexOf(sequence);
   }
 
   private parseQueryString(queryString: string): Record<string, string> {

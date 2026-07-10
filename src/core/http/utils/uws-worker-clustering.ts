@@ -11,6 +11,7 @@
 import { Worker, isMainThread, threadId, parentPort } from 'worker_threads';
 import os from 'os';
 import { createFrameworkLogger } from '../../logger/index.js';
+import { loadNativeEngine } from '../../utilities/package-utils.js';
 
 const logger = createFrameworkLogger('UWSClustering');
 
@@ -73,8 +74,13 @@ export class UWSWorkerClusterManager {
     }
 
     try {
-      // Lazy load uWebSockets.js
-      const uwsModule = await import('uWebSockets.js');
+      // Worker clustering uses the uWS-shaped App/SSLApp + SO_REUSEPORT API,
+      // so it needs uWebSockets.js specifically (not @morojs/engine).
+      const engine = loadNativeEngine({ candidates: ['uWebSockets.js'] });
+      if (!engine) {
+        throw new Error('uWebSockets.js is not available for uWS worker clustering');
+      }
+      const uwsModule = engine.module;
       this.uws = uwsModule.default || uwsModule;
 
       // Create acceptor app - must match SSL config of worker apps

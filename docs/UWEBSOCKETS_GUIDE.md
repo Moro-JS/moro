@@ -1,8 +1,21 @@
-# uWebSockets.js Integration Guide
+# HTTP Engine Guide (Moro engine, Node, and uWebSockets.js)
 
 ## Overview
 
-Moro Framework now supports **uWebSockets.js** as a complete HTTP and WebSocket server replacement. uWebSockets.js is a C++ implementation with native Node.js bindings that provides exceptional performance - handling both HTTP requests and WebSocket connections with minimal overhead.
+Moro has three interchangeable HTTP backends, selected by the `server.engine` config option:
+
+- `engine: 'moro'` (**default**) — Moro's own native engine (`@morojs/engine`), falling back to the Node.js http server if it cannot load on this platform/Node ABI (the fallback reason is logged and exposed via `app.engine`)
+- `engine: 'node'` — the Node.js http server (no native engine)
+- `engine: 'uws'` — opt in to uWebSockets.js, falling back to Node.js if it cannot load
+
+Notes:
+
+- A chosen native engine never silently switches to the _other_ native engine: `'moro'` uses `@morojs/engine` only, `'uws'` uses uWebSockets.js only; each falls back only to Node.js. Nothing ever fails to boot.
+- `MORO_SERVER_ENGINE` environment variable overrides the config value.
+- The deprecated `useUWebSockets: true` flag is a legacy alias for `engine: 'uws'`. The old `'auto'`/`'native'` engine values map to `'moro'`.
+- Inspect what actually booted with `app.engine` / `app.getServerKind()`.
+
+The rest of this guide focuses on the uWebSockets.js (`engine: 'uws'`) path.
 
 ## Why uWebSockets.js?
 
@@ -40,7 +53,7 @@ export default {
   server: {
     port: 3000,
     host: 'localhost',
-    useUWebSockets: true, // Enable uWebSockets for HTTP + WebSocket!
+    engine: 'uws', // uWebSockets.js for HTTP + WebSocket (or 'moro' for Moro's native engine)
     ssl: {
       // Optional SSL/TLS configuration
       key_file_name: '/path/to/key.pem',
@@ -61,13 +74,17 @@ export default {
 
 ### WebSocket-Only Integration
 
-If you only want uWebSockets for WebSocket (keeping Node.js http.Server for HTTP):
+> **Note:** the `uws` WebSocket adapter only works integrated with the native
+> engine HTTP server (`engine: 'moro'` or `'uws'`), where upgrades share the
+> HTTP listen socket. On the Node.js http server it cannot attach to the listen
+> socket, so Moro logs a warning and falls back to `socket.io`/`ws` detection.
+> For WebSockets on the Node server, use the `ws` or `socket.io` adapter:
 
 ```javascript
 export default {
   websocket: {
     enabled: true,
-    adapter: 'uws', // Specify uWebSockets adapter
+    adapter: 'ws', // or 'socket.io' - both attach to the Node.js http server
     compression: true,
     options: {
       path: '/*',
@@ -125,7 +142,7 @@ Once configured, uWebSockets handles both HTTP and WebSocket with zero code chan
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = await createApp(); // Reads moro.config.js with useUWebSockets: true
+const app = await createApp(); // Reads moro.config.js with engine: 'uws'
 
 // HTTP routes work exactly the same
 app.get('/api/users', async (req, res) => {
@@ -244,7 +261,7 @@ export default {
 ```javascript
 export default {
   server: {
-    useUWebSockets: true, // Enable for both HTTP and WebSocket
+    engine: 'uws', // uWebSockets.js for both HTTP and WebSocket
   },
   websocket: {
     enabled: true,

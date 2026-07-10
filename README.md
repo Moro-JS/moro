@@ -21,7 +21,8 @@
 Build high-performance APIs with intelligent routing that automatically orders middleware execution. Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
 
 **Key Features:**
-- **200k+ req/s** - built-in clustering or uWebSockets.js integration (single core)
+
+- **Native C++ Engine** - Moro's own HTTP engine, faster than uWebSockets.js: 94k+ req/s real-world, ~500k pipelined, on a single thread
 - **Intelligent Routing** - Automatic middleware ordering, no configuration needed
 - **Enterprise Auth** - Built-in Auth.js with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
@@ -29,20 +30,25 @@ Build high-performance APIs with intelligent routing that automatically orders m
 - **gRPC Support** - Native gRPC for high-performance microservices
 - **Multi-Runtime** - Deploy to Node.js, Edge, Lambda, or Workers
 - **Powerful CLI** - Scaffold projects, generate modules, deploy with one command
-- **Zero Dependencies** - Lightweight core with optional integrations
+- **Zero third-party dependencies** - lightweight core (just Moro's own native engine) with optional integrations
 
 ## Performance
 
-| Framework | Req/sec | Latency | Memory | Notes |
-|-----------|---------|---------|--------|-------|
-| **Moro + uWebSockets.js** | **200,000+** | **3.93ms** | **25MB** | Single core |
-| **Moro (Clustering)**  | **190,000+** | **3.62ms** | **24MB** | Multi-core |
-| **Moro (Standard)**  | **87,000** | **7.8ms** | **14MB** | Single core |
-| Fastify   | 38,120  | 2.9ms   | 35MB   | Single core |
-| Express   | 28,540  | 3.8ms   | 45MB   | Single core |
-| NestJS    | 22,100  | 4.5ms   | 58MB   | Single core |
+The Moro rows run the **full framework** (routing, validation pipeline, middleware) — not a stripped-down stack:
 
-> **uWebSockets.js** achieves multi-core performance on a single core - perfect for WebSockets and serverless. **Clustering** scales across CPU cores for traditional HTTP workloads.
+| Configuration                      | Req/sec                      | Latency (avg) | p99     |
+| ---------------------------------- | ---------------------------- | ------------- | ------- |
+| **Moro + Moro Engine** _(default)_ | **94,000+**                  | **1.1 ms**    | 2.4 ms  |
+| **Moro + uWebSockets.js**          | 91,000+                      | 1.1 ms        | 3.4 ms  |
+| **Moro (Node http)**               | 58,000+                      | 1.8 ms        | 6.4 ms  |
+| **Moro (Clustering)**              | scales across all CPU cores¹ | —             | —       |
+| Fastify                            | 56,625                       | 1.9 ms        | 4.5 ms  |
+| Koa                                | 48,238                       | 2.3 ms        | 11.5 ms |
+| Express                            | 39,552                       | 2.7 ms        | 7.9 ms  |
+
+Moro's own native engine is the default — and it outperforms uWebSockets.js in **both** profiles: real-world above, and pipelined ×10 (TechEmpower-style) at **495k req/s vs 470k**, single thread.
+
+> Methodology: `wrk`, 100 connections, no pipelining (how real HTTP clients behave), best of alternating rounds, Node 24, Apple M2 Ultra — same machine, same day, same tool for every row. ¹ Clustering multiplies throughput across cores; a single-machine loopback benchmark can't measure it honestly (the load generator competes with the workers for the same cores), so no misleading number is shown.
 
 ## Quick Start
 
@@ -58,16 +64,19 @@ import { createApp, z } from '@morojs/moro';
 const app = createApp();
 
 // Intelligent routing - order doesn't matter!
-app.post('/users')
-   .body(z.object({
-     name: z.string().min(2),
-     email: z.string().email()
-   }))
-   .rateLimit({ requests: 10, window: 60000 })
-   .handler((req, res) => {
-     // req.body is fully typed and validated
-     return { success: true, data: req.body };
-   });
+app
+  .post('/users')
+  .body(
+    z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    })
+  )
+  .rateLimit({ requests: 10, window: 60000 })
+  .handler((req, res) => {
+    // req.body is fully typed and validated
+    return { success: true, data: req.body };
+  });
 
 app.listen(3000);
 ```
@@ -85,31 +94,73 @@ npm run dev
 
 Learn more at [morojs.com/cli](https://morojs.com/cli)
 
-### Ultra-High Performance (Optional)
+### HTTP Engine
+
+Moro ships its own native HTTP engine (`@morojs/engine`) and uses it by default,
+falling back to the Node.js http server wherever a prebuilt binary isn't
+available. Pick the backend with `server.engine`:
 
 ```typescript
-// uWebSockets.js - 200k+ req/s on single core
 const app = createApp({
   server: {
-    useUWebSockets: true
-  }
+    engine: 'moro', // default - Moro's native engine (Node.js fallback if it can't load)
+    // engine: 'node' - the Node.js http server (no native engine)
+    // engine: 'uws'  - opt in to uWebSockets.js
+  },
 });
 
-// Or combine with worker thread clustering for even more power
-const app = createApp({
+// Check which engine actually booted (logged at startup too)
+app.engine; // { server, enginePackage?, engineVersion?, protocols?, fallbackReason? }
+```
+
+#### TLS / HTTPS (unified config)
+
+One `server.ssl` config flows to whichever runtime serves — the Moro engine terminates TLS in-process, as do the Node https server, uWebSockets.js (file paths only), and the HTTP/2 server. Both shapes are accepted:
+
+```typescript
+// Inline PEM (node-style) — works on engine, node, http2
+createApp({ server: { engine: 'moro', ssl: { key, cert, ca } } });
+
+// File paths — works on every runtime incl. uWS
+createApp({ server: { engine: 'moro', ssl: { keyFile: './key.pem', certFile: './cert.pem' } } });
+```
+
+#### HTTP/2
+
+`http2: true` serves ALPN h2 + http/1.1. When `engine: 'moro'` and the engine
+build supports h2 it is served natively; otherwise Moro uses its dedicated
+HTTP/2 server. Requires TLS.
+
+```typescript
+createApp({ server: { engine: 'moro', http2: true, ssl: { key, cert } } });
+```
+
+#### Configurable limits (no arbitrary caps)
+
+Every limit is a documented default you can override; values flow through to
+the engine. Nothing is silently capped.
+
+```typescript
+createApp({
   server: {
-    useUWebSockets: true
+    bodySizeLimit: '10mb', // maxUploadSize: '100mb' for multipart
+    maxConnections: 0, // 0 = unlimited
+    timeouts: { request: 30000, idle: 0, keepAlive: 5000, headers: 6000 },
+    limits: {
+      maxHeaderSize: '64kb',
+      maxHeaders: 100,
+      wsMaxMessageSize: '16mb',
+      wsBackpressureLimit: '1mb',
+      multipart: { maxParts: 1000, maxFiles: 20, maxFileSize: '25mb' },
+    },
   },
-  performance: {
-    clustering: {
-      enabled: true,
-      workers: 4  // or 'auto' for CPU count
-    }
-  }
 });
 ```
 
-See [uWebSockets Guide](./docs/UWEBSOCKETS_GUIDE.md)
+See [HTTP Engine Guide](./docs/UWEBSOCKETS_GUIDE.md),
+[HTTP/2 Guide](./docs/HTTP2_GUIDE.md), and the
+[Configuration Reference](./docs/CONFIGURATION_REFERENCE.md) for the full
+defaults table.
 
 ## Deploy Everywhere
 
@@ -144,6 +195,7 @@ export default { fetch: app.getHandler() };
 ## Examples
 
 Check out [working examples](https://github.com/Moro-JS/examples) for:
+
 - REST APIs with validation
 - Real-time WebSocket apps
 - Auth.js integration
@@ -155,9 +207,9 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 **vs Express** - Intelligent middleware ordering eliminates configuration complexity and race conditions
 
-**vs Fastify** - 4x faster with uWebSockets.js, plus multi-runtime deployment without adapters
+**vs Fastify** - ~1.7x the throughput out of the box (Moro's native engine), plus multi-runtime deployment without adapters
 
-**vs NestJS** - Functional architecture without decorators, 9x faster, 3x less memory
+**vs NestJS** - Functional architecture without decorators, with a fraction of the per-request overhead
 
 ## Contributing
 

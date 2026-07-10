@@ -147,18 +147,110 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
     if (!config.server) config.server = {} as any;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.maxConnections = parseInt(
-      process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '1000',
+      process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '0',
       10
     );
   }
 
   if (process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT) {
     if (!config.server) config.server = {} as any;
+    if (!config.server!.timeouts) config.server!.timeouts = {} as any;
+    // Now writes the canonical timeouts.request (timeout is its deprecated alias).
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    config.server!.timeout = parseInt(
-      process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '30000',
+    config.server!.timeouts!.request = parseInt(
+      process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '0',
       10
     );
+  }
+
+  // Additional timeout knobs (all ms).
+  const setTimeoutEnv = (envName: string, key: 'idle' | 'keepAlive' | 'headers') => {
+    if (process.env[envName]) {
+      if (!config.server) config.server = {} as any;
+      if (!config.server!.timeouts) config.server!.timeouts = {} as any;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      (config.server!.timeouts as any)[key] = parseInt(process.env[envName] as string, 10);
+    }
+  };
+  setTimeoutEnv('MORO_IDLE_TIMEOUT', 'idle');
+  setTimeoutEnv('MORO_KEEPALIVE_TIMEOUT', 'keepAlive');
+  setTimeoutEnv('MORO_HEADERS_TIMEOUT', 'headers');
+
+  if (process.env.MORO_BACKLOG) {
+    if (!config.server) config.server = {} as any;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    config.server!.backlog = parseInt(process.env.MORO_BACKLOG, 10);
+  }
+
+  // Limit knobs. Size values stay as strings so the validator/parser handle
+  // '16kb'-style inputs uniformly.
+  const setLimitEnv = (envName: string, key: string) => {
+    if (process.env[envName]) {
+      if (!config.server) config.server = {} as any;
+      if (!config.server!.limits) config.server!.limits = {} as any;
+      (config.server!.limits as any)[key] = process.env[envName];
+    }
+  };
+  setLimitEnv('MORO_MAX_HEADER_SIZE', 'maxHeaderSize');
+  setLimitEnv('MORO_WS_MAX_MESSAGE_SIZE', 'wsMaxMessageSize');
+  if (process.env.MORO_MAX_HEADERS) {
+    if (!config.server) config.server = {} as any;
+    if (!config.server!.limits) config.server!.limits = {} as any;
+    config.server!.limits!.maxHeaders = parseInt(process.env.MORO_MAX_HEADERS, 10);
+  }
+  const setMultipartEnv = (envName: string, key: string, numeric: boolean) => {
+    if (process.env[envName]) {
+      if (!config.server) config.server = {} as any;
+      if (!config.server!.limits) config.server!.limits = {} as any;
+      if (!config.server!.limits!.multipart) config.server!.limits!.multipart = {} as any;
+      (config.server!.limits!.multipart as any)[key] = numeric
+        ? parseInt(process.env[envName] as string, 10)
+        : process.env[envName];
+    }
+  };
+  setMultipartEnv('MORO_MULTIPART_MAX_PARTS', 'maxParts', true);
+  setMultipartEnv('MORO_MULTIPART_MAX_FILES', 'maxFiles', true);
+  setMultipartEnv('MORO_MULTIPART_MAX_FILE_SIZE', 'maxFileSize', false);
+
+  // SSL from env (file paths + passphrase; never fails boot — a partial set is
+  // caught by the validator).
+  const setSslEnv = (envName: string, key: string) => {
+    if (process.env[envName]) {
+      if (!config.server) config.server = {} as any;
+      if (!config.server!.ssl) config.server!.ssl = {} as any;
+      (config.server!.ssl as any)[key] = process.env[envName];
+    }
+  };
+  setSslEnv('MORO_SSL_KEY_FILE', 'keyFile');
+  setSslEnv('MORO_SSL_CERT_FILE', 'certFile');
+  setSslEnv('MORO_SSL_CA_FILE', 'caFile');
+  setSslEnv('MORO_SSL_PASSPHRASE', 'passphrase');
+
+  if (process.env.MORO_HTTP2) {
+    const v = process.env.MORO_HTTP2.trim().toLowerCase();
+    if (v === 'true' || v === '1' || v === 'false' || v === '0') {
+      if (!config.server) config.server = {} as any;
+      config.server!.http2 = v === 'true' || v === '1';
+    }
+  }
+
+  if (process.env.MORO_SERVER_ENGINE) {
+    // Normalize and whitelist like the other env enums (LOG_LEVEL etc.):
+    // engine selection must never fail the boot, so an invalid value is
+    // ignored rather than being handed to the validator to throw on.
+    // Legacy 'auto'/'native' values map to 'moro'.
+    const rawEngine = process.env.MORO_SERVER_ENGINE.trim().toLowerCase();
+    const engineValue =
+      rawEngine === 'auto' || rawEngine === 'native'
+        ? 'moro'
+        : rawEngine === 'moro' || rawEngine === 'node' || rawEngine === 'uws'
+          ? rawEngine
+          : undefined;
+    if (engineValue) {
+      if (!config.server) config.server = {} as any;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      config.server!.engine = engineValue;
+    }
   }
 
   // Database configuration
@@ -564,6 +656,19 @@ function normalizeCreateAppOptions(options: MoroOptions): DeepPartial<AppConfig>
   // Direct config section overrides - merge with existing config
   if (options.server) {
     config.server = { ...config.server, ...options.server } as any;
+  }
+
+  // options.https is the node-style alias for server.ssl; options.http2 the
+  // top-level HTTP/2 switch. Fold both into server config (only when the
+  // canonical server field isn't already set) so a config file / env can also
+  // drive them and everything flows through one validated shape. framework.ts
+  // still reads options.https/options.http2 directly at highest precedence for
+  // back-compat — they arrive identical after this.
+  if ((options as any).https && !(options.server as any)?.ssl) {
+    config.server = { ...(config.server as any), ssl: (options as any).https } as any;
+  }
+  if ((options as any).http2 !== undefined && (options.server as any)?.http2 === undefined) {
+    config.server = { ...(config.server as any), http2: (options as any).http2 } as any;
   }
   if (options.database) {
     config.database = { ...config.database, ...options.database } as any;

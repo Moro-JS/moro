@@ -1,16 +1,19 @@
 # MoroJS Performance Optimization Guide
 
 ## Current Performance: 128,844 req/sec
+
 Your current benchmark results are excellent! Here are ways to squeeze out more performance:
 
 ## 🚀 Server-Side Optimizations
 
 ### 1. Ultra-Optimized Benchmark Server
+
 ```bash
 NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
 ```
 
 ### 2. Node.js Runtime Optimizations
+
 ```bash
 # Increase max old space size
 NODE_OPTIONS="--max-old-space-size=8192" NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
@@ -23,6 +26,7 @@ NODE_OPTIONS="--max-old-space-size=8192 --optimize-for-size --gc-interval=100" N
 ```
 
 ### 3. System-Level Optimizations
+
 ```bash
 # Increase file descriptor limits
 ulimit -n 65536
@@ -37,6 +41,7 @@ taskset -c 0-23 node benchmark-server.js
 ## 🔧 Benchmark Optimizations
 
 ### 1. More Aggressive Autocannon Settings
+
 ```bash
 # Current: 100 connections, 10 pipelining
 autocannon -c 100 -d 40 -p 10 http://127.0.0.1:3111/
@@ -52,6 +57,7 @@ autocannon -c 1000 -d 40 -p 100 http://127.0.0.1:3111/
 ```
 
 ### 2. Multiple Autocannon Instances
+
 ```bash
 # Run multiple autocannon instances in parallel
 autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3111/ &
@@ -61,6 +67,7 @@ wait
 ```
 
 ### 3. Alternative Benchmark Tools
+
 ```bash
 # Install wrk (C-based, faster than autocannon)
 brew install wrk
@@ -76,7 +83,9 @@ hey -n 1000000 -c 1000 http://127.0.0.1:3111/
 ## 🎯 Expected Performance Improvements
 
 ### Current: 128,844 req/sec
+
 ### Potential with optimizations:
+
 - **Node.js optimizations**: +10-20% (140k-155k req/sec)
 - **More aggressive autocannon**: +20-30% (155k-170k req/sec)
 - **wrk instead of autocannon**: +30-50% (170k-190k req/sec)
@@ -85,12 +94,14 @@ hey -n 1000000 -c 1000 http://127.0.0.1:3111/
 ## 🔍 Bottleneck Analysis
 
 ### Current Bottlenecks (in order):
+
 1. **Network I/O** - HTTP parsing/serialization
 2. **Autocannon limitations** - JavaScript-based tool
 3. **Node.js event loop** - Single-threaded per worker
 4. **Memory allocation** - JSON.stringify overhead
 
 ### Solutions:
+
 1. **Pre-computed responses** ✅ (implemented in benchmark-server.js)
 2. **Use wrk/hey** - C/Go-based tools
 3. **Worker optimization** - Find optimal worker count
@@ -115,7 +126,8 @@ wrk -t24 -c1000 -d40s http://127.0.0.1:3111/
 ## 📊 Expected Results
 
 With all optimizations, you should see:
-- **150k-200k req/sec** with autocannon
-- **200k-300k req/sec** with wrk
-- **Better CPU utilization** across all cores
+
+- **~94k req/sec on a single thread** with the default native engine (`wrk`, no pipelining, Apple M2 Ultra — scales with your hardware)
+- **~495k req/sec** in pipelined ×10 microbenchmarks (TechEmpower-style)
+- **Clustering multiplies throughput across CPU cores** — measure it from a separate load machine; on a single box the load generator competes with the workers for cores and understates it
 - **Lower latency** under high load

@@ -4,7 +4,7 @@
 
 import crypto from 'crypto';
 import { TextDecoder } from 'util';
-import { resolveUserPackage } from '../../utilities/package-utils.js';
+import { loadNativeEngine } from '../../utilities/package-utils.js';
 
 // Reusable TextDecoder instance — avoids Buffer allocation per WS message
 const textDecoder = new TextDecoder('utf-8');
@@ -38,23 +38,30 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
-      // Lazy load uWebSockets.js from user's context
-      // This ensures it's an optional dependency with graceful fallback
-      const uwsPath = resolveUserPackage('uWebSockets.js');
-      this.uws = await import(uwsPath);
+      // This adapter needs the uWS-shaped API (App/SSLApp/ws/us_listen_socket_*)
+      // - specifically uWebSockets.js, NOT the Moro-shaped @morojs/engine.
+      const engine = loadNativeEngine({ candidates: ['uWebSockets.js'] });
+      if (!engine) {
+        throw new Error('uWebSockets.js is not available for the uws WebSocket adapter');
+      }
+      this.uws = engine.module.default || engine.module;
 
       // Store HTTP server reference for compatibility
       this.httpServer = httpServer;
 
-      // uWebSockets.js doesn't integrate with Node's http.Server
-      // Instead, it creates its own server, so we'll need to handle this carefully
-      // We'll create a uWebSockets app that can coexist with the HTTP server
-
       // Check if SSL/TLS options are provided
       const sslOptions = (options as any).ssl;
 
-      if (sslOptions && sslOptions.key_file_name && sslOptions.cert_file_name) {
-        // Create SSL app
+      if (httpServer && typeof httpServer.ws === 'function') {
+        // Integrated mode: the framework passes the engine's own uWS app.
+        // Register .ws() routes directly on it so WebSocket upgrades share
+        // the HTTP listen socket. (Creating a second App() here would attach
+        // the routes to an app that never listens - upgrades on the real
+        // port would fail.)
+        this.app = httpServer;
+        this.logger.info('Using integrated uWebSockets app from HTTP server', 'Init');
+      } else if (sslOptions && sslOptions.key_file_name && sslOptions.cert_file_name) {
+        // Standalone SSL app (adapter owns the listen socket via listen())
         this.app = this.uws.SSLApp({
           key_file_name: sslOptions.key_file_name,
           cert_file_name: sslOptions.cert_file_name,
@@ -63,7 +70,7 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
         });
         this.logger.info('uWebSockets SSL/TLS app created', 'Init');
       } else {
-        // Create regular app
+        // Standalone app (adapter owns the listen socket via listen())
         this.app = this.uws.App();
         this.logger.info('uWebSockets app created', 'Init');
       }
@@ -109,11 +116,13 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
 
       this.logger.info('uWebSockets adapter initialized', 'Init');
     } catch (error) {
-      // Throw helpful error with installation instructions
+      // Throw helpful error with installation instructions. This adapter only
+      // works with uWebSockets.js - do not suggest @morojs/engine, which it
+      // deliberately refuses to load.
       throw new Error(
-        'Failed to load uWebSockets.js (optional dependency)\n' +
-          'To use the uWebSockets adapter, install it with:\n' +
-          '  npm install --save-dev github:uNetworking/uWebSockets.js#v20.52.0\n' +
+        'Failed to load uWebSockets.js for the uws WebSocket adapter\n' +
+          'Install it with:\n' +
+          '  npm install github:uNetworking/uWebSockets.js#v20.52.0\n' +
           'Or use a different WebSocket adapter (socket.io or ws) in your config.\n' +
           'Error: ' +
           (error instanceof Error ? error.message : String(error))

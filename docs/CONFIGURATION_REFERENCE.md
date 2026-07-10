@@ -79,12 +79,59 @@ export default config;
 
 Configure the HTTP server settings.
 
-| Property         | Type     | Default       | Description                        |
-| ---------------- | -------- | ------------- | ---------------------------------- |
-| `port`           | `number` | `3001`        | Server port to listen on (1-65535) |
-| `host`           | `string` | `'localhost'` | Server host to bind to             |
-| `maxConnections` | `number` | `1000`        | Maximum concurrent connections     |
-| `timeout`        | `number` | `30000`       | Request timeout in milliseconds    |
+| Property         | Type        | Default       | Description                                                                   |
+| ---------------- | ----------- | ------------- | ----------------------------------------------------------------------------- |
+| `port`           | `number`    | `3001`        | Server port to listen on (1-65535)                                            |
+| `host`           | `string`    | `'localhost'` | Server host to bind to                                                        |
+| `engine`         | `string`    | `'moro'`      | `'moro' \| 'node' \| 'uws'`; unset ⇒ moro with Node fallback                  |
+| `bodySizeLimit`  | `string`    | `'10mb'`      | Non-multipart body cap (413 over)                                             |
+| `maxUploadSize`  | `string`    | `'100mb'`     | Multipart body cap (413 over)                                                 |
+| `maxConnections` | `number`    | `0`           | Max concurrent connections; `0` = unlimited (**was `1000`**, see below)       |
+| `timeout`        | `number`    | `0`           | **Deprecated** alias for `timeouts.request`; `0` = disabled (**was `30000`**) |
+| `backlog`        | `number`    | OS default    | TCP listen backlog                                                            |
+| `ssl`            | `object`    | (none)        | Unified TLS config (both shapes)                                              |
+| `timeouts`       | `object`    | see below     | Per-phase receive timeouts (ms)                                               |
+| `limits`         | `object`    | see below     | Fine-grained size/count limits                                                |
+| `http2`          | `bool\|obj` | (off)         | ALPN h2 + http/1.1 (requires TLS)                                             |
+
+**SSL/TLS** (`server.ssl`) — one config, both shapes, flows to every runtime:
+
+```javascript
+// inline PEM (node-style)              // file paths (works everywhere)
+ssl: {
+  (key, cert, ca, passphrase);
+}
+ssl: {
+  (keyFile, certFile, caFile, passphrase);
+}
+// also: minVersion 'TLSv1.2'|'TLSv1.3', requestCert, rejectUnauthorized
+```
+
+The Moro engine terminates TLS in-process; Node uses
+`https.createServer`; uWS needs file paths (inline PEM errors loudly); HTTP/2
+uses it too. `options.https` remains a supported alias.
+
+**Timeouts** (`server.timeouts`, ms; `0` = default/disabled): `request` (full
+receive budget, doesn't reset on activity), `idle` (socket inactivity; engine
+default 120000, http2 30000), `keepAlive` (Node, default `5000`), `headers`
+(Node, default `6000`). The keepAlive/headers values were previously hardcoded.
+
+**Limits** (`server.limits`) — every one a documented default, not a hard cap;
+passed through to the engine: `maxHeaderSize`, `maxHeaders` (100),
+`wsMaxMessageSize` ('16mb'), `wsBackpressureLimit` ('1mb', 0=unlimited),
+`writeHighWaterMark` ('256kb'), `maxPendingBytes`, and
+`multipart: { maxParts (1000), maxPartHeaderBytes ('16kb'), maxFiles, maxFileSize }`.
+
+**HTTP/2** (`server.http2`): `true`, or `{ allowHTTP1, maxSessionMemory,
+settings: { maxConcurrentStreams, initialWindowSize, maxFrameSize,
+maxHeaderListSize, ... } }`. When `engine: 'moro'` and the engine build supports
+h2, it is served natively; otherwise Moro's dedicated HTTP/2 server is used.
+
+> **Migration:** `maxConnections` (1000→0) and `timeout` (30000→0) were
+> previously validated but **never applied to any server**, so the observed
+> behavior has always been unlimited/no-timeout. The `0` defaults preserve that;
+> both are now actually wired through, so an explicit value finally takes effect.
+> Set them explicitly to enforce the old numbers.
 
 **Note**: Environment detection now uses `NODE_ENV` directly for consistency with the Node.js ecosystem. Use `isDevelopment()`, `isProduction()`, and `isStaging()` utility functions to check the current environment.
 
@@ -110,7 +157,12 @@ Configure the HTTP server settings.
 - `HOST` or `MORO_HOST`
 - `NODE_ENV` (controls environment behavior - not part of server config)
 - `MAX_CONNECTIONS` or `MORO_MAX_CONNECTIONS`
-- `REQUEST_TIMEOUT` or `MORO_TIMEOUT`
+- `REQUEST_TIMEOUT` or `MORO_TIMEOUT` (writes `timeouts.request`)
+- `MORO_IDLE_TIMEOUT`, `MORO_KEEPALIVE_TIMEOUT`, `MORO_HEADERS_TIMEOUT`
+- `MORO_BACKLOG`, `MORO_MAX_HEADER_SIZE`, `MORO_MAX_HEADERS`, `MORO_WS_MAX_MESSAGE_SIZE`
+- `MORO_MULTIPART_MAX_PARTS`, `MORO_MULTIPART_MAX_FILES`, `MORO_MULTIPART_MAX_FILE_SIZE`
+- `MORO_SSL_KEY_FILE`, `MORO_SSL_CERT_FILE`, `MORO_SSL_CA_FILE`, `MORO_SSL_PASSPHRASE`
+- `MORO_HTTP2`, `MORO_SERVER_ENGINE`
 
 ## Service Discovery
 

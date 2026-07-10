@@ -81,8 +81,10 @@ function validateServerConfig(config: any, path: string) {
   const result: any = {
     port: validatePort(config.port, `${path}.port`),
     host: validateString(config.host, `${path}.host`),
-    maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 1 }),
-    timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 1000 }),
+    // min 0: 0 = unlimited / disabled (these were never applied before, so 0
+    // preserves the historical observed behavior — see schema.ts).
+    maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 0 }),
+    timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 0 }),
     bodySizeLimit: validateString(config.bodySizeLimit, `${path}.bodySizeLimit`),
     maxUploadSize: validateString(config.maxUploadSize, `${path}.maxUploadSize`),
     requestTracking: {
@@ -96,9 +98,52 @@ function validateServerConfig(config: any, path: string) {
     },
   };
 
-  // Optional uWebSockets configuration
+  // Optional per-phase timeouts (all ms, >= 0 where 0 = default/disabled).
+  if (config.timeouts !== undefined) {
+    result.timeouts = validateServerTimeouts(config.timeouts, `${path}.timeouts`);
+  }
+  // `timeout` is a deprecated alias for `timeouts.request`. Fold it forward
+  // when set and the canonical field is absent (matching the useUWebSockets
+  // deprecation pattern).
+  if (config.timeout && config.timeout > 0 && result.timeouts?.request === undefined) {
+    result.timeouts = { ...(result.timeouts ?? {}), request: result.timeout };
+    if (config.timeouts?.request === undefined) {
+      logger.warn(`${path}.timeout is deprecated - use ${path}.timeouts.request instead`);
+    }
+  }
+
+  // Optional fine-grained limits.
+  if (config.limits !== undefined) {
+    result.limits = validateServerLimits(config.limits, `${path}.limits`);
+  }
+  // Optional TCP backlog.
+  if (config.backlog !== undefined) {
+    result.backlog = validateNumber(config.backlog, `${path}.backlog`, { min: 0 });
+  }
+  // Optional HTTP/2 (boolean or options object).
+  if (config.http2 !== undefined) {
+    result.http2 = validateHttp2Config(config.http2, `${path}.http2`);
+  }
+
+  // Optional HTTP engine selection ('moro' | 'node' | 'uws')
+  if (config.engine !== undefined) {
+    // Map legacy values from the earlier 'auto'/'native' scheme to 'moro'
+    let engine = config.engine;
+    if (engine === 'auto' || engine === 'native') {
+      logger.warn(`${path}.engine: '${engine}' is deprecated - use 'moro' (Moro's native engine)`);
+      engine = 'moro';
+    }
+    result.engine = validateEnum(engine, ['moro', 'node', 'uws'], `${path}.engine`);
+  }
+
+  // Optional uWebSockets configuration (deprecated alias for engine: 'uws')
   if (config.useUWebSockets !== undefined) {
     result.useUWebSockets = validateBoolean(config.useUWebSockets, `${path}.useUWebSockets`);
+    // The default config merges useUWebSockets: false in, so only an actual
+    // opt-in warrants the deprecation nudge
+    if (result.useUWebSockets && config.engine === undefined) {
+      logger.warn(`${path}.useUWebSockets is deprecated - use ${path}.engine: 'uws' instead`);
+    }
   }
 
   // Optional SSL configuration
@@ -110,7 +155,10 @@ function validateServerConfig(config: any, path: string) {
 }
 
 /**
- * Validate SSL configuration
+ * Validate the unified SSL configuration (superset of both historical
+ * shapes). Passes recognized keys through, folds the legacy uWS aliases, and
+ * rejects a partial key-without-cert (or vice versa) so a half-configured TLS
+ * server fails loudly at boot instead of silently serving plaintext.
  */
 function validateSSLConfig(config: any, path: string) {
   if (!config || typeof config !== 'object') {
@@ -118,17 +166,178 @@ function validateSSLConfig(config: any, path: string) {
   }
 
   const result: any = {};
-
+  // File-path shape (both the uWS key_file_name and node keyFile spellings).
+  if (config.keyFile !== undefined)
+    result.keyFile = validateString(config.keyFile, `${path}.keyFile`);
+  if (config.certFile !== undefined)
+    result.certFile = validateString(config.certFile, `${path}.certFile`);
   if (config.key_file_name !== undefined) {
     result.key_file_name = validateString(config.key_file_name, `${path}.key_file_name`);
   }
   if (config.cert_file_name !== undefined) {
     result.cert_file_name = validateString(config.cert_file_name, `${path}.cert_file_name`);
   }
+  if (config.ca_file_name !== undefined) result.ca_file_name = config.ca_file_name;
+  if (config.caFile !== undefined) result.caFile = config.caFile;
+  // Inline-PEM shape (string or Buffer — pass through without stringifying).
+  if (config.key !== undefined) result.key = config.key;
+  if (config.cert !== undefined) result.cert = config.cert;
+  if (config.ca !== undefined) result.ca = config.ca;
   if (config.passphrase !== undefined) {
     result.passphrase = validateString(config.passphrase, `${path}.passphrase`);
   }
+  if (config.minVersion !== undefined) {
+    result.minVersion = validateEnum(
+      config.minVersion,
+      ['TLSv1.2', 'TLSv1.3'],
+      `${path}.minVersion`
+    );
+  }
+  if (config.requestCert !== undefined) {
+    result.requestCert = validateBoolean(config.requestCert, `${path}.requestCert`);
+  }
+  if (config.rejectUnauthorized !== undefined) {
+    result.rejectUnauthorized = validateBoolean(
+      config.rejectUnauthorized,
+      `${path}.rejectUnauthorized`
+    );
+  }
 
+  const hasKey = Boolean(result.key || result.keyFile || result.key_file_name);
+  const hasCert = Boolean(result.cert || result.certFile || result.cert_file_name);
+  if (hasKey !== hasCert) {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'key + cert',
+      'SSL configuration must supply BOTH a key and a certificate (or neither)'
+    );
+  }
+
+  return result;
+}
+
+/** Size fields accept a number of bytes or a size string ('16kb', '10mb'). */
+function validateSize(value: any, path: string): number | string {
+  if (typeof value === 'number') return validateNumber(value, path, { min: 0 });
+  if (typeof value === 'string') {
+    if (!/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/i.test(value.trim())) {
+      throw new ConfigValidationError(path, value, 'size', `Invalid size string: ${value}`);
+    }
+    return value;
+  }
+  throw new ConfigValidationError(
+    path,
+    value,
+    'number|string',
+    'Size must be a number or size string'
+  );
+}
+
+function validateServerTimeouts(config: any, path: string) {
+  if (typeof config !== 'object' || config === null) {
+    throw new ConfigValidationError(path, config, 'object', 'timeouts must be an object');
+  }
+  const result: any = {};
+  for (const key of ['request', 'idle', 'keepAlive', 'headers']) {
+    if (config[key] !== undefined) {
+      result[key] = validateNumber(config[key], `${path}.${key}`, { min: 0 });
+    }
+  }
+  return result;
+}
+
+function validateServerLimits(config: any, path: string) {
+  if (typeof config !== 'object' || config === null) {
+    throw new ConfigValidationError(path, config, 'object', 'limits must be an object');
+  }
+  const result: any = {};
+  for (const key of [
+    'maxHeaderSize',
+    'wsMaxMessageSize',
+    'wsBackpressureLimit',
+    'writeHighWaterMark',
+    'maxPendingBytes',
+  ]) {
+    if (config[key] !== undefined) result[key] = validateSize(config[key], `${path}.${key}`);
+  }
+  if (config.maxHeaders !== undefined) {
+    result.maxHeaders = validateNumber(config.maxHeaders, `${path}.maxHeaders`, { min: 1 });
+  }
+  if (config.multipart !== undefined) {
+    const m = config.multipart;
+    if (typeof m !== 'object' || m === null) {
+      throw new ConfigValidationError(
+        `${path}.multipart`,
+        m,
+        'object',
+        'multipart must be an object'
+      );
+    }
+    const mp: any = {};
+    if (m.maxParts !== undefined)
+      mp.maxParts = validateNumber(m.maxParts, `${path}.multipart.maxParts`, { min: 1 });
+    if (m.maxFiles !== undefined)
+      mp.maxFiles = validateNumber(m.maxFiles, `${path}.multipart.maxFiles`, { min: 0 });
+    if (m.maxPartHeaderBytes !== undefined)
+      mp.maxPartHeaderBytes = validateSize(
+        m.maxPartHeaderBytes,
+        `${path}.multipart.maxPartHeaderBytes`
+      );
+    if (m.maxFileSize !== undefined)
+      mp.maxFileSize = validateSize(m.maxFileSize, `${path}.multipart.maxFileSize`);
+    result.multipart = mp;
+  }
+  return result;
+}
+
+function validateHttp2Config(config: any, path: string) {
+  if (typeof config === 'boolean') return config;
+  if (typeof config !== 'object' || config === null) {
+    throw new ConfigValidationError(
+      path,
+      config,
+      'boolean|object',
+      'http2 must be a boolean or an options object'
+    );
+  }
+  const result: any = {};
+  if (config.allowHTTP1 !== undefined)
+    result.allowHTTP1 = validateBoolean(config.allowHTTP1, `${path}.allowHTTP1`);
+  if (config.maxSessionMemory !== undefined) {
+    result.maxSessionMemory = validateNumber(config.maxSessionMemory, `${path}.maxSessionMemory`, {
+      min: 1,
+    });
+  }
+  if (config.settings !== undefined) {
+    if (typeof config.settings !== 'object' || config.settings === null) {
+      throw new ConfigValidationError(
+        `${path}.settings`,
+        config.settings,
+        'object',
+        'http2.settings must be an object'
+      );
+    }
+    const s: any = {};
+    for (const key of [
+      'maxConcurrentStreams',
+      'initialWindowSize',
+      'maxFrameSize',
+      'maxHeaderListSize',
+      'headerTableSize',
+      'maxHeaderSize',
+    ]) {
+      if (config.settings[key] !== undefined) {
+        s[key] = validateNumber(config.settings[key], `${path}.settings.${key}`, { min: 0 });
+      }
+    }
+    for (const key of ['enablePush', 'enableConnectProtocol']) {
+      if (config.settings[key] !== undefined) {
+        s[key] = validateBoolean(config.settings[key], `${path}.settings.${key}`);
+      }
+    }
+    result.settings = s;
+  }
   return result;
 }
 
@@ -1119,11 +1328,25 @@ function validateCompressionConfig(config: any, path: string) {
     );
   }
 
-  return {
+  const result: any = {
     enabled: validateBoolean(config.enabled, `${path}.enabled`),
     level: validateNumber(config.level, `${path}.level`, { min: 1, max: 9 }),
     threshold: validateNumber(config.threshold, `${path}.threshold`, { min: 0 }),
   };
+  if (config.encodings !== undefined) {
+    if (!Array.isArray(config.encodings)) {
+      throw new ConfigValidationError(
+        `${path}.encodings`,
+        config.encodings,
+        'array',
+        'encodings must be an array'
+      );
+    }
+    result.encodings = config.encodings.map((e: any) =>
+      validateEnum(e, ['br', 'gzip', 'deflate'], `${path}.encodings[]`)
+    );
+  }
+  return result;
 }
 
 /**

@@ -20,13 +20,91 @@ export type DeepPartial<T> = T extends object
       : { [P in keyof T]?: DeepPartial<T[P]> }
   : T;
 
+/** Unified SSL/TLS config (superset of both historical shapes). */
+export interface SSLConfig {
+  /** File-path shape (uWS-style; keyFile/certFile also accepted) */
+  key_file_name?: string;
+  cert_file_name?: string;
+  ca_file_name?: string | string[];
+  keyFile?: string;
+  certFile?: string;
+  caFile?: string | string[];
+  /** Inline-PEM shape (node-style) */
+  key?: string | Buffer;
+  cert?: string | Buffer;
+  ca?: string | Buffer | Array<string | Buffer>;
+  passphrase?: string;
+  minVersion?: 'TLSv1.2' | 'TLSv1.3';
+  requestCert?: boolean;
+  rejectUnauthorized?: boolean;
+}
+
+/** Per-phase receive timeouts. 0 = use the per-server default / disabled. */
+export interface ServerTimeoutsConfig {
+  /** Full-request receive budget (ms); does NOT reset on activity. */
+  request?: number;
+  /** Socket inactivity timeout (ms). */
+  idle?: number;
+  /** Node keep-alive socket timeout (ms). Default 5000. */
+  keepAlive?: number;
+  /** Node headers-received timeout (ms). Default 6000. */
+  headers?: number;
+}
+
+export interface MultipartLimitsConfig {
+  maxParts?: number;
+  maxPartHeaderBytes?: number | string;
+  maxFiles?: number;
+  maxFileSize?: number | string;
+}
+
+/** Fine-grained limits; every value is a documented default, not a hard cap. */
+export interface ServerLimitsConfig {
+  /** Max request head (request line + headers) size. Node maxHeaderSize / engine maxHeadSize. */
+  maxHeaderSize?: number | string;
+  /** Max header count. Node maxHeadersCount / engine maxHeaders. */
+  maxHeaders?: number;
+  multipart?: MultipartLimitsConfig;
+  /** Reassembled WebSocket message cap (engine wsMaxMessageSize). */
+  wsMaxMessageSize?: number | string;
+  /** WebSocket send backpressure cap (engine wsBackpressureLimit). 0 = unlimited. */
+  wsBackpressureLimit?: number | string;
+  /** Write-queue high-water mark (engine writeHighWaterMark). */
+  writeHighWaterMark?: number | string;
+  /** Per-connection not-yet-parsed backlog cap (engine maxPendingBytes). */
+  maxPendingBytes?: number | string;
+}
+
+export interface Http2SettingsConfig {
+  maxConcurrentStreams?: number;
+  initialWindowSize?: number;
+  maxFrameSize?: number;
+  maxHeaderListSize?: number;
+  headerTableSize?: number;
+  enablePush?: boolean;
+  enableConnectProtocol?: boolean;
+  maxHeaderSize?: number;
+}
+
 export interface ServerConfig {
   port: number;
   host: string;
   maxConnections: number;
+  /** @deprecated Use timeouts.request. Kept as an alias; still honored. */
   timeout: number;
   bodySizeLimit: string;
   maxUploadSize: string; // Maximum size for file uploads (multipart/form-data)
+  /** Per-phase receive timeouts (finally applied to every runtime). */
+  timeouts?: ServerTimeoutsConfig;
+  /** Fine-grained size/count limits, passed through to whichever runtime serves. */
+  limits?: ServerLimitsConfig;
+  /** TCP listen backlog. */
+  backlog?: number;
+  /** HTTP/2: true, or an options object. Served natively by the engine when
+   *  it supports h2 (feature-detected), else by the Node http2 server. */
+  http2?:
+    | boolean
+    | { allowHTTP1?: boolean; maxSessionMemory?: number; settings?: Http2SettingsConfig };
   requestTracking: {
     enabled: boolean;
   };
@@ -36,12 +114,20 @@ export interface ServerConfig {
   errorBoundary: {
     enabled: boolean;
   };
-  useUWebSockets?: boolean; // Enable uWebSockets for both HTTP and WebSocket
-  ssl?: {
-    key_file_name?: string;
-    cert_file_name?: string;
-    passphrase?: string;
-  };
+  /**
+   * HTTP engine selection. Default: 'moro'.
+   * - 'moro' (default): Moro's own native engine (@morojs/engine), falling back
+   *   to the Node.js http server if it cannot load on this platform/Node ABI
+   * - 'node': the Node.js http server (no native engine)
+   * - 'uws': opt in to uWebSockets.js, falling back to Node.js if it cannot load
+   * Any chosen engine that cannot load degrades to Node.js and logs why; the app
+   * never fails to boot. Inspect what actually booted via app.engine.
+   */
+  engine?: 'moro' | 'node' | 'uws';
+  /** @deprecated Use engine: 'uws' instead. Enable uWebSockets for both HTTP and WebSocket */
+  useUWebSockets?: boolean;
+  /** Unified SSL/TLS config; flows to whichever runtime serves. */
+  ssl?: SSLConfig;
 }
 
 export interface ServiceDiscoveryConfig {
@@ -317,6 +403,8 @@ export interface PerformanceConfig {
     enabled: boolean;
     level: number;
     threshold: number;
+    /** Encoding preference order (default ['br','gzip','deflate']). */
+    encodings?: Array<'br' | 'gzip' | 'deflate'>;
   };
   circuitBreaker: {
     enabled: boolean;

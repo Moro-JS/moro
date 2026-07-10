@@ -1,9 +1,16 @@
 // src/core/http-server.ts
 import { IncomingMessage, ServerResponse, createServer, Server } from 'http';
+import { createServer as createHttpsServer, Server as HttpsServer } from 'https';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
+import {
+  parseMultipart as parseMultipartBuffer,
+  type MultipartLimits,
+} from './utils/multipart-parser.js';
+import { parseRawQueryString } from './utils/query-parser.js';
+import type { HttpRuntimeLimits } from './utils/size.js';
 import {
   HttpRequest,
   HttpResponse,
@@ -51,25 +58,9 @@ const TYPE_SHORTHANDS: Record<string, string> = {
   form: 'application/x-www-form-urlencoded',
 };
 
-function parseQueryString(queryString: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!queryString) return result;
-
-  const pairs = queryString.split('&');
-  const pairsLen = pairs.length;
-  for (let i = 0; i < pairsLen; i++) {
-    const pair = pairs[i];
-    const equalIndex = pair.indexOf('=');
-    if (equalIndex === -1) {
-      result[decodeURIComponent(pair)] = '';
-    } else {
-      const key = decodeURIComponent(pair.substring(0, equalIndex));
-      const value = decodeURIComponent(pair.substring(equalIndex + 1));
-      result[key] = value;
-    }
-  }
-  return result;
-}
+// Canonical query parsing shared with the uWS/engine transports - identical
+// req.query semantics everywhere ('+' as space, malformed escapes tolerated).
+const parseQueryString = parseRawQueryString;
 
 function parseCookieHeader(cookieHeader: string): Record<string, string> {
   const cookies: Record<string, string> = {};
@@ -518,13 +509,17 @@ export class MoroServerResponse extends ServerResponse {
     const cookieValue = encodeURIComponent(value);
     let cookieString = `${name}=${cookieValue}`;
 
-    if (options.maxAge) cookieString += `; Max-Age=${options.maxAge}`;
+    // maxAge: 0 is meaningful (immediate expiry - clearCookie relies on it)
+    if (options.maxAge !== undefined && options.maxAge !== null)
+      cookieString += `; Max-Age=${options.maxAge}`;
     if (options.expires) cookieString += `; Expires=${options.expires.toUTCString()}`;
     if (options.httpOnly) cookieString += '; HttpOnly';
     if (options.secure) cookieString += '; Secure';
     if (options.sameSite) cookieString += `; SameSite=${options.sameSite}`;
     if (options.domain) cookieString += `; Domain=${options.domain}`;
-    if (options.path) cookieString += `; Path=${options.path}`;
+    // Path defaults to '/' (Express behavior) so clearCookie() from a nested
+    // route can clear a cookie originally set at the site root.
+    cookieString += `; Path=${options.path ?? '/'}`;
 
     const existingCookies = this.getHeader('Set-Cookie') || [];
     // Avoid spread operator - direct array manipulation
@@ -922,7 +917,11 @@ export class MoroServerResponse extends ServerResponse {
 }
 
 export class MoroHttpServer {
-  private server: Server;
+  private server: Server | HttpsServer;
+  /** Multipart limits threaded to parseMultipart at the call site. */
+  private multipartLimits?: MultipartLimits;
+  /** TCP backlog for listen(), when configured. */
+  private listenBacklog?: number;
   private routes: RouteEntry[] = [];
   private globalMiddleware: Middleware[] = [];
   /** @internal read by MoroServerResponse prototype methods */
@@ -974,7 +973,22 @@ export class MoroHttpServer {
     rateLimited: Buffer.from('{"success":false,"error":"Rate limit exceeded"}'),
   };
 
-  constructor(options?: { maxBodySize?: number; maxUploadSize?: number }) {
+  constructor(options?: {
+    maxBodySize?: number;
+    maxUploadSize?: number;
+    /** node-style TLS material (from the unified ssl normalizer). When present
+     *  the server is created via https.createServer. */
+    ssl?: {
+      key: string | Buffer;
+      cert: string | Buffer;
+      ca?: Array<string | Buffer>;
+      passphrase?: string;
+      minVersion?: string;
+      requestCert?: boolean;
+      rejectUnauthorized?: boolean;
+    };
+    limits?: HttpRuntimeLimits;
+  }) {
     // Per-instance subclasses so prototype methods can reach this server's
     // config (logger, compression) with zero per-request allocation.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -986,10 +1000,26 @@ export class MoroHttpServer {
     this.RequestClass = BoundRequest;
     this.ResponseClass = BoundResponse;
 
-    this.server = createServer(
-      { IncomingMessage: BoundRequest as any, ServerResponse: BoundResponse as any },
-      this.handleRequest.bind(this) as any
-    );
+    const limits = options?.limits;
+    // maxHeaderSize is a createServer option (not a mutable property), so it
+    // must be passed here.
+    const serverOpts: any = {
+      IncomingMessage: BoundRequest as any,
+      ServerResponse: BoundResponse as any,
+      ...(limits?.maxHeaderSize && { maxHeaderSize: limits.maxHeaderSize }),
+    };
+
+    if (options?.ssl) {
+      // In-process HTTPS. The https ServerOptions extends the http one, so the
+      // IncomingMessage/ServerResponse subclass injection carries over.
+      this.server = createHttpsServer(
+        { ...serverOpts, ...options.ssl },
+        this.handleRequest.bind(this) as any
+      );
+      this.logger.info('HTTPS server created (in-process TLS)', 'HttpServer');
+    } else {
+      this.server = createServer(serverOpts, this.handleRequest.bind(this) as any);
+    }
 
     // Configure body size limits from options
     if (options?.maxBodySize) {
@@ -998,16 +1028,22 @@ export class MoroHttpServer {
     if (options?.maxUploadSize) {
       this.maxUploadSize = options.maxUploadSize;
     }
+    if (limits?.multipart) this.multipartLimits = limits.multipart;
 
-    // Optimize server for high performance (conservative settings for compatibility)
-    this.server.keepAliveTimeout = 5000; // 5 seconds
-    this.server.headersTimeout = 6000; // 6 seconds
-    // Socket inactivity timeout stays at Node's default (0 = disabled). A
-    // non-zero value arms/refreshes a timer on every request, which shows up
-    // in CPU profiles (setStreamTimeout + timer churn) under load; slowloris
-    // protection is already covered by headersTimeout + keepAliveTimeout, and
-    // this matches Node's own default connectionTimeout: 0.
-    this.server.timeout = 0;
+    // Timeouts: the previous hardcodes (keepAlive 5000, headers 6000) become
+    // the documented defaults; a configured value overrides them. Socket idle
+    // timeout stays 0 (disabled) unless set - a non-zero value arms a
+    // per-request timer that shows up in CPU profiles under load.
+    const t = limits?.timeouts ?? {};
+    this.server.keepAliveTimeout = t.keepAlive ?? 5000;
+    this.server.headersTimeout = t.headers ?? 6000;
+    this.server.timeout = t.idle ?? 0;
+    if (t.request) this.server.requestTimeout = t.request;
+    if (limits?.maxConnections && limits.maxConnections > 0) {
+      this.server.maxConnections = limits.maxConnections;
+    }
+    if (limits?.maxHeaders) this.server.maxHeadersCount = limits.maxHeaders;
+    this.listenBacklog = limits?.backlog;
   }
 
   // Direct router dispatch - called after global middleware, before the legacy
@@ -1419,17 +1455,22 @@ export class MoroHttpServer {
       }
 
       if (!httpRes.headersSent) {
+        // A malformed body is a client error: default to 400 (parity with the
+        // engine/uWS transports), not the generic 500.
+        const isBadRequest = (error as any)?.statusCode === 400;
+        const defaultStatus = isBadRequest ? 400 : 500;
+        const defaultError = isBadRequest ? 'Invalid request body' : 'Internal server error';
         // Ensure response is properly enhanced before using custom methods
         if (typeof httpRes.status === 'function' && typeof httpRes.json === 'function') {
-          httpRes.status(500).json({
+          httpRes.status(defaultStatus).json({
             success: false,
-            error: 'Internal server error',
+            error: defaultError,
             requestId: httpReq.requestId,
           });
         } else {
           // Defensive fallback - check each method individually
           if (typeof httpRes.setHeader === 'function') {
-            httpRes.statusCode = 500;
+            httpRes.statusCode = defaultStatus;
             httpRes.setHeader('Content-Type', 'application/json');
           } else {
             // Even setHeader doesn't exist - object is completely wrong
@@ -1443,7 +1484,7 @@ export class MoroHttpServer {
             httpRes.end(
               JSON.stringify({
                 success: false,
-                error: 'Internal server error',
+                error: defaultError,
                 requestId: httpReq.requestId,
               })
             );
@@ -1637,7 +1678,9 @@ export class MoroHttpServer {
           const body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, totalLength);
 
           if (contentType.includes('application/json')) {
-            resolve(JSON.parse(body.toString()));
+            // Empty JSON body -> null (parity with the engine/uWS servers, and
+            // avoids JSON.parse('') throwing and 500ing an empty POST).
+            resolve(totalLength === 0 ? null : JSON.parse(body.toString()));
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
             resolve(this.parseUrlEncoded(body.toString()));
           } else if (contentType.includes('multipart/form-data')) {
@@ -1646,6 +1689,12 @@ export class MoroHttpServer {
             resolve(body.toString());
           }
         } catch (error) {
+          // A malformed body is a client error (400), not a server error (500).
+          // Tag it so the request-error path answers 400, matching the engine
+          // and uWS transports.
+          if (error instanceof Error && (error as any).statusCode === undefined) {
+            (error as any).statusCode = 400;
+          }
           reject(error);
         }
       });
@@ -1798,89 +1847,9 @@ export class MoroHttpServer {
     buffer: Buffer,
     contentType: string
   ): { fields: Record<string, string>; files: Record<string, any> } {
-    const boundary = contentType.split('boundary=')[1];
-    if (!boundary) {
-      throw new Error('Invalid multipart boundary');
-    }
-
-    // Work with Buffer directly - don't convert to string (corrupts binary data)
-    const boundaryBuffer = Buffer.from(`--${boundary}`);
-    const parts = this.splitBuffer(buffer, boundaryBuffer);
-    const fields: Record<string, string> = {};
-    const files: Record<string, any> = {};
-
-    // Skip first (empty) and last (closing boundary) parts
-    const partsLen = parts.length - 1;
-    for (let i = 1; i < partsLen; i++) {
-      const part = parts[i];
-
-      // Find the double CRLF that separates headers from content
-      const headerEndPos = this.findBufferSequence(part, Buffer.from('\r\n\r\n'));
-      if (headerEndPos === -1) continue;
-
-      // Headers are always text - safe to convert to string
-      const headers = part.slice(0, headerEndPos).toString('utf8');
-      // Content stays as Buffer to preserve binary data
-      const content = part.slice(headerEndPos + 4); // Skip the \r\n\r\n
-
-      const nameMatch = headers.match(/name="([^"]+)"/);
-      const filenameMatch = headers.match(/filename="([^"]+)"/);
-      const contentTypeMatch = headers.match(/Content-Type: ([^\r\n]+)/);
-
-      if (nameMatch) {
-        const name = nameMatch[1];
-
-        if (filenameMatch) {
-          // This is a file - keep as Buffer to preserve binary data
-          const filename = filenameMatch[1];
-          const mimeType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
-
-          // Remove trailing \r\n (2 bytes) from the end
-          const fileData = content.slice(0, content.length - 2);
-
-          files[name] = {
-            filename,
-            mimetype: mimeType,
-            data: fileData, // Already a Buffer - preserves binary integrity
-            size: fileData.length,
-          };
-        } else {
-          // This is a regular field - convert to string
-          const fieldContent = content.slice(0, content.length - 2); // Remove trailing \r\n
-          fields[name] = fieldContent.toString('utf8');
-        }
-      }
-    }
-
-    return { fields, files };
-  }
-
-  /**
-   * Split a Buffer by a delimiter Buffer
-   * Used for multipart boundary splitting without corrupting binary data
-   */
-  private splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
-    const parts: Buffer[] = [];
-    let start = 0;
-    let pos = 0;
-
-    while ((pos = buffer.indexOf(delimiter, start)) !== -1) {
-      parts.push(buffer.slice(start, pos));
-      start = pos + delimiter.length;
-    }
-
-    // Add the remaining part
-    parts.push(buffer.slice(start));
-
-    return parts;
-  }
-
-  /**
-   * Find the position of a sequence within a Buffer
-   * Returns -1 if not found
-   */
-  private findBufferSequence(buffer: Buffer, sequence: Buffer): number {
-    return buffer.indexOf(sequence);
+    // Shared implementation - the native engine server parses uploads with
+    // the exact same code so both transports agree on body/files shape
+    return parseMultipartBuffer(buffer, contentType, this.multipartLimits);
   }
 
   private parseUrlEncoded(body: string): Record<string, string> {
@@ -2090,7 +2059,10 @@ export class MoroHttpServer {
       host = undefined;
     }
 
-    if (host) {
+    const backlog = this.listenBacklog;
+    if (host && backlog) {
+      this.server.listen(port, host, backlog, callback);
+    } else if (host) {
       this.server.listen(port, host, callback);
     } else {
       this.server.listen(port, callback);

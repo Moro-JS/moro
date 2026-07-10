@@ -1,21 +1,37 @@
 // Compression Core Logic
+//
+// The global compression middleware wraps res.json/res.send uniformly across
+// EVERY runtime (Node, uWS, HTTP/2, engine), so it is the single source of
+// response compression parity. It delegates encoding choice and content-type
+// filtering to the shared utility (utils/compression) so brotli, q-value
+// negotiation, and the compressible-type allowlist behave identically here and
+// in the per-server fallback paths.
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import * as zlib from 'zlib';
+import {
+  compressBuffer,
+  negotiateEncoding,
+  isCompressible,
+  DEFAULT_ENCODINGS,
+  type Encoding,
+} from '../../../http/utils/compression.js';
 
 export interface CompressionOptions {
   threshold?: number;
   level?: number;
+  encodings?: Encoding[];
   filter?: (req: HttpRequest, res: HttpResponse) => boolean;
 }
 
 export class CompressionCore {
   private threshold: number;
   private level: number;
+  private encodings: Encoding[];
   private filter?: (req: HttpRequest, res: HttpResponse) => boolean;
 
   constructor(options: CompressionOptions = {}) {
     this.threshold = options.threshold || 1024; // 1KB default
     this.level = options.level || 6; // Default compression level
+    this.encodings = options.encodings || DEFAULT_ENCODINGS;
     this.filter = options.filter;
   }
 
@@ -25,9 +41,9 @@ export class CompressionCore {
       return false;
     }
 
-    // Check if client accepts compression
-    const acceptEncoding = req.headers['accept-encoding'] || '';
-    return acceptEncoding.includes('gzip') || acceptEncoding.includes('deflate');
+    // Check if client accepts any encoding we offer
+    const acceptEncoding = (req.headers['accept-encoding'] as string) || '';
+    return negotiateEncoding(acceptEncoding, this.encodings) !== null;
   }
 
   wrapResponse(req: HttpRequest, res: HttpResponse): void {
@@ -35,25 +51,25 @@ export class CompressionCore {
     const acceptEncoding = (req.headers['accept-encoding'] as string) || '';
     const level = this.level;
     const threshold = this.threshold;
+    const encodings = this.encodings;
+    const filterOk = this.filter ? this.filter(req, res) : true;
 
-    const pickEncoding = (): 'gzip' | 'deflate' | null =>
-      acceptEncoding.includes('gzip')
-        ? 'gzip'
-        : acceptEncoding.includes('deflate')
-          ? 'deflate'
-          : null;
-
-    const compressResponse = (data: any, isJson: boolean) => {
+    const compressResponse = (data: any, isJson: boolean, contentType?: string) => {
       const content = isJson ? JSON.stringify(data) : data;
       const byteLength = Buffer.isBuffer(content)
         ? content.length
         : Buffer.byteLength(content ?? '');
-      const encoding = pickEncoding();
+      const ctHeader =
+        contentType ??
+        (res.getHeader ? (res.getHeader('content-type') as string | undefined) : undefined);
+      const encoding = filterOk ? negotiateEncoding(acceptEncoding, encodings) : null;
 
-      // Below the threshold, or the client can't accept compression: send directly.
-      // For JSON we already have the serialized string - ending with it here avoids
-      // re-entering res.json, which would JSON.stringify the same data a second time.
-      if (byteLength < threshold || !encoding) {
+      // Skip compression when: below threshold, client accepts nothing we
+      // offer, or the content type isn't worth compressing (already-compressed
+      // binary - images, video, octet-stream). For JSON we already have the
+      // serialized string; ending with it here avoids re-entering res.json,
+      // which would JSON.stringify the same data a second time.
+      if (byteLength < threshold || !encoding || !isCompressible(ctHeader)) {
         if (isJson) {
           if (res.headersSent) return;
           res.setHeader('Content-Length', byteLength);
@@ -65,37 +81,29 @@ export class CompressionCore {
 
       const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content ?? '');
 
-      // Commit the response headers synchronously, BEFORE the asynchronous gzip. This
-      // marks the response as sent (`headersSent === true`) the moment `send`/`json` is
-      // called, so the request lifecycle's "no route matched" fallback can't fire and
-      // 404 the response while compression is still pending (the race that previously
-      // broke any middleware-served compressed response, e.g. the Swagger docs page).
-      // The compressed length isn't known yet, so the body streams (chunked) rather
-      // than carrying a Content-Length.
+      // Commit the response headers synchronously, BEFORE the asynchronous
+      // compression. This marks headersSent the moment send/json is called, so
+      // the "no route matched" fallback can't 404 the response mid-compress.
+      // The compressed length isn't known yet, so the body streams (chunked).
       if (!res.headersSent) {
         res.setHeader('Content-Encoding', encoding);
-        res.setHeader('Vary', 'Accept-Encoding');
+        const vary = res.getHeader ? (res.getHeader('vary') as string | undefined) : undefined;
+        res.setHeader('Vary', vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding');
         (res as any).writeHead((res as any).statusCode || 200);
       }
 
-      const finish = (err: Error | null, compressed: Buffer) => {
-        // Headers (including Content-Encoding) are already committed, so we can't fall
-        // back to a raw body on the rare compression error — end without one.
-        res.end(err ? undefined : compressed);
-      };
+      compressBuffer(buffer, encoding, level)
+        .then(compressed => res.end(compressed))
+        .catch(() => res.end()); // headers already committed - can't fall back to raw
 
-      if (encoding === 'gzip') {
-        zlib.gzip(buffer, { level }, finish);
-      } else {
-        zlib.deflate(buffer, { level }, finish);
-      }
+      return res;
     };
 
     res.json = function (data: any) {
       if (!this.getHeader('Content-Type')) {
         this.setHeader('Content-Type', 'application/json; charset=utf-8');
       }
-      compressResponse(data, true);
+      compressResponse(data, true, 'application/json');
       return this;
     };
 

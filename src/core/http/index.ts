@@ -1,6 +1,9 @@
 // HTTP System - Centralized Exports
+// Three separate HTTP backends: Node (MoroHttpServer), uWebSockets.js
+// (UWebSocketsHttpServer, opt-in), and Moro's own native engine (MoroEngineServer).
 export { MoroHttpServer } from './http-server.js';
 export { UWebSocketsHttpServer } from './uws-http-server.js';
+export { MoroEngineServer } from './moro-engine-server.js';
 export { MoroHttp2Server } from './http2-server.js';
 export type { Http2ServerOptions } from './http2-server.js';
 export { Router } from '../routing/router.js';

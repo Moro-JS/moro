@@ -5,26 +5,24 @@ import cluster from 'cluster';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse, Middleware } from '../../types/http.js';
+import { loadNativeEngine, getNativeEngineLoadErrors } from '../utilities/package-utils.js';
+import {
+  parseMultipart as parseMultipartBuffer,
+  type MultipartLimits,
+} from './utils/multipart-parser.js';
+import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
+import { parseRawQueryString } from './utils/query-parser.js';
+import type { HttpRuntimeLimits } from './utils/size.js';
+import {
+  resolveCompressionSettings,
+  compressBuffer,
+  isCompressible,
+  negotiateEncoding,
+  type CompressionSettings,
+} from './utils/compression.js';
 
-function parseUwsQueryString(queryString: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!queryString) return result;
-  const pairs = queryString.split('&');
-  for (let i = 0; i < pairs.length; i++) {
-    const pair = pairs[i];
-    const eqIdx = pair.indexOf('=');
-    if (eqIdx > 0) {
-      const key = pair.substring(0, eqIdx);
-      const value = pair.substring(eqIdx + 1);
-      try {
-        result[decodeURIComponent(key)] = decodeURIComponent(value);
-      } catch {
-        result[key] = value;
-      }
-    }
-  }
-  return result;
-}
+// Back-compat alias (this parser is now the transport-neutral one in utils/)
+const parseUwsQueryString = parseRawQueryString;
 
 /**
  * Prototype-based request object for the uWS adapter.
@@ -35,7 +33,7 @@ function parseUwsQueryString(queryString: string): Record<string, string> {
  * so `materialize()` MUST be called before any `await` - it snapshots the
  * headers and detaches the native reference.
  */
-export class UwsRequest {
+export class UwsRequest extends LazyEventEmitter {
   method: string;
   path: string;
   url: string;
@@ -51,6 +49,7 @@ export class UwsRequest {
   _cookies: Record<string, string> | undefined = undefined;
   _context: Record<string, any> | undefined = undefined;
   _requestId: string | undefined = undefined;
+  _socket: any = undefined;
 
   constructor(
     server: UWebSocketsHttpServer,
@@ -59,12 +58,44 @@ export class UwsRequest {
     url: string,
     queryString: string
   ) {
+    super();
     this._server = server;
     this._uwsReq = uwsReq;
     this.method = method;
     this.path = url;
     this.url = url;
     this._queryString = queryString || null;
+  }
+
+  // net.Socket-shaped shim so Node-style middleware (CSRF's req.socket.encrypted,
+  // rate-limiters' req.connection.remoteAddress) doesn't throw on this transport.
+  // uWS terminates plaintext HTTP here (TLS via its own listen options or a
+  // proxy); scheme detection should use x-forwarded-proto.
+  get socket(): any {
+    let s = this._socket;
+    if (s === undefined) {
+      const getIp = () => this.ip; // arrow captures this lexically (no this-alias)
+      s = {
+        get remoteAddress() {
+          return getIp() || undefined;
+        },
+        remotePort: undefined,
+        encrypted: false,
+        destroyed: false,
+      };
+      this._socket = s;
+    }
+    return s;
+  }
+  set socket(value: any) {
+    this._socket = value;
+  }
+
+  get connection(): any {
+    return this.socket;
+  }
+  set connection(value: any) {
+    this._socket = value;
   }
 
   /** Snapshot uWS-backed data and detach the native request. Idempotent.
@@ -288,6 +319,8 @@ export class UwsRequest {
 export class UWebSocketsHttpServer {
   private app: any; // uWebSockets app instance
   private uws: any; // uWebSockets module reference (stored to avoid re-importing)
+  private _limits?: HttpRuntimeLimits;
+  private multipartLimits?: MultipartLimits;
   private listenSocket: any; // uWebSockets listen socket
   private globalMiddleware: Middleware[] = [];
   private logger = createFrameworkLogger('UWSHttpServer');
@@ -355,13 +388,28 @@ export class UWebSocketsHttpServer {
 
   constructor(
     options: {
-      ssl?: { key_file_name?: string; cert_file_name?: string; passphrase?: string };
+      ssl?: {
+        key_file_name?: string;
+        cert_file_name?: string;
+        ca_file_name?: string;
+        passphrase?: string;
+      } | null;
+      /** True when a TLS config was given but only as inline PEM (uWS needs
+       *  file paths); triggers a clear error instead of a silent plain boot. */
+      sslInlineOnly?: boolean;
+      limits?: HttpRuntimeLimits;
       maxBodySize?: number;
       maxUploadSize?: number;
+      /** Preloaded native engine module (from loadNativeEngine) - avoids a
+       * second resolution and keeps load failures at the framework's
+       * synchronous preflight instead of surfacing at listen() */
+      engineModule?: any;
     } = {}
   ) {
     if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
     if (options.maxUploadSize) this.maxUploadSize = options.maxUploadSize;
+    this._limits = options.limits;
+    if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
     this.initPromise = this.initialize(options);
   }
 
@@ -389,18 +437,48 @@ export class UWebSocketsHttpServer {
   }
 
   private async initialize(options: {
-    ssl?: { key_file_name?: string; cert_file_name?: string; passphrase?: string };
+    ssl?: {
+      key_file_name?: string;
+      cert_file_name?: string;
+      ca_file_name?: string;
+      passphrase?: string;
+    } | null;
+    sslInlineOnly?: boolean;
+    limits?: HttpRuntimeLimits;
+    engineModule?: any;
   }): Promise<void> {
     try {
-      // Lazy load uWebSockets.js - only when explicitly configured
-      // This ensures it's an optional dependency with graceful fallback
-      const uwsModule = await import('uWebSockets.js');
+      // The framework preloads the engine synchronously (loadNativeEngine) and
+      // injects it; loading here directly covers standalone construction.
+      // This server is uWS-shaped only: never probe @morojs/engine, whose
+      // Moro-shaped module would pass a generic load but has no App().
+      const uwsModule =
+        options.engineModule ?? loadNativeEngine({ candidates: ['uWebSockets.js'] })?.module;
+      if (!uwsModule) {
+        throw new Error(
+          'uWebSockets.js is not available: ' +
+            (getNativeEngineLoadErrors().join('; ') || 'not installed')
+        );
+      }
       this.uws = uwsModule.default || uwsModule;
+
+      // A TLS config that was given only as inline PEM cannot be honored by
+      // uWS (it requires on-disk file paths). Surface it loudly rather than
+      // silently booting plain HTTP (the historical footgun).
+      if (options.sslInlineOnly) {
+        this.logger.error(
+          'uWebSockets.js requires TLS key/cert as FILE PATHS (keyFile/certFile ' +
+            'or key_file_name/cert_file_name); inline PEM is not supported. ' +
+            'Booting WITHOUT TLS - provide file paths or use engine: "moro"/"node".',
+          'Init'
+        );
+      }
 
       if (options.ssl && options.ssl.key_file_name && options.ssl.cert_file_name) {
         this.app = this.uws.SSLApp({
           key_file_name: options.ssl.key_file_name,
           cert_file_name: options.ssl.cert_file_name,
+          ...(options.ssl.ca_file_name && { ca_file_name: options.ssl.ca_file_name }),
           passphrase: options.ssl.passphrase,
         });
         this.isSsl = true;
@@ -410,15 +488,33 @@ export class UWebSocketsHttpServer {
         this.logger.info('uWebSockets HTTP server created', 'Init');
       }
 
+      // uWS has no knobs for TCP timeouts/backlog/maxConnections/maxHeaderSize;
+      // if the user set any, say so once at startup rather than silently
+      // ignoring them (the "no arbitrary caps" contract cuts both ways).
+      const ignored: string[] = [];
+      const t = options.limits?.timeouts ?? {};
+      if (t.request || t.idle || t.keepAlive || t.headers) ignored.push('timeouts');
+      if (options.limits?.maxConnections) ignored.push('maxConnections');
+      if (options.limits?.backlog) ignored.push('backlog');
+      if (options.limits?.maxHeaderSize || options.limits?.maxHeaders)
+        ignored.push('header limits');
+      if (ignored.length) {
+        this.logger.info(
+          `uWebSockets.js does not support these server options; they are ignored: ${ignored.join(', ')}`,
+          'Init'
+        );
+      }
+
       // Setup generic route handler for all HTTP methods and paths
       this.setupRouteHandlers();
     } catch (error) {
       // Log helpful error message with installation instructions
       this.logger.error(
-        'Failed to load uWebSockets.js (optional dependency)\n' +
-          'To use uWebSockets, install it with:\n' +
-          '  npm install --save-dev github:uNetworking/uWebSockets.js#v20.52.0\n' +
-          'Or set useUWebSockets: false in your config to use the standard HTTP server.\n' +
+        'Failed to load the native HTTP engine\n' +
+          'Install it with:\n' +
+          '  npm install @morojs/engine\n' +
+          '(or the legacy engine: npm install --save-dev github:uNetworking/uWebSockets.js#v20.52.0)\n' +
+          "Or set engine: 'node' in your server config to use the standard HTTP server.\n" +
           'Error: ' +
           (error instanceof Error ? error.message : String(error)),
         'Init'
@@ -502,17 +598,22 @@ export class UWebSocketsHttpServer {
     const httpRes = new UWebSocketsHttpServer.ResponsePrototype().init(
       res,
       req,
-      this.logger
+      this.logger,
+      this._compression
     ) as any as HttpResponse;
+    (httpRes as any)._moroReq = httpReq;
 
     if (needsBody) {
       // Body routes always go async: snapshot headers, arm the abort hook,
       // read the body, then run the handler
       httpReq.materialize();
+      res._abortArmed = true;
       res.onAborted(() => {
         res.aborted = true;
         const hook = res._abortHook;
         if (hook) hook();
+        const moroRes = res._moroRes;
+        if (moroRes) moroRes._handleAbort();
       });
       const contentLength = req.getHeader('content-length');
       const bodyPromise =
@@ -541,10 +642,13 @@ export class UWebSocketsHttpServer {
         // Async handler: it is suspended at its first await - snapshot
         // uWS-backed data and arm abort tracking before returning to the loop
         httpReq.materialize();
+        res._abortArmed = true;
         res.onAborted(() => {
           res.aborted = true;
           const hook = res._abortHook;
           if (hook) hook();
+          const moroRes = res._moroRes;
+          if (moroRes) moroRes._handleAbort();
         });
         (result as Promise<any>).then(
           r => {
@@ -555,6 +659,22 @@ export class UWebSocketsHttpServer {
       } else if (result !== undefined && !httpRes.headersSent) {
         // Fully synchronous: single corked write, no header copy, no promise
         httpRes.json(result);
+      }
+
+      // A synchronous handler that returned with the response still open
+      // (e.g. SSE: writeHead + periodic write) is about to hand an unfinished
+      // uWS response back to the event loop - uWS forbids that without an
+      // abort handler, and without one client disconnects are never noticed.
+      if (!(httpRes as any).finished && !res.aborted && !res._abortArmed) {
+        res._abortArmed = true;
+        httpReq.materialize();
+        res.onAborted(() => {
+          res.aborted = true;
+          const hook = res._abortHook;
+          if (hook) hook();
+          const moroRes = res._moroRes;
+          if (moroRes) moroRes._handleAbort();
+        });
       }
     } catch (err) {
       this.handleNativeRouteError(err, httpReq, httpRes, res);
@@ -571,6 +691,13 @@ export class UWebSocketsHttpServer {
       httpRes.statusCode = 413;
       httpRes.setHeader('Content-Type', 'application/json');
       httpRes.end('{"success":false,"error":"Request entity too large"}');
+      return;
+    }
+
+    if (err?.statusCode === 400 && !res.aborted && !httpRes.headersSent) {
+      httpRes.statusCode = 400;
+      httpRes.setHeader('Content-Type', 'application/json');
+      httpRes.end('{"success":false,"error":"Invalid request body"}');
       return;
     }
 
@@ -609,6 +736,9 @@ export class UWebSocketsHttpServer {
       res.aborted = true;
       const hook = res._abortHook;
       if (hook) hook();
+      // Fire 'close'/'aborted' on the moro wrappers (SSE/monitor cleanup)
+      const moroRes = res._moroRes;
+      if (moroRes) moroRes._handleAbort();
     });
 
     let httpReq: any;
@@ -618,6 +748,7 @@ export class UWebSocketsHttpServer {
       // Create Moro-compatible request/response objects
       httpReq = this.createMoroRequest(req, res);
       httpRes = this.createMoroResponse(req, res);
+      httpRes._moroReq = httpReq;
 
       const method = httpReq.method;
 
@@ -683,6 +814,14 @@ export class UWebSocketsHttpServer {
         return;
       }
 
+      // Malformed body: a client error (400), not a server error (500)
+      if ((error as any)?.statusCode === 400 && !res.aborted && httpRes && !httpRes.headersSent) {
+        httpRes.statusCode = 400;
+        httpRes.setHeader('Content-Type', 'application/json');
+        httpRes.end('{"success":false,"error":"Invalid request body"}');
+        return;
+      }
+
       this.logger.error(
         `Request handling error: ${error instanceof Error ? error.message : String(error)}`,
         'RequestError'
@@ -731,15 +870,26 @@ export class UWebSocketsHttpServer {
   }
 
   // Pre-define methods on prototype instead of creating new closures for each request
-  private static readonly ResponsePrototype = class {
+  private static readonly ResponsePrototype = class extends LazyEventEmitter {
     public headersSent = false;
     public statusCode = 200;
     public responseHeaders: Record<string, string | string[]> = {};
     private _res: any;
     private _req: any;
     private _logger: any;
+    // Terminal-write latch: headersSent means "head flushed" (true mid-stream
+    // after writeHead/write), _ended means the body is complete
+    private _ended = false;
+    private _drainArmed = false;
+    // Accept-Encoding captured eagerly (uWS req is valid only synchronously)
+    // and the server's compression settings, for buffered-response compression.
+    private _acceptEncoding: string | undefined = undefined;
+    private _compression: CompressionSettings | undefined = undefined;
+    // The UwsRequest wrapper, linked by the server so lifecycle events reach
+    // req.on('close') listeners (SSE cleanup, monitors)
+    public _moroReq: any = null;
 
-    init(res: any, req: any, logger: any) {
+    init(res: any, req: any, logger: any, compression?: CompressionSettings) {
       this.headersSent = false;
       this.statusCode = 200;
       // Fresh object (a delete-loop reset would push the object into V8
@@ -748,7 +898,119 @@ export class UWebSocketsHttpServer {
       this._res = res;
       this._req = req;
       this._logger = logger;
+      this._ended = false;
+      this._drainArmed = false;
+      this._compression = compression;
+      // Capture Accept-Encoding now: the native req is valid only during the
+      // synchronous handler entry, but compression resolves asynchronously.
+      this._acceptEncoding =
+        compression?.enabled && req ? req.getHeader('accept-encoding') || undefined : undefined;
+      // Route client aborts to the wrapper so 'close' fires (see onAborted)
+      res._moroRes = this;
       return this;
+    }
+
+    // Buffered-response compression for uWS (parity with the engine/Node
+    // paths). Returns true when it took over the write (async), false when the
+    // caller should proceed with its normal synchronous cork+end.
+    private _tryCompressedEnd(body: string | Buffer, contentType: string | undefined): boolean {
+      const s = this._compression;
+      if (!s || !s.enabled) return false;
+      const bytes = typeof body === 'string' ? Buffer.byteLength(body) : body.length;
+      if (bytes < s.threshold) return false;
+      if ('content-encoding' in this.responseHeaders) return false;
+      if (this.statusCode === 204 || this.statusCode === 304) return false;
+      const ctHeader = this.responseHeaders['content-type'];
+      const ct = contentType ?? (Array.isArray(ctHeader) ? ctHeader[0] : (ctHeader as string));
+      if (!isCompressible(ct)) return false;
+      const encoding = negotiateEncoding(this._acceptEncoding, s.encodings);
+      if (!encoding) return false;
+
+      void compressBuffer(body, encoding, s.level)
+        .then(compressed => {
+          if (this._ended || this._res.aborted) return;
+          this.responseHeaders['content-encoding'] = encoding;
+          const vary = this.responseHeaders['vary'];
+          this.responseHeaders['vary'] = vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding';
+          this._res.cork(() => {
+            this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+            UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+            this._res.end(compressed);
+          });
+          this.headersSent = true;
+          this._ended = true;
+          this._emitDone();
+        })
+        .catch((err: unknown) => {
+          this._logger?.error?.(
+            `uWS response compression failed: ${err instanceof Error ? err.message : String(err)}`,
+            'Response'
+          );
+          if (this._ended || this._res.aborted) return;
+          this._res.cork(() => {
+            this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+            UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+            this._res.end(body);
+          });
+          this.headersSent = true;
+          this._ended = true;
+          this._emitDone();
+        });
+      return true;
+    }
+
+    get writableEnded() {
+      return this._ended;
+    }
+
+    get writableFinished() {
+      return this._ended;
+    }
+
+    get finished() {
+      return this._ended;
+    }
+
+    // Node ServerResponse lifecycle: 'finish' then 'close' after the terminal
+    // write; the request wrapper's 'close' fires too (IncomingMessage parity).
+    // No listeners -> two null checks, nothing else.
+    private _emitDone() {
+      this._ended = true;
+      if (this._events) {
+        this.emit('finish');
+        this.emit('close');
+      }
+      const req = this._moroReq;
+      if (req && req._events) req.emit('close');
+    }
+
+    // Client aborted: 'close' without 'finish' (Node semantics), plus
+    // 'aborted'/'close' on the request wrapper
+    _handleAbort() {
+      if (this._ended) return;
+      this._ended = true;
+      if (this._events) this.emit('close');
+      const req = this._moroReq;
+      if (req && req._events) {
+        req.emit('aborted');
+        req.emit('close');
+      }
+    }
+
+    // Backpressure: surface uWS's onWritable as the 'drain' event pipe()
+    // and manual streaming loops wait on
+    private _armDrain() {
+      if (this._drainArmed) return;
+      this._drainArmed = true;
+      try {
+        this._res.onWritable(() => {
+          this._drainArmed = false;
+          this.emit('drain');
+          return true;
+        });
+      } catch {
+        this._drainArmed = false;
+      }
     }
 
     status(code: number) {
@@ -818,12 +1080,16 @@ export class UWebSocketsHttpServer {
       }
 
       try {
+        // Compression (when enabled + compressible + accepted) takes over the
+        // write asynchronously; otherwise the synchronous corked path runs.
+        if (this._tryCompressedEnd(body, 'application/json')) return;
         this._res.cork(() => {
           this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
           UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
           this._res.end(body);
         });
         this.headersSent = true;
+        this._emitDone();
       } catch {
         this._logger.error('Failed to send JSON response', 'ResponseError');
       }
@@ -835,30 +1101,105 @@ export class UWebSocketsHttpServer {
       const body = typeof data === 'string' ? data : data.toString();
 
       try {
+        if (this._tryCompressedEnd(body, undefined)) return;
         this._res.cork(() => {
           this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
           UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
           this._res.end(body);
         });
         this.headersSent = true;
+        this._emitDone();
       } catch {
         this._logger.error('Failed to send response', 'ResponseError');
       }
     }
 
+    // Flush status + headers without ending the response (Node streaming
+    // entry point - SSE and manual chunked responses start here). Supports
+    // both (code, headers) and (code, statusMessage, headers) signatures;
+    // uWS derives the reason phrase from the status string, so a custom
+    // message is folded into it.
+    writeHead(statusCode: number, reasonOrHeaders?: any, maybeHeaders?: any) {
+      if (this.headersSent || this._res.aborted) return this;
+
+      this.statusCode = statusCode;
+      const headers =
+        reasonOrHeaders && typeof reasonOrHeaders === 'object' ? reasonOrHeaders : maybeHeaders;
+      if (headers) {
+        for (const key of Object.keys(headers)) {
+          this.setHeader(key, headers[key]);
+        }
+      }
+
+      try {
+        this._res.cork(() => {
+          const status =
+            typeof reasonOrHeaders === 'string'
+              ? `${statusCode} ${reasonOrHeaders}`
+              : UWebSocketsHttpServer.getStatusString(statusCode);
+          this._res.writeStatus(status);
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+        });
+        this.headersSent = true;
+      } catch {
+        this._logger.error('Failed to write response head', 'ResponseError');
+      }
+
+      return this;
+    }
+
+    // Stream a body chunk, flushing the head first if needed. Returns uWS's
+    // backpressure signal like Node's Writable.write; 'drain' fires when the
+    // socket can accept more.
+    write(chunk: any, encoding?: any, callback?: any): boolean {
+      if (typeof encoding === 'function') {
+        callback = encoding;
+        encoding = undefined;
+      }
+      if (this._ended || this._res.aborted) return false;
+
+      let ok = true;
+      try {
+        this._res.cork(() => {
+          if (!this.headersSent) {
+            this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+            UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+            this.headersSent = true;
+          }
+          ok = this._res.write(chunk);
+        });
+      } catch {
+        this._logger.error('Failed to write response chunk', 'ResponseError');
+        return false;
+      }
+
+      if (!ok) this._armDrain();
+      if (typeof callback === 'function') callback();
+      return ok;
+    }
+
     end(data?: any, encoding?: any, callback?: any) {
-      if (this.headersSent || this._res.aborted) {
+      if (typeof encoding === 'function') {
+        callback = encoding;
+        encoding = undefined;
+      }
+      // Guard on _ended, not headersSent: in streaming mode (writeHead/write)
+      // the head is already flushed and end() must still complete the body
+      if (this._ended || this._res.aborted) {
         if (typeof callback === 'function') callback();
         return this;
       }
 
       try {
         this._res.cork(() => {
-          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
-          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          if (!this.headersSent) {
+            this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+            UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+            this.headersSent = true;
+          }
           this._res.end(data || '');
         });
-        this.headersSent = true;
+        this._emitDone();
         if (typeof callback === 'function') callback();
       } catch {
         this._logger.error('Failed to end response', 'ResponseError');
@@ -882,6 +1223,7 @@ export class UWebSocketsHttpServer {
           this._res.end();
         });
         this.headersSent = true;
+        this._emitDone();
       } catch {
         this._logger.error('Failed to send redirect', 'ResponseError');
       }
@@ -1033,36 +1375,26 @@ export class UWebSocketsHttpServer {
       });
     }
 
-    // EventEmitter stubs for middleware compatibility
-    on(_event: string, _callback: (...args: any[]) => void) {
-      return this;
-    }
-
-    once(_event: string, _callback: (...args: any[]) => void) {
-      return this;
-    }
-
-    emit(_event: string, ..._args: any[]) {
-      return true;
-    }
-
-    removeListener(_event: string, _callback: (...args: any[]) => void) {
-      return this;
-    }
-
     cookie(name: string, value: string, options?: any) {
-      // Build cookie string with array join for better performance
-      const parts = [name, '=', value];
+      // Percent-encode the value (matches the Node path and Express) so a value
+      // containing ';'/',' can't inject cookie attributes and control chars
+      // don't corrupt the Set-Cookie header.
+      const parts = [name, '=', encodeURIComponent(value)];
 
       if (options) {
-        if (options.maxAge) {
+        // maxAge: 0 is meaningful (immediate expiry - clearCookie relies on it)
+        if (options.maxAge !== undefined && options.maxAge !== null) {
           parts.push('; Max-Age=', String(options.maxAge));
+        }
+        if (options.expires) {
+          const expires =
+            options.expires instanceof Date
+              ? options.expires.toUTCString()
+              : String(options.expires);
+          parts.push('; Expires=', expires);
         }
         if (options.domain) {
           parts.push('; Domain=', options.domain);
-        }
-        if (options.path) {
-          parts.push('; Path=', options.path);
         }
         if (options.secure) {
           parts.push('; Secure');
@@ -1074,6 +1406,9 @@ export class UWebSocketsHttpServer {
           parts.push('; SameSite=', options.sameSite);
         }
       }
+      // Path defaults to '/' (Express behavior) so clearCookie() from a nested
+      // route can clear a cookie originally set at the site root.
+      parts.push('; Path=', options?.path ?? '/');
 
       const cookie = parts.join('');
       const lowerKey = 'set-cookie';
@@ -1229,8 +1564,8 @@ export class UWebSocketsHttpServer {
         headersSent: this.headersSent,
         statusCode: this.statusCode,
         headers: this.responseHeaders,
-        finished: this.headersSent,
-        writable: !this.headersSent,
+        finished: this._ended,
+        writable: !this._ended,
       };
     }
   };
@@ -1308,15 +1643,35 @@ export class UWebSocketsHttpServer {
               body[key] = value;
             });
             httpReq.body = body;
+          } else if (isMultipart) {
+            // Shared parser (same as the Node http server) - stringifying
+            // multipart would corrupt binary uploads and lose fields/files.
+            // parseMultipart retains slices of the payload as file Buffers;
+            // the single-chunk fast path (buffer === view) aliases uWS-owned
+            // memory that is recycled after this callback returns, so copy
+            // it first. Concatenated multi-chunk buffers are already stable.
+            const stable = buffer === view ? Buffer.from(buffer) : buffer;
+            httpReq.body = parseMultipartBuffer(stable, contentType, this.multipartLimits);
           } else {
             httpReq.body = buffer.toString('utf-8');
           }
 
           finish(resolve);
-        } catch {
-          this.logger.error('Failed to parse request body', 'BodyParseError');
-          httpReq.body = null;
-          finish(resolve);
+        } catch (parseError) {
+          // A limit error (multipart maxParts/maxFiles/maxFileSize) carries its
+          // own 413 - preserve it rather than masking it as a generic 400.
+          if (parseError && typeof (parseError as any).statusCode === 'number') {
+            finish(() => reject(parseError));
+            return;
+          }
+          // A malformed body is a client error: reject with 400 (parity with
+          // the engine and Node transports) rather than silently handing the
+          // handler a null body it may treat as "no input".
+          const error: any = new Error(
+            `Invalid request body: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+          );
+          error.statusCode = 400;
+          finish(() => reject(error));
         }
       });
 
@@ -1394,10 +1749,18 @@ export class UWebSocketsHttpServer {
     this.hookManager = hookManager;
   }
 
-  configurePerformance(_config: any): void {
-    // uWebSockets is already highly optimized
-    // This method exists for API compatibility
-    this.logger.debug('Performance configuration noted (uWebSockets is pre-optimized)', 'Config');
+  /** @internal buffered-response compression settings (read at init). */
+  _compression: CompressionSettings = resolveCompressionSettings();
+
+  configurePerformance(config: any): void {
+    // uWS batches the request hot path natively; response compression is the
+    // one thing it doesn't do itself, so wire that here (parity with Node/
+    // engine). Buffered responses only - streaming stays raw.
+    this._compression = resolveCompressionSettings(config);
+    this.logger.debug(
+      `Performance configured (compression ${this._compression.enabled ? 'on' : 'off'})`,
+      'Config'
+    );
   }
 
   listen(port: number, callback?: () => void): void;

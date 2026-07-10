@@ -1,11 +1,17 @@
 // Tests for package utility functions
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
   filePathToImportURL,
   isPackageAvailable,
   resolveUserPackage,
+  loadNativeEngine,
+  getNativeEngineLoadErrors,
+  resetNativeEngineLoaderForTesting,
+  NATIVE_ENGINE_PACKAGES,
 } from '../../src/core/utilities/package-utils.js';
 import { platform } from 'os';
+import { createRequire } from 'module';
+import { join } from 'path';
 
 describe('Package Utils', () => {
   describe('filePathToImportURL', () => {
@@ -142,6 +148,86 @@ describe('Package Utils', () => {
       expect(() => {
         resolveUserPackage('this-package-does-not-exist-12345');
       }).toThrow();
+    });
+  });
+
+  describe('loadNativeEngine', () => {
+    // A package counts as a usable engine only if it both requires AND exposes
+    // a usable HTTP surface - either uWS-style App() or the Moro-shaped
+    // serve()/respond(). This mirrors loadNativeEngine's own capability check
+    // so the ground truth tracks whichever engine is installed on this machine.
+    const hasEngineSurface = (m: any) => {
+      const s = m?.default || m;
+      return (
+        typeof s?.App === 'function' ||
+        (typeof s?.serve === 'function' && typeof s?.respond === 'function')
+      );
+    };
+    const directlyLoadable = NATIVE_ENGINE_PACKAGES.filter(name => {
+      try {
+        return hasEngineSurface(createRequire(join(process.cwd(), 'package.json'))(name));
+      } catch {
+        return false;
+      }
+    });
+
+    beforeEach(() => {
+      resetNativeEngineLoaderForTesting();
+    });
+
+    it('should return null when no candidate package exists', () => {
+      const result = loadNativeEngine({
+        candidates: ['this-package-does-not-exist-12345'],
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should return null for an empty candidate list', () => {
+      expect(loadNativeEngine({ candidates: [] })).toBeNull();
+    });
+
+    it('candidate-override probes do not clobber the default load diagnostics', () => {
+      // Prime the cached default-candidates load state (whatever it is)
+      loadNativeEngine();
+      const before = getNativeEngineLoadErrors();
+      // An override probe (e.g. the clustering worker's uWS-only check) must
+      // not overwrite the diagnostics that startup logging reads
+      loadNativeEngine({ candidates: ['this-package-does-not-exist-12345'] });
+      expect(getNativeEngineLoadErrors()).toEqual(before);
+      expect(getNativeEngineLoadErrors().join(';')).not.toContain(
+        'this-package-does-not-exist-12345'
+      );
+    });
+
+    it('should match direct-require ground truth for the default candidates', () => {
+      const result = loadNativeEngine();
+      if (directlyLoadable.length === 0) {
+        expect(result).toBeNull();
+        expect(getNativeEngineLoadErrors().length).toBeGreaterThan(0);
+      } else {
+        expect(result).not.toBeNull();
+        // Priority order: first loadable candidate wins
+        expect(result!.source).toBe(directlyLoadable[0]);
+        expect(hasEngineSurface(result!.module)).toBe(true);
+        expect(getNativeEngineLoadErrors()).toHaveLength(0);
+      }
+    });
+
+    it('should memoize the default load result', () => {
+      const first = loadNativeEngine();
+      const second = loadNativeEngine();
+      expect(second).toBe(first);
+    });
+
+    it('should not cache results for injected candidates', () => {
+      loadNativeEngine({ candidates: ['this-package-does-not-exist-12345'] });
+      const result = loadNativeEngine();
+      // The default call must re-probe, not reuse the injected-candidates result
+      if (directlyLoadable.length > 0) {
+        expect(result).not.toBeNull();
+      } else {
+        expect(result).toBeNull();
+      }
     });
   });
 });

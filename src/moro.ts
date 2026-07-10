@@ -1002,8 +1002,14 @@ export class Moro extends EventEmitter {
     const startServer = () => {
       const actualCallback = () => {
         const displayHost = host || 'localhost';
+        const serverKind = this.engine;
         this.logger.info('Moro Server Started', 'Server');
         this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
+        this.logger.info(
+          `HTTP engine: ${serverKind.server}` +
+            (serverKind.enginePackage ? ` (${serverKind.enginePackage})` : ''),
+          'Server'
+        );
         this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
         if (this.config.websocket.enabled) {
           this.logger.info(`WebSocket: ws://${displayHost}:${port}`, 'Server');
@@ -1018,7 +1024,11 @@ export class Moro extends EventEmitter {
           this.unifiedRouter.logPerformanceStats();
         }
 
-        this.eventBus.emit('server:started', { port, runtime: this.runtimeType });
+        this.eventBus.emit('server:started', {
+          port,
+          runtime: this.runtimeType,
+          engine: serverKind,
+        });
 
         // Start job scheduler after server starts
         this.startJobScheduler().catch(err => {
@@ -1054,22 +1064,35 @@ export class Moro extends EventEmitter {
       this.ensureAutoDiscoveryComplete().then(() => this.ensureRoutesLoaded()),
       this.processQueuedWebSocketRegistrations(),
     ])
-      .then(() => {
-        startServer();
-      })
-      .catch(error => {
-        this.logger.error('Initialization failed during server start', 'Framework', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        // For auto-discovery failures, start server anyway
-        // For WebSocket failures with queued registrations, error will propagate
-        if (
-          error instanceof Error &&
-          error.message.includes('WebSocket features require a WebSocket adapter')
-        ) {
-          throw error;
+      .then(
+        () => startServer(),
+        initError => {
+          // Initialization (auto-discovery / WebSocket setup) failed — this is
+          // NOT the listen() call. Handle it here so a subsequent listen()
+          // failure can't be misdiagnosed as an init failure and retried.
+          this.logger.error('Initialization failed during server start', 'Framework', {
+            error: initError instanceof Error ? initError.message : String(initError),
+          });
+          // WebSocket-adapter misconfiguration is fatal; propagate it.
+          if (
+            initError instanceof Error &&
+            initError.message.includes('WebSocket features require a WebSocket adapter')
+          ) {
+            throw initError;
+          }
+          // A non-fatal init issue (e.g. auto-discovery) — start the server anyway.
+          startServer();
         }
-        startServer();
+      )
+      .catch(error => {
+        // startServer()/listen() failed — e.g. EADDRINUSE thrown synchronously
+        // by the native engine. Retrying would fail identically, so surface it
+        // via the 'error' event (Node's server convention) instead of retrying
+        // into an unhandled rejection. With no 'error' listener, EventEmitter
+        // rethrows — the desired visible crash for a fatal bind failure.
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to start server on port ${port}: ${message}`, 'Framework');
+        this.emit('error', error);
       });
   }
 
@@ -1402,6 +1425,17 @@ export class Moro extends EventEmitter {
     return this.coreFramework;
   }
 
+  // Which HTTP server actually booted (engine/node/http2), the package
+  // backing a native engine, and the fallback reason when one was requested
+  // but the Node server booted instead. Stable surface for logs/tests/benchmarks.
+  get engine(): ReturnType<MoroCore['getServerKind']> {
+    return this.coreFramework.getServerKind();
+  }
+
+  getServerKind(): ReturnType<MoroCore['getServerKind']> {
+    return this.coreFramework.getServerKind();
+  }
+
   // Public API for accessing the DI container
   getContainer() {
     return this.coreFramework.getContainer();
@@ -1598,7 +1632,7 @@ export class Moro extends EventEmitter {
 
           // Rate limiting middleware
           if (route.rateLimit) {
-            const clientId = req.ip || req.connection.remoteAddress || 'unknown';
+            const clientId = req.ip || req.connection?.remoteAddress || 'unknown';
             const key = `${route.method}:${route.path}:${clientId}`;
 
             if (!this.checkRateLimit(key, route.rateLimit)) {
@@ -2139,21 +2173,40 @@ export class Moro extends EventEmitter {
           port,
           runtime: this.runtimeType,
           worker: process.pid,
+          engine: this.engine,
         });
       };
 
       // Ensure WebSocket setup is complete before starting worker
+      const startWorkerListening = () => {
+        if (host) {
+          this.coreFramework.listen(port, host, workerCallback);
+        } else {
+          this.coreFramework.listen(port, workerCallback);
+        }
+      };
       this.processQueuedWebSocketRegistrations()
-        .then(() => {
-          if (host) {
-            this.coreFramework.listen(port, host, workerCallback);
-          } else {
-            this.coreFramework.listen(port, workerCallback);
-          }
-        })
+        .then(startWorkerListening)
         .catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          const code = (error as any)?.code;
+          // listen() itself failed (EADDRINUSE etc.): retrying is guaranteed to
+          // fail again and would surface as an unhandled rejection crash-loop.
+          // Log fatally and exit so the cluster primary sees a clean death.
+          // Prefer the code the native/Node servers set; fall back to message.
+          if (
+            code === 'EADDRINUSE' ||
+            code === 'EACCES' ||
+            /EADDRINUSE|failed to bind/i.test(message)
+          ) {
+            this.logger.error(
+              `Worker ${process.pid} could not bind port ${port}: ${message}`,
+              'Worker'
+            );
+            process.exit(1);
+          }
           this.logger.error('WebSocket initialization failed in worker', 'Worker', {
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
           });
           // For WebSocket failures with queued registrations, error will propagate
           if (
@@ -2162,11 +2215,18 @@ export class Moro extends EventEmitter {
           ) {
             throw error;
           }
-          // Start anyway for other errors
-          if (host) {
-            this.coreFramework.listen(port, host, workerCallback);
-          } else {
-            this.coreFramework.listen(port, workerCallback);
+          // WebSocket setup failed but the HTTP server can still serve: start
+          // anyway, and surface (not swallow) a listen failure from this path.
+          try {
+            startWorkerListening();
+          } catch (listenError) {
+            this.logger.error(
+              `Worker ${process.pid} failed to start: ${
+                listenError instanceof Error ? listenError.message : String(listenError)
+              }`,
+              'Worker'
+            );
+            process.exit(1);
           }
         });
     }

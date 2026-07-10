@@ -44,20 +44,22 @@ MoroJS is designed for high performance across all supported runtimes. The frame
 
 Comprehensive benchmarks comparing MoroJS with popular Node.js frameworks:
 
-| Framework  | Req/sec    | Latency (avg) | Latency (99p) | Memory Usage | CPU Usage |
-| ---------- | ---------- | ------------- | ------------- | ------------ | --------- |
-| **MoroJS** | **52,400** | **1.8ms**     | **4.2ms**     | **24MB**     | **45%**   |
-| Express    | 28,540     | 3.8ms         | 8.9ms         | 45MB         | 72%       |
-| Fastify    | 38,120     | 2.9ms         | 6.5ms         | 35MB         | 58%       |
-| NestJS     | 22,100     | 4.5ms         | 11.2ms        | 58MB         | 78%       |
-| Koa        | 25,880     | 4.2ms         | 9.8ms         | 42MB         | 69%       |
+| Framework                            | Req/sec     | Latency (avg) | Latency (99p) |
+| ------------------------------------ | ----------- | ------------- | ------------- |
+| **MoroJS + Moro Engine** _(default)_ | **94,000+** | **1.1ms**     | **2.4ms**     |
+| **MoroJS + uWebSockets.js**          | 91,000+     | 1.1ms         | 3.4ms         |
+| **MoroJS (Node http)**               | 58,000+     | 1.8ms         | 6.4ms         |
+| Fastify                              | 56,625      | 1.9ms         | 4.5ms         |
+| Koa                                  | 48,238      | 2.3ms         | 11.5ms        |
+| Express                              | 39,552      | 2.7ms         | 7.9ms         |
+
+MoroJS's native engine also outperforms uWebSockets.js in the pipelined ×10 profile (TechEmpower-style): **495k req/s vs 470k**, single thread.
 
 **Test Configuration:**
 
-- **Load:** 50,000 requests, 100 concurrent connections
-- **Environment:** Node.js 20.x, 4 CPU cores, 8GB RAM
-- **Route:** POST /api/users with validation, auth, rate limiting
-- **Tool:** AutoCannon with 30-second duration
+- **Tool:** `wrk`, 100 concurrent connections, no pipelining, 10s runs, best of alternating rounds
+- **Environment:** Node.js 24, Apple M2 Ultra — same machine, same day, same tool for every row
+- **Route:** GET returning JSON through the full framework (routing, validation pipeline, middleware) for the Moro rows; hello-world equivalents for the others
 
 ### Validation Performance
 
@@ -74,12 +76,14 @@ Zod vs other validation libraries:
 
 Performance across different deployment environments:
 
-| Runtime                | Req/sec    | Cold Start | Memory | Scaling |
-| ---------------------- | ---------- | ---------- | ------ | ------- |
-| **Node.js**            | **52,400** | N/A        | 24MB   | Manual  |
-| **Vercel Edge**        | **48,200** | 15ms       | 18MB   | Auto    |
-| **AWS Lambda**         | **45,800** | 95ms       | 22MB   | Auto    |
-| **Cloudflare Workers** | **51,100** | 8ms        | 16MB   | Auto    |
+| Runtime                | Req/sec            | Cold Start | Memory | Scaling |
+| ---------------------- | ------------------ | ---------- | ------ | ------- |
+| **Node.js**            | **94,000+**        | N/A        | —      | Manual  |
+| **Vercel Edge**        | platform-dependent | ~15ms      | —      | Auto    |
+| **AWS Lambda**         | platform-dependent | ~95ms      | —      | Auto    |
+| **Cloudflare Workers** | platform-dependent | ~8ms       | —      | Auto    |
+
+_Node.js runs Moro's native engine (measured; see the framework comparison above). Serverless/edge runtimes use the fetch-handler path — throughput there is governed by the platform's own scaling and billing model, not a single-instance number._
 
 ---
 

@@ -7,11 +7,39 @@ export const DEFAULT_CONFIG: AppConfig = {
   server: {
     port: 3001,
     host: 'localhost',
-    maxConnections: 1000,
-    timeout: 30000,
+    // 0 = unlimited. Historically defaulted to 1000/30000 but those values
+    // were VALIDATED-BUT-NEVER-APPLIED to any server, so the observed behavior
+    // has always been "unlimited connections, no request timeout". Now that
+    // both are actually wired through, keeping 0 preserves that behavior;
+    // enforcing the old numbers would silently break existing deployments.
+    // A user who sets either explicitly finally gets it applied.
+    maxConnections: 0,
+    timeout: 0, // deprecated alias for timeouts.request; 0 = disabled
     bodySizeLimit: '10mb',
     maxUploadSize: '100mb', // Separate limit for file uploads (multipart/form-data)
-    useUWebSockets: false, // Opt-in for high performance
+    // Per-phase timeouts. keepAlive/headers were previously hardcoded in the
+    // Node server (5000/6000); they become documented, overridable defaults.
+    // idle/request default to 0 = the per-server default (engine: 120s idle /
+    // 300s request; Node: its built-in 5min requestTimeout).
+    timeouts: {
+      keepAlive: 5000,
+      headers: 6000,
+      idle: 0,
+      request: 0,
+    },
+    // Fine-grained limits. Only multipart carries defaults here (matching the
+    // parser's previous hardcodes); header/ws/high-water limits are left unset
+    // so each runtime uses its own documented default unless overridden.
+    limits: {
+      multipart: {
+        maxParts: 1000,
+        maxPartHeaderBytes: '16kb',
+      },
+    },
+    // engine: left unset so resolution can tell "user chose it" from "default".
+    // Unset resolves to 'moro' (Moro's native engine, Node.js fallback if it
+    // can't load); set 'node' to disable it or 'uws' to opt into uWebSockets.js.
+    useUWebSockets: false, // Deprecated alias for engine: 'uws'
     requestTracking: {
       enabled: true, // Enable by default for debugging
     },

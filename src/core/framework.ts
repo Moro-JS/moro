@@ -3,13 +3,28 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
+import { MoroEngineServer } from './http/moro-engine-server.js';
 import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
 import { Container, buildModuleBasePath } from './utilities/index.js';
 import { ModuleLoader } from './modules/index.js';
 import { WebSocketManager } from './networking/websocket-manager.js';
 import { CircuitBreaker } from './utilities/circuit-breaker.js';
-import { isPackageAvailable, createUserRequire } from './utilities/package-utils.js';
+import {
+  isPackageAvailable,
+  loadNativeEngine,
+  getNativeEngineLoadErrors,
+  NativeEngineLoadResult,
+} from './utilities/package-utils.js';
+import { parseSizeToBytes, type HttpRuntimeLimits } from './http/utils/size.js';
+import {
+  normalizeSSLConfig,
+  sslForNode,
+  sslForUws,
+  sslForEngine,
+  sslIsComplete,
+} from './http/utils/ssl-config.js';
+import type { EngineCapabilities } from './utilities/package-utils.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
@@ -20,6 +35,48 @@ import {
   mergeWebSocketConfig,
 } from './networking/websocket-adapter.js';
 import { cors, helmet, compression } from './middleware/built-in/index.js';
+
+/**
+ * Which HTTP server actually booted, and why, when the native engine was
+ * bypassed. Exposed via getServerKind() / app.engine for logs, tests and
+ * benchmarks that need to assert the transport in use.
+ */
+export interface ServerKind {
+  server: 'engine' | 'node' | 'http2';
+  /** Package backing the native engine ('@morojs/engine' or 'uWebSockets.js') */
+  enginePackage?: string;
+  engineVersion?: string;
+  /** Present when the native engine was requested but the Node server booted */
+  fallbackReason?: string;
+  /** Protocols the booted server can speak (observability for app.engine). */
+  protocols?: Array<'http/1.1' | 'h2'>;
+}
+
+// Flattened, size-resolved server limits built once and passed to whichever
+// server boots (shared shape lives in http/utils/size.ts). Required fields
+// here (maxBodySize/maxUploadSize/maxConnections/timeouts/multipart) are
+// always populated by buildRuntimeLimits().
+type RuntimeLimits = HttpRuntimeLimits &
+  Required<
+    Pick<
+      HttpRuntimeLimits,
+      'maxBodySize' | 'maxUploadSize' | 'maxConnections' | 'timeouts' | 'multipart'
+    >
+  >;
+
+// Internal result of resolveEngineMode()
+type EngineChoice =
+  | {
+      kind: 'engine';
+      engine: NativeEngineLoadResult;
+      requested: 'moro' | 'uws';
+      /** Serve HTTP/2 natively via the engine's ALPN (engine caps.http2). */
+      h2?: boolean;
+    }
+  | { kind: 'http2' }
+  // explicitEngine: the user explicitly chose a native engine that could not
+  // be honored (drives warn-level vs info-level fallback logging).
+  | { kind: 'node'; fallbackReason?: string; explicitEngine?: boolean };
 
 // Extended MoroOptions that includes both core options and framework-specific options
 export interface MoroOptions extends CoreMoroOptions {
@@ -42,7 +99,7 @@ export interface MoroOptions extends CoreMoroOptions {
 }
 
 export class Moro extends EventEmitter {
-  private httpServer: MoroHttpServer | UWebSocketsHttpServer | MoroHttp2Server;
+  private httpServer: MoroHttpServer | UWebSocketsHttpServer | MoroEngineServer | MoroHttp2Server;
   private server: Server | any; // HTTP/2 server type or uWebSockets app
   private websocketAdapter?: WebSocketAdapter;
   private container: Container;
@@ -57,7 +114,12 @@ export class Moro extends EventEmitter {
   private options: MoroOptions;
   private config: any;
   private usingUWebSockets = false;
+  // True when the Moro-shaped @morojs/engine backs this app (usingUWebSockets
+  // stays reserved for the legacy uWS-API-shaped engine)
+  private usingEngine = false;
   private usingHttp2 = false;
+  // Which server actually booted (engine = native uWS-style engine)
+  private engineInfo: ServerKind = { server: 'node' };
   // WebSocket initialization promise to handle async adapter detection
   private websocketSetupPromise: Promise<void> | null = null;
 
@@ -84,75 +146,136 @@ export class Moro extends EventEmitter {
     // Initialize framework logger after global configuration
     this.logger = createFrameworkLogger('Core');
 
-    // Check if uWebSockets should be used for HTTP and WebSocket.
-    // IMPORTANT: uWS is a native optional dependency loaded ASYNCHRONOUSLY by
-    // UWebSocketsHttpServer's constructor, so a load failure (package missing,
-    // or no prebuilt binary for this Node ABI - e.g. Node 25 with uWS v20.52)
-    // does NOT throw here and the catch-based fallback below would never fire;
-    // the app would hang at listen() bound to nothing. Preflight the require
-    // synchronously so the fallback can actually happen.
-    const useUWebSockets = (this.config.server?.useUWebSockets || false) && this.preflightUws();
+    // Resolve which HTTP server backs this app: the native engine
+    // (@morojs/engine, or a legacy user-installed uWebSockets.js), Node's
+    // http server, or the http2 server. The engine module is loaded
+    // SYNCHRONOUSLY here - UWebSocketsHttpServer finishes initialization
+    // asynchronously, so a load failure (package missing, or no prebuilt
+    // binary for this Node ABI) surfacing there would never hit the fallback
+    // and the app would hang at listen() bound to nothing.
+    const engineChoice = this.resolveEngineMode(options);
 
-    if (useUWebSockets) {
+    // One normalized SSL config + one flattened limits object, built here and
+    // projected per-runtime, so a single server.ssl / server.limits flows
+    // everywhere regardless of which server boots.
+    const ssl = normalizeSSLConfig(this.config.server?.ssl, options.https as any, this.logger);
+    const rt = this.buildRuntimeLimits();
+
+    if (engineChoice.kind === 'engine') {
       try {
-        // Try to use uWebSockets for high performance HTTP and WebSocket
-        const sslOptions = this.config.server?.ssl || options.https;
-        this.httpServer = new UWebSocketsHttpServer({
-          ssl: sslOptions,
-          maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
-          maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
-        });
-        this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
-        this.usingUWebSockets = true;
-        this.logger.info('uWebSockets HTTP+WebSocket server created', 'ServerInit');
+        // The two native engines expose different APIs: @morojs/engine is
+        // Moro-shaped (serve/respond, one JS crossing each way), the legacy
+        // uWS peer is App()-shaped. Pick the adapter by capability.
+        const engineSurface = engineChoice.engine.module?.default || engineChoice.engine.module;
+        const caps = engineChoice.engine.capabilities;
+        if (
+          typeof engineSurface?.serve === 'function' &&
+          typeof engineSurface?.respond === 'function'
+        ) {
+          this.httpServer = new MoroEngineServer({
+            ssl,
+            capabilities: caps,
+            limits: rt,
+            http2Settings: engineChoice.h2 ? this.resolveH2Settings(options) : undefined,
+            maxBodySize: rt.maxBodySize,
+            maxUploadSize: rt.maxUploadSize,
+            engineModule: engineChoice.engine.module,
+            // Cluster workers each bind the port; SO_REUSEPORT lets the kernel
+            // balance accepts across them (Windows is gated to Node earlier).
+            reusePort: this.config.performance?.clustering?.enabled === true,
+          });
+          this.server = (this.httpServer as MoroEngineServer).getServer();
+          this.usingEngine = true;
+        } else {
+          this.httpServer = new UWebSocketsHttpServer({
+            ssl: ssl ? sslForUws(ssl) : undefined,
+            sslInlineOnly: ssl ? !sslForUws(ssl) : false,
+            limits: rt,
+            maxBodySize: rt.maxBodySize,
+            maxUploadSize: rt.maxUploadSize,
+            engineModule: engineChoice.engine.module,
+          });
+          this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
+          this.usingUWebSockets = true;
+        }
+        this.engineInfo = {
+          server: 'engine',
+          enginePackage: engineChoice.engine.source,
+          engineVersion: engineChoice.engine.version,
+          protocols: engineChoice.h2 && caps?.http2 ? ['h2', 'http/1.1'] : ['http/1.1'],
+        };
+        this.logger.info(
+          `HTTP engine: ${engineChoice.engine.source}` +
+            (engineChoice.engine.version ? ` v${engineChoice.engine.version}` : '') +
+            ` (native, Node ABI ${process.versions.modules})`,
+          'ServerInit'
+        );
       } catch (error) {
-        // Fallback to standard HTTP/1.1 if uWebSockets fails to load
+        // Construction failed after a successful module load - unexpected, but
+        // never boot nothing: fall back to the Node.js http server.
+        const reason = error instanceof Error ? error.message : String(error);
         this.logger.warn(
-          'uWebSockets failed to initialize, falling back to Node.js http.Server. ' +
-            'Error: ' +
-            (error instanceof Error ? error.message : String(error)),
+          `Native engine (${engineChoice.requested}) failed to initialize, falling back to Node.js http.Server. Error: ${reason}`,
           'ServerInit'
         );
         this.usingUWebSockets = false;
+        this.usingEngine = false;
+        this.engineInfo = { server: 'node', fallbackReason: reason };
         this.httpServer = new MoroHttpServer({
-          maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
-          maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+          ssl: ssl && sslIsComplete(ssl) ? sslForNode(ssl) : undefined,
+          limits: rt,
+          maxBodySize: rt.maxBodySize,
+          maxUploadSize: rt.maxUploadSize,
         });
         this.server = (this.httpServer as MoroHttpServer).getServer();
       }
-    } else if (options.http2) {
+    } else if (engineChoice.kind === 'http2') {
       // Use HTTP/2 with proper adapter
-      const http2Options: Http2ServerOptions = {};
+      const http2Options: Http2ServerOptions = this.resolveH2Settings(options);
 
-      if (typeof options.http2 === 'object') {
-        // Advanced HTTP/2 configuration
-        Object.assign(http2Options, options.http2);
-      }
-
-      // Add SSL configuration if provided
-      if (options.https) {
-        http2Options.key = options.https.key;
-        http2Options.cert = options.https.cert;
-        if (options.https.ca) {
-          http2Options.ca = options.https.ca;
-        }
+      // SSL now flows from the unified config (either shape) as well as the
+      // legacy options.https, via the normalizer.
+      if (ssl) {
+        const nodeSsl = sslForNode(ssl);
+        http2Options.key = nodeSsl.key;
+        http2Options.cert = nodeSsl.cert;
+        if (nodeSsl.ca) http2Options.ca = nodeSsl.ca as any;
       }
 
       this.httpServer = new MoroHttp2Server({
         ...http2Options,
-        maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
-        maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+        limits: rt,
+        maxBodySize: rt.maxBodySize,
+        maxUploadSize: rt.maxUploadSize,
       });
       this.server = (this.httpServer as MoroHttp2Server).getServer();
       this.usingHttp2 = true;
+      this.engineInfo = { server: 'http2', protocols: ['h2', 'http/1.1'] };
       this.logger.info('HTTP/2 server created with native adapter', 'ServerInit');
     } else {
-      // Use standard HTTP/1.1
+      // Use standard HTTP/1.1 (Node), now with optional in-process HTTPS.
       this.httpServer = new MoroHttpServer({
-        maxBodySize: this.parseSizeToBytes(this.config.server.bodySizeLimit),
-        maxUploadSize: this.parseSizeToBytes(this.config.server.maxUploadSize),
+        ssl:
+          ssl && require('./http/utils/ssl-config.js').sslIsComplete(ssl)
+            ? sslForNode(ssl)
+            : undefined,
+        limits: rt,
+        maxBodySize: rt.maxBodySize,
+        maxUploadSize: rt.maxUploadSize,
       });
       this.server = (this.httpServer as MoroHttpServer).getServer();
+      this.engineInfo = { server: 'node', fallbackReason: engineChoice.fallbackReason };
+      if (engineChoice.fallbackReason) {
+        // The default engine simply not being installed is expected (it is an
+        // optional dependency) - only an EXPLICIT engine choice that cannot be
+        // honored deserves warn-level noise on every boot.
+        const message = `Native engine unavailable, using Node.js http.Server - ${engineChoice.fallbackReason}`;
+        if (engineChoice.explicitEngine) {
+          this.logger.warn(message, 'ServerInit');
+        } else {
+          this.logger.info(message, 'ServerInit');
+        }
+      }
     }
 
     this.container = new Container();
@@ -246,6 +369,24 @@ export class Moro extends EventEmitter {
    */
   private async setupWebSockets(wsConfig: any): Promise<void> {
     try {
+      // The Moro-shaped @morojs/engine has native RFC 6455 WebSocket support:
+      // upgrades share the HTTP listen socket, driven by the engine's C++ WS
+      // path via the EngineWebSocketAdapter.
+      if (this.usingEngine) {
+        const { EngineWebSocketAdapter } = await import('./networking/adapters/engine-adapter.js');
+        this.websocketAdapter = new EngineWebSocketAdapter();
+        await this.websocketAdapter.initialize(this.httpServer, wsConfig.options);
+        this.websocketManager = new WebSocketManager(this.websocketAdapter, this.container);
+        if (wsConfig.compression) this.websocketAdapter.setCompression(true);
+        if (wsConfig.customIdGenerator)
+          this.websocketAdapter.setCustomIdGenerator(wsConfig.customIdGenerator);
+        this.logger.info(
+          'Engine WebSocket adapter initialized (integrated with @morojs/engine)',
+          'WebSocketSetup'
+        );
+        return;
+      }
+
       // If using uWebSockets HTTP server, automatically use uWebSockets for WebSocket too
       if (this.usingUWebSockets) {
         const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
@@ -306,13 +447,16 @@ export class Moro extends EventEmitter {
     if (this.config.websocket?.adapter) {
       const adapterType = this.config.websocket.adapter;
 
-      if (adapterType === 'uws' && isPackageAvailable('uWebSockets.js')) {
-        try {
-          const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
-          return new UWebSocketsAdapter();
-        } catch {
-          this.logger.warn('uWebSockets.js specified but failed to load', 'AdapterDetection');
-        }
+      if (adapterType === 'uws') {
+        // The uws adapter only works integrated with the native engine's own
+        // app (setupWebSockets handles that path before detection runs).
+        // Standalone it would register routes on a second, never-listening
+        // uWS app - fall through to the Node-compatible adapters instead.
+        this.logger.warn(
+          "websocket adapter 'uws' requires a native engine HTTP server " +
+            "(engine: 'moro' or 'uws') - falling back to socket.io/ws detection",
+          'AdapterDetection'
+        );
       } else if (adapterType === 'socket.io' && isPackageAvailable('socket.io')) {
         try {
           const { SocketIOAdapter } = await import('./networking/adapters/index.js');
@@ -330,18 +474,12 @@ export class Moro extends EventEmitter {
       }
     }
 
-    // Auto-detect: Try uWebSockets.js first (highest performance)
-    if (isPackageAvailable('uWebSockets.js')) {
-      try {
-        const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
-        this.logger.debug('uWebSockets.js detected and loaded', 'AdapterDetection');
-        return new UWebSocketsAdapter();
-      } catch {
-        // Failed to load adapter
-      }
-    }
+    // Auto-detect. The uws adapter is deliberately NOT probed here: it only
+    // works integrated with the native engine's app (the usingUWebSockets
+    // branch of setupWebSockets), and with the engine installed by default a
+    // resolvable package no longer implies the engine is serving HTTP.
 
-    // Try socket.io second
+    // Try socket.io first
     if (isPackageAvailable('socket.io')) {
       try {
         const { SocketIOAdapter } = await import('./networking/adapters/index.js');
@@ -1047,50 +1185,242 @@ export class Moro extends EventEmitter {
     return true;
   }
 
-  // Synchronously verify that uWebSockets.js can actually load on this
-  // runtime: the package must be present AND ship a prebuilt binary for this
-  // Node ABI (e.g. uWS v20.52 has no binary for Node 25 / ABI 141). Loading
-  // it here is not wasted work - the CJS module cache shares the instance
-  // with the server's own import.
-  private preflightUws(): boolean {
-    try {
-      // cwd-based require (the repo's standard optional-dependency resolution,
-      // and safe under both ESM and the CJS test transform - import.meta is not)
-      createUserRequire()('uWebSockets.js');
-      return true;
-    } catch (error) {
-      this.logger.warn(
-        'useUWebSockets is enabled but uWebSockets.js cannot load on this runtime - ' +
-          'falling back to Node.js http.Server. ' +
-          (error instanceof Error ? error.message.split('\n')[0] : String(error)),
-        'ServerInit'
-      );
-      return false;
+  /**
+   * Which HTTP server backs this app, which package provides it, and the
+   * fallback reason when the native engine was requested but unavailable.
+   */
+  getServerKind(): ServerKind {
+    return { ...this.engineInfo };
+  }
+
+  // Decide which HTTP server to construct. Engine values:
+  //   'moro' (default) - Moro's own native engine (@morojs/engine)
+  //   'uws'            - opt in to uWebSockets.js
+  //   'node'           - the Node.js http server (no native engine)
+  // A chosen native engine that cannot load on this platform/Node ABI (e.g.
+  // no prebuilt binary) silently degrades to the Node.js http server and logs
+  // why - the app never fails to boot. The engine load happens here,
+  // synchronously; the CJS module cache shares the instance with the server.
+  private resolveEngineMode(options: MoroOptions): EngineChoice {
+    const server = this.config.server || {};
+    // Explicit engine wins. The deprecated useUWebSockets:true counts as an
+    // explicit 'uws' choice - it always beat http2 before the engine option
+    // existed, and silently changing that transport on upgrade would break
+    // existing apps.
+    let engineExplicit = server.engine !== undefined || server.useUWebSockets === true;
+    let mode: 'moro' | 'node' | 'uws' = server.engine ?? (server.useUWebSockets ? 'uws' : 'moro');
+
+    // A user-provided uWS adapter INSTANCE implies the uWS engine when the
+    // engine wasn't chosen explicitly - otherwise the instance would be
+    // silently discarded in favor of the default engine's WS bridge.
+    const wsAdapterOption =
+      options.websocket && typeof options.websocket === 'object'
+        ? (options.websocket as any).adapter
+        : undefined;
+    const isUwsAdapterInstance =
+      wsAdapterOption &&
+      typeof wsAdapterOption.getAdapterName === 'function' &&
+      wsAdapterOption.getAdapterName() === 'uWebSockets.js';
+    if (isUwsAdapterInstance) {
+      if (!engineExplicit && mode === 'moro') {
+        mode = 'uws';
+        engineExplicit = true;
+      } else if (mode === 'moro') {
+        this.logger.warn(
+          "A uWebSockets.js adapter instance was provided but engine: 'moro' is set - " +
+            'the instance is superseded by the Moro engine WebSocket bridge',
+          'ServerInit'
+        );
+      }
     }
+
+    // HTTP/2 is wanted via either the top-level option or server.http2 config.
+    const wantH2 = Boolean(options.http2 ?? this.config.server?.http2);
+
+    if (mode === 'node') {
+      // The Node runtime serves HTTP/2 via the separate MoroHttp2Server.
+      return wantH2 ? { kind: 'http2' } : { kind: 'node' };
+    }
+
+    // Clustering forks workers that each bind the port themselves; the native
+    // engines rely on SO_REUSEPORT for that, which Windows lacks. The Node
+    // server shares the listener over cluster IPC instead, so fall back there
+    // rather than letting workers 2..N crash with EADDRINUSE.
+    if (this.config.performance?.clustering?.enabled === true && process.platform === 'win32') {
+      return {
+        kind: 'node',
+        fallbackReason:
+          'clustering on Windows requires the Node.js http server (SO_REUSEPORT is unavailable)',
+        explicitEngine: engineExplicit,
+      };
+    }
+
+    // Environments where a native engine cannot apply (edge runtime, an
+    // explicit ws/socket.io adapter that needs a Node http.Server)
+    const gate = this.nativeEngineGate(options);
+    if (gate) {
+      // The native engine can't apply here - but http2 still can, and works
+      // fine with the ws/socket.io adapters that trigger the gate, so honor an
+      // explicit http2 opt-in rather than silently dropping it.
+      return wantH2 ? { kind: 'http2' } : { kind: 'node', fallbackReason: gate };
+    }
+
+    // Load the specific package for the chosen engine - 'moro' never silently
+    // uses uWS and vice-versa; each falls back only to Node. The load happens
+    // BEFORE the http2 decision so we can feature-detect native ALPN h2.
+    const pkg = mode === 'uws' ? 'uWebSockets.js' : '@morojs/engine';
+    const loadErrors: string[] = [];
+    const engine = loadNativeEngine({ candidates: [pkg], collectErrors: loadErrors });
+    if (!engine) {
+      // Prefer this load's own failure detail (missing prebuilt binary, ABI
+      // mismatch, ...); only degrade to "not installed" when there is none.
+      const detail =
+        (loadErrors.length ? loadErrors : getNativeEngineLoadErrors())
+          .map(e => e.split('\n')[0])
+          .join('; ') || `${pkg} is not installed`;
+      // An explicit http2 opt-in survives the engine's absence - falling all
+      // the way to plain HTTP/1.1 would silently drop the user's choice.
+      if (wantH2) {
+        this.logger.warn(
+          `Native engine (${mode}) unavailable (${detail}) - using the configured http2 server`,
+          'ServerInit'
+        );
+        return { kind: 'http2' };
+      }
+      return { kind: 'node', fallbackReason: detail, explicitEngine: engineExplicit };
+    }
+
+    // HTTP/2 decision, now that the engine is loaded and its capabilities known.
+    if (wantH2) {
+      const canH2 = engine.capabilities?.http2 === true;
+      if (mode === 'uws') {
+        // uWebSockets.js does not serve HTTP/2 through this integration.
+        this.logger.warn(
+          "engine: 'uws' does not serve HTTP/2 - serving HTTP/1.1 (use engine: " +
+            "'moro' with an h2-capable build, or engine: 'node' for the http2 server)",
+          'ServerInit'
+        );
+        return { kind: 'engine', engine, requested: mode };
+      }
+      if (canH2) {
+        // The Moro engine speaks ALPN h2 + http/1.1 on one TLS port.
+        return { kind: 'engine', engine, requested: mode, h2: true };
+      }
+      // Engine can't do h2. An explicit engine choice keeps the engine (h1);
+      // the default engine yields to the dedicated MoroHttp2Server.
+      if (engineExplicit) {
+        this.logger.warn(
+          `engine: '${mode}' (build ${engine.version ?? 'unknown'}) does not support ` +
+            'HTTP/2 - serving HTTP/1.1. Upgrade @morojs/engine or use engine: ' +
+            "'node' for the http2 server.",
+          'ServerInit'
+        );
+        return { kind: 'engine', engine, requested: mode };
+      }
+      return { kind: 'http2' };
+    }
+
+    return { kind: 'engine', engine, requested: mode };
+  }
+
+  // Reasons the native engine should not back this app even when loadable:
+  // edge/serverless runtimes never use a listening server, and the ws /
+  // socket.io adapters attach to a real Node http.Server for upgrades.
+  private nativeEngineGate(options: MoroOptions): string | null {
+    const runtimeType = (options as any).runtime?.type;
+    if (runtimeType && runtimeType !== 'node') {
+      return `runtime '${runtimeType}' does not use a Node listening server`;
+    }
+
+    const optionsAdapter =
+      options.websocket && typeof options.websocket === 'object'
+        ? options.websocket.adapter
+        : undefined;
+    if (optionsAdapter && typeof optionsAdapter.getAdapterName === 'function') {
+      const name = optionsAdapter.getAdapterName();
+      if (name && name !== 'uWebSockets.js') {
+        return `websocket adapter '${name}' requires the Node.js http server`;
+      }
+    }
+
+    const configuredAdapter = this.config.websocket?.adapter;
+    if (typeof configuredAdapter === 'string' && configuredAdapter !== 'uws') {
+      return `websocket adapter '${configuredAdapter}' requires the Node.js http server`;
+    }
+
+    return null;
   }
 
   /**
-   * Parse size string (e.g., "10mb", "5gb") to bytes
+   * Parse size string (e.g., "10mb", "5gb") to bytes.
+   * Delegates to the shared utility so every server + config path agrees.
    */
   private parseSizeToBytes(size: string | number): number {
-    if (typeof size === 'number') {
-      return size;
+    return parseSizeToBytes(size);
+  }
+
+  /**
+   * Merge HTTP/2 settings from config.server.http2 and the top-level
+   * options.http2 (options win — the highest-precedence, back-compat path)
+   * into one Http2ServerOptions used by both the engine (ALPN h2) and the
+   * MoroHttp2Server fallback.
+   */
+  private resolveH2Settings(options: MoroOptions): Http2ServerOptions {
+    const out: Http2ServerOptions = {};
+    const cfg = this.config.server?.http2;
+    if (cfg && typeof cfg === 'object') {
+      if (cfg.allowHTTP1 !== undefined) out.allowHTTP1 = cfg.allowHTTP1;
+      if (cfg.maxSessionMemory !== undefined) out.maxSessionMemory = cfg.maxSessionMemory;
+      if (cfg.settings) out.settings = { ...cfg.settings };
     }
+    if (typeof options.http2 === 'object') {
+      Object.assign(out, options.http2);
+      if ((options.http2 as any).settings) {
+        out.settings = { ...(out.settings ?? {}), ...(options.http2 as any).settings };
+      }
+    }
+    if (out.allowHTTP1 === undefined) out.allowHTTP1 = true;
+    return out;
+  }
 
-    const units: { [key: string]: number } = {
-      b: 1,
-      kb: 1024,
-      mb: 1024 * 1024,
-      gb: 1024 * 1024 * 1024,
+  /**
+   * Resolve every size string in server.limits/timeouts/backlog into one flat
+   * object of bytes/ms, built once and passed to whichever server boots. A
+   * value left undefined means "use the server's own documented default".
+   */
+  private buildRuntimeLimits(): RuntimeLimits {
+    const s = this.config.server ?? ({} as any);
+    const limits = s.limits ?? {};
+    const timeouts = s.timeouts ?? {};
+    const size = (v: unknown): number | undefined =>
+      v === undefined ? undefined : parseSizeToBytes(v as string | number);
+    const multipart = limits.multipart ?? {};
+    return {
+      maxBodySize: parseSizeToBytes(s.bodySizeLimit ?? '10mb'),
+      maxUploadSize: parseSizeToBytes(s.maxUploadSize ?? '100mb'),
+      maxConnections: typeof s.maxConnections === 'number' ? s.maxConnections : 0,
+      backlog: s.backlog,
+      timeouts: {
+        request: timeouts.request,
+        idle: timeouts.idle,
+        keepAlive: timeouts.keepAlive,
+        headers: timeouts.headers,
+      },
+      maxHeaderSize: size(limits.maxHeaderSize),
+      maxHeaders: limits.maxHeaders,
+      wsMaxMessageSize: size(
+        limits.wsMaxMessageSize ?? this.config.websocket?.options?.maxPayloadLength
+      ),
+      wsBackpressureLimit: size(limits.wsBackpressureLimit),
+      writeHighWaterMark: size(limits.writeHighWaterMark),
+      maxPendingBytes: size(limits.maxPendingBytes),
+      multipart: {
+        maxParts: multipart.maxParts,
+        maxPartHeaderBytes: size(multipart.maxPartHeaderBytes),
+        maxFiles: multipart.maxFiles,
+        maxFileSize: size(multipart.maxFileSize),
+      },
     };
-
-    const match = size.toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
-    if (!match) return 10 * 1024 * 1024; // Default 10MB
-
-    const value = parseFloat(match[1]);
-    const unit = match[2] || 'b';
-
-    return Math.round(value * units[unit]);
   }
 
   private getCircuitBreaker(key: string): CircuitBreaker {

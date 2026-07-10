@@ -85,7 +85,7 @@ export type {
 export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-workers-adapter.js';
 
 // Core exports
-export { MoroHttpServer, UWebSocketsHttpServer } from './core/http/index.js';
+export { MoroHttpServer, UWebSocketsHttpServer, MoroEngineServer } from './core/http/index.js';
 export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in/index.js';
 
 // Networking System
