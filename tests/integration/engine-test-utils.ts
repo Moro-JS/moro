@@ -1,4 +1,3 @@
- 
 // Shared guard for integration suites that need the native @morojs/engine
 // addon. On dev machines without a built addon the suites skip silently (a
 // parity test without the engine leg is meaningless locally). In CI the
