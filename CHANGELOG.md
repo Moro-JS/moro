@@ -1,3 +1,13 @@
+## [1.8.0] - 2026-07-10
+
+### Added
+
+- Add unit tests for multipart and query string parsers, enhance package utility tests, and implement TLS client helpers
+
+### Changed
+
+- chore: remove unnecessary blank lines from test files
+
 ## [1.7.30] - 2026-07-06
 
 ### Other
