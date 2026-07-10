@@ -42,24 +42,12 @@ MoroJS is designed for high performance across all supported runtimes. The frame
 
 ### Framework Comparison
 
-Comprehensive benchmarks comparing MoroJS with popular Node.js frameworks:
-
-| Framework                            | Req/sec     | Latency (avg) | Latency (99p) |
-| ------------------------------------ | ----------- | ------------- | ------------- |
-| **MoroJS + Moro Engine** _(default)_ | **94,000+** | **1.1ms**     | **2.4ms**     |
-| **MoroJS + uWebSockets.js**          | 91,000+     | 1.1ms         | 3.4ms         |
-| **MoroJS (Node http)**               | 58,000+     | 1.8ms         | 6.4ms         |
-| Fastify                              | 56,625      | 1.9ms         | 4.5ms         |
-| Koa                                  | 48,238      | 2.3ms         | 11.5ms        |
-| Express                              | 39,552      | 2.7ms         | 7.9ms         |
-
-MoroJS's native engine also outperforms uWebSockets.js in the pipelined ×10 profile (TechEmpower-style): **495k req/s vs 470k**, single thread.
-
-**Test Configuration:**
-
-- **Tool:** `wrk`, 100 concurrent connections, no pipelining, 10s runs, best of alternating rounds
-- **Environment:** Node.js 24, Apple M2 Ultra — same machine, same day, same tool for every row
-- **Route:** GET returning JSON through the full framework (routing, validation pipeline, middleware) for the Moro rows; hello-world equivalents for the others
+Framework comparison benchmarks (MoroJS engine/uWS/node paths vs Fastify,
+Express, Koa, Elysia, and raw baselines — both realistic and pipelined
+profiles, full methodology, saved results files) live in the
+**[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**. Headline:
+the default native engine serves ~100k req/s single-threaded on the reference
+machine, ~56% ahead of the Node-http path, at ~1.0 ms average latency.
 
 ### Validation Performance
 
@@ -78,7 +66,7 @@ Performance across different deployment environments:
 
 | Runtime                | Req/sec            | Cold Start | Memory | Scaling |
 | ---------------------- | ------------------ | ---------- | ------ | ------- |
-| **Node.js**            | **94,000+**        | N/A        | —      | Manual  |
+| **Node.js**            | **~100,000**       | N/A        | —      | Manual  |
 | **Vercel Edge**        | platform-dependent | ~15ms      | —      | Auto    |
 | **AWS Lambda**         | platform-dependent | ~95ms      | —      | Auto    |
 | **Cloudflare Workers** | platform-dependent | ~8ms       | —      | Auto    |

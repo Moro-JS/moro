@@ -127,7 +127,7 @@ wrk -t24 -c1000 -d40s http://127.0.0.1:3111/
 
 With all optimizations, you should see:
 
-- **~94k req/sec on a single thread** with the default native engine (`wrk`, no pipelining, Apple M2 Ultra — scales with your hardware)
-- **~495k req/sec** in pipelined ×10 microbenchmarks (TechEmpower-style)
+- **~100k req/sec on a single thread** with the default native engine (`wrk`, no pipelining, Apple M2 Ultra — scales with your hardware)
+- **~543k req/sec** in pipelined ×10 microbenchmarks (TechEmpower-style)
 - **Clustering multiplies throughput across CPU cores** — measure it from a separate load machine; on a single box the load generator competes with the workers for cores and understates it
 - **Lower latency** under high load

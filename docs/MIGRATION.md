@@ -1198,13 +1198,10 @@ const app = await createApp({
 
 ### Expected Performance Gains
 
-Measured against MoroJS on its default native engine (`wrk`, 100 connections, no pipelining, Node 24, Apple M2 Ultra — same machine, same tool, every row):
-
-| Migration From | Req/sec Improvement         | Latency Improvement      |
-| -------------- | --------------------------- | ------------------------ |
-| Express        | **+138%** (39,552 → 94,216) | **-59%** (2.7ms → 1.1ms) |
-| Koa            | **+95%** (48,238 → 94,216)  | **-52%** (2.3ms → 1.1ms) |
-| Fastify        | **+66%** (56,625 → 94,216)  | **-42%** (1.9ms → 1.1ms) |
+Migrating to MoroJS's default native engine roughly **doubles Express
+throughput and adds ~50% over Fastify** on the reference machine — measured
+tables, methodology, and saved results live in the
+**[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**.
 
 ### Performance Features You Get
 

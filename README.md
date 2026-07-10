@@ -22,7 +22,7 @@ Build high-performance APIs with intelligent routing that automatically orders m
 
 **Key Features:**
 
-- **Native C++ Engine** - Moro's own HTTP engine, faster than uWebSockets.js: 94k+ req/s real-world, ~500k pipelined, on a single thread
+- **Native C++ Engine** - ~100k req/s real-world through the full framework, 543k pipelined, on a single thread
 - **Intelligent Routing** - Automatic middleware ordering, no configuration needed
 - **Enterprise Auth** - Built-in Auth.js with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
@@ -36,19 +36,19 @@ Build high-performance APIs with intelligent routing that automatically orders m
 
 The Moro rows run the **full framework** (routing, validation pipeline, middleware) — not a stripped-down stack:
 
-| Configuration                      | Req/sec                      | Latency (avg) | p99     |
-| ---------------------------------- | ---------------------------- | ------------- | ------- |
-| **Moro + Moro Engine** _(default)_ | **94,000+**                  | **1.1 ms**    | 2.4 ms  |
-| **Moro + uWebSockets.js**          | 91,000+                      | 1.1 ms        | 3.4 ms  |
-| **Moro (Node http)**               | 58,000+                      | 1.8 ms        | 6.4 ms  |
-| **Moro (Clustering)**              | scales across all CPU cores¹ | —             | —       |
-| Fastify                            | 56,625                       | 1.9 ms        | 4.5 ms  |
-| Koa                                | 48,238                       | 2.3 ms        | 11.5 ms |
-| Express                            | 39,552                       | 2.7 ms        | 7.9 ms  |
+| Configuration                      | Req/sec                      | Latency (avg) | p99    |
+| ---------------------------------- | ---------------------------- | ------------- | ------ |
+| **Moro + Moro Engine** _(default)_ | **99,974**                   | **1.0 ms**    | 2.1 ms |
+| **Moro + uWebSockets.js**          | 98,711                       | 1.0 ms        | 2.1 ms |
+| **Moro (Node http)**               | 63,977                       | 1.5 ms        | 2.9 ms |
+| **Moro (Clustering)**              | scales across all CPU cores¹ | —             | —      |
+| Fastify                            | 66,070                       | 1.6 ms        | 3.8 ms |
+| Koa                                | 56,835                       | 1.8 ms        | 4.6 ms |
+| Express                            | 46,366                       | 2.1 ms        | 4.3 ms |
 
-Moro's own native engine is the default — and it outperforms uWebSockets.js in **both** profiles: real-world above, and pipelined ×10 (TechEmpower-style) at **495k req/s vs 470k**, single thread.
+Moro's own native engine is the default — and it outperforms uWebSockets.js in **both** profiles: real-world above, and pipelined ×10 (TechEmpower-style) at **543,021 vs 500,573 req/s (+8.5%)**, single thread.
 
-> Methodology: `wrk`, 100 connections, no pipelining (how real HTTP clients behave), best of alternating rounds, Node 24, Apple M2 Ultra — same machine, same day, same tool for every row. ¹ Clustering multiplies throughput across cores; a single-machine loopback benchmark can't measure it honestly (the load generator competes with the workers for the same cores), so no misleading number is shown.
+> Methodology: `wrk`, 100 connections, 40s runs, best-of-3 per target, one server at a time, Node 24, Apple M2 Ultra — same machine, same session, same tool for every row (full results file in the [benchmark repo](https://github.com/Moro-JS/benchmark)). No-pipelining is the headline profile (real HTTP clients don't pipeline); pipelined ×10 shown where noted. ¹ Clustering multiplies throughput across cores; a single-machine loopback benchmark can't measure it honestly (the load generator competes with the workers for the same cores), so no misleading number is shown.
 
 ## Quick Start
 
@@ -207,7 +207,7 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 **vs Express** - Intelligent middleware ordering eliminates configuration complexity and race conditions
 
-**vs Fastify** - ~1.7x the throughput out of the box (Moro's native engine), plus multi-runtime deployment without adapters
+**vs Fastify** - ~1.5x the throughput out of the box (Moro's native engine), plus multi-runtime deployment without adapters
 
 **vs NestJS** - Functional architecture without decorators, with a fraction of the per-request overhead
 
