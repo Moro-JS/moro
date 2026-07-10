@@ -46,8 +46,8 @@ Framework comparison benchmarks (MoroJS engine/uWS/node paths vs Fastify,
 Express, Koa, Elysia, and raw baselines — both realistic and pipelined
 profiles, full methodology, saved results files) live in the
 **[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**. Headline:
-the default native engine serves ~100k req/s single-threaded on the reference
-machine, ~56% ahead of the Node-http path, at ~1.0 ms average latency.
+the default native engine serves ~102k req/s single-threaded on the reference
+machine, ~56% ahead of the Node-http path, at ~0.9 ms average latency.
 
 ### Validation Performance
 
