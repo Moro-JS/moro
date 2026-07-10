@@ -39,7 +39,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        # Oldest engine-supported line (20) through newest (26) — test what we
+        # ship binaries for. Node 20 is EOL upstream but still within MoroJS's
+        # engines claim; drop it when the engines floor moves.
+        node-version: [20, 22, 24, 26]
 
     steps:
       - name: Checkout code

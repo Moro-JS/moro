@@ -1,9 +1,10 @@
 /* eslint-disable */
 // @ts-nocheck
 // Integration Tests - integrated WebSocket support on the native engine path.
-// Regression test: the uws adapter used to register its .ws() routes on a
-// second, never-listening uWS App, so upgrades on the real HTTP port failed.
+// Regression test: the uws adapter used to register its .ws() routes on a second, never-listening uWS App, so upgrades on the real HTTP port failed.
 import { describe, it, expect, afterEach } from '@jest/globals';
+// The global WebSocket client only exists on Node >= 21; use the ws package so this test runs on the full CI matrix (Node 20+). Its client supports the same onopen/onerror handler style.
+import { WebSocket } from 'ws';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { closeApp } from '../setup.js';
