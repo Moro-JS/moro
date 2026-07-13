@@ -1,5 +1,16 @@
 ## [1.8.1] - 2026-07-13
 
+### Changed
+
+- docs: update performance metrics in README and performance guides to reflect improved benchmarks
+- docs: update performance metrics for MoroJS and uWebSockets.js comparison
+
+### Other
+
+- ### Security
+
+## [1.8.1] - 2026-07-13
+
 ### Security
 
 - **Better Auth: missing secret now fails loudly in production.** When the Better Auth adapter is used with no `secret`/`AUTH_SECRET` under `NODE_ENV=production`, startup now throws instead of silently running with an empty secret. `trustedOrigins` is derived from the configured `baseURL` (override via `trustedOrigins`) rather than defaulting to `*`. Apps that set a secret are unaffected.
