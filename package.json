@@ -280,7 +280,7 @@
     "typedoc-theme-hierarchy": "^6.0.0",
     "typescript": "^5.9.2",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#semver:^v20.52.0",
-    "ws": "^8.18.3",
+    "ws": "^8.21.0",
     "zod": "^4.1.8"
   },
   "files": [
