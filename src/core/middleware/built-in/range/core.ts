@@ -56,7 +56,10 @@ export class RangeCore {
 
         if (ranges.length === 1) {
           // Single range
-          await this.sendSingleRange(filePath, fileSize, ranges[0], res);
+          const [firstRange] = ranges;
+          if (firstRange) {
+            await this.sendSingleRange(filePath, fileSize, firstRange, res);
+          }
         } else {
           // Multiple ranges - multipart response
           await this.sendMultipleRanges(filePath, fileSize, ranges, res);

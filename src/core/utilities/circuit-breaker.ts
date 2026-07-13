@@ -5,6 +5,9 @@ export class CircuitBreaker extends EventEmitter {
   private failures = 0;
   private lastFailTime = 0;
   private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  // Failure timestamps for the sliding monitoring window (only used when
+  // options.monitoringPeriod is set).
+  private failureTimestamps: number[] = [];
 
   constructor(
     private options: {
@@ -38,6 +41,7 @@ export class CircuitBreaker extends EventEmitter {
   private onSuccess() {
     const wasOpen = this.state === 'OPEN' || this.state === 'HALF_OPEN';
     this.failures = 0;
+    this.failureTimestamps = [];
     this.state = 'CLOSED';
 
     if (wasOpen) {
@@ -46,8 +50,25 @@ export class CircuitBreaker extends EventEmitter {
   }
 
   private onFailure() {
-    this.failures++;
-    this.lastFailTime = Date.now();
+    const now = Date.now();
+    this.lastFailTime = now;
+
+    const period = this.options.monitoringPeriod;
+    if (period && period > 0) {
+      // Sliding window: only failures within the last `monitoringPeriod` ms
+      // count toward the threshold, so isolated failures spread over time don't
+      // eventually trip the breaker.
+      this.failureTimestamps.push(now);
+      const cutoff = now - period;
+      while (this.failureTimestamps.length > 0) {
+        const oldest = this.failureTimestamps[0];
+        if (oldest === undefined || oldest >= cutoff) break;
+        this.failureTimestamps.shift();
+      }
+      this.failures = this.failureTimestamps.length;
+    } else {
+      this.failures++;
+    }
 
     if (this.failures >= this.options.failureThreshold && this.state !== 'OPEN') {
       this.state = 'OPEN';
@@ -69,6 +90,7 @@ export class CircuitBreaker extends EventEmitter {
 
   public reset(): void {
     this.failures = 0;
+    this.failureTimestamps = [];
     this.state = 'CLOSED';
     this.emit('reset');
   }

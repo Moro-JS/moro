@@ -83,7 +83,7 @@ export class JobHealthChecker {
     stats: SchedulerStats;
     jobs: JobHealth[];
     unhealthyJobCount: number;
-    message?: string;
+    message?: string | undefined;
   } {
     const stats = this.scheduler.getStats();
     const jobHealths = this.checkAllJobs();
@@ -131,8 +131,8 @@ export function parseInterval(interval: string | number): number {
     throw new Error(`Invalid interval format: "${interval}". Use format like: 5s, 10m, 2h, 1d`);
   }
 
-  const value = parseFloat(match[1]);
-  const unit = match[2].toLowerCase();
+  const value = parseFloat(match[1] ?? '');
+  const unit = (match[2] ?? '').toLowerCase();
 
   const multipliers: Record<string, number> = {
     s: 1000,
@@ -141,7 +141,12 @@ export function parseInterval(interval: string | number): number {
     d: 86400000,
   };
 
-  return value * multipliers[unit];
+  const multiplier = multipliers[unit];
+  if (multiplier === undefined) {
+    throw new Error(`Invalid interval format: "${interval}". Use format like: 5s, 10m, 2h, 1d`);
+  }
+
+  return value * multiplier;
 }
 
 /**

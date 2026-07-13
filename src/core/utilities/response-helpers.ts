@@ -383,7 +383,7 @@ export class ResponseBuilder<T = any> {
     builder.response = {
       success: false,
       error: errorMessage,
-      code,
+      ...(code !== undefined ? { code } : {}),
     };
     return builder;
   }

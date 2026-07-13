@@ -253,18 +253,18 @@ export const cache = (options: CacheOptions = {}): MiddlewareInterface => ({
 
       // Override response methods
       res.json = function (data: any) {
-        cacheResponse(data, 'application/json');
+        void cacheResponse(data, 'application/json');
         return originalJson.call(this, data);
       };
 
       res.send = function (data: any) {
-        cacheResponse(data);
+        void cacheResponse(data);
         return originalSend.call(this, data);
       };
 
       res.end = function (data?: any) {
         if (data) {
-          cacheResponse(data);
+          void cacheResponse(data);
         }
         return originalEnd.call(this, data);
       };

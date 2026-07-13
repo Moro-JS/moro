@@ -72,7 +72,7 @@ export class MiddlewareManager extends EventEmitter {
 
     // Initialize middleware
     if (middleware.install) {
-      middleware.install(this.hooks, options);
+      void middleware.install(this.hooks, options);
     }
 
     this.emit('installed', { name, middleware, options });
@@ -92,7 +92,7 @@ export class MiddlewareManager extends EventEmitter {
 
     // Call cleanup if available
     if (middleware.uninstall) {
-      middleware.uninstall(this.hooks);
+      void middleware.uninstall(this.hooks);
     }
 
     this.middleware.delete(name);

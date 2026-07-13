@@ -1,10 +1,9 @@
-/* eslint-disable */
 // Integration Test - Config File Loading
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
-import { createApp } from '../../src';
-import { resetConfig } from '../../src/core/config';
+import { createApp } from '../../src/index.js';
+import { resetConfig } from '../../src/core/config/index.js';
 
 describe('Config File Integration', () => {
   const configPath = join(process.cwd(), 'moro.config.js');

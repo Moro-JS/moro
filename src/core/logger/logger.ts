@@ -12,6 +12,12 @@ import {
   ColorScheme,
 } from '../../types/logger.js';
 
+// Optional LogEntry fields are cleared to undefined when a pooled entry is
+// reused. exactOptionalPropertyTypes rejects assigning undefined straight onto
+// a plain optional property, so those writes go through this widened view.
+// Runtime shape is unchanged; this only relaxes the compile-time check.
+type ResettableLogEntry = { [K in keyof LogEntry]: LogEntry[K] | undefined };
+
 export class MoroLogger implements Logger {
   private level: LogLevel = 'info';
   private options: LoggerOptions;
@@ -140,20 +146,26 @@ export class MoroLogger implements Logger {
     this.addOutput({
       name: 'console',
       write: this.writeToConsole.bind(this),
-      format: this.options.format,
+      ...(this.options.format !== undefined ? { format: this.options.format } : {}),
     });
 
     // Add custom outputs
     if (this.options.outputs) {
       const outputsLen = this.options.outputs.length;
       for (let i = 0; i < outputsLen; i++) {
-        this.addOutput(this.options.outputs[i]);
+        const output = this.options.outputs[i];
+        if (output !== undefined) {
+          this.addOutput(output);
+        }
       }
     }
     if (this.options.filters) {
       const filtersLen = this.options.filters.length;
       for (let i = 0; i < filtersLen; i++) {
-        this.addFilter(this.options.filters[i]);
+        const filter = this.options.filters[i];
+        if (filter !== undefined) {
+          this.addFilter(filter);
+        }
       }
     }
   }
@@ -163,14 +175,17 @@ export class MoroLogger implements Logger {
     if (MoroLogger.ENTRY_POOL.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const entry = MoroLogger.ENTRY_POOL.pop()!;
-      // Properly reset ALL properties to prevent memory leaks
-      entry.timestamp = new Date();
-      entry.level = 'info';
-      entry.message = '';
-      entry.context = undefined;
-      entry.metadata = undefined;
-      entry.performance = undefined;
-      entry.moduleId = undefined;
+      // Properly reset ALL properties to prevent memory leaks. Reset through a
+      // Partial view so the optional fields can be cleared to undefined under
+      // exactOptionalPropertyTypes; the runtime object shape is unchanged.
+      const reset = entry as ResettableLogEntry;
+      reset.timestamp = new Date();
+      reset.level = 'info';
+      reset.message = '';
+      reset.context = undefined;
+      reset.metadata = undefined;
+      reset.performance = undefined;
+      reset.moduleId = undefined;
       return entry;
     }
     return MoroLogger.createFreshEntry();
@@ -178,7 +193,10 @@ export class MoroLogger implements Logger {
 
   // ADD this new method:
   private static createFreshEntry(): LogEntry {
-    return {
+    // Optional fields are present-and-undefined so pooled and fresh entries
+    // share one V8 hidden class. Built as a Partial to satisfy
+    // exactOptionalPropertyTypes, then returned as a fully-formed LogEntry.
+    const entry: ResettableLogEntry = {
       timestamp: new Date(),
       level: 'info',
       message: '',
@@ -187,6 +205,7 @@ export class MoroLogger implements Logger {
       performance: undefined,
       moduleId: undefined,
     };
+    return entry as LogEntry;
   }
 
   private static returnPooledEntry(entry: LogEntry): void {
@@ -444,7 +463,15 @@ export class MoroLogger implements Logger {
         break;
       }
       if (hasKeys) {
-        this.complexLog(level, message, context, metadata);
+        // Only take the minimal fast path when nothing needs the full pipeline.
+        // If filters (e.g. sanitizeFilter redaction) or metrics are configured,
+        // metadata-bearing logs MUST go through fullLog - otherwise sensitive
+        // keys in call metadata would be logged unredacted.
+        if (this.filters.size === 0 && !this.metricsEnabled) {
+          this.complexLog(level, message, context, metadata);
+        } else {
+          this.fullLog(level, message, context, metadata);
+        }
         return;
       }
     }
@@ -467,13 +494,15 @@ export class MoroLogger implements Logger {
     entry.timestamp = new Date(now);
     entry.level = level;
     entry.message = message;
-    entry.context = this.contextPrefix
+    (entry as ResettableLogEntry).context = this.contextPrefix
       ? context
         ? `${this.contextPrefix}:${context}`
         : this.contextPrefix
       : context;
     entry.metadata = this.createMetadata(metadata);
-    entry.performance = this.options.enablePerformance ? this.getPerformanceData(now) : undefined;
+    (entry as ResettableLogEntry).performance = this.options.enablePerformance
+      ? this.getPerformanceData(now)
+      : undefined;
 
     // Apply filters with early return optimization
     if (this.filters.size > 0) {
@@ -512,13 +541,15 @@ export class MoroLogger implements Logger {
     entry.timestamp = new Date(now);
     entry.level = level;
     entry.message = message;
-    entry.context = this.contextPrefix
+    (entry as ResettableLogEntry).context = this.contextPrefix
       ? context
         ? `${this.contextPrefix}:${context}`
         : this.contextPrefix
       : context;
     entry.metadata = this.createMetadata(metadata);
-    entry.performance = this.options.enablePerformance ? this.getPerformanceData(now) : undefined;
+    (entry as ResettableLogEntry).performance = this.options.enablePerformance
+      ? this.getPerformanceData(now)
+      : undefined;
 
     // Write to outputs with batched processing
     this.writeToOutputs(entry, level);
@@ -639,7 +670,7 @@ export class MoroLogger implements Logger {
     for (const output of this.outputs.values()) {
       if (!output.level || MoroLogger.LEVELS[level] >= MoroLogger.LEVELS[output.level]) {
         try {
-          output.write(entry);
+          void output.write(entry);
           successCount++;
         } catch (error) {
           errors.push({ outputName: output.name, error });
@@ -860,10 +891,12 @@ export class MoroLogger implements Logger {
     const stderrMessages: string[] = [];
 
     for (let i = 0; i < this.outputBuffer.length; i++) {
+      const message = this.outputBuffer[i];
+      if (message === undefined) continue;
       if (this.outputBufferIsError[i]) {
-        stderrMessages.push(this.outputBuffer[i]);
+        stderrMessages.push(message);
       } else {
-        stdoutMessages.push(this.outputBuffer[i]);
+        stdoutMessages.push(message);
       }
     }
 
@@ -1195,15 +1228,16 @@ export const createFrameworkLogger = (context: string) => {
   return logger.child('Moro', { framework: 'moro', context });
 };
 
-// Graceful shutdown handler to flush any pending logs
-process.on('SIGINT', () => {
+// Flush any pending logs synchronously on the way out. We deliberately do NOT
+// register SIGINT/SIGTERM handlers here. Registering them at import time is
+// harmful either way: a non-exiting handler suppresses Node's default Ctrl-C
+// termination (the app becomes unkillable), and one that calls process.exit()
+// preempts the framework's own graceful-shutdown handlers (which are registered
+// later, so process.exit() runs first) and masks the real signal/exit code.
+// Signal handling belongs to the application/framework; the logger only ensures
+// buffered logs are flushed. flush() is synchronous, so it is safe in 'exit'.
+process.on('exit', () => {
   logger.flush();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  logger.flush();
-  process.exit(0);
 });
 
 process.on('beforeExit', () => {

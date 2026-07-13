@@ -4,13 +4,36 @@
 export interface WebSocketAdapterOptions {
   compression?: boolean;
   cors?: {
-    origin?: string | string[] | boolean;
+    /**
+     * Allowed origin(s) for cross-origin WebSocket upgrades.
+     * - `undefined` / `true` / `'*'` — allow any origin
+     * - `false` — same-origin only
+     * - `string` / `string[]` — exact origin(s)
+     * - `RegExp` — matched origin (Socket.IO)
+     * - function — dynamic: the `ws` adapter calls it `(requestOrigin) => boolean | string`
+     *   (return `true`/`'*'` to allow, `false` to deny, or the allowed origin string);
+     *   the Socket.IO adapter passes it through to Socket.IO (express-cors `(origin, callback)`).
+     */
+    origin?:
+      | string
+      | string[]
+      | boolean
+      | RegExp
+      | ((
+          requestOrigin: string | undefined,
+          callback?: (err: Error | null, allow?: boolean) => void
+        ) => boolean | string | void);
     methods?: string[];
     credentials?: boolean;
   };
   path?: string;
   maxPayloadLength?: number;
   idleTimeout?: number;
+  /**
+   * Optional upgrade-time authentication hook (ws adapter). Return false to
+   * reject the handshake. Runs after the CORS origin check passes.
+   */
+  verifyClient?: (info: { origin?: string; req: any; secure: boolean }) => boolean;
   [key: string]: any; // Allow adapter-specific options
 }
 
@@ -110,10 +133,10 @@ export interface WebSocketConnection {
   id: string;
 
   /** Client IP address */
-  ip?: string;
+  ip?: string | undefined;
 
   /** Connection headers */
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
 
   /** Custom data storage */
   data: Record<string, any>;

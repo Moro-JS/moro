@@ -105,11 +105,14 @@ function parseDispositionParams(value: string): Map<string, string> {
 function decodeExtendedValue(value: string): string | null {
   const match = /^(utf-8|iso-8859-1)'[^']*'(.+)$/i.exec(value);
   if (!match) return null;
+  const charset = match[1];
+  const encoded = match[2];
+  if (charset === undefined || encoded === undefined) return null;
   try {
-    if (match[1].toLowerCase() === 'utf-8') {
-      return decodeURIComponent(match[2]);
+    if (charset.toLowerCase() === 'utf-8') {
+      return decodeURIComponent(encoded);
     }
-    return match[2].replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) =>
+    return encoded.replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) =>
       String.fromCharCode(parseInt(hex, 16))
     );
   } catch {

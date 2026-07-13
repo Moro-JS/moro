@@ -38,9 +38,9 @@ interface StoredJob {
   options: JobOptions;
   attemptsMade: number;
   timestamp: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
+  processedOn?: number | undefined;
+  finishedOn?: number | undefined;
+  failedReason?: string | undefined;
   progress: number;
 }
 
@@ -335,8 +335,8 @@ export class KafkaAdapter extends QueueAdapter {
                 }
               }
 
-              setTimeout(async () => {
-                await this.addJob(queueName, storedJob.data, storedJob.options);
+              setTimeout(() => {
+                void this.addJob(queueName, storedJob.data, storedJob.options);
               }, delay);
             } else {
               // Auto-remove if configured

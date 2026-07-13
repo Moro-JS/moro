@@ -24,7 +24,7 @@ Build high-performance APIs with intelligent routing that automatically orders m
 
 - **Native C++ Engine** - ~102k req/s real-world through the full framework, 572k pipelined, on a single thread
 - **Intelligent Routing** - Automatic middleware ordering, no configuration needed
-- **Enterprise Auth** - Built-in Auth.js with OAuth & RBAC
+- **Enterprise Auth** - Built-in Better Auth with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
 - **Message Queues** - Production-ready queues (Bull, RabbitMQ, SQS, Kafka)
 - **gRPC Support** - Native gRPC for high-performance microservices
@@ -42,29 +42,33 @@ MoroJS is the fastest Node.js framework we've measured (not just because its our
 
 ```bash
 npm install @morojs/moro
+npm install zod # peer dependency used by the `z` validation helper below
 ```
 
 ```typescript
 import { createApp, z } from '@morojs/moro';
 
-const app = createApp();
+// createApp() is async — await it inside an async context
+(async () => {
+  const app = await createApp();
 
-// Intelligent routing - order doesn't matter!
-app
-  .post('/users')
-  .body(
-    z.object({
-      name: z.string().min(2),
-      email: z.string().email(),
-    })
-  )
-  .rateLimit({ requests: 10, window: 60000 })
-  .handler((req, res) => {
-    // req.body is fully typed and validated
-    return { success: true, data: req.body };
-  });
+  // Intelligent routing - order doesn't matter!
+  app
+    .post('/users')
+    .body(
+      z.object({
+        name: z.string().min(2),
+        email: z.string().email(),
+      })
+    )
+    .rateLimit({ requests: 10, window: 60000 })
+    .handler((req, res) => {
+      // req.body is fully typed and validated
+      return { success: true, data: req.body };
+    });
 
-app.listen(3000);
+  app.listen(3000);
+})();
 ```
 
 ### Or Use the CLI
@@ -87,7 +91,8 @@ falling back to the Node.js http server wherever a prebuilt binary isn't
 available. Pick the backend with `server.engine`:
 
 ```typescript
-const app = createApp({
+// createApp() is async — top-level await (ESM) or wrap in an async function
+const app = await createApp({
   server: {
     engine: 'moro', // default - Moro's native engine (Node.js fallback if it can't load)
     // engine: 'node' - the Node.js http server (no native engine)
@@ -184,7 +189,7 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 - REST APIs with validation
 - Real-time WebSocket apps
-- Auth.js integration
+- Better Auth integration
 - Multi-runtime deployment
 - Database integration
 - And more...

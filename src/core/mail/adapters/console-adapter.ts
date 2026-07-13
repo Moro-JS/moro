@@ -18,7 +18,7 @@ export class ConsoleAdapter extends BaseMailAdapter {
     this.logger = createFrameworkLogger('Mail:Console');
   }
 
-  async initialize(config: any): Promise<void> {
+  override async initialize(config: any): Promise<void> {
     await super.initialize(config);
     this.logger.info('Console adapter initialized', 'Mail');
   }
@@ -107,7 +107,7 @@ export class ConsoleAdapter extends BaseMailAdapter {
     return 'Console';
   }
 
-  async verify(): Promise<boolean> {
+  override async verify(): Promise<boolean> {
     return true;
   }
 }

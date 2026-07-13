@@ -35,6 +35,7 @@ export class HookManager extends EventEmitter {
     const hookEventLen = hookEventValues.length;
     for (let i = 0; i < hookEventLen; i++) {
       const event = hookEventValues[i];
+      if (event === undefined) continue;
       this.hooks.set(event, []);
       this.beforeHooks.set(event, []);
       this.afterHooks.set(event, []);
@@ -71,7 +72,10 @@ export class HookManager extends EventEmitter {
         const beforeLen = beforeHooks.length;
         for (let i = 0; i < beforeLen; i++) {
           try {
-            beforeHooks[i](context);
+            const hook = beforeHooks[i];
+            if (hook !== undefined) {
+              hook(context);
+            }
           } catch (error) {
             // Check if this is a known/expected error that should not halt execution
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -103,7 +107,10 @@ export class HookManager extends EventEmitter {
         const hooksLen = hooks.length;
         for (let i = 0; i < hooksLen; i++) {
           try {
-            hooks[i](context);
+            const hook = hooks[i];
+            if (hook !== undefined) {
+              hook(context);
+            }
           } catch (error) {
             // Check if this is a known/expected error that should not halt execution
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -135,7 +142,10 @@ export class HookManager extends EventEmitter {
         const afterLen = afterHooks.length;
         for (let i = 0; i < afterLen; i++) {
           try {
-            afterHooks[i](context);
+            const hook = afterHooks[i];
+            if (hook !== undefined) {
+              hook(context);
+            }
           } catch (error) {
             // Check if this is a known/expected error that should not halt execution
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -174,19 +184,28 @@ export class HookManager extends EventEmitter {
         // Execute before hooks
         const beforeLen = beforeHooks.length;
         for (let i = 0; i < beforeLen; i++) {
-          await this.executeHook(beforeHooks[i], context);
+          const hook = beforeHooks[i];
+          if (hook !== undefined) {
+            await this.executeHook(hook, context);
+          }
         }
 
         // Execute main hooks
         const hooksLen = hooks.length;
         for (let i = 0; i < hooksLen; i++) {
-          await this.executeHook(hooks[i], context);
+          const hook = hooks[i];
+          if (hook !== undefined) {
+            await this.executeHook(hook, context);
+          }
         }
 
         // Execute after hooks
         const afterLen = afterHooks.length;
         for (let i = 0; i < afterLen; i++) {
-          await this.executeHook(afterHooks[i], context);
+          const hook = afterHooks[i];
+          if (hook !== undefined) {
+            await this.executeHook(hook, context);
+          }
         }
 
         // Emit event for listeners
@@ -308,6 +327,7 @@ export class HookManager extends EventEmitter {
       const mapsLen = maps.length;
       for (let i = 0; i < mapsLen; i++) {
         const map = maps[i];
+        if (map === undefined) continue;
         const hooks = map.get(event);
         if (hooks) {
           const index = hooks.indexOf(fn);

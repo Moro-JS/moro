@@ -74,12 +74,12 @@ export interface JobHealth {
   name: string;
   status: JobHealthStatus;
   enabled: boolean;
-  lastExecution?: Date;
-  lastSuccess?: Date;
+  lastExecution?: Date | undefined;
+  lastSuccess?: Date | undefined;
   consecutiveFailures: number;
   circuitBreakerState?: 'open' | 'half-open' | 'closed';
-  nextRun?: Date;
-  message?: string;
+  nextRun?: Date | undefined;
+  message?: string | undefined;
 }
 
 // Job event types

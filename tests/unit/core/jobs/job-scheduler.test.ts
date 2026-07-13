@@ -270,16 +270,19 @@ describe('JobScheduler', () => {
         executor: { enableMemoryMonitoring: false },
       });
 
+      // Use a cron that won't fire during the test (Jan 1 00:00) so ONLY the
+      // manual triggerJob() calls execute; an every-minute cron could straddle a
+      // minute boundary under load and add a spurious 3rd execution.
       const lowJob = scheduler.registerJob(
         'low-priority',
-        { type: 'cron', cron: '* * * * *' },
+        { type: 'cron', cron: '0 0 1 1 *' },
         lowPriorityHandler,
         { priority: 1 }
       );
 
       const highJob = scheduler.registerJob(
         'high-priority',
-        { type: 'cron', cron: '* * * * *' },
+        { type: 'cron', cron: '0 0 1 1 *' },
         highPriorityHandler,
         { priority: 10 }
       );

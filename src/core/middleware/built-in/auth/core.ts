@@ -624,9 +624,9 @@ export class AuthCore {
    */
   createAuthRequest(session: AuthSession | null, token?: string): AuthRequest {
     const authRequest: AuthRequest = {
-      user: session?.user || undefined,
-      session: session || undefined,
-      token: token || undefined,
+      ...(session?.user ? { user: session.user } : {}),
+      ...(session ? { session } : {}),
+      ...(token ? { token } : {}),
       isAuthenticated: !!session?.user,
       signIn: async (provider?: string, options?: any) => {
         if (!this.authInstance) {

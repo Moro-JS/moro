@@ -85,6 +85,7 @@ export class CloudflareWorkersAdapter extends BaseRuntimeAdapter {
     for (const key in headers) {
       if (Object.prototype.hasOwnProperty.call(headers, key)) {
         const value = headers[key];
+        if (value === undefined) continue;
         if (Array.isArray(value)) {
           for (let i = 0; i < value.length; i++) {
             responseHeaders.append(key, value[i]);

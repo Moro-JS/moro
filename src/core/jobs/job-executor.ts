@@ -56,7 +56,7 @@ export interface ExecutionContext {
 export interface ExecutionResult {
   success: boolean;
   value?: any;
-  error?: Error;
+  error?: Error | undefined;
   attempts: number;
   duration: number;
   memoryUsed?: number;

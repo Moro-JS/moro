@@ -41,7 +41,7 @@ interface RegisteredQueue {
  */
 export class QueueManager implements IQueueManager {
   private queues: Map<string, RegisteredQueue> = new Map();
-  private eventEmitter?: EventEmitter;
+  private eventEmitter?: EventEmitter | undefined;
   private isShuttingDown: boolean = false;
 
   constructor(eventEmitter?: EventEmitter) {

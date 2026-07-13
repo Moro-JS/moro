@@ -85,7 +85,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     session: {
       enabled: false, // Opt-in
       store: 'memory',
-      secret: 'moro-session-secret',
+      // No hardcoded default: a shared shipped secret is insecure. Empty means
+      // "configure one" (mirrors csrf.secret below); the session layer should
+      // warn + generate a random secret when none is set, like auth/csrf do.
+      secret: '',
       name: 'connect.sid',
       rolling: false,
       resave: false,

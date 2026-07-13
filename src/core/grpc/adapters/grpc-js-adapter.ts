@@ -220,6 +220,7 @@ export class GrpcJsAdapter implements GrpcAdapter {
         // Handle middleware array
         const handlers = Array.isArray(handler) ? handler : [handler];
         const finalHandler = handlers[handlers.length - 1];
+        if (!finalHandler) continue;
 
         wrappedImplementation[methodName] = async (call: any, callback?: any) => {
           const startTime = Date.now();
@@ -523,6 +524,7 @@ export class GrpcJsAdapter implements GrpcAdapter {
       (this.stats.averageLatency * (totalCalls - 1) + latency) / totalCalls;
 
     const methodStats = this.stats.byMethod[methodName];
+    if (!methodStats) return;
     const methodCalls = methodStats.calls;
     methodStats.averageLatency =
       (methodStats.averageLatency * (methodCalls - 1) + latency) / methodCalls;

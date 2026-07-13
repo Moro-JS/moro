@@ -1,8 +1,8 @@
 # MoroJS Documentation
 
-Complete documentation for the MoroJS framework (v1.5.3).
+Complete documentation for the MoroJS framework (v1.8.x).
 
-**Note:** MoroJS has zero core dependencies! All validation libraries (Zod, Joi, Yup, Class Validator) are optional peer dependencies, making the framework lightweight and flexible.
+**Note:** MoroJS has a single runtime dependency — its own native `@morojs/engine` — and no third-party runtime dependencies. All validation libraries (Zod, Joi, Yup, Class Validator) are optional peer dependencies, making the framework lightweight and flexible.
 
 ## Documentation Structure
 
@@ -10,33 +10,45 @@ Complete documentation for the MoroJS framework (v1.5.3).
 
 - **[Getting Started](./GETTING_STARTED.md)** - Complete setup guide and first application
 - **[API Reference](./API.md)** - Comprehensive framework API documentation
+- **[Configuration Reference](./CONFIGURATION_REFERENCE.md)** - Full configuration options and defaults
+- **[Example Config](./EXAMPLE_CONFIG.md)** - Annotated example configuration
+- **[Init Pattern](./INIT_PATTERN.md)** - Recommended application initialization pattern
 - **[Migration Guide](./MIGRATION.md)** - Migrate from Express, Fastify, NestJS, and Koa
 
 ### Core Features
 
-- **[Authentication Guide](./AUTH_GUIDE.md)** - Complete Auth.js integration with RBAC and security
-- **[Native Auth Adapter](./NATIVE_AUTH_ADAPTER.md)** - Custom `@auth/morojs` adapter for contribution to Auth.js
+- **[Authentication Guide](./AUTH_GUIDE.md)** - Complete Better Auth integration with RBAC and security
+- **[Native Auth Adapter](./NATIVE_AUTH_ADAPTER.md)** - Custom native `@auth/morojs` auth adapter internals
+- **[Native Auth Summary](./NATIVE_AUTH_SUMMARY.md)** - Overview of the native auth adapter
+- **[Validation Libraries](./VALIDATION-LIBRARIES.md)** - Using Zod, Joi, Yup, and Class Validator
+- **[Response Helpers](./RESPONSE_HELPERS.md)** - Standardized response builder helpers
 - **[Dependency Injection](./DEPENDENCY_INJECTION.md)** - Built-in DI container with service management
+- **[Type-Safe DI](./TYPE_SAFE_DI.md)** - Type-safe dependency injection patterns
 - **[Module System](./MODULES_GUIDE.md)** - Modular architecture for scalable applications
 - **[Object Pooling](./OBJECT_POOLING.md)** - Performance optimization with object pooling
 - **[Circuit Breaker](./CIRCUIT_BREAKER.md)** - Fault tolerance and resilience patterns
 - **[Runtime System](./RUNTIME.md)** - Multi-runtime deployment guide (Node.js, Edge, Lambda, Workers)
 - **[Performance Guide](./PERFORMANCE.md)** - Optimization, benchmarks, and monitoring
+- **[Performance Tips](./PERFORMANCE_TIPS.md)** - Host- and OS-level tuning and load-testing tips
 - **[Testing Guide](./TESTING_GUIDE.md)** - Testing strategies and best practices
 
 ### Features & Middleware
 
 - **[Middleware Guide](./MIDDLEWARE_GUIDE.md)** - Complete reference for all 18+ built-in middleware
+- **[HTTP Engine Guide](./UWEBSOCKETS_GUIDE.md)** - Native engine, Node fallback, and uWebSockets.js setup
 - **[HTTP/2 Guide](./HTTP2_GUIDE.md)** - HTTP/2 server push, stream prioritization, and multiplexing
+- **[WebSocket Adapters](./WEBSOCKET-ADAPTERS.md)** - Socket.IO, ws, and uWebSockets.js WebSocket adapters
 - **[Worker Threads Guide](./WORKERS_GUIDE.md)** - CPU-intensive task offloading with worker threads
 - **[Message Queue Guide](./QUEUE_GUIDE.md)** - Production-ready queue system with multiple adapters
 - **[gRPC Guide](./GRPC_GUIDE.md)** - High-performance microservices with gRPC
 - **[GraphQL Guide](./GRAPHQL_GUIDE.md)** - GraphQL API integration
 - **[Jobs Guide](./JOBS_GUIDE.md)** - Background job scheduling and execution
+- **[Email](./FEATURE_EMAIL.md)** - Sending email with the built-in mail system
 
 ### Development
 
 - **[Contributing](./CONTRIBUTING.md)** - How to contribute to MoroJS
+- **[AI Assistant Guide](./AI_ASSISTANT_GUIDE.md)** - Guidance for AI-assisted development with MoroJS
 - **[Testing & Documentation Summary](./TESTING_AND_DOCS_SUMMARY.md)** - Overview of testing approach
 
 ## Quick Navigation
@@ -89,7 +101,7 @@ Complete documentation for the MoroJS framework (v1.5.3).
 - ✅ **Circuit Breakers** - Fault tolerance with automatic failure protection
 - ✅ **Service Discovery** - Consul, Kubernetes, and in-memory service registry
 - ✅ **Validation** - Zod schema validation with type inference
-- ✅ **Authentication** - Auth.js integration with RBAC and native adapter
+- ✅ **Authentication** - Better Auth integration with RBAC and native adapter
 - ✅ **Caching** - Memory, Redis, and edge caching strategies
 - ✅ **Rate Limiting** - Built-in protection against abuse
 - ✅ **WebSockets** - Real-time communication support
@@ -104,7 +116,7 @@ Complete documentation for the MoroJS framework (v1.5.3).
 ## External Resources
 
 - **[Examples Repository](https://github.com/Moro-JS/examples)** - Real-world usage examples
-- **[npm Package](https://www.npmjs.com/package/moro)** - Official npm package
+- **[npm Package](https://www.npmjs.com/package/@morojs/moro)** - Official npm package
 - **[GitHub Repository](https://github.com/Moro-JS/moro)** - Source code and issues
 - **[Discord Community](https://morojs.com/discord)** - Get help and discuss
 
@@ -126,7 +138,7 @@ Complete documentation for the MoroJS framework (v1.5.3).
 - [Object Pooling](./OBJECT_POOLING.md) - Performance optimization guide
 - [Circuit Breaker](./CIRCUIT_BREAKER.md) - Fault tolerance and resilience
 - [Middleware Guide](./MIDDLEWARE_GUIDE.md) - All built-in middleware reference
-- [Authentication Guide](./AUTH_GUIDE.md) - Auth.js integration and security
+- [Authentication Guide](./AUTH_GUIDE.md) - Better Auth integration and security
 - [Message Queue Guide](./QUEUE_GUIDE.md) - Queue system with multiple adapters
 - [gRPC Guide](./GRPC_GUIDE.md) - Microservices with gRPC
 - [Worker Threads Guide](./WORKERS_GUIDE.md) - CPU-intensive task offloading

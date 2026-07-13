@@ -24,7 +24,7 @@ export class UploadCore {
   private dest: string;
   private maxFileSize: number;
   private maxFiles: number;
-  private allowedTypes?: string[];
+  private allowedTypes?: string[] | undefined;
 
   constructor(options: UploadOptions = {}) {
     this.dest = options.dest || '/tmp';

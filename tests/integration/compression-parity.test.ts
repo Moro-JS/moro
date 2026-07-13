@@ -1,4 +1,3 @@
-/* eslint-disable */
 // @ts-nocheck
 // Integration - response compression works uniformly on the native engine
 // (parity with the Node path, which already compressed). Verifies gzip/brotli

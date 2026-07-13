@@ -399,12 +399,12 @@ export type SignOutOptions = {
 // Error types
 export interface AuthError extends Error {
   type: string;
-  code?: string;
+  code?: string | undefined;
 }
 
 export class SignInError extends Error implements AuthError {
   type = 'SignInError';
-  code?: string;
+  code?: string | undefined;
 
   constructor(message: string, code?: string) {
     super(message);
@@ -414,7 +414,7 @@ export class SignInError extends Error implements AuthError {
 
 export class CallbackError extends Error implements AuthError {
   type = 'CallbackError';
-  code?: string;
+  code?: string | undefined;
 
   constructor(message: string, code?: string) {
     super(message);
@@ -424,7 +424,7 @@ export class CallbackError extends Error implements AuthError {
 
 export class SessionError extends Error implements AuthError {
   type = 'SessionError';
-  code?: string;
+  code?: string | undefined;
 
   constructor(message: string, code?: string) {
     super(message);

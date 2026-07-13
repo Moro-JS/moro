@@ -2,13 +2,20 @@
 import { Worker } from 'worker_threads';
 import { createFrameworkLogger } from '../logger/index.js';
 import { cpus } from 'os';
-import { join } from 'path';
 import { isPackageAvailable } from '../utilities/package-utils.js';
+// WORKER_ENTRY resolves to worker.js, this file's compiled sibling in dist/**,
+// via import.meta in ./worker-entry.js. That ESM-only syntax is isolated in its
+// own module (mapped to a stub in jest.config) so importing WorkerManager under
+// ts-jest's CommonJS transform never hits a load-time import.meta SyntaxError.
+import { WORKER_ENTRY } from './worker-entry.js';
 
 // Optional JWT import
 const jwtAvailable = isPackageAvailable('jsonwebtoken');
 
 const logger = createFrameworkLogger('WorkerManager');
+
+// Upper bound on the exponential restart backoff
+const MAX_RESTART_BACKOFF_MS = 5000;
 
 // Hoisted constants — avoids object allocation inside sort comparator on every call
 const PRIORITY_ORDER: Record<string, number> = { high: 3, normal: 2, low: 1 };
@@ -45,6 +52,9 @@ interface ActiveTask {
   resolve: CallableFunction;
   reject: CallableFunction;
   timeout: NodeJS.Timeout | null;
+  // The worker a task was dispatched to (set once it leaves the queue). Used so a
+  // crashed worker only rejects its own in-flight tasks, not everyone else's.
+  assignedWorker?: Worker;
 }
 
 /**
@@ -74,15 +84,25 @@ export class WorkerManager {
   private workerCount: number;
   private maxQueueSize: number;
   private isShuttingDown = false;
+  private maxRestartAttempts: number;
+  private restartBackoffMs: number;
+  private restartAttempts = 0;
+  private restartTimers = new Set<NodeJS.Timeout>();
+  private handledFailures = new WeakSet<Worker>();
+  private poolFailed = false;
 
   constructor(
     options: {
       workerCount?: number;
       maxQueueSize?: number;
+      maxRestartAttempts?: number;
+      restartBackoffMs?: number;
     } = {}
   ) {
     this.workerCount = options.workerCount || Math.max(1, cpus().length - 1); // Leave 1 core for main thread
     this.maxQueueSize = options.maxQueueSize || 1000;
+    this.maxRestartAttempts = options.maxRestartAttempts ?? 10;
+    this.restartBackoffMs = options.restartBackoffMs ?? 100;
 
     this.initializeWorkers();
   }
@@ -105,25 +125,40 @@ export class WorkerManager {
    * Create a single worker thread
    */
   private createWorker(): void {
-    const workerPath = join(process.cwd(), 'src/core/workers/worker.ts');
+    if (this.isShuttingDown || this.poolFailed) {
+      return;
+    }
 
-    const worker = new Worker(workerPath, {
-      workerData: { type: 'worker' },
-    });
+    let worker: Worker;
+    try {
+      worker = new Worker(WORKER_ENTRY, {
+        workerData: { type: 'worker' },
+      });
+    } catch (error) {
+      // Spawning can fail synchronously (e.g. a missing entry file). Treat it the
+      // same as a runtime failure so we back off instead of throwing.
+      logger.error('Failed to spawn worker thread', 'WorkerSpawn', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.scheduleRestart();
+      return;
+    }
 
     worker.on('message', (result: WorkerResult) => {
+      // A successful message proves the pool is healthy; reset the restart budget.
+      this.restartAttempts = 0;
       this.handleWorkerResult(result);
     });
 
     worker.on('error', error => {
       logger.error('Worker thread error', 'WorkerError', { error: error.message });
-      this.restartWorker(worker);
+      this.handleWorkerFailure(worker);
     });
 
     worker.on('exit', code => {
       if (code !== 0 && !this.isShuttingDown) {
         logger.warn(`Worker exited with code ${code}, restarting`, 'WorkerExit');
-        this.restartWorker(worker);
+        this.handleWorkerFailure(worker);
       }
     });
 
@@ -132,23 +167,104 @@ export class WorkerManager {
   }
 
   /**
-   * Restart a failed worker
+   * Handle a crashed worker: reject only the tasks that were assigned to it and
+   * schedule a backed-off restart. A failed worker emits both 'error' and 'exit',
+   * so this is guarded to run at most once per worker.
    */
-  private restartWorker(oldWorker: Worker): void {
-    const threadId = oldWorker.threadId;
-    this.workers.delete(threadId);
+  private handleWorkerFailure(worker: Worker): void {
+    if (this.handledFailures.has(worker)) {
+      return;
+    }
+    this.handledFailures.add(worker);
 
-    // Clean up any pending tasks for this worker
+    this.workers.delete(worker.threadId);
+
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    // Reject only the tasks that were dispatched to this specific worker. Tasks
+    // still queued (or running on other workers) are intentionally left alone.
+    for (const [taskId, taskInfo] of this.activeTasks.entries()) {
+      if (taskInfo.assignedWorker === worker) {
+        if (taskInfo.timeout) {
+          clearTimeout(taskInfo.timeout);
+        }
+        taskInfo.reject(new Error('Worker thread failed'));
+        this.activeTasks.delete(taskId);
+      }
+    }
+
+    this.scheduleRestart();
+  }
+
+  /**
+   * Schedule a replacement worker with exponential backoff, capping the number of
+   * consecutive restart attempts so a persistently broken worker entry can never
+   * spin into an unbounded restart loop.
+   */
+  private scheduleRestart(): void {
+    if (this.isShuttingDown || this.poolFailed) {
+      return;
+    }
+
+    this.restartAttempts++;
+
+    if (this.restartAttempts > this.maxRestartAttempts) {
+      this.failPool();
+      return;
+    }
+
+    const delay = Math.min(
+      this.restartBackoffMs * 2 ** (this.restartAttempts - 1),
+      MAX_RESTART_BACKOFF_MS
+    );
+
+    logger.warn(
+      `Scheduling worker restart in ${delay}ms (attempt ${this.restartAttempts}/${this.maxRestartAttempts})`,
+      'WorkerRestart'
+    );
+
+    const timer = setTimeout(() => {
+      this.restartTimers.delete(timer);
+      this.createWorker();
+    }, delay);
+
+    // Don't keep the process alive purely for a pending restart
+    timer.unref();
+    this.restartTimers.add(timer);
+  }
+
+  /**
+   * Give up after too many failed restarts: fail every outstanding task cleanly
+   * (rejecting their promises) instead of looping forever.
+   */
+  private failPool(): void {
+    if (this.poolFailed) {
+      return;
+    }
+    this.poolFailed = true;
+
+    logger.error(
+      `Worker pool failed to recover after ${this.maxRestartAttempts} restart attempts`,
+      'WorkerPoolFailed'
+    );
+
+    const error = new Error(
+      `Worker pool is unavailable after ${this.maxRestartAttempts} failed restart attempts`
+    );
+
+    // Every queued task also has an activeTasks entry, so this rejects both
+    // in-flight and queued work.
     for (const [taskId, taskInfo] of this.activeTasks.entries()) {
       if (taskInfo.timeout) {
         clearTimeout(taskInfo.timeout);
       }
-      taskInfo.reject(new Error('Worker thread failed'));
+      taskInfo.reject(error);
       this.activeTasks.delete(taskId);
     }
 
-    // Create new worker
-    this.createWorker();
+    this.taskQueue.length = 0;
   }
 
   /**
@@ -157,6 +273,10 @@ export class WorkerManager {
   async executeTask<T = any>(task: WorkerTask): Promise<T> {
     if (this.isShuttingDown) {
       throw new Error('Worker manager is shutting down');
+    }
+
+    if (this.poolFailed) {
+      throw new Error('Worker pool is unavailable (too many worker failures)');
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -195,7 +315,9 @@ export class WorkerManager {
   private processQueue(): void {
     // Sort queue by priority (high first)
     this.taskQueue.sort(
-      (a, b) => PRIORITY_ORDER[b.priority || 'normal'] - PRIORITY_ORDER[a.priority || 'normal']
+      (a, b) =>
+        (PRIORITY_ORDER[b.priority || 'normal'] ?? 0) -
+        (PRIORITY_ORDER[a.priority || 'normal'] ?? 0)
     );
 
     // Assign tasks to available workers
@@ -206,6 +328,11 @@ export class WorkerManager {
       // For simplicity, we'll send tasks and let workers handle queuing
       const task = this.taskQueue.shift();
       if (task) {
+        // Record the assignment so a crashed worker only rejects its own tasks.
+        const taskInfo = this.activeTasks.get(task.id);
+        if (taskInfo) {
+          taskInfo.assignedWorker = worker;
+        }
         worker.postMessage(task);
         logger.debug(`Assigned task ${task.id} to worker ${threadId}`, 'TaskAssigned');
       }
@@ -249,6 +376,12 @@ export class WorkerManager {
   async shutdown(): Promise<void> {
     this.isShuttingDown = true;
 
+    // Cancel any pending worker restarts
+    for (const timer of this.restartTimers) {
+      clearTimeout(timer);
+    }
+    this.restartTimers.clear();
+
     // Reject all pending tasks
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [taskId, taskInfo] of this.activeTasks.entries()) {
@@ -263,7 +396,7 @@ export class WorkerManager {
       worker =>
         new Promise<void>(resolve => {
           worker.once('exit', () => resolve());
-          worker.terminate();
+          void worker.terminate();
         })
     );
 

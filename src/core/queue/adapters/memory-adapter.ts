@@ -77,7 +77,7 @@ export class MemoryAdapter extends QueueAdapter {
     // Handle delayed jobs
     if (options.delay && options.delay > 0) {
       job.timeoutId = setTimeout(() => {
-        this.processJob(queueName, jobId);
+        void this.processJob(queueName, jobId);
       }, options.delay);
       // Don't keep process alive for delayed job timers
       job.timeoutId.unref();
@@ -87,7 +87,7 @@ export class MemoryAdapter extends QueueAdapter {
 
     // Process immediately if not delayed
     if (!options.delay || options.delay === 0) {
-      this.processJob(queueName, jobId);
+      void this.processJob(queueName, jobId);
     }
 
     return job;
@@ -447,7 +447,7 @@ export class MemoryAdapter extends QueueAdapter {
       if (job.opts.removeOnComplete) {
         setTimeout(
           () => {
-            this.removeJob(queueName, jobId);
+            void this.removeJob(queueName, jobId);
           },
           typeof job.opts.removeOnComplete === 'number' ? job.opts.removeOnComplete : 0
         );
@@ -481,14 +481,14 @@ export class MemoryAdapter extends QueueAdapter {
           job.stacktrace = undefined;
           job.processedOn = undefined;
           job.finishedOn = undefined;
-          this.processJob(queueName, jobId);
+          void this.processJob(queueName, jobId);
         }, delay);
       } else {
         // Auto-remove if configured
         if (job.opts.removeOnFail) {
           setTimeout(
             () => {
-              this.removeJob(queueName, jobId);
+              void this.removeJob(queueName, jobId);
             },
             typeof job.opts.removeOnFail === 'number' ? job.opts.removeOnFail : 0
           );
@@ -518,7 +518,7 @@ export class MemoryAdapter extends QueueAdapter {
       for (const [jobId, job] of queue.jobs.entries()) {
         const status = this.getJobStatus(job);
         if (status === 'waiting' && !job.opts.delay) {
-          this.processJob(queueName, jobId);
+          void this.processJob(queueName, jobId);
         }
       }
     }, 100); // Check every 100ms

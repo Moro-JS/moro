@@ -91,7 +91,7 @@ export function grpcValidateHandler<TRequest = any, TResponse = any>(
     if (options.request) {
       const validator = grpcValidate({
         request: options.request,
-        stripUnknown: options.stripUnknown,
+        ...(options.stripUnknown !== undefined ? { stripUnknown: options.stripUnknown } : {}),
       });
       await validator(call, callback);
     }

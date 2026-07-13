@@ -25,9 +25,9 @@ export function parseSizeToBytes(
   const match = size.toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
   if (!match) return fallback;
 
-  const value = parseFloat(match[1]);
+  const value = parseFloat(match[1] ?? '');
   const unit = match[2] || 'b';
-  return Math.round(value * UNITS[unit]);
+  return Math.round(value * (UNITS[unit] ?? 1));
 }
 
 /**

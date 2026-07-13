@@ -201,7 +201,7 @@ export class RadixTree {
       const params: Record<string, string> = {};
       if (result.paramPath) {
         for (let i = 0; i < result.paramPath.length; i++) {
-          params[result.paramPath[i]] = paramValues[i];
+          params[result.paramPath[i] as string] = paramValues[i] as string;
         }
       }
       return { handler: result.handler, params };

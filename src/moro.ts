@@ -230,7 +230,7 @@ export class Moro extends EventEmitter {
   // Queue system (lazy loaded)
   private queueManager?: any; // Use any to avoid import dependency
   private queueInitialized = false;
-  private queueInitPromise?: Promise<void>; // Track initialization promise
+  private queueInitPromise?: Promise<void> | undefined; // Track initialization promise
   private queueConfigs: Map<string, any> = new Map(); // Store queue configs for lazy initialization
   // Worker threads system (lazy loaded facade)
   private workerFacade: WorkerThreadsFacade;
@@ -332,24 +332,31 @@ export class Moro extends EventEmitter {
     // Default to enabled (true) unless explicitly disabled
     const jobsEnabled = this.config.jobs?.enabled !== false && options.jobs?.enabled !== false;
     if (jobsEnabled) {
+      const le = this.config.jobs?.leaderElection;
       const leaderElectionOptions: LeaderElectionOptions | undefined =
-        this.config.jobs?.leaderElection?.enabled !== false
+        le?.enabled !== false
           ? {
-              strategy:
-                (this.config.jobs?.leaderElection?.strategy as 'file' | 'redis' | 'none') ?? 'file',
-              lockPath: this.config.jobs?.leaderElection?.lockPath,
-              lockTimeout: this.config.jobs?.leaderElection?.lockTimeout,
-              heartbeatInterval: this.config.jobs?.leaderElection?.heartbeatInterval,
+              strategy: (le?.strategy as 'file' | 'redis' | 'none') ?? 'file',
+              ...(le?.lockPath !== undefined ? { lockPath: le.lockPath } : {}),
+              ...(le?.lockTimeout !== undefined ? { lockTimeout: le.lockTimeout } : {}),
+              ...(le?.heartbeatInterval !== undefined
+                ? { heartbeatInterval: le.heartbeatInterval }
+                : {}),
             }
           : undefined;
 
+      const jobs = this.config.jobs;
       const jobSchedulerOptions: JobSchedulerOptions = {
-        maxConcurrentJobs: this.config.jobs?.maxConcurrentJobs,
-        enableLeaderElection: this.config.jobs?.leaderElection?.enabled !== false,
-        leaderElection: leaderElectionOptions,
-        executor: this.config.jobs?.executor,
-        stateManager: this.config.jobs?.stateManager,
-        gracefulShutdownTimeout: this.config.jobs?.gracefulShutdownTimeout,
+        enableLeaderElection: jobs?.leaderElection?.enabled !== false,
+        ...(jobs?.maxConcurrentJobs !== undefined
+          ? { maxConcurrentJobs: jobs.maxConcurrentJobs }
+          : {}),
+        ...(leaderElectionOptions !== undefined ? { leaderElection: leaderElectionOptions } : {}),
+        ...(jobs?.executor !== undefined ? { executor: jobs.executor } : {}),
+        ...(jobs?.stateManager !== undefined ? { stateManager: jobs.stateManager } : {}),
+        ...(jobs?.gracefulShutdownTimeout !== undefined
+          ? { gracefulShutdownTimeout: jobs.gracefulShutdownTimeout }
+          : {}),
       };
 
       this.jobScheduler = new JobScheduler(createFrameworkLogger('Jobs'), jobSchedulerOptions);
@@ -380,7 +387,7 @@ export class Moro extends EventEmitter {
     this.autoDiscoveryOptions = options.autoDiscover !== false ? options : null;
 
     // Emit initialization event through enterprise event bus
-    this.eventBus.emit('framework:initialized', {
+    void this.eventBus.emit('framework:initialized', {
       options,
       config: this.config,
       runtime: this.runtimeType,
@@ -625,7 +632,7 @@ export class Moro extends EventEmitter {
     this.documentation.enableDocs(config, this.intelligentRouting);
 
     this.logger.info(`API Documentation enabled at ${config.basePath || '/docs'}`, 'Documentation');
-    this.eventBus.emit('docs:enabled', { config });
+    void this.eventBus.emit('docs:enabled', { config });
   }
 
   // Get OpenAPI specification
@@ -676,7 +683,7 @@ export class Moro extends EventEmitter {
     // Standard middleware integration (req, res, next pattern)
     if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length >= 3) {
       this.coreFramework.addMiddleware(middlewareOrFunction);
-      this.eventBus.emit('middleware:registered', {
+      void this.eventBus.emit('middleware:registered', {
         type: 'standard',
         middleware: middlewareOrFunction,
       });
@@ -686,7 +693,7 @@ export class Moro extends EventEmitter {
     // Function-style middleware execution
     if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length <= 1) {
       await middlewareOrFunction(this);
-      this.eventBus.emit('middleware:executed', {
+      void this.eventBus.emit('middleware:executed', {
         type: 'function',
         middleware: middlewareOrFunction,
       });
@@ -710,7 +717,7 @@ export class Moro extends EventEmitter {
     }
 
     // Fallback: emit event for unknown middleware types
-    this.eventBus.emit('middleware:advanced', {
+    void this.eventBus.emit('middleware:advanced', {
       middleware: middlewareOrFunction,
       config,
     });
@@ -794,7 +801,7 @@ export class Moro extends EventEmitter {
 
   // Module loading with events
   async loadModule(moduleOrPath: ModuleConfig | string) {
-    this.eventBus.emit('module:loading', {
+    void this.eventBus.emit('module:loading', {
       moduleId: typeof moduleOrPath === 'string' ? moduleOrPath : moduleOrPath.name,
     });
 
@@ -802,14 +809,14 @@ export class Moro extends EventEmitter {
       const module = await this.importModule(moduleOrPath);
       await this.coreFramework.loadModule(module);
       this.loadedModules.add(moduleOrPath);
-      this.eventBus.emit('module:loaded', {
+      void this.eventBus.emit('module:loaded', {
         moduleId: module.name,
         version: module.version || '1.0.0',
       });
     } else {
       await this.coreFramework.loadModule(moduleOrPath);
       this.loadedModules.add(moduleOrPath.name);
-      this.eventBus.emit('module:loaded', {
+      void this.eventBus.emit('module:loaded', {
         moduleId: moduleOrPath.name,
         version: moduleOrPath.version || '1.0.0',
       });
@@ -826,7 +833,7 @@ export class Moro extends EventEmitter {
 
   // Database helper with events
   database(adapter: any) {
-    this.eventBus.emit('database:connected', {
+    void this.eventBus.emit('database:connected', {
       adapter: adapter.constructor.name,
       config: 'hidden',
     });
@@ -979,7 +986,13 @@ export class Moro extends EventEmitter {
       this.startWithClustering(port, host as string, callback);
       return;
     }
-    this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
+
+    // Single-process graceful shutdown: SIGINT/SIGTERM (Ctrl-C) drain in-flight
+    // work via close() by default; a second signal force-exits. Opt out with
+    // `server.gracefulShutdown: false`. (Cluster mode wires its own handlers.)
+    this.registerProcessShutdownHandlers();
+
+    void this.eventBus.emit('server:starting', { port, runtime: this.runtimeType });
 
     // Add documentation middleware first (if enabled)
     try {
@@ -1024,7 +1037,7 @@ export class Moro extends EventEmitter {
           this.unifiedRouter.logPerformanceStats();
         }
 
-        this.eventBus.emit('server:started', {
+        void this.eventBus.emit('server:started', {
           port,
           runtime: this.runtimeType,
           engine: serverKind,
@@ -1294,7 +1307,7 @@ export class Moro extends EventEmitter {
       if (matches) {
         req.params = {};
         route.paramNames.forEach((name: string, index: number) => {
-          req.params[name] = matches[index + 1];
+          req.params[name] = matches[index + 1] ?? '';
         });
       }
 
@@ -1551,6 +1564,7 @@ export class Moro extends EventEmitter {
     // This provides the intuitive developer experience users expect
     for (const route of this.routes) {
       const handler = this.routeHandlers[route.handler];
+      if (!handler) continue;
 
       // Get direct access to the HTTP server through the core framework
       const httpServer = (this.coreFramework as any).httpServer;
@@ -1913,7 +1927,7 @@ export class Moro extends EventEmitter {
 
     // Unload existing modules (if supported)
     // For now, just log the change
-    this.eventBus.emit('modules:changed', {
+    void this.eventBus.emit('modules:changed', {
       modules: modules.map(m => ({ name: m.name, version: m.version })),
       timestamp: new Date(),
     });
@@ -1921,13 +1935,13 @@ export class Moro extends EventEmitter {
 
   // Legacy method for backward compatibility
   private autoDiscoverModules(modulesPath: string) {
-    // Redirect to new system
-    this.initializeAutoDiscovery({
+    // Redirect to new system (legacy sync shim over the async discovery path).
+    void this.initializeAutoDiscovery({
       autoDiscover: {
         enabled: true,
         paths: [modulesPath],
       },
-    });
+    }).catch(err => this.logger.error(`Auto-discovery failed: ${String(err)}`, 'ModuleDiscovery'));
   }
 
   private async importModule(modulePath: string): Promise<ModuleConfig> {
@@ -2144,7 +2158,7 @@ export class Moro extends EventEmitter {
       process.on('SIGINT', workerShutdown);
 
       // Continue with normal server startup for this worker
-      this.eventBus.emit('server:starting', {
+      void this.eventBus.emit('server:starting', {
         port,
         runtime: this.runtimeType,
         worker: process.pid,
@@ -2169,7 +2183,7 @@ export class Moro extends EventEmitter {
       const workerCallback = () => {
         const displayHost = host || 'localhost';
         this.logger.info(`Worker ${process.pid} ready on ${displayHost}:${port}`, 'Worker');
-        this.eventBus.emit('server:started', {
+        void this.eventBus.emit('server:started', {
           port,
           runtime: this.runtimeType,
           worker: process.pid,
@@ -2248,8 +2262,104 @@ export class Moro extends EventEmitter {
    * Gracefully close the application and clean up resources
    * This should be called in tests and during shutdown
    */
+  private shutdownHandlersRegistered = false;
+  private isShuttingDown = false;
+  // Per-instance opt-in uncaught-error listeners (removed by close()).
+  private processListeners: Array<[string, (...args: any[]) => void]> = [];
+
+  // Graceful shutdown is driven by ONE process-level SIGINT/SIGTERM handler
+  // shared across every Moro instance (installed once), so creating many apps
+  // never accumulates process listeners. Instances register here on listen()
+  // and deregister on close().
+  private static activeInstances = new Set<Moro>();
+  private static globalSignalsInstalled = false;
+  private static globalShuttingDown = false;
+
+  private static installGlobalShutdownSignals(): void {
+    if (Moro.globalSignalsInstalled) return;
+    Moro.globalSignalsInstalled = true;
+
+    const handle = (signal: string, code: number) => {
+      // A second signal while already draining forces an immediate exit, so a
+      // stuck shutdown can never make the process unkillable via Ctrl-C.
+      if (Moro.globalShuttingDown) {
+        process.exit(code);
+        return;
+      }
+      Moro.globalShuttingDown = true;
+      const instances = Array.from(Moro.activeInstances);
+      instances[0]?.logger.info(`Received ${signal}, shutting down gracefully...`, 'Server');
+      Promise.allSettled(instances.map(inst => inst.close()))
+        .then(() => process.exit(code))
+        .catch(() => process.exit(1));
+    };
+
+    process.on('SIGINT', () => handle('SIGINT', 0));
+    process.on('SIGTERM', () => handle('SIGTERM', 0));
+  }
+
+  /**
+   * Enable graceful shutdown for this instance. SIGINT/SIGTERM (Ctrl-C) drain
+   * in-flight work via close() by default; a second signal force-exits. Opt out
+   * with `server.gracefulShutdown: false` (e.g. when the host app owns signals).
+   * Uncaught-error draining is separate and opt-in (`server.handleUncaught`).
+   */
+  private registerProcessShutdownHandlers(): void {
+    if (this.shutdownHandlersRegistered) return;
+    const serverCfg = this.config.server as any;
+    if (serverCfg?.gracefulShutdown === false) return; // default ON; opt out here
+    this.shutdownHandlersRegistered = true;
+
+    Moro.activeInstances.add(this);
+    Moro.installGlobalShutdownSignals();
+
+    // Opt-in uncaught-error draining (per instance, removed on close()).
+    if (serverCfg?.handleUncaught === true) {
+      const add = (event: string, handler: (...args: any[]) => void) => {
+        process.on(event as any, handler);
+        this.processListeners.push([event, handler]);
+      };
+      add('unhandledRejection', reason => {
+        this.logger.error(`Unhandled promise rejection: ${String(reason)}`, 'Server');
+        this.drainAndExit(1);
+      });
+      add('uncaughtException', err => {
+        this.logger.error(
+          `Uncaught exception: ${err instanceof Error ? err.stack || err.message : String(err)}`,
+          'Server'
+        );
+        this.drainAndExit(1);
+      });
+    }
+  }
+
+  private drainAndExit(code: number): void {
+    if (this.isShuttingDown) {
+      process.exit(code);
+      return;
+    }
+    this.isShuttingDown = true;
+    this.close()
+      .then(() => process.exit(code))
+      .catch(() => process.exit(1));
+  }
+
+  /** Deregister this instance from process shutdown handling (called by close()). */
+  private removeProcessShutdownHandlers(): void {
+    Moro.activeInstances.delete(this);
+    for (const [event, handler] of this.processListeners) {
+      process.removeListener(event as any, handler);
+    }
+    this.processListeners = [];
+    this.shutdownHandlersRegistered = false;
+  }
+
   async close(): Promise<void> {
     this.logger.debug('Closing Moro application...');
+
+    // Detach our process signal listeners so repeated create/close cycles
+    // (tests, or a host that spins up many apps) don't leak process listeners.
+    this.removeProcessShutdownHandlers();
 
     // Run user-registered onClose hooks first, while subsystems are still alive.
     // Failures in one hook don't prevent subsequent hooks or Moro's own teardown.
@@ -2320,6 +2430,13 @@ export class Moro extends EventEmitter {
         const isListening = server?.listening || server?.address?.() !== null;
 
         if (isListening) {
+          // Stop accepting new connections and let in-flight requests finish,
+          // but don't hang on idle keep-alive / WebSocket connections: close
+          // idle sockets right away, then force-close whatever remains at the
+          // deadline so this promise reflects a real close instead of only the
+          // timer firing. (closeIdle/closeAllConnections exist on the Node http
+          // server; the uWS/engine backends ignore the optional calls.)
+          server?.closeIdleConnections?.();
           await Promise.race([
             new Promise<void>(resolve => {
               httpServer.close(() => {
@@ -2327,7 +2444,14 @@ export class Moro extends EventEmitter {
               });
             }),
             new Promise<void>(resolve => {
-              const timer = setTimeout(resolve, 2000); // 2 second timeout
+              const timer = setTimeout(() => {
+                try {
+                  server?.closeAllConnections?.();
+                } catch {
+                  // best-effort force-close
+                }
+                resolve();
+              }, 2000); // 2 second grace period
               timer.unref(); // Don't keep process alive
             }),
           ]);
@@ -2444,19 +2568,21 @@ export class Moro extends EventEmitter {
 
     const jobOptions: Partial<JobOptions> = {
       name: options.name || name,
-      enabled: options.enabled,
-      priority: options.priority,
-      timezone: options.timezone,
-      maxConcurrent: options.maxConcurrent,
-      timeout: options.timeout,
-      maxRetries: options.maxRetries,
-      retryDelay: options.retryDelay,
-      retryBackoff: options.retryBackoff,
-      enableCircuitBreaker: options.enableCircuitBreaker,
-      metadata: options.metadata,
-      onStart: options.onStart,
-      onComplete: options.onComplete,
-      onError: options.onError,
+      ...(options.enabled !== undefined ? { enabled: options.enabled } : {}),
+      ...(options.priority !== undefined ? { priority: options.priority } : {}),
+      ...(options.timezone !== undefined ? { timezone: options.timezone } : {}),
+      ...(options.maxConcurrent !== undefined ? { maxConcurrent: options.maxConcurrent } : {}),
+      ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+      ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+      ...(options.retryDelay !== undefined ? { retryDelay: options.retryDelay } : {}),
+      ...(options.retryBackoff !== undefined ? { retryBackoff: options.retryBackoff } : {}),
+      ...(options.enableCircuitBreaker !== undefined
+        ? { enableCircuitBreaker: options.enableCircuitBreaker }
+        : {}),
+      ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
+      ...(options.onStart !== undefined ? { onStart: options.onStart } : {}),
+      ...(options.onComplete !== undefined ? { onComplete: options.onComplete } : {}),
+      ...(options.onError !== undefined ? { onError: options.onError } : {}),
     };
 
     const jobId = this.jobScheduler.registerJob(name, jobSchedule, handler, jobOptions);
@@ -2650,7 +2776,7 @@ export class Moro extends EventEmitter {
     // Store config and trigger initialization immediately
     this.graphqlConfig = options;
     this.graphqlInitPromise = this.initializeGraphQL(options);
-    this.eventBus.emit('graphql:configured', { options });
+    void this.eventBus.emit('graphql:configured', { options });
 
     return this;
   }
@@ -3440,7 +3566,7 @@ export class Moro extends EventEmitter {
     // Store config for lazy initialization
     this.mailConfig = config;
     this.logger.debug('Mail system configured (will initialize on first use)', 'Mail');
-    this.eventBus.emit('mail:configured', { config });
+    void this.eventBus.emit('mail:configured', { config });
 
     return this;
   }
@@ -3482,7 +3608,9 @@ export class Moro extends EventEmitter {
 
           await this.processQueue(queueName, async (job: any) => {
             if (this.mailManager) {
-              return await this.mailManager.send(job.data);
+              // deliver() bypasses the queue check; send() would re-enqueue the
+              // job forever and never actually transmit the email.
+              return await this.mailManager.deliver(job.data);
             }
             throw new Error('Mail manager not initialized');
           });
@@ -3533,20 +3661,20 @@ export class Moro extends EventEmitter {
     // Lazy initialize on first use
     await this.ensureMailInitialized();
 
-    this.eventBus.emit('mail:sending', { options });
+    void this.eventBus.emit('mail:sending', { options });
 
     try {
       const result = await this.mailManager.send(options);
 
       if (result.success) {
-        this.eventBus.emit('mail:sent', { result, options });
+        void this.eventBus.emit('mail:sent', { result, options });
       } else {
-        this.eventBus.emit('mail:failed', { error: new Error(result.error), options });
+        void this.eventBus.emit('mail:failed', { error: new Error(result.error), options });
       }
 
       return result;
     } catch (error) {
-      this.eventBus.emit('mail:failed', { error, options });
+      void this.eventBus.emit('mail:failed', { error, options });
       throw error;
     }
   }

@@ -42,11 +42,25 @@ interface StoredJob {
   options: JobOptions;
   attemptsMade: number;
   timestamp: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
+  processedOn?: number | undefined;
+  finishedOn?: number | undefined;
+  failedReason?: string | undefined;
   progress: number;
-  receiptHandle?: string;
+  receiptHandle?: string | undefined;
+}
+
+/**
+ * Per-queue long-polling state.
+ *
+ * SQS long polling (WaitTimeSeconds) already paces requests, so instead of a
+ * fixed-rate setInterval — which would stack ~one 10s request every 100ms — we
+ * run a single self-scheduling loop: poll, then schedule the next poll only once
+ * the previous one settles.
+ */
+interface PollingState {
+  timer: NodeJS.Timeout | null;
+  stopped: boolean;
+  inFlight: Promise<void> | null;
 }
 
 /**
@@ -65,7 +79,7 @@ export class SQSAdapter extends QueueAdapter {
   private connectionConfig: QueueConnectionConfig;
   private processors: Map<string, JobHandler<any, any>> = new Map();
   private jobStore: Map<string, Map<string, StoredJob>> = new Map();
-  private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private pollingState: Map<string, PollingState> = new Map();
   private queueUrls: Map<string, string> = new Map();
 
   constructor(connectionConfig: QueueConnectionConfig = {}) {
@@ -209,6 +223,9 @@ export class SQSAdapter extends QueueAdapter {
 
     for (let i = 0; i < jobs.length; i++) {
       const jobData = jobs[i];
+      if (!jobData) {
+        continue;
+      }
       const jobId = jobData.options?.jobId || randomUUID();
 
       const job: StoredJob = {
@@ -394,12 +411,7 @@ export class SQSAdapter extends QueueAdapter {
    */
   async pauseQueue(queueName: string): Promise<void> {
     this.ensureReady();
-
-    const interval = this.pollingIntervals.get(queueName);
-    if (interval) {
-      clearInterval(interval);
-      this.pollingIntervals.delete(queueName);
-    }
+    await this.stopPolling(queueName);
   }
 
   /**
@@ -491,8 +503,8 @@ export class SQSAdapter extends QueueAdapter {
    */
   async close(): Promise<void> {
     // Stop all polling
-    for (const queueName of this.pollingIntervals.keys()) {
-      await this.pauseQueue(queueName);
+    for (const queueName of Array.from(this.pollingState.keys())) {
+      await this.stopPolling(queueName);
     }
 
     this.jobStore.clear();
@@ -503,14 +515,23 @@ export class SQSAdapter extends QueueAdapter {
   }
 
   /**
-   * Start polling for messages
+   * Start polling for messages.
+   *
+   * Runs a single self-scheduling loop instead of a fixed-rate interval: the next
+   * poll is only scheduled once the current one settles, so long-poll requests can
+   * never stack up. The scheduling timer is unref'd so it doesn't keep the process
+   * alive, and an in-flight promise is tracked so pause/close can await the active
+   * poll before returning.
    */
   private startPolling(queueName: string, maxMessages: number): void {
-    if (this.pollingIntervals.has(queueName)) {
+    if (this.pollingState.has(queueName)) {
       return;
     }
 
-    const poll = async () => {
+    const state: PollingState = { timer: null, stopped: false, inFlight: null };
+    this.pollingState.set(queueName, state);
+
+    const pollOnce = async (): Promise<void> => {
       try {
         const command = new this.ReceiveMessageCommand({
           QueueUrl: this.getQueueUrl(queueName),
@@ -533,12 +554,51 @@ export class SQSAdapter extends QueueAdapter {
       }
     };
 
-    // Start polling loop
-    const interval = setInterval(poll, 100);
-    this.pollingIntervals.set(queueName, interval);
+    const runLoop = (): void => {
+      if (state.stopped) {
+        return;
+      }
 
-    // Initial poll
-    poll();
+      const current = pollOnce();
+      state.inFlight = current;
+
+      void current.then(() => {
+        state.inFlight = null;
+        if (state.stopped) {
+          return;
+        }
+        // Long polling already paces us; schedule the next iteration immediately.
+        const timer = setTimeout(runLoop, 0);
+        timer.unref();
+        state.timer = timer;
+      });
+    };
+
+    runLoop();
+  }
+
+  /**
+   * Stop the polling loop for a queue and wait for any in-flight poll to settle.
+   */
+  private async stopPolling(queueName: string): Promise<void> {
+    const state = this.pollingState.get(queueName);
+    if (!state) {
+      return;
+    }
+
+    state.stopped = true;
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+
+    // Await the active poll so callers don't race with in-flight message processing.
+    const inFlight = state.inFlight;
+    if (inFlight) {
+      await inFlight.catch(() => {});
+    }
+
+    this.pollingState.delete(queueName);
   }
 
   /**
@@ -552,19 +612,28 @@ export class SQSAdapter extends QueueAdapter {
 
     try {
       const body = JSON.parse(message.Body);
-      const { jobId, data, options } = body;
+      const { jobId, data, options, timestamp } = body;
 
-      const storedJob = this.jobStore.get(queueName)?.get(jobId);
+      // The SQS message body is the source of truth for the job. In the normal
+      // topology producers and consumers are separate processes (or the
+      // consumer restarted after enqueue), so this consumer's in-memory
+      // jobStore will not contain the job. Reconstruct and cache a local record
+      // from the body instead of deleting the message unprocessed — dropping it
+      // here silently loses the job and never runs the handler.
+      let storedJob = this.jobStore.get(queueName)?.get(jobId);
       if (!storedJob) {
-        // Delete unknown message
+        storedJob = {
+          id: jobId,
+          name: queueName,
+          data,
+          options: options || {},
+          attemptsMade: 0,
+          timestamp: timestamp || Date.now(),
+          progress: 0,
+        };
+        this.ensureJobStore(queueName);
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        await this.client!.send(
-          new this.DeleteMessageCommand({
-            QueueUrl: this.getQueueUrl(queueName),
-            ReceiptHandle: message.ReceiptHandle,
-          })
-        );
-        return;
+        this.jobStore.get(queueName)!.set(jobId, storedJob);
       }
 
       storedJob.receiptHandle = message.ReceiptHandle;

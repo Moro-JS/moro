@@ -10,7 +10,9 @@ export class FileCacheAdapter implements CacheAdapter {
 
   constructor(options: { cacheDir?: string } = {}) {
     this.cacheDir = options.cacheDir || './cache';
-    this.ensureCacheDir();
+    void this.ensureCacheDir().catch(() => {
+      // best-effort cache directory creation; write paths re-check/create
+    });
   }
 
   private async ensureCacheDir(): Promise<void> {

@@ -252,9 +252,10 @@ export class SessionCore {
     // Set session cookie
     res.cookie(this.options.name || 'connect.sid', id, {
       ...this.options.cookie,
-      secure:
+      secure: !!(
         this.options.cookie?.secure ||
-        (this.options.proxy && req.headers['x-forwarded-proto'] === 'https'),
+        (this.options.proxy && req.headers['x-forwarded-proto'] === 'https')
+      ),
     });
 
     return session;
@@ -294,9 +295,10 @@ export class SessionCore {
     if (isNew || this.options.rolling) {
       res.cookie(this.options.name || 'connect.sid', id, {
         ...this.options.cookie,
-        secure:
+        secure: !!(
           this.options.cookie?.secure ||
-          (this.options.proxy && req.headers['x-forwarded-proto'] === 'https'),
+          (this.options.proxy && req.headers['x-forwarded-proto'] === 'https')
+        ),
       });
     }
 

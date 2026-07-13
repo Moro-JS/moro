@@ -117,10 +117,10 @@ export interface Job<T = any> {
   progress: number;
   attemptsMade: number;
   timestamp: number;
-  processedOn?: number;
-  finishedOn?: number;
-  failedReason?: string;
-  stacktrace?: string[];
+  processedOn?: number | undefined;
+  finishedOn?: number | undefined;
+  failedReason?: string | undefined;
+  stacktrace?: string[] | undefined;
   returnvalue?: any;
   opts: JobOptions;
 }
@@ -181,11 +181,11 @@ export type QueueEventType =
  */
 export interface QueueEvent {
   queueName: string;
-  jobId?: string;
-  job?: Job;
+  jobId?: string | undefined;
+  job?: Job | undefined;
   result?: any;
-  error?: Error;
-  progress?: number;
+  error?: Error | undefined;
+  progress?: number | undefined;
   timestamp: number;
 }
 

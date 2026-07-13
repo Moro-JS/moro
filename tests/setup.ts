@@ -1,7 +1,7 @@
 /* eslint-disable */
 // Test Setup - Global configuration and utilities for MoroJS tests
 import { jest, beforeEach, afterEach, afterAll } from '@jest/globals';
-import { destroyGlobalLogger, logger } from '../src/core/logger';
+import { destroyGlobalLogger, logger } from '../src/core/logger/index.js';
 import { UnifiedRouter } from '../src/core/routing/unified-router.js';
 import { ObjectPoolManager } from '../src/core/pooling/object-pool-manager.js';
 
@@ -39,8 +39,15 @@ declare global {
   var testPort: number;
 }
 
-// Generate a unique port for each test suite to avoid conflicts
-globalThis.testPort = 3000 + Math.floor(Math.random() * 1000);
+// Monotonic port allocator, namespaced per Jest worker so it's collision-free
+// both WITHIN a worker (monotonic) and ACROSS parallel workers (each worker gets
+// its own 1000-port band via JEST_WORKER_ID). This is what lets the suite run
+// with maxWorkers > 1 without random-port clashes. (New tests can still prefer
+// app.listen(0) + reading the bound port.)
+const __workerId = parseInt(process.env.JEST_WORKER_ID || '1', 10);
+let __nextTestPort = 3000 + __workerId * 1000;
+const allocTestPort = () => __nextTestPort++;
+globalThis.testPort = allocTestPort();
 
 // Mock console methods for cleaner test output (optional)
 const originalConsoleLog = console.log;
@@ -85,7 +92,7 @@ afterAll(async () => {
 });
 
 // Global test helpers
-export const createTestPort = () => 3000 + Math.floor(Math.random() * 1000);
+export const createTestPort = () => allocTestPort();
 
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -101,7 +108,10 @@ export const closeApp = async (app: any): Promise<void> => {
         new Promise<void>(resolve => {
           app.core.httpServer.close(() => resolve());
         }),
-        new Promise<void>(resolve => setTimeout(resolve, 1000)), // 1 second timeout
+        new Promise<void>(resolve => {
+          const t = setTimeout(resolve, 1000); // 1 second timeout
+          t.unref?.(); // don't keep the event loop / Jest alive
+        }),
       ]);
     }
 

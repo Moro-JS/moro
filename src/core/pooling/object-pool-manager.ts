@@ -11,7 +11,7 @@ const logger = createFrameworkLogger('ObjectPoolManager');
 class ObjectPool<T> {
   private pool: T[] = [];
   private readonly factory: () => T;
-  private readonly reset?: (obj: T) => void;
+  private readonly reset?: ((obj: T) => void) | undefined;
   private readonly maxSize: number;
   private acquireCount = 0;
   private releaseCount = 0;
@@ -233,6 +233,7 @@ export class ObjectPoolManager {
     const bufferSizesLen = this.bufferSizes.length;
     for (let i = 0; i < bufferSizesLen; i++) {
       const size = this.bufferSizes[i];
+      if (size === undefined) continue;
       this.bufferPools.set(
         size,
         new ObjectPool<Buffer>(() => Buffer.allocUnsafe(size), this.getOptimalPoolSize(size))
@@ -290,6 +291,7 @@ export class ObjectPoolManager {
     const bufferSizesLen = this.bufferSizes.length;
     for (let i = 0; i < bufferSizesLen; i++) {
       const size = this.bufferSizes[i];
+      if (size === undefined) continue;
       const pool = this.bufferPools.get(size);
       if (pool) {
         const warmCount = bufferSizes[size] ?? Math.min(25, pool.stats.maxSize);
@@ -532,6 +534,7 @@ export class ObjectPoolManager {
     const bufferSizesLen = this.bufferSizes.length;
     for (let i = 0; i < bufferSizesLen; i++) {
       const size = this.bufferSizes[i];
+      if (size === undefined) continue;
       const poolKey = `buffer_${size}`;
       const history = this.poolUsageHistory.get(poolKey) || [];
       if (history.length >= 10) {

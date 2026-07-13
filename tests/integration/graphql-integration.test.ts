@@ -1,8 +1,7 @@
-/* eslint-disable */
 // GraphQL Integration Test with Moro
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createApp } from '../../src/moro';
-import type { Moro } from '../../src/moro';
+import { createApp } from '../../src/moro.js';
+import type { Moro } from '../../src/moro.js';
 
 describe('GraphQL Integration with Moro', () => {
   let app: Moro;
@@ -98,7 +97,7 @@ describe('GraphQL Integration with Moro', () => {
           },
         },
       },
-      context: (req, res) => ({
+      context: (req: any, res: any) => ({
         request: req,
         response: res,
         userId: 'test-user-123',

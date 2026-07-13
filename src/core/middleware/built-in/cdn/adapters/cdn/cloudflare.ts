@@ -15,7 +15,7 @@ export class CloudflareCDNAdapter implements CDNAdapter {
   private apiToken: string;
   private zoneId: string;
   private cacheControlMaxAge: number;
-  private email?: string;
+  private email?: string | undefined;
 
   constructor(options: {
     apiToken: string;

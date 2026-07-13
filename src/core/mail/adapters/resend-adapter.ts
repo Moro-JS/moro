@@ -20,7 +20,7 @@ export class ResendAdapter extends BaseMailAdapter {
     this.logger = createFrameworkLogger('Mail:Resend');
   }
 
-  async initialize(config: ResendConnection): Promise<void> {
+  override async initialize(config: ResendConnection): Promise<void> {
     if (!config.apiKey) {
       throw new Error('Resend API key is required');
     }
@@ -139,7 +139,7 @@ export class ResendAdapter extends BaseMailAdapter {
     }
   }
 
-  async sendBulk(options: MailOptions[]): Promise<MailResult[]> {
+  override async sendBulk(options: MailOptions[]): Promise<MailResult[]> {
     this.ensureInitialized();
 
     if (!this.client) {
@@ -176,7 +176,7 @@ export class ResendAdapter extends BaseMailAdapter {
     return 'Resend';
   }
 
-  async verify(): Promise<boolean> {
+  override async verify(): Promise<boolean> {
     return this.initialized;
   }
 

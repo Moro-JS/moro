@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Unit Tests - getApp() singleton accessor
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { createApp, getApp } from '../../../src/index.js';

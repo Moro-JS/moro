@@ -257,7 +257,7 @@ export function loadNativeEngine(options?: {
         result = {
           module,
           source: candidate,
-          version,
+          ...(version !== undefined ? { version } : {}),
           capabilities: moroStyle ? getEngineCapabilities(module) : NO_CAPABILITIES,
         };
         break;

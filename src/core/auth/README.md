@@ -1,6 +1,8 @@
-# @auth/morojs - Auth.js Adapter for MoroJS
+# @auth/morojs - Native Auth Adapter for MoroJS
 
-A native Auth.js adapter for the [MoroJS](https://github.com/MoroJS/moro) framework, providing seamless authentication integration without external dependencies.
+> **Note:** MoroJS's authentication is now powered by [Better Auth](https://better-auth.com/) — see the [Authentication Guide](../../../docs/AUTH_GUIDE.md). This document describes the native, Auth.js-compatible `@auth/morojs` adapter, which is retained for Auth.js compatibility and for contribution to the Auth.js project. References to "Auth.js" below refer to that ecosystem specifically, not to MoroJS's default auth stack.
+
+A native, Auth.js-compatible adapter for the [MoroJS](https://github.com/MoroJS/moro) framework, providing seamless authentication integration without external dependencies.
 
 ## Overview
 

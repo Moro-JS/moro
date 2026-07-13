@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Simple Integration Tests - Basic MoroJS HTTP functionality
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';
@@ -16,7 +15,7 @@ describe('MoroJS Basic Integration', () => {
 
   afterEach(async () => {
     // Close app properly with logger cleanup
-    const { closeApp } = await import('../setup');
+    const { closeApp } = await import('../setup.js');
     await closeApp(app);
 
     // Close Socket.IO if it exists

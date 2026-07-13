@@ -15,7 +15,7 @@ export interface JobMetrics {
   endTime?: number;
   duration?: number;
   success: boolean;
-  error?: string;
+  error?: string | undefined;
   attemptsMade: number;
   memoryUsage?: NodeJS.MemoryUsage;
 }

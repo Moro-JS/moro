@@ -10,6 +10,7 @@ import {
   WebSocketEmitter,
   WebSocketMiddleware,
 } from '../websocket-adapter.js';
+import { createFrameworkLogger } from '../../logger/index.js';
 
 /**
  * Socket.IO adapter implementation
@@ -17,6 +18,7 @@ import {
 export class SocketIOAdapter implements WebSocketAdapter {
   private io: any; // Socket.IO server instance
   private customIdGenerator?: () => string;
+  private ioLogger = createFrameworkLogger('SOCKETIO_ADAPTER');
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
@@ -24,8 +26,20 @@ export class SocketIOAdapter implements WebSocketAdapter {
       const socketIOPath = resolveUserPackage('socket.io');
       const { Server } = await import(socketIOPath);
 
+      // Never default to a wildcard origin. `{ origin: '*' }` disables
+      // Socket.IO's same-origin protection for every deployment that doesn't
+      // set CORS, exposing cookie-authenticated apps to cross-site hijacking.
+      // When unset, keep Socket.IO's safe same-origin default and warn.
+      const corsConfig = options.cors;
+      if (!corsConfig) {
+        this.ioLogger.warn(
+          '[MoroJS Security] WebSocket CORS origin not configured; defaulting to same-origin. ' +
+            'Set websocket.options.cors.origin to allow specific cross-origin clients.'
+        );
+      }
+
       this.io = new Server(httpServer, {
-        cors: options.cors || { origin: '*' },
+        ...(corsConfig ? { cors: corsConfig } : {}),
         path: options.path || '/socket.io/',
         compression: options.compression !== false,
         maxHttpBufferSize: options.maxPayloadLength,

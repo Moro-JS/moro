@@ -109,7 +109,7 @@ export class MoroHttp2Server {
       this.maxUploadSize = options.maxUploadSize;
     }
     if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
-    this._limits = options.limits;
+    if (options.limits) this._limits = options.limits;
 
     const serverOptions: any = {
       allowHTTP1: options.allowHTTP1 !== false,
@@ -162,8 +162,16 @@ export class MoroHttp2Server {
       (this.server as any).maxConnections = options.limits.maxConnections;
     }
 
-    // Handle streams (HTTP/2 requests)
-    this.server.on('stream', this.handleStream.bind(this));
+    // Handle streams (HTTP/2 requests). Wrap so the async handler's promise is
+    // always caught - a rejection escaping here becomes an unhandled rejection
+    // that can crash the process.
+    this.server.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
+      void this.handleStream(stream, headers).catch(error => {
+        this.logger.error('Unhandled HTTP/2 stream error', 'StreamError', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    });
 
     // Handle session events
     this.server.on('session', session => {
@@ -356,7 +364,11 @@ export class MoroHttp2Server {
         httpReq.params = this.poolManager.acquireParams();
         const paramNames = route.paramNames;
         for (let i = 0; i < paramNames.length; i++) {
-          httpReq.params[paramNames[i]] = matches[i + 1];
+          const paramName = paramNames[i];
+          const value = matches[i + 1];
+          if (paramName !== undefined && value !== undefined) {
+            httpReq.params[paramName] = value;
+          }
         }
       }
 
@@ -449,7 +461,15 @@ export class MoroHttp2Server {
           const name = cookie.substring(0, equalIndex).trim();
           const value = cookie.substring(equalIndex + 1);
           if (name && value) {
-            cookies[name] = decodeURIComponent(value);
+            try {
+              cookies[name] = decodeURIComponent(value);
+            } catch {
+              // Malformed percent-encoding: keep the raw value rather than
+              // throwing a URIError. createRequestFromStream runs before
+              // handleStream's try block, so an escape here would surface as
+              // an unhandled rejection and crash the process.
+              cookies[name] = value;
+            }
           }
         }
       }

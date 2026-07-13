@@ -1,29 +1,39 @@
 # MoroJS Performance Optimization Guide
 
-## Current Performance: 128,844 req/sec
+This guide collects host-, runtime-, and OS-level tuning tips for squeezing
+more throughput out of a MoroJS server, plus advice on running load tests
+that actually reflect production behaviour.
 
-Your current benchmark results are excellent! Here are ways to squeeze out more performance:
+> **Numbers:** For official, methodology-backed throughput figures and
+> framework comparisons, see the
+> **[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)** — don't
+> rely on ad-hoc numbers from a single machine. The headline reference figures
+> are summarised in [Expected Results](#expected-results) below.
 
-## 🚀 Server-Side Optimizations
+## Server-Side Optimizations
 
-### 1. Ultra-Optimized Benchmark Server
+### 1. Run in production mode
+
+Always benchmark and deploy with production settings so development-only
+logging and checks are disabled. Replace `your-server.js` with your own server
+entry point:
 
 ```bash
-NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
+NODE_ENV=production LOG_LEVEL=error node your-server.js
 ```
 
 ### 2. Node.js Runtime Optimizations
 
 ```bash
 # Increase max old space size
-NODE_OPTIONS="--max-old-space-size=8192" NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
+NODE_OPTIONS="--max-old-space-size=8192" NODE_ENV=production LOG_LEVEL=error node your-server.js
 
-# Enable V8 optimizations
-NODE_OPTIONS="--max-old-space-size=8192 --optimize-for-size" NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
-
-# Aggressive V8 optimizations
-NODE_OPTIONS="--max-old-space-size=8192 --optimize-for-size --gc-interval=100" NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
+# Enable additional V8 tuning
+NODE_OPTIONS="--max-old-space-size=8192 --optimize-for-size" NODE_ENV=production LOG_LEVEL=error node your-server.js
 ```
+
+Measure before and after — the right flags depend on your workload and
+hardware, so treat these as starting points rather than guaranteed wins.
 
 ### 3. System-Level Optimizations
 
@@ -34,100 +44,56 @@ ulimit -n 65536
 # Disable CPU frequency scaling (Linux)
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 
-# Set CPU affinity (if needed)
-taskset -c 0-23 node benchmark-server.js
+# Pin the process to specific cores (if needed)
+taskset -c 0-23 node your-server.js
 ```
 
-## 🔧 Benchmark Optimizations
+## Load-Testing the Server
 
-### 1. More Aggressive Autocannon Settings
+### 1. Autocannon settings
 
 ```bash
-# Current: 100 connections, 10 pipelining
-autocannon -c 100 -d 40 -p 10 http://127.0.0.1:3111/
+# Baseline: 100 connections, 10 pipelining
+autocannon -c 100 -d 40 -p 10 http://127.0.0.1:3000/
 
-# Try: 200 connections, 20 pipelining
-autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3111/
-
-# Try: 500 connections, 50 pipelining
-autocannon -c 500 -d 40 -p 50 http://127.0.0.1:3111/
-
-# Try: 1000 connections, 100 pipelining
-autocannon -c 1000 -d 40 -p 100 http://127.0.0.1:3111/
+# Push harder: more connections and pipelining
+autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3000/
+autocannon -c 500 -d 40 -p 50 http://127.0.0.1:3000/
 ```
 
-### 2. Multiple Autocannon Instances
+Pipelining (`-p`) inflates request counts dramatically and does **not** model
+typical real-world traffic. Report pipelined and non-pipelined results
+separately so the numbers are comparable to the benchmark repo.
+
+### 2. Alternative benchmark tools
 
 ```bash
-# Run multiple autocannon instances in parallel
-autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3111/ &
-autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3111/ &
-autocannon -c 200 -d 40 -p 20 http://127.0.0.1:3111/ &
-wait
-```
-
-### 3. Alternative Benchmark Tools
-
-```bash
-# Install wrk (C-based, faster than autocannon)
+# wrk (C-based, higher ceiling than autocannon)
 brew install wrk
+wrk -t24 -c1000 -d40s http://127.0.0.1:3000/
 
-# Use wrk for higher throughput
-wrk -t24 -c1000 -d40s http://127.0.0.1:3111/
-
-# Install hey (Go-based)
+# hey (Go-based)
 go install github.com/rakyll/hey@latest
-hey -n 1000000 -c 1000 http://127.0.0.1:3111/
+hey -n 1000000 -c 1000 http://127.0.0.1:3000/
 ```
 
-## 🎯 Expected Performance Improvements
+### 3. Measure clustering from a separate machine
 
-### Current: 128,844 req/sec
+When you run the load generator on the same box as the server, the two compete
+for CPU cores and the clustered numbers are understated. Drive load from a
+separate machine to see the real per-core scaling.
 
-### Potential with optimizations:
+## Expected Results
 
-- **Node.js optimizations**: +10-20% (140k-155k req/sec)
-- **More aggressive autocannon**: +20-30% (155k-170k req/sec)
-- **wrk instead of autocannon**: +30-50% (170k-190k req/sec)
-- **System optimizations**: +10-15% (190k-220k req/sec)
+Reference figures measured on an Apple M2 Ultra (single thread, `wrk`, no
+pipelining unless noted) — they scale with your hardware:
 
-## 🔍 Bottleneck Analysis
-
-### Current Bottlenecks (in order):
-
-1. **Network I/O** - HTTP parsing/serialization
-2. **Autocannon limitations** - JavaScript-based tool
-3. **Node.js event loop** - Single-threaded per worker
-4. **Memory allocation** - JSON.stringify overhead
-
-### Solutions:
-
-1. **Pre-computed responses** ✅ (implemented in benchmark-server.js)
-2. **Use wrk/hey** - C/Go-based tools
-3. **Worker optimization** - Find optimal worker count
-4. **Memory pools** - Reuse response buffers
-
-## 🧪 Testing Commands
-
-```bash
-# 1. Test worker optimization
-node worker-optimization-test.js
-
-# 2. Test ultra-optimized server
-NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
-
-# 3. Test with Node.js optimizations
-NODE_OPTIONS="--max-old-space-size=8192" NODE_ENV=production LOG_LEVEL=error node benchmark-server.js
-
-# 4. Test with wrk (if installed)
-wrk -t24 -c1000 -d40s http://127.0.0.1:3111/
-```
-
-## 📊 Expected Results
-
-With all optimizations, you should see:
-
-- **~102k req/sec on a single thread** with the default native engine (`wrk`, no pipelining, Apple M2 Ultra — scales with your hardware)
+- **~102k req/sec on a single thread** with the default native engine
+  (`wrk`, no pipelining)
 - **~572k req/sec** in pipelined ×10 microbenchmarks (TechEmpower-style)
-- **Clustering multiplies throughput across CPU cores** — measure it from a separate load machine; on a single box the load generator competes with the workers for cores and understates it
+- **Clustering multiplies throughput across CPU cores** — measure it from a
+  separate load machine, as noted above
 - **Lower latency** under high load
+
+See the [MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark) for the
+full methodology, saved result files, and up-to-date comparisons.

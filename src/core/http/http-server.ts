@@ -70,6 +70,7 @@ function parseCookieHeader(cookieHeader: string): Record<string, string> {
   const cookiePartsLen = cookieParts.length;
   for (let i = 0; i < cookiePartsLen; i++) {
     const cookie = cookieParts[i];
+    if (cookie === undefined) continue;
     const equalIndex = cookie.indexOf('=');
     if (equalIndex > 0) {
       const name = cookie.substring(0, equalIndex).trim();
@@ -213,7 +214,7 @@ export class MoroIncomingMessage extends IncomingMessage {
     if (v === undefined) {
       const forwardedProto = this.headers['x-forwarded-proto'] as string | undefined;
       v = forwardedProto
-        ? forwardedProto.split(',')[0].trim()
+        ? (forwardedProto.split(',')[0] ?? '').trim()
         : (this.socket as any)?.encrypted
           ? 'https'
           : 'http';
@@ -299,7 +300,7 @@ export class MoroIncomingMessage extends IncomingMessage {
   is(type: string): boolean {
     const ct = (this.headers['content-type'] || '') as string;
     if (!ct) return false;
-    const mime = ct.split(';')[0].trim().toLowerCase();
+    const mime = (ct.split(';')[0] ?? '').trim().toLowerCase();
     const t = type.toLowerCase();
     if (t.indexOf('/') === -1) {
       // e.g. 'json' → match */json or +json suffix
@@ -316,7 +317,7 @@ export class MoroIncomingMessage extends IncomingMessage {
     if (!types) return accept;
     const wanted = Array.isArray(types) ? types : [types];
     if (accept === '*/*' || accept === '') return wanted[0] || false;
-    const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+    const acceptTypes = accept.split(',').map(s => (s.split(';')[0] ?? '').trim().toLowerCase());
     for (const w of wanted) {
       const wl = w.toLowerCase();
       const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
@@ -339,7 +340,7 @@ export class MoroIncomingMessage extends IncomingMessage {
       .split(',')
       .map(s => {
         const parts = s.trim().split(';');
-        const tag = parts[0].toLowerCase();
+        const tag = (parts[0] ?? '').toLowerCase();
         const qPart = parts.find(p => p.trim().startsWith('q='));
         const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
         return { tag, q: isNaN(q) ? 0 : q };
@@ -730,7 +731,7 @@ export class MoroServerResponse extends ServerResponse {
   }
 
   // Header management utilities
-  hasHeader(name: string): boolean {
+  override hasHeader(name: string): boolean {
     return this.getHeader(name) !== undefined;
   }
 
@@ -748,12 +749,13 @@ export class MoroServerResponse extends ServerResponse {
     }
 
     for (const key in headers) {
-      this.setHeader(key, headers[key]);
+      const value = headers[key];
+      if (value !== undefined) this.setHeader(key, value);
     }
     return this;
   }
 
-  appendHeader(name: string, value: string | string[]): this {
+  override appendHeader(name: string, value: string | string[]): this {
     if (this.headersSent) {
       this._server?.logger.warn(
         `Cannot append to header '${name}' - headers already sent`,
@@ -852,11 +854,16 @@ export class MoroServerResponse extends ServerResponse {
       // Set Content-Type from extension if not already set
       if (!this.getHeader('Content-Type')) {
         // fire-and-forget mime lookup; not awaited to keep signature chainable
-        this._server.getMimeType(filename.substring(filename.lastIndexOf('.'))).then(mime => {
-          if (!this.getHeader('Content-Type') && !this.headersSent) {
-            this.setHeader('Content-Type', mime);
-          }
-        });
+        void this._server
+          .getMimeType(filename.substring(filename.lastIndexOf('.')))
+          .then(mime => {
+            if (!this.getHeader('Content-Type') && !this.headersSent) {
+              this.setHeader('Content-Type', mime);
+            }
+          })
+          .catch(() => {
+            // best-effort content-type inference
+          });
       }
     } else {
       this.setHeader('Content-Disposition', 'attachment');
@@ -1043,7 +1050,7 @@ export class MoroHttpServer {
       this.server.maxConnections = limits.maxConnections;
     }
     if (limits?.maxHeaders) this.server.maxHeadersCount = limits.maxHeaders;
-    this.listenBacklog = limits?.backlog;
+    if (limits?.backlog !== undefined) this.listenBacklog = limits.backlog;
   }
 
   // Direct router dispatch - called after global middleware, before the legacy
@@ -1376,7 +1383,11 @@ export class MoroHttpServer {
       const paramNames = route.paramNames;
       const paramNamesLen = paramNames.length;
       for (let i = 0; i < paramNamesLen; i++) {
-        params[paramNames[i]] = matches[i + 1];
+        const paramName = paramNames[i];
+        const value = matches[i + 1];
+        if (paramName !== undefined && value !== undefined) {
+          params[paramName] = value;
+        }
       }
       httpReq.params = params;
     }
@@ -1645,13 +1656,12 @@ export class MoroHttpServer {
       return Promise.reject(error);
     }
 
-    // For very large payloads, return a streaming interface instead of buffering
-    if (contentLength > maxSize / 2) {
-      // Stream for payloads > 50MB (uploads) or > 5MB (JSON/form)
-      return this.createStreamingBodyParser(req, contentType, maxSize);
-    }
-
-    // Standard buffered parsing for smaller payloads
+    // Buffer every body up to maxSize and parse it into its real shape. The
+    // incremental limit check below already bounds memory, and every other
+    // backend (uWS, engine) returns the parsed body here - previously bodies
+    // between maxSize/2 and maxSize resolved to a { type, parser } descriptor
+    // object instead, so handlers/validation on the Node backend silently saw
+    // a bogus shape for the exact same request that parsed normally elsewhere.
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       let totalLength = 0;
@@ -1675,7 +1685,11 @@ export class MoroHttpServer {
         try {
           // Single-chunk fast path (most JSON bodies arrive in one chunk);
           // otherwise concat with the known total length to avoid a re-scan
-          const body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, totalLength);
+          const firstChunk = chunks[0];
+          const body =
+            chunks.length === 1 && firstChunk !== undefined
+              ? firstChunk
+              : Buffer.concat(chunks, totalLength);
 
           if (contentType.includes('application/json')) {
             // Empty JSON body -> null (parity with the engine/uWS servers, and
@@ -1695,146 +1709,6 @@ export class MoroHttpServer {
           if (error instanceof Error && (error as any).statusCode === undefined) {
             (error as any).statusCode = 400;
           }
-          reject(error);
-        }
-      });
-
-      req.on('error', reject);
-    });
-  }
-
-  /**
-   * Create a streaming body parser for large payloads
-   * Returns a streaming interface instead of buffering
-   */
-  private createStreamingBodyParser(
-    req: IncomingMessage,
-    contentType: string,
-    maxSize: number
-  ): any {
-    let totalLength = 0;
-    const chunks: Buffer[] = [];
-
-    return new Promise((resolve, reject) => {
-      const streamParser = {
-        // Streaming JSON parser for large JSON payloads
-        json: () => this.streamJsonParse(req, maxSize),
-
-        // Streaming form data parser
-        form: () => this.streamFormParse(req, maxSize),
-
-        // Raw stream access
-        stream: () => ({
-          onData: (callback: (chunk: Buffer) => void) => {
-            req.on('data', (chunk: Buffer) => {
-              totalLength += chunk.length;
-              if (totalLength > maxSize) {
-                reject(new Error('Request body too large'));
-                return;
-              }
-              callback(chunk);
-            });
-          },
-          onEnd: (callback: () => void) => {
-            req.on('end', callback);
-          },
-          onError: (callback: (error: Error) => void) => {
-            req.on('error', callback);
-          },
-        }),
-
-        // Traditional buffered parsing (fallback)
-        buffer: async () => {
-          return new Promise((resolveBuffer, rejectBuffer) => {
-            req.on('data', (chunk: Buffer) => {
-              totalLength += chunk.length;
-              if (totalLength > maxSize) {
-                rejectBuffer(new Error('Request body too large'));
-                return;
-              }
-              chunks.push(chunk);
-            });
-
-            req.on('end', () => {
-              try {
-                const body = Buffer.concat(chunks);
-                if (contentType.includes('application/json')) {
-                  resolveBuffer(JSON.parse(body.toString()));
-                } else {
-                  resolveBuffer(body.toString());
-                }
-              } catch (error) {
-                rejectBuffer(error);
-              }
-            });
-
-            req.on('error', rejectBuffer);
-          });
-        },
-      };
-
-      // Auto-detect and return appropriate parser
-      if (contentType.includes('application/json')) {
-        resolve({ type: 'json', parser: streamParser.json });
-      } else if (contentType.includes('application/x-www-form-urlencoded')) {
-        resolve({ type: 'form', parser: streamParser.form });
-      } else {
-        resolve({ type: 'stream', parser: streamParser.stream });
-      }
-    });
-  }
-
-  /**
-   * Streaming JSON parser for large payloads
-   */
-  private async streamJsonParse(req: IncomingMessage, maxSize: number): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let jsonString = '';
-      let totalLength = 0;
-
-      req.on('data', (chunk: Buffer) => {
-        totalLength += chunk.length;
-        if (totalLength > maxSize) {
-          reject(new Error('Request body too large'));
-          return;
-        }
-        jsonString += chunk.toString();
-      });
-
-      req.on('end', () => {
-        try {
-          // For very large JSON, consider streaming JSON parsing in the future
-          resolve(JSON.parse(jsonString));
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      req.on('error', reject);
-    });
-  }
-
-  /**
-   * Streaming form data parser
-   */
-  private async streamFormParse(req: IncomingMessage, maxSize: number): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let formData = '';
-      let totalLength = 0;
-
-      req.on('data', (chunk: Buffer) => {
-        totalLength += chunk.length;
-        if (totalLength > maxSize) {
-          reject(new Error('Request body too large'));
-          return;
-        }
-        formData += chunk.toString();
-      });
-
-      req.on('end', () => {
-        try {
-          resolve(this.parseUrlEncoded(formData));
-        } catch (error) {
           reject(error);
         }
       });
@@ -1926,6 +1800,7 @@ export class MoroHttpServer {
       // Only test routes with matching method and segment count
       for (let i = 0; i < candidateLen; i++) {
         const candidateRoute = candidateRoutes[i];
+        if (candidateRoute === undefined) continue;
         if (candidateRoute.method === method && candidateRoute.pattern.test(normalizedPath)) {
           route = candidateRoute;
           break;

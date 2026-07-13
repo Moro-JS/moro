@@ -160,7 +160,7 @@ function convertZodType(def: any, options: ConversionOptions): OpenAPISchema {
       return {
         type: 'string',
         format: 'date-time',
-        description: options.includeDescriptions ? 'ISO 8601 date-time string' : undefined,
+        ...(options.includeDescriptions ? { description: 'ISO 8601 date-time string' } : {}),
       };
 
     case 'ZodUUID':
@@ -168,7 +168,7 @@ function convertZodType(def: any, options: ConversionOptions): OpenAPISchema {
         type: 'string',
         format: 'uuid',
         pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-        description: options.includeDescriptions ? 'UUID string' : undefined,
+        ...(options.includeDescriptions ? { description: 'UUID string' } : {}),
       };
 
     default:

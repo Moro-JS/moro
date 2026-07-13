@@ -378,23 +378,23 @@ export interface SecurityConfig {
 
 export interface ExternalServicesConfig {
   stripe?: {
-    secretKey?: string;
-    publishableKey?: string;
-    webhookSecret?: string;
+    secretKey?: string | undefined;
+    publishableKey?: string | undefined;
+    webhookSecret?: string | undefined;
     apiVersion: string;
   };
   paypal?: {
-    clientId?: string;
-    clientSecret?: string;
-    webhookId?: string;
+    clientId?: string | undefined;
+    clientSecret?: string | undefined;
+    webhookId?: string | undefined;
     environment: 'sandbox' | 'production';
   };
   smtp?: {
-    host?: string;
+    host?: string | undefined;
     port: number;
     secure: boolean;
-    username?: string;
-    password?: string;
+    username?: string | undefined;
+    password?: string | undefined;
   };
 }
 
@@ -415,7 +415,7 @@ export interface PerformanceConfig {
   clustering: {
     enabled: boolean;
     workers: number | 'auto';
-    memoryPerWorkerGB?: number;
+    memoryPerWorkerGB?: number | undefined;
   };
 }
 

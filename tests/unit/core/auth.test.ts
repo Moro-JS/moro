@@ -1,7 +1,6 @@
-/* eslint-disable */
 // Auth Middleware Unit Tests
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { auth, providers } from '../../../src/core/middleware/built-in/auth.js';
+import { auth, providers } from '../../../src/core/middleware/built-in/auth/index.js';
 import { AuthProvider, AuthOptions } from '../../../src/types/auth.js';
 
 // Mock logger
@@ -199,7 +198,7 @@ describe('Auth Middleware', () => {
       // Mock the install function to capture the configuration
       let capturedConfig: any;
       const originalInstall = authMiddleware.install;
-      authMiddleware.install = async (hooks, options) => {
+      authMiddleware.install = async (hooks: any, options: any) => {
         // Extract config from the middleware options
         capturedConfig = {
           basePath: '/custom/auth',

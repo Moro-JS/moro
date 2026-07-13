@@ -74,8 +74,8 @@ export class CSRFCore {
       // Set token in cookie
       res.cookie(this.cookieName, token, {
         httpOnly: true,
-        sameSite: this.sameSite ? 'strict' : undefined,
         secure: req.headers['x-forwarded-proto'] === 'https' || (req.socket as any).encrypted,
+        ...(this.sameSite ? { sameSite: 'strict' as const } : {}),
       });
     }
 

@@ -22,7 +22,7 @@ export class MailManager {
   private adapter?: MailAdapter;
   private templateEngine?: TemplateEngineManager;
   private logger: Logger;
-  private defaultFrom?: string | EmailAddress;
+  private defaultFrom?: string | EmailAddress | undefined;
   private queueManager?: any;
 
   constructor(config: MailConfig = {}) {
@@ -114,9 +114,10 @@ export class MailManager {
       throw new Error('Email "from" address not specified');
     }
 
+    const resolvedFrom = options.from || this.defaultFrom;
     const mailOptions: MailOptions = {
       ...options,
-      from: options.from || this.defaultFrom,
+      ...(resolvedFrom ? { from: resolvedFrom } : {}),
     };
 
     if (!mailOptions.from) {
@@ -147,6 +148,19 @@ export class MailManager {
     }
 
     return this.sendDirect(mailOptions);
+  }
+
+  /**
+   * Deliver an email immediately through the adapter, bypassing the queue.
+   *
+   * The mail queue processor MUST call this instead of send(): send() re-checks
+   * queue.enabled and re-enqueues, so routing a dequeued job back through it
+   * loops forever and no mail is ever delivered. Options pulled off the queue
+   * are already from-defaulted and template-rendered, so no re-processing is
+   * needed here.
+   */
+  async deliver(options: MailOptions): Promise<MailResult> {
+    return this.sendDirect(options);
   }
 
   /**
@@ -239,10 +253,13 @@ export class MailManager {
       throw new Error('Mail adapter not initialized');
     }
 
-    const mailOptions = options.map(opts => ({
-      ...opts,
-      from: opts.from || this.defaultFrom,
-    }));
+    const mailOptions: MailOptions[] = options.map(opts => {
+      const resolvedFrom = opts.from || this.defaultFrom;
+      return {
+        ...opts,
+        ...(resolvedFrom ? { from: resolvedFrom } : {}),
+      };
+    });
 
     if (mailOptions.some(opts => !opts.from)) {
       throw new Error('Email "from" address not specified for one or more emails');

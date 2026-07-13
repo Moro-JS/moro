@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * Queue Middleware - Unit Tests
  * Tests for rate limiting, priority, and monitoring middleware
@@ -253,7 +252,7 @@ describe('Queue Middleware', () => {
       const stats = collector.getQueueStats('test-queue');
       expect(stats).toBeDefined();
       expect(stats?.minDuration).toBeGreaterThan(0);
-      expect(stats?.maxDuration).toBeGreaterThan(stats?.minDuration);
+      expect(stats?.maxDuration).toBeGreaterThan(stats?.minDuration as number);
     });
   });
 });

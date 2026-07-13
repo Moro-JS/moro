@@ -13,10 +13,9 @@ const logger = createFrameworkLogger('GraphQL');
 export class GraphQLCore {
   private adapter!: GraphQLAdapter;
   private options: GraphQLOptions;
-  private contextFactory?: (
-    req: HttpRequest,
-    res: HttpResponse
-  ) => GraphQLContext | Promise<GraphQLContext>;
+  private contextFactory?:
+    | ((req: HttpRequest, res: HttpResponse) => GraphQLContext | Promise<GraphQLContext>)
+    | undefined;
 
   constructor(options: GraphQLOptions) {
     this.options = options;

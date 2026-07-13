@@ -62,22 +62,24 @@ Jobs automatically use circuit breakers to prevent repeated failures:
 ```typescript
 import { createApp } from '@morojs/moro';
 
-const app = await createApp();
+// Jobs must be enabled for app.job() to register
+const app = await createApp({ jobs: { enabled: true } });
 
+// Signature: app.job(name, schedule, handler, options)
 // Circuit breaker is automatically configured
-app.scheduleJob({
-  name: 'external-api-sync',
-  schedule: '*/5 * * * *', // Every 5 minutes
-  handler: async () => {
+app.job(
+  'external-api-sync',
+  '*/5 * * * *', // Every 5 minutes (cron); interval strings like '5m' also work
+  async ctx => {
     // If this fails repeatedly, circuit breaker opens
     const response = await fetch('https://api.example.com/data');
     return await response.json();
   },
-  options: {
+  {
     enableCircuitBreaker: true, // Enabled by default
     maxRetries: 3,
-  },
-});
+  }
+);
 ```
 
 ### 2. WebSocket Handlers
@@ -111,7 +113,7 @@ import { CircuitBreaker } from '@morojs/moro';
 const externalApiBreaker = new CircuitBreaker({
   failureThreshold: 5, // Open after 5 failures
   resetTimeout: 30000, // Try again after 30 seconds
-  monitoringPeriod: 10000, // Track failures over 10 seconds
+  // monitoringPeriod is reserved and not yet used by the breaker (see note below)
 });
 
 app.get('/external-data', async (req, res) => {
@@ -230,9 +232,15 @@ app.get('/external/data', async (req, res) => {
 interface CircuitBreakerOptions {
   failureThreshold: number; // Failures before opening
   resetTimeout: number; // Ms before trying again
-  monitoringPeriod?: number; // Ms to track failures (optional)
+  monitoringPeriod?: number; // Reserved — not yet used (see note below)
 }
 ```
+
+> **Note on failure counting:** The current implementation does **not** use a
+> sliding time window. Failures accumulate across calls and the count is only
+> cleared by a successful call (which closes the breaker) or an explicit
+> `reset()`. `monitoringPeriod` is accepted for forward compatibility but is not
+> read by the breaker yet, so setting it has no effect on behaviour.
 
 ### Configuration Examples
 
@@ -668,7 +676,7 @@ class CircuitBreaker extends EventEmitter {
 interface CircuitBreakerOptions {
   failureThreshold: number; // Number of failures before opening
   resetTimeout: number; // Milliseconds before trying HALF_OPEN
-  monitoringPeriod?: number; // Milliseconds for failure tracking window
+  monitoringPeriod?: number; // Reserved for a future sliding window — not yet used
 }
 ```
 

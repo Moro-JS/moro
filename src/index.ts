@@ -46,6 +46,16 @@ export {
   accountLinking,
   rateLimit,
   bearerToken,
+  // Route guards and helpers (referenced by the auth docs as package-root
+  // imports; must be re-exported here to be part of the public API).
+  requireAuth,
+  requireRole,
+  requirePermission,
+  requireAdmin,
+  authUtils,
+  authResponses,
+  extendedProviders,
+  enterpriseProviders,
 } from './core/middleware/built-in/auth/index.js';
 export type {
   TwoFactorAuthOptions,

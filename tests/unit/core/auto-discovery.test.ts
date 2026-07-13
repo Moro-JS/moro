@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Unit Tests - Enhanced Module Auto-Discovery System
 import {
   ModuleDiscovery,

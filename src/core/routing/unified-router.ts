@@ -147,7 +147,7 @@ export class RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.before) phases.before = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.before.push(middleware[i]);
+      phases.before.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -158,7 +158,7 @@ export class RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.after) phases.after = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.after.push(middleware[i]);
+      phases.after.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -169,7 +169,7 @@ export class RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.transform) phases.transform = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.transform.push(middleware[i]);
+      phases.transform.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -188,7 +188,7 @@ export class RouteBuilder {
     // Avoid spread, use push for better performance
     if (!this.schema.tags) this.schema.tags = [];
     for (let i = 0; i < tags.length; i++) {
-      this.schema.tags.push(tags[i]);
+      this.schema.tags.push(tags[i] as string);
     }
     return this;
   }
@@ -436,23 +436,27 @@ export class UnifiedRouter {
     if (paramCount === 0) {
       return () => ({}); // No allocation needed
     } else if (paramCount === 1) {
-      const name = paramNames[0];
-      return matches => ({ [name]: matches[1] });
+      const name = paramNames[0] as string;
+      return matches => ({ [name]: matches[1] as string });
     } else if (paramCount === 2) {
-      const name1 = paramNames[0];
-      const name2 = paramNames[1];
-      return matches => ({ [name1]: matches[1], [name2]: matches[2] });
+      const name1 = paramNames[0] as string;
+      const name2 = paramNames[1] as string;
+      return matches => ({ [name1]: matches[1] as string, [name2]: matches[2] as string });
     } else if (paramCount === 3) {
-      const name1 = paramNames[0];
-      const name2 = paramNames[1];
-      const name3 = paramNames[2];
-      return matches => ({ [name1]: matches[1], [name2]: matches[2], [name3]: matches[3] });
+      const name1 = paramNames[0] as string;
+      const name2 = paramNames[1] as string;
+      const name3 = paramNames[2] as string;
+      return matches => ({
+        [name1]: matches[1] as string,
+        [name2]: matches[2] as string,
+        [name3]: matches[3] as string,
+      });
     } else {
       // Generic path for 4+ params
       return matches => {
         const params: Record<string, string> = {};
         for (let i = 0; i < paramCount; i++) {
-          params[paramNames[i]] = matches[i + 1];
+          params[paramNames[i] as string] = matches[i + 1] as string;
         }
         return params;
       };
@@ -706,7 +710,7 @@ export class UnifiedRouter {
 
         const beforeLen = beforeMw.length;
         for (let i = 0; i < beforeLen; i++) {
-          await this.executeMiddleware(beforeMw[i], req, res);
+          await this.executeMiddleware(beforeMw[i] as Middleware, req, res);
           if (res.headersSent) return;
         }
         break;
@@ -724,9 +728,13 @@ export class UnifiedRouter {
         if (schema.auth) {
           if (!route.authMiddleware) {
             route.authMiddleware = requireAuth({
-              roles: schema.auth.roles,
-              permissions: schema.auth.permissions,
-              allowUnauthenticated: schema.auth.optional,
+              ...(schema.auth.roles !== undefined && { roles: schema.auth.roles }),
+              ...(schema.auth.permissions !== undefined && {
+                permissions: schema.auth.permissions,
+              }),
+              ...(schema.auth.optional !== undefined && {
+                allowUnauthenticated: schema.auth.optional,
+              }),
             });
           }
           await this.executeMiddleware(route.authMiddleware, req, res);
@@ -751,7 +759,7 @@ export class UnifiedRouter {
 
         const transformLen = transformMw.length;
         for (let i = 0; i < transformLen; i++) {
-          await this.executeMiddleware(transformMw[i], req, res);
+          await this.executeMiddleware(transformMw[i] as Middleware, req, res);
           if (res.headersSent) return;
         }
         break;
@@ -775,7 +783,7 @@ export class UnifiedRouter {
 
         const afterLen = afterMw.length;
         for (let i = 0; i < afterLen; i++) {
-          await this.executeMiddleware(afterMw[i], req, res);
+          await this.executeMiddleware(afterMw[i] as Middleware, req, res);
           if (res.headersSent) return;
         }
         break;
@@ -788,7 +796,7 @@ export class UnifiedRouter {
 
         const middlewareLen = middleware.length;
         for (let i = 0; i < middlewareLen; i++) {
-          await this.executeMiddleware(middleware[i], req, res);
+          await this.executeMiddleware(middleware[i] as Middleware, req, res);
           if (res.headersSent) return;
         }
         break;

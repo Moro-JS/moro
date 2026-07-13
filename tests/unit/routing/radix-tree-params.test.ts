@@ -1,4 +1,4 @@
-import { RadixTree } from '../../../src/core/routing/radix-tree';
+import { RadixTree } from '../../../src/core/routing/radix-tree.js';
 
 describe('RadixTree - Parameter Name Handling', () => {
   let tree: RadixTree;

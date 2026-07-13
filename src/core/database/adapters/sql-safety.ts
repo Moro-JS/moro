@@ -1,15 +1,16 @@
 // SQL Identifier Safety — validates and quotes table/column names to prevent injection
 
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-const VALID_DOTTED_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 
 /**
  * Validates that a SQL identifier (table or column name) contains only safe characters.
- * Rejects anything that doesn't match alphanumeric + underscores (+ dots for schema.table).
+ * Rejects anything that doesn't match alphanumeric + underscores. With allowDots,
+ * each dot-separated part (schema.table) is validated independently, so empty
+ * parts (".users", "users.") are rejected rather than producing malformed SQL.
  */
 function validateIdentifier(name: string, allowDots = false): void {
-  const pattern = allowDots ? VALID_DOTTED_IDENTIFIER : VALID_IDENTIFIER;
-  if (!pattern.test(name)) {
+  const parts = allowDots ? name.split('.') : [name];
+  if (parts.length === 0 || parts.some(part => !VALID_IDENTIFIER.test(part))) {
     throw new Error(
       `Invalid SQL identifier: "${name}". Identifiers must be alphanumeric/underscore only.`
     );

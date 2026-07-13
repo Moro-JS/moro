@@ -50,10 +50,10 @@ export interface Job {
   schedule: JobSchedule;
   fn: JobFunction;
   options: JobOptions;
-  nextRun?: Date;
+  nextRun?: Date | undefined;
   enabled: boolean;
   priority: number;
-  timer?: NodeJS.Timeout;
+  timer?: NodeJS.Timeout | undefined;
   concurrentExecutions: number;
   createdAt: Date;
 }
@@ -799,7 +799,7 @@ export class JobScheduler extends EventEmitter {
 interface ExecutionResult {
   success: boolean;
   value?: any;
-  error?: Error;
+  error?: Error | undefined;
   attempts: number;
   duration: number;
   circuitBreakerTripped?: boolean;

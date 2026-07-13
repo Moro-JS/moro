@@ -5,8 +5,7 @@
  * https://morojs.com/docs/advanced/dependency-injection
  */
 
-/* eslint-disable no-unused-vars */
-import { createApp } from '../../src/index';
+import { createApp } from '../../src/index.js';
 
 describe('Real-World DI Patterns', () => {
   describe('Accessing Container in Different Contexts', () => {
@@ -26,7 +25,7 @@ describe('Real-World DI Patterns', () => {
       );
 
       // Test that container is accessible directly
-      const logger = container.resolve('logger');
+      const logger = container.resolve<any>('logger');
       const result = logger.log('test message');
       expect(result).toBe('test message');
 
@@ -53,7 +52,7 @@ describe('Real-World DI Patterns', () => {
       );
 
       // Test that container is accessible
-      const auth = container.resolve('authService');
+      const auth = container.resolve<any>('authService');
       expect(auth.verify('valid-token')).toBe(true);
       expect(auth.verify('invalid-token')).toBe(false);
 
@@ -158,7 +157,7 @@ describe('Real-World DI Patterns', () => {
         .build();
 
       // Test the full chain
-      const userService = await container.resolve('userService');
+      const userService = await container.resolve<any>('userService');
       const result = await userService.register('user@example.com', 'password123');
 
       expect(result).toEqual([
@@ -166,7 +165,7 @@ describe('Real-World DI Patterns', () => {
       ]);
 
       // Verify email was sent
-      const emailService = await container.resolve('emailService');
+      const emailService = await container.resolve<any>('emailService');
       expect(emailService.emails).toHaveLength(1);
       expect(emailService.emails[0]).toEqual({
         to: 'user@example.com',
@@ -301,8 +300,8 @@ describe('Real-World DI Patterns', () => {
       const context1 = { requestId: 'req-1' };
       const context2 = { requestId: 'req-2' };
 
-      const logger1 = await enhanced.resolve('requestLogger', { context: context1 });
-      const logger2 = await enhanced.resolve('requestLogger', { context: context2 });
+      const logger1 = await enhanced.resolve('requestLogger', { context: context1 as any });
+      const logger2 = await enhanced.resolve('requestLogger', { context: context2 as any });
 
       expect(logger1.log('test')).toBe('[req-1] test');
       expect(logger2.log('test')).toBe('[req-2] test');
@@ -326,7 +325,7 @@ describe('Real-World DI Patterns', () => {
             return 'work-done';
           },
         }))
-        .interceptor((name, factory, deps, context) => {
+        .interceptor((name: any, factory: any, deps: any, context: any) => {
           return async () => {
             logs.push(`Creating service: ${name}`);
             const startTime = Date.now();
@@ -339,7 +338,7 @@ describe('Real-World DI Patterns', () => {
         .singleton()
         .build();
 
-      const service = await container.resolve('trackedService');
+      const service = await container.resolve<any>('trackedService');
       expect(service.doWork()).toBe('work-done');
       expect(logs).toHaveLength(2);
       expect(logs[0]).toBe('Creating service: trackedService');
@@ -364,7 +363,7 @@ describe('Real-World DI Patterns', () => {
             return 'processed';
           },
         }))
-        .interceptor((name, deps, context, next) => {
+        .interceptor((name: any, deps: any, context: any, next: any) => {
           // Middleware-style with next() callback
           logs.push(`Before ${name}`);
           const result = next();
@@ -374,7 +373,7 @@ describe('Real-World DI Patterns', () => {
         .singleton()
         .build();
 
-      const service = await container.resolve('middlewareService');
+      const service = await container.resolve<any>('middlewareService');
       expect(service.process()).toBe('processed');
       expect(logs).toEqual(['Before middlewareService', 'After middlewareService']);
 

@@ -36,8 +36,9 @@ export const rateLimitFilter = (maxPerSecond: number): LogFilter => {
         const cutoff = now - 1000;
         let keepIndex = 0;
         for (let i = 0; i < timestamps.length; i++) {
-          if (timestamps[i] >= cutoff) {
-            timestamps[keepIndex++] = timestamps[i];
+          const ts = timestamps[i];
+          if (ts !== undefined && ts >= cutoff) {
+            timestamps[keepIndex++] = ts;
           }
         }
         timestamps.length = keepIndex;

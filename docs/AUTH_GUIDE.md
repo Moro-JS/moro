@@ -26,8 +26,8 @@ The authentication middleware supports:
 ### Basic OAuth Setup (GitHub)
 
 ```typescript
-import { Moro } from '../src/moro';
-import { auth, providers } from '../src/core/middleware/built-in';
+import { Moro } from '@morojs/moro';
+import { auth, providers } from '@morojs/moro';
 
 const app = new Moro();
 
@@ -76,7 +76,7 @@ AUTH_URL=http://localhost:3000 # Base URL for your app
 #### Google
 
 ```typescript
-import { auth, providers } from '../src/core/middleware/built-in';
+import { auth, providers } from '@morojs/moro';
 
 app.use(
   auth({
@@ -123,7 +123,7 @@ app.use(
 ### Extended OAuth Providers
 
 ```typescript
-import { auth, extendedProviders } from '../src/core/middleware/built-in';
+import { auth, extendedProviders } from '@morojs/moro';
 
 app.use(
   auth({
@@ -163,7 +163,7 @@ app.use(
 ### Enterprise SSO Providers
 
 ```typescript
-import { auth, enterpriseProviders } from '../src/core/middleware/built-in';
+import { auth, enterpriseProviders } from '@morojs/moro';
 
 app.use(
   auth({
@@ -252,13 +252,7 @@ app.use(
 ### Route Protection Middleware
 
 ```typescript
-import {
-  requireAuth,
-  requireRole,
-  requireAdmin,
-  requirePermission,
-  authUtils,
-} from '../src/core/middleware/built-in';
+import { requireAuth, requireRole, requireAdmin, requirePermission, authUtils } from '@morojs/moro';
 
 // Helper function to compose middleware with route handlers
 function withMiddleware(middleware: any, handler: any) {
@@ -344,7 +338,7 @@ app.get(
 ### Manual Authentication Checks
 
 ```typescript
-import { authUtils, authResponses } from '../src/core/middleware/built-in';
+import { authUtils, authResponses } from '@morojs/moro';
 
 app.get('/profile/settings', (req, res) => {
   // Manual authentication check
@@ -375,7 +369,7 @@ app.get('/profile/settings', (req, res) => {
 ### Auth Utilities
 
 ```typescript
-import { authUtils } from '../src/core/middleware/built-in';
+import { authUtils } from '@morojs/moro';
 
 // Available utility functions:
 authUtils.isAuthenticated(req); // Check if user is authenticated
@@ -392,7 +386,7 @@ authUtils.ensureAuth(req, res); // Force auth check with redirect
 ### Auth Response Helpers
 
 ```typescript
-import { authResponses } from '../src/core/middleware/built-in';
+import { authResponses } from '@morojs/moro';
 
 // Standardized auth responses:
 authResponses.unauthorized(res, 'Custom message');
@@ -514,7 +508,7 @@ app.use(
 MoroJS includes a native Auth.js adapter for maximum compatibility and zero external dependencies:
 
 ```typescript
-import { createAuthMiddleware } from '../src/core/auth/morojs-adapter';
+import { createAuthMiddleware } from '@morojs/moro';
 
 app.use(
   createAuthMiddleware({
@@ -593,7 +587,7 @@ app.get('/profile', (req, res) => {
 ### Custom User Type
 
 ```typescript
-import { AuthUser } from '../src/types/auth';
+import { AuthUser } from '@morojs/moro';
 
 interface CustomUser extends AuthUser {
   role: 'admin' | 'user' | 'manager';

@@ -87,13 +87,19 @@ export class MoroEventBus implements GlobalEventBus {
     }
   }
 
-  // Type-safe event listeners with automatic payload unwrapping
+  // Type-safe event listeners with automatic payload unwrapping.
+  // Listeners may be async (EventHandler returns void | Promise<void>); Node's
+  // EventEmitter invokes them without awaiting. We intentionally register the
+  // listener by reference rather than wrapping it, so removeListener/off keep
+  // working - an async listener owns handling its own rejections.
   on<T = any>(event: string, listener: EventHandler<T>): this {
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.emitter.on(event, listener);
     return this;
   }
 
   once<T = any>(event: string, listener: EventHandler<T>): this {
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.emitter.once(event, listener);
     return this;
   }
@@ -233,13 +239,13 @@ class ModuleEventBusImpl implements ModuleEventBus {
     if (event) {
       this.globalBus.removeAllListeners(this.namespaced(event));
     } else {
-      // Remove all module events - would need access to globalBus emitter
-      // For now, this is a simplified implementation
-      const logger = createFrameworkLogger('EventBus');
-      logger.warn(
-        `Removing all listeners for module ${this.moduleId} not fully implemented`,
-        'ModuleBus'
-      );
+      // Remove every namespaced event this module registered on the global emitter.
+      // nameCache holds the namespaced name of every event the module ever touched,
+      // so iterating it clears all of the module's listeners (no leak).
+      for (const namespacedEvent of this.nameCache.values()) {
+        this.globalBus.removeAllListeners(namespacedEvent);
+      }
+      this.nameCache.clear();
     }
     return this;
   }

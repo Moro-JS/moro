@@ -190,7 +190,7 @@ class EngineNamespaceWrapper implements WebSocketNamespace {
       if (err) return finalCallback(err);
       if (index >= this.middlewares.length) return finalCallback();
       const middleware = this.middlewares[index++];
-      middleware(connection, next);
+      middleware?.(connection, next);
     };
     next();
   }

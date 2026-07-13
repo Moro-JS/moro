@@ -177,7 +177,9 @@ export class OpenAPIGenerator {
     if (this.options.includeSchemas && this.schemas.size > 0) {
       spec.components = {
         schemas: Object.fromEntries(this.schemas),
-        securitySchemes: this.options.securitySchemes,
+        ...(this.options.securitySchemes !== undefined
+          ? { securitySchemes: this.options.securitySchemes }
+          : {}),
       };
     }
 
@@ -212,8 +214,8 @@ export class OpenAPIGenerator {
   private generateOperation(route: RouteSchema): OpenAPIOperation {
     const operation: OpenAPIOperation = {
       summary: route.description || `${route.method} ${route.path}`,
-      description: route.description,
-      tags: route.tags,
+      ...(route.description !== undefined ? { description: route.description } : {}),
+      ...(route.tags !== undefined ? { tags: route.tags } : {}),
       responses: this.generateResponses(route),
     };
 
@@ -250,7 +252,7 @@ export class OpenAPIGenerator {
             in: 'path',
             required: true,
             schema,
-            description: schema.description,
+            ...(schema.description !== undefined ? { description: schema.description } : {}),
             example: this.options.includeExamples ? schema.example : undefined,
           });
         }
@@ -268,7 +270,7 @@ export class OpenAPIGenerator {
             in: 'query',
             required: isRequired,
             schema,
-            description: schema.description,
+            ...(schema.description !== undefined ? { description: schema.description } : {}),
             example: this.options.includeExamples ? schema.example : undefined,
           });
         }
@@ -286,7 +288,7 @@ export class OpenAPIGenerator {
             in: 'header',
             required: isRequired,
             schema,
-            description: schema.description,
+            ...(schema.description !== undefined ? { description: schema.description } : {}),
             example: this.options.includeExamples ? schema.example : undefined,
           });
         }

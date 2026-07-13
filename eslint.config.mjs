@@ -43,6 +43,11 @@ export default [
       ...typescriptEslint.configs.recommended.rules,
       ...prettierConfig.rules,
 
+      // Type-aware safety rules. An unawaited rejected promise in a handler is
+      // an unhandled rejection that can crash the process, so these are errors.
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+
       // TypeScript specific rules
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'off',
@@ -92,6 +97,10 @@ export default [
       },
     },
     rules: {
+      // The base no-unused-vars is not TS-aware — it flags parameter names in
+      // function-TYPE annotations (e.g. `(info: {...}) => boolean`) as unused.
+      // Disable it for tests alongside the TS-aware version.
+      'no-unused-vars': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
       'no-console': 'off',

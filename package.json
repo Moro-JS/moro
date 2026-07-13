@@ -1,24 +1,28 @@
 {
   "name": "@morojs/moro",
   "version": "1.8.0",
-  "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, enterprise authentication (Auth.js), type-safe validation, and functional architecture",
+  "description": "High-performance Node.js framework with intelligent routing, automatic middleware ordering, enterprise authentication (Better Auth), type-safe validation, and functional architecture",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    }
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
+  "sideEffects": [
+    "**/logger/logger.js"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "dev:watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "prepare": "husky",
-    "prepublish": "npm run build",
+    "prepare": "husky || true",
+    "prepublishOnly": "npm run clean && npm run build && node scripts/validate-package.mjs",
     "test": "jest --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage --detectOpenHandles",
@@ -26,13 +30,14 @@
     "test:integration": "jest --testPathPatterns=integration --detectOpenHandles",
     "test:e2e": "jest --testPathPatterns=e2e --detectOpenHandles --testTimeout=30000",
     "test:debug": "jest --detectOpenHandles --verbose",
-    "test:ci": "jest --coverage --watchAll=false --ci --forceExit",
+    "test:ci": "jest --coverage --watchAll=false --ci",
     "test:force": "jest --forceExit",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "test:dist": "npm run build && node scripts/validate-dist.mjs",
     "test:package": "npm run build && node scripts/validate-package.mjs",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src --ext .ts --max-warnings 0",
     "lint:fix": "eslint src --ext .ts --fix",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "lint-staged": "lint-staged",
@@ -108,7 +113,7 @@
     "url": "https://github.com/Moro-JS/moro/issues"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@morojs/engine": "^1.1.0"
@@ -143,7 +148,8 @@
     "swagger-ui-dist": ">=5.28.1",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#semver:^v20.52.0",
     "ws": ">=8.18.0",
-    "yup": ">=1.7.1"
+    "yup": ">=1.7.1",
+    "zod": ">=3.22.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-ses": {
@@ -234,6 +240,9 @@
       "optional": true
     },
     "yup": {
+      "optional": true
+    },
+    "zod": {
       "optional": true
     }
   },

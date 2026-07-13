@@ -153,6 +153,7 @@ export class UwsRequest extends LazyEventEmitter {
         const parts = header.split(';');
         for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
+          if (part === undefined) continue;
           const eq = part.indexOf('=');
           if (eq > 0) {
             const name = part.substring(0, eq).trim();
@@ -204,12 +205,12 @@ export class UwsRequest extends LazyEventEmitter {
 
   get hostname(): string {
     const host = this.headers.host || '';
-    return host ? host.split(':')[0] : '';
+    return host ? (host.split(':')[0] ?? '') : '';
   }
 
   get protocol(): string {
     const forwardedProto = this.headers['x-forwarded-proto'];
-    if (forwardedProto) return forwardedProto.split(',')[0].trim();
+    if (forwardedProto) return (forwardedProto.split(',')[0] ?? '').trim();
     return this._server && (this._server as any).isSsl ? 'https' : 'http';
   }
 
@@ -257,7 +258,7 @@ export class UwsRequest extends LazyEventEmitter {
   is(type: string): boolean {
     const ct = this.headers['content-type'] || '';
     if (!ct) return false;
-    const mime = ct.split(';')[0].trim().toLowerCase();
+    const mime = (ct.split(';')[0] ?? '').trim().toLowerCase();
     const t = type.toLowerCase();
     if (t.indexOf('/') === -1) {
       return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
@@ -273,7 +274,7 @@ export class UwsRequest extends LazyEventEmitter {
     if (!types) return accept;
     const wanted = Array.isArray(types) ? types : [types];
     if (accept === '*/*' || accept === '') return wanted[0] || false;
-    const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+    const acceptTypes = accept.split(',').map(s => (s.split(';')[0] ?? '').trim().toLowerCase());
     for (const w of wanted) {
       const wl = w.toLowerCase();
       const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
@@ -295,7 +296,7 @@ export class UwsRequest extends LazyEventEmitter {
       .split(',')
       .map(s => {
         const parts = s.trim().split(';');
-        const tag = parts[0].toLowerCase();
+        const tag = (parts[0] ?? '').toLowerCase();
         const qPart = parts.find(p => p.trim().startsWith('q='));
         const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
         return { tag, q: isNaN(q) ? 0 : q };
@@ -408,7 +409,7 @@ export class UWebSocketsHttpServer {
   ) {
     if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
     if (options.maxUploadSize) this.maxUploadSize = options.maxUploadSize;
-    this._limits = options.limits;
+    if (options.limits) this._limits = options.limits;
     if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
     this.initPromise = this.initialize(options);
   }
@@ -433,7 +434,7 @@ export class UWebSocketsHttpServer {
     onError?: (req: HttpRequest, res: HttpResponse, err: any) => Promise<boolean>
   ): void {
     this.nativeRouteProvider = provider;
-    this.nativeErrorHandler = onError;
+    if (onError) this.nativeErrorHandler = onError;
   }
 
   private async initialize(options: {
@@ -529,7 +530,7 @@ export class UWebSocketsHttpServer {
     // method-specific routes registered later take priority in uWS's router
     // (static > parameter > wildcard).
     this.app.any('/*', (res: any, req: any) => {
-      this.handleRequest(req, res);
+      void this.handleRequest(req, res);
     });
   }
 
@@ -564,7 +565,7 @@ export class UWebSocketsHttpServer {
           (this.hookManager &&
             (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('request')))
         ) {
-          this.handleRequest(req, res);
+          void this.handleRequest(req, res);
           return;
         }
         this.handleNativeRoute(req, res, handler, methodInterned, paramNames, needsBody);
@@ -591,7 +592,9 @@ export class UWebSocketsHttpServer {
     if (paramNames) {
       const params: Record<string, string> = {};
       for (let i = 0; i < paramNames.length; i++) {
-        params[paramNames[i]] = req.getParameter(i);
+        const paramName = paramNames[i];
+        if (paramName === undefined) continue;
+        params[paramName] = req.getParameter(i);
       }
       httpReq.params = params;
     }
@@ -630,6 +633,7 @@ export class UWebSocketsHttpServer {
             });
           }
           if (result !== undefined && !httpRes.headersSent) httpRes.json(result);
+          return;
         })
         .catch(err => this.handleNativeRouteError(err, httpReq, httpRes, res));
       return;
@@ -763,6 +767,11 @@ export class UWebSocketsHttpServer {
           // readBody awaits - snapshot uWS-backed data first
           httpReq.materialize();
           await this.readBody(res, httpReq);
+          // A client that disconnects mid-upload resolves readBody with a
+          // null/partial body; do not run hooks, middleware or the handler for
+          // a dead request (matches the native fast-path guard at ~line 625 and
+          // the Node backend, whose aborted stream rejects parseBody).
+          if (res.aborted) return;
         }
       }
 
@@ -855,12 +864,32 @@ export class UWebSocketsHttpServer {
     return new UwsRequest(this, req, method, url, queryString) as unknown as HttpRequest;
   }
 
+  // Strip CR/LF from a header value to prevent response-splitting / header
+  // injection, matching Node's setHeader ERR_INVALID_CHAR guarantee. Guarded
+  // with indexOf so the common (clean) path allocates nothing on the hot path.
+  private static sanitizeHeaderValue(value: string): string {
+    return value.indexOf('\r') === -1 && value.indexOf('\n') === -1
+      ? value
+      : value.replace(/[\r\n]/g, '');
+  }
+
   // Optimized helper to write headers
   private static writeHeaders(res: any, headers: Record<string, string | string[]>): void {
     // Performance: for...in is the fastest way to iterate response headers
     for (const key in headers) {
       const value = headers[key];
-      res.writeHeader(key, Array.isArray(value) ? value.join(', ') : String(value));
+      if (Array.isArray(value)) {
+        // Emit one header line per element instead of comma-joining. RFC 6265
+        // forbids folding Set-Cookie, and browsers parse a folded
+        // `a=1; Path=/, b=2` as a single cookie, silently dropping the second
+        // (session + CSRF is the canonical breakage). uWS writes a separate
+        // line per writeHeader call with the same key.
+        for (let i = 0; i < value.length; i++) {
+          res.writeHeader(key, UWebSocketsHttpServer.sanitizeHeaderValue(String(value[i])));
+        }
+        continue;
+      }
+      res.writeHeader(key, UWebSocketsHttpServer.sanitizeHeaderValue(String(value)));
     }
   }
 
@@ -1045,7 +1074,12 @@ export class UWebSocketsHttpServer {
       // Fast-path JSON serialization for common API patterns
       let body: string;
 
-      if (data && typeof data === 'object' && 'success' in data) {
+      // The interpolated fast path is only valid when `success` is a real
+      // boolean (a string/number would produce invalid JSON like
+      // {"success":yes,...}), and each interpolated field must be defined
+      // (JSON.stringify(undefined) yields the literal token "undefined", which
+      // would corrupt the body). Otherwise fall through to JSON.stringify.
+      if (data && typeof data === 'object' && typeof data.success === 'boolean') {
         let keyCount = 0;
         let hasData = false;
         let hasError = false;
@@ -1060,13 +1094,25 @@ export class UWebSocketsHttpServer {
           }
         }
 
-        if (keyCount === 3 && hasData && hasError) {
+        if (
+          keyCount === 3 &&
+          hasData &&
+          hasError &&
+          data.data !== undefined &&
+          data.error !== undefined
+        ) {
           body = `{"success":${data.success},"data":${JSON.stringify(data.data)},"error":${JSON.stringify(data.error)}}`;
-        } else if (keyCount === 3 && hasData && hasTotal) {
+        } else if (
+          keyCount === 3 &&
+          hasData &&
+          hasTotal &&
+          data.data !== undefined &&
+          typeof data.total === 'number'
+        ) {
           body = `{"success":${data.success},"data":${JSON.stringify(data.data)},"total":${data.total}}`;
-        } else if (keyCount === 2 && hasData) {
+        } else if (keyCount === 2 && hasData && data.data !== undefined) {
           body = `{"success":${data.success},"data":${JSON.stringify(data.data)}}`;
-        } else if (keyCount === 2 && hasError) {
+        } else if (keyCount === 2 && hasError && data.error !== undefined) {
           body = `{"success":${data.success},"error":${JSON.stringify(data.error)}}`;
         } else {
           body = JSON.stringify(data);
@@ -1218,7 +1264,7 @@ export class UWebSocketsHttpServer {
       try {
         this._res.cork(() => {
           this._res.writeStatus(UWebSocketsHttpServer.getStatusString(redirectCode));
-          this._res.writeHeader('Location', url);
+          this._res.writeHeader('Location', UWebSocketsHttpServer.sanitizeHeaderValue(url));
           UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
           this._res.end();
         });
@@ -1800,25 +1846,37 @@ export class UWebSocketsHttpServer {
         // Do NOT pass listenOptions in cluster mode - let uWS handle it automatically
         // In non-cluster mode, we don't need SO_REUSEPORT
 
-        this.app.listen(port, (token: any) => {
+        const onListen = (token: any) => {
           if (token) {
             this.listenSocket = token;
             this.isListening = true;
             const clusterInfo = isClusterWorker ? ` (worker ${process.pid})` : '';
             this.logger.info(
-              `uWebSockets HTTP server listening on 0.0.0.0:${port}${clusterInfo}`,
+              `uWebSockets HTTP server listening on ${host}:${port}${clusterInfo}`,
               'Listen'
             );
             if (cb) cb();
           } else {
             const clusterInfo = isClusterWorker ? ` (worker ${process.pid})` : '';
-            this.logger.error(`Failed to listen on port ${port}${clusterInfo}`, 'Listen');
+            this.logger.error(`Failed to listen on ${host}:${port}${clusterInfo}`, 'Listen');
             // Don't throw in cluster workers - let them fail gracefully
             if (!isClusterWorker) {
-              throw new Error(`Failed to bind to port ${port}`);
+              throw new Error(`Failed to bind to ${host}:${port}`);
             }
           }
-        });
+        };
+
+        // Honor the requested bind host. For the all-interfaces default (and
+        // cluster mode, where uWS auto-enables SO_REUSEPORT) keep the 2-arg
+        // form so that behavior is unchanged; when a specific host is given
+        // (e.g. 127.0.0.1 for an internal/admin service behind a proxy) use
+        // uWS's (host, port, cb) overload so we don't silently bind 0.0.0.0.
+        const bindAllInterfaces = host === '0.0.0.0' || host === '::';
+        if (bindAllInterfaces) {
+          this.app.listen(port, onListen);
+        } else {
+          this.app.listen(host, port, onListen);
+        }
       })
       .catch(error => {
         this.logger.error('Failed to initialize server before listen', 'Listen', {

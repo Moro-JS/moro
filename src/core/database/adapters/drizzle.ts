@@ -88,7 +88,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   // ORM-style operations (requires schema)
@@ -106,7 +106,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
 
         const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
         const result = await this.query<T>(sql, values);
-        return result[0];
+        return result[0] as T;
       }
     } catch (error) {
       this.logger.error('Drizzle insert failed', 'Insert', {
@@ -151,7 +151,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
           const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
           const params = [...Object.values(data), ...Object.values(where)];
           const result = await this.query<T>(sql, params);
-          return result[0];
+          return result[0] as T;
         }
       } else {
         // Fallback to raw SQL
@@ -163,7 +163,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
         const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
         const result = await this.query<T>(sql, params);
-        return result[0];
+        return result[0] as T;
       }
     } catch (error) {
       this.logger.error('Drizzle update failed', 'Update', {
@@ -299,7 +299,7 @@ class DrizzleTransaction implements DatabaseTransaction {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
@@ -313,7 +313,7 @@ class DrizzleTransaction implements DatabaseTransaction {
 
       const sql = `INSERT INTO ${qi(table)} (${quoteColumns(keys, qi)}) VALUES (${placeholders}) RETURNING *`;
       const result = await this.query<T>(sql, values);
-      return result[0];
+      return result[0] as T;
     }
   }
 
@@ -351,7 +351,7 @@ class DrizzleTransaction implements DatabaseTransaction {
         const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const params = [...Object.values(data), ...Object.values(where)];
         const result = await this.query<T>(sql, params);
-        return result[0];
+        return result[0] as T;
       }
     } else {
       const setClause = buildSetClause(Object.keys(data), qi, 'dollar');
@@ -365,7 +365,7 @@ class DrizzleTransaction implements DatabaseTransaction {
       const sql = `UPDATE ${qi(table)} SET ${setClause} WHERE ${whereClause} RETURNING *`;
       const params = [...Object.values(data), ...Object.values(where)];
       const result = await this.query<T>(sql, params);
-      return result[0];
+      return result[0] as T;
     }
   }
 

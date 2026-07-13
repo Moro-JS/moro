@@ -22,7 +22,7 @@ export function extractTokenFromMetadata(metadata: GrpcMetadata): string | null 
   if (typeof authValue === 'string') {
     // Extract Bearer token
     const match = authValue.match(/^Bearer\s+(\S+)$/i);
-    return match ? match[1] : null;
+    return match?.[1] ?? null;
   }
 
   return null;

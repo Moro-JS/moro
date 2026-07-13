@@ -60,25 +60,27 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
     const originalServer = httpServer.getServer();
     originalServer.removeAllListeners('request');
 
-    originalServer.on('request', async (req: IncomingMessage, res: ServerResponse) => {
-      try {
-        const moroReq = await this.adaptRequest(req);
-        const moroRes = this.enhanceResponse(res);
+    originalServer.on('request', (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        try {
+          const moroReq = await this.adaptRequest(req);
+          const moroRes = this.enhanceResponse(res);
 
-        await handler(moroReq, moroRes);
-      } catch (error) {
-        if (!res.headersSent) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(
-            JSON.stringify({
-              success: false,
-              error: 'Internal server error',
-              message: error instanceof Error ? error.message : 'Unknown error',
-            })
-          );
+          await handler(moroReq, moroRes);
+        } catch (error) {
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                success: false,
+                error: 'Internal server error',
+                message: error instanceof Error ? error.message : 'Unknown error',
+              })
+            );
+          }
         }
-      }
+      })();
     });
 
     return httpServer;
@@ -110,7 +112,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
   private getClientIP(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'] as string;
     if (forwarded) {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]?.trim() ?? 'unknown';
     }
     return req.socket.remoteAddress || 'unknown';
   }

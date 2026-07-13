@@ -24,7 +24,7 @@ MoroJS is designed for high performance across all supported runtimes. The frame
 
 - **Intelligent middleware ordering** - Eliminates unnecessary processing
 - **Runtime-specific optimizations** - Adapters optimized for each environment
-- **Zod validation** - 2-3x faster than JSON Schema alternatives
+- **Efficient validation** - Compiled Zod schemas with minimal per-request overhead
 - **Memory-efficient design** - Lower memory footprint
 - **Built-in performance features** - Caching, rate limiting, circuit breakers
 
@@ -51,27 +51,27 @@ machine, ~56% ahead of the Node-http path, at ~0.9 ms average latency.
 
 ### Validation Performance
 
-Zod vs other validation libraries:
+MoroJS supports Zod, Joi, Yup, and Class Validator through a common interface,
+so you can pick the library whose ergonomics and performance suit your project.
+Zod is the default and uses a compiled validation approach that keeps
+per-request overhead low.
 
-| Library           | Ops/sec       | Relative Performance | Memory per Op |
-| ----------------- | ------------- | -------------------- | ------------- |
-| **Zod**           | **1,245,000** | **1.0x**             | **0.12KB**    |
-| Joi               | 485,000       | 0.39x                | 0.28KB        |
-| JSON Schema (AJV) | 890,000       | 0.71x                | 0.18KB        |
-| Yup               | 320,000       | 0.26x                | 0.35KB        |
+We don't publish fixed ops/sec figures here because validation throughput is
+highly schema- and workload-dependent. Benchmark against your own schemas, and
+see the [MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark) for the
+methodology used in the framework comparisons.
 
 ### Runtime-Specific Performance
 
-Performance across different deployment environments:
+Only the Node.js runtime has a single meaningful throughput number, because it
+runs Moro's native engine in-process (~102k req/s single-threaded on the
+reference machine; see the framework comparison above).
 
-| Runtime                | Req/sec            | Cold Start | Memory | Scaling |
-| ---------------------- | ------------------ | ---------- | ------ | ------- |
-| **Node.js**            | **~100,000**       | N/A        | —      | Manual  |
-| **Vercel Edge**        | platform-dependent | ~15ms      | —      | Auto    |
-| **AWS Lambda**         | platform-dependent | ~95ms      | —      | Auto    |
-| **Cloudflare Workers** | platform-dependent | ~8ms       | —      | Auto    |
-
-_Node.js runs Moro's native engine (measured; see the framework comparison above). Serverless/edge runtimes use the fetch-handler path — throughput there is governed by the platform's own scaling and billing model, not a single-instance number._
+Serverless and edge runtimes (Vercel Edge, AWS Lambda, Cloudflare Workers) use
+the fetch-handler path, where throughput, cold-start time, and memory are
+governed by the platform's own scaling and billing model rather than a single
+per-instance figure. Measure these on the platform and configuration you deploy
+to; don't rely on a fixed number.
 
 ---
 

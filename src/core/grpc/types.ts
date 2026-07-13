@@ -148,7 +148,7 @@ export interface ServiceImplementation {
  */
 export interface ServiceDefinition {
   serviceName: string;
-  packageName?: string;
+  packageName?: string | undefined;
   methods: Record<string, MethodDefinition>;
 }
 
@@ -169,12 +169,12 @@ export interface MethodDefinition {
  */
 export interface GrpcClientOptions {
   address: string;
-  credentials?: GrpcCredentials;
-  deadline?: number;
-  maxReceiveMessageLength?: number;
-  maxSendMessageLength?: number;
-  interceptors?: GrpcInterceptor[];
-  channelOptions?: Record<string, any>;
+  credentials?: GrpcCredentials | undefined;
+  deadline?: number | undefined;
+  maxReceiveMessageLength?: number | undefined;
+  maxSendMessageLength?: number | undefined;
+  interceptors?: GrpcInterceptor[] | undefined;
+  channelOptions?: Record<string, any> | undefined;
 }
 
 /**

@@ -26,7 +26,7 @@ export class CompressionCore {
   private threshold: number;
   private level: number;
   private encodings: Encoding[];
-  private filter?: (req: HttpRequest, res: HttpResponse) => boolean;
+  private filter?: ((req: HttpRequest, res: HttpResponse) => boolean) | undefined;
 
   constructor(options: CompressionOptions = {}) {
     this.threshold = options.threshold || 1024; // 1KB default

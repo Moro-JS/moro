@@ -1,12 +1,11 @@
-/* eslint-disable no-unused-vars */
 import { describe, it, expect, jest } from '@jest/globals';
 import { defineModule } from '../../../src/core/modules/modules.js';
 
 describe('Module Middleware Support', () => {
   describe('defineModule with middleware', () => {
     it('should accept module-level middleware as functions', () => {
-      const middleware1 = jest.fn((_req, _res, next) => next());
-      const middleware2 = jest.fn((_req, _res, next) => next());
+      const middleware1 = jest.fn((_req: any, _res: any, next: () => void) => next());
+      const middleware2 = jest.fn((_req: any, _res: any, next: () => void) => next());
 
       const module = defineModule({
         name: 'test-module',
@@ -48,7 +47,7 @@ describe('Module Middleware Support', () => {
     });
 
     it('should accept mixed middleware (functions and strings)', () => {
-      const customMiddleware = jest.fn((_req, _res, next) => next());
+      const customMiddleware = jest.fn((_req: any, _res: any, next: () => void) => next());
 
       const module = defineModule({
         name: 'test-module',
@@ -72,7 +71,7 @@ describe('Module Middleware Support', () => {
     });
 
     it('should accept route-level middleware as functions', () => {
-      const routeMiddleware = jest.fn((_req, _res, next) => next());
+      const routeMiddleware = jest.fn((_req: any, _res: any, next: () => void) => next());
 
       const module = defineModule({
         name: 'test-module',
@@ -112,8 +111,8 @@ describe('Module Middleware Support', () => {
     });
 
     it('should accept both module and route-level middleware', () => {
-      const globalMw = jest.fn((_req, _res, next) => next());
-      const routeMw = jest.fn((_req, _res, next) => next());
+      const globalMw = jest.fn((_req: any, _res: any, next: () => void) => next());
+      const routeMw = jest.fn((_req: any, _res: any, next: () => void) => next());
 
       const module = defineModule({
         name: 'test-module',
@@ -214,9 +213,9 @@ describe('Module Middleware Support', () => {
 
   describe('Module middleware execution order', () => {
     it('should maintain middleware order', () => {
-      const mw1 = jest.fn((_req, _res, next) => next());
-      const mw2 = jest.fn((_req, _res, next) => next());
-      const mw3 = jest.fn((_req, _res, next) => next());
+      const mw1 = jest.fn((_req: any, _res: any, next: () => void) => next());
+      const mw2 = jest.fn((_req: any, _res: any, next: () => void) => next());
+      const mw3 = jest.fn((_req: any, _res: any, next: () => void) => next());
 
       const module = defineModule({
         name: 'test-module',
@@ -241,7 +240,7 @@ describe('Module Middleware Support', () => {
 
   describe('Middleware type checking', () => {
     it('should accept async middleware functions', () => {
-      const asyncMiddleware = jest.fn(async (req, res, next) => {
+      const asyncMiddleware = jest.fn(async (req: any, res: any, next: () => void) => {
         await Promise.resolve();
         next();
       });

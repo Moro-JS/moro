@@ -16,9 +16,9 @@ export class AzureCDNAdapter implements CDNAdapter {
   private resourceGroup: string;
   private profileName: string;
   private endpointName: string;
-  private clientId?: string;
-  private clientSecret?: string;
-  private tenantId?: string;
+  private clientId?: string | undefined;
+  private clientSecret?: string | undefined;
+  private tenantId?: string | undefined;
   private accessToken?: string;
   private tokenExpiry?: number;
   private cacheControlMaxAge: number;

@@ -62,9 +62,9 @@ MoroJS includes several built-in security features:
 
 - Input validation with Zod schemas
 - CSRF protection middleware
-- Rate limiting capabilities  
+- Rate limiting capabilities
 - Content Security Policy (CSP) support
 - Secure headers middleware
 - Circuit breaker patterns
 
-For more details, see our [Security Documentation](../docs/SECURITY.md). 
+For guidance on configuring these securely, see the framework docs at https://morojs.com.

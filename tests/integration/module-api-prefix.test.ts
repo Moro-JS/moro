@@ -46,7 +46,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Should work with default /api/ prefix
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/default-prefix/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -84,7 +84,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Should work without /api/ prefix
     const response = await fetch(`http://localhost:${port}/v1.0.0/no-prefix/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -126,7 +126,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Should work with custom /services/ prefix
     const response = await fetch(`http://localhost:${port}/services/v1.0.0/custom-prefix/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -168,7 +168,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Should work with normalized path
     const response = await fetch(`http://localhost:${port}/v1/v2.0.0/normalize-test/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -222,12 +222,12 @@ describe('Module API Prefix Configuration', () => {
 
     // Test both modules with custom prefix
     const response1 = await fetch(`http://localhost:${port}/rest/v1.0.0/users/list`);
-    const data1 = await response1.json();
+    const data1: any = await response1.json();
     expect(response1.status).toBe(200);
     expect(data1.module).toBe('users');
 
     const response2 = await fetch(`http://localhost:${port}/rest/v1.0.0/products/list`);
-    const data2 = await response2.json();
+    const data2: any = await response2.json();
     expect(response2.status).toBe(200);
     expect(data2.module).toBe('products');
   });
@@ -279,12 +279,12 @@ describe('Module API Prefix Configuration', () => {
 
     // Test both versions
     const responseV1 = await fetch(`http://localhost:${port}/v1/v1.0.0/admin/users`);
-    const dataV1 = await responseV1.json();
+    const dataV1: any = await responseV1.json();
     expect(responseV1.status).toBe(200);
     expect(dataV1.version).toBe('1.0.0');
 
     const responseV2 = await fetch(`http://localhost:${port}/v1/v2.0.0/admin/users`);
-    const dataV2 = await responseV2.json();
+    const dataV2: any = await responseV2.json();
     expect(responseV2.status).toBe(200);
     expect(dataV2.version).toBe('2.0.0');
   });
@@ -329,7 +329,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Test nested routes without prefix
     const response1 = await fetch(`http://localhost:${port}/v1.0.0/api/users/123`);
-    const data1 = await response1.json();
+    const data1: any = await response1.json();
     expect(response1.status).toBe(200);
     expect(data1.userId).toBe('123');
 
@@ -338,7 +338,7 @@ describe('Module API Prefix Configuration', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'Test' }),
     });
-    const data2 = await response2.json();
+    const data2: any = await response2.json();
     expect(response2.status).toBe(200);
     expect(data2.userId).toBe('456');
     expect(data2.action).toBe('create-post');
@@ -391,7 +391,7 @@ describe('Module API Prefix Configuration', () => {
     const withAuthResponse = await fetch(`http://localhost:${port}/backend/v1.0.0/secure/data`, {
       headers: { Authorization: 'Bearer token' },
     });
-    const data = await withAuthResponse.json();
+    const data: any = await withAuthResponse.json();
     expect(withAuthResponse.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.user.id).toBe('test-user');
@@ -428,7 +428,7 @@ describe('Module API Prefix Configuration', () => {
 
     // Test with default prefix
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/health/status`);
-    const data = await response.json();
+    const data: any = await response.json();
     expect(response.status).toBe(200);
     expect(data.status).toBe('healthy');
   });

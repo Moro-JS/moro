@@ -56,14 +56,18 @@ export class DocumentationSystem {
       info: {
         title: this.config.title,
         version: this.config.version,
-        description: this.config.description,
-        contact: this.config.contact,
-        license: this.config.license,
+        ...(this.config.description !== undefined ? { description: this.config.description } : {}),
+        ...(this.config.contact !== undefined ? { contact: this.config.contact } : {}),
+        ...(this.config.license !== undefined ? { license: this.config.license } : {}),
       },
-      servers: this.config.servers,
-      includeExamples: this.config.includeExamples,
-      includeSchemas: this.config.includeSchemas,
-      securitySchemes: this.config.enableAuth ? defaultSecuritySchemes : undefined,
+      ...(this.config.servers !== undefined ? { servers: this.config.servers } : {}),
+      ...(this.config.includeExamples !== undefined
+        ? { includeExamples: this.config.includeExamples }
+        : {}),
+      ...(this.config.includeSchemas !== undefined
+        ? { includeSchemas: this.config.includeSchemas }
+        : {}),
+      ...(this.config.enableAuth ? { securitySchemes: defaultSecuritySchemes } : {}),
     };
 
     this.generator = new OpenAPIGenerator(generationOptions);

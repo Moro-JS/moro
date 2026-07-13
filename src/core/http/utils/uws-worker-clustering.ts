@@ -127,7 +127,12 @@ export class UWSWorkerClusterManager {
 
   private async spawnWorker(index: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(process.argv[1], {
+      const scriptPath = process.argv[1];
+      if (scriptPath === undefined) {
+        reject(new Error('Cannot spawn worker: process.argv[1] (entry script) is unavailable'));
+        return;
+      }
+      const worker = new Worker(scriptPath, {
         workerData: {
           isUWSWorker: true,
           workerIndex: index,
@@ -207,7 +212,7 @@ export class UWSWorkerClusterManager {
       setTimeout(() => {
         if (!descriptorReceived) {
           logger.error(`Worker ${index} failed to send descriptor within timeout`, 'WorkerSpawn');
-          worker.terminate();
+          void worker.terminate();
           reject(new Error(`Worker ${index} initialization timeout`));
         }
       }, 10000); // 10 second timeout
@@ -247,7 +252,7 @@ export class UWSWorkerClusterManager {
               );
               try {
                 // Terminate is the last resort for stuck workers
-                worker.terminate();
+                void worker.terminate();
               } catch {
                 logger.error(`Error terminating worker ${index}`, 'Shutdown');
               }
@@ -275,7 +280,7 @@ export class UWSWorkerClusterManager {
             logger.error(`Failed to send shutdown message to worker ${index}`, 'Shutdown');
             clearTimeout(timeout);
             try {
-              worker.terminate();
+              void worker.terminate();
             } catch {
               // Ignore termination errors
             }
@@ -299,8 +304,8 @@ export class UWSWorkerClusterManager {
       process.exit(0);
     };
 
-    process.on('SIGINT', gracefulShutdown);
-    process.on('SIGTERM', gracefulShutdown);
+    process.on('SIGINT', () => void gracefulShutdown());
+    process.on('SIGTERM', () => void gracefulShutdown());
   }
 
   static isUWSWorker(): boolean {
@@ -342,37 +347,39 @@ export class UWSWorkerClusterManager {
       return;
     }
 
-    parentPort.on('message', async (message: any) => {
-      if (message.type === 'shutdown') {
-        logger.info(`Worker thread ${threadId} shutting down...`, 'Worker');
+    parentPort.on('message', (message: any) => {
+      void (async () => {
+        if (message.type === 'shutdown') {
+          logger.info(`Worker thread ${threadId} shutting down...`, 'Worker');
 
-        try {
-          // Call the close callback and wait if it's async
-          const result = closeCallback();
-          if (result && typeof result.then === 'function') {
-            await result;
+          try {
+            // Call the close callback and wait if it's async
+            const result = closeCallback();
+            if (result && typeof result.then === 'function') {
+              await result;
+            }
+
+            // Give uWebSockets event loop time to fully cleanup
+            await new Promise(resolve => setTimeout(resolve, 150));
+
+            // Close parent port to signal we're ready to exit
+            if (parentPort) {
+              parentPort.close();
+            }
+
+            logger.info(`Worker thread ${threadId} cleanup complete`, 'Worker');
+
+            // DON'T call process.exit() - let Node.js exit naturally
+            // This allows the event loop to properly drain all uWebSockets handles
+            // The worker will exit on its own once all handles are closed
+          } catch (error) {
+            logger.error('Error during worker shutdown', 'Worker', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            // Still don't force exit - let it drain naturally
           }
-
-          // Give uWebSockets event loop time to fully cleanup
-          await new Promise(resolve => setTimeout(resolve, 150));
-
-          // Close parent port to signal we're ready to exit
-          if (parentPort) {
-            parentPort.close();
-          }
-
-          logger.info(`Worker thread ${threadId} cleanup complete`, 'Worker');
-
-          // DON'T call process.exit() - let Node.js exit naturally
-          // This allows the event loop to properly drain all uWebSockets handles
-          // The worker will exit on its own once all handles are closed
-        } catch (error) {
-          logger.error('Error during worker shutdown', 'Worker', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          // Still don't force exit - let it drain naturally
         }
-      }
+      })();
     });
   }
 }

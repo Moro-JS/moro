@@ -163,7 +163,7 @@ export class PathMatcher {
     const paramNames = compiledPath.paramNames;
     const paramCount = paramNames.length;
     for (let i = 0; i < paramCount; i++) {
-      params[paramNames[i]] = matches[i + 1];
+      params[paramNames[i] as string] = matches[i + 1] as string;
     }
 
     return { params };
@@ -248,7 +248,7 @@ export class PathMatcher {
   static precompile(paths: string[]): void {
     const pathsLen = paths.length;
     for (let i = 0; i < pathsLen; i++) {
-      this.compile(paths[i]);
+      this.compile(paths[i] as string);
     }
   }
 }

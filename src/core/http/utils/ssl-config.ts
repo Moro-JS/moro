@@ -33,16 +33,16 @@ export interface SSLConfigInput {
 
 /** Canonical internal SSL config after normalization. */
 export interface NormalizedSSLConfig {
-  keyFile?: string;
-  certFile?: string;
-  caFile?: string[];
-  key?: string | Buffer;
-  cert?: string | Buffer;
-  ca?: Array<string | Buffer>;
-  passphrase?: string;
-  minVersion?: 'TLSv1.2' | 'TLSv1.3';
-  requestCert?: boolean;
-  rejectUnauthorized?: boolean;
+  keyFile?: string | undefined;
+  certFile?: string | undefined;
+  caFile?: string[] | undefined;
+  key?: string | Buffer | undefined;
+  cert?: string | Buffer | undefined;
+  ca?: Array<string | Buffer> | undefined;
+  passphrase?: string | undefined;
+  minVersion?: 'TLSv1.2' | 'TLSv1.3' | undefined;
+  requestCert?: boolean | undefined;
+  rejectUnauthorized?: boolean | undefined;
 }
 
 const toArray = <T>(v: T | T[] | undefined): T[] | undefined =>

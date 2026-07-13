@@ -12,7 +12,7 @@ const ESCAPE_MAP: Record<string, string> = {
 };
 
 function escapeHtml(str: string): string {
-  return str.replace(/[&<>"']/g, char => ESCAPE_MAP[char]);
+  return str.replace(/[&<>"']/g, char => ESCAPE_MAP[char] ?? char);
 }
 
 // Pre-compiled regex patterns — avoids recompilation on every render call.
@@ -39,7 +39,7 @@ export class TemplateCore {
   private views: string;
   private engine: string;
   private cache: boolean;
-  private defaultLayout?: string;
+  private defaultLayout?: string | undefined;
   private templateCache = new Map<string, string>();
 
   constructor(options: TemplateOptions) {

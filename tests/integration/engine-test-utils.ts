@@ -21,4 +21,10 @@ if (!engineLoadable && process.env.MORO_REQUIRE_ENGINE === '1') {
   );
 }
 
-export const describeEngine = engineLoadable ? describe : describe.skip;
+// Typed as the plain call signature it's actually used with. This avoids TS4023
+// (the inferred `Describe`/`DescribeBase` union references a non-exported
+// internal Jest type that "cannot be named" across the module boundary); both
+// `describe` and `describe.skip` are assignable to this narrower callable type.
+export const describeEngine: (name: string, fn: () => void) => void = engineLoadable
+  ? describe
+  : describe.skip;

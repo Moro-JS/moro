@@ -35,6 +35,8 @@ export class MySQLAdapter implements DatabaseAdapter {
   private pool: any;
   private logger = createFrameworkLogger('MySQL');
   private initPromise: Promise<void>;
+  // Marked false on a pool 'error' so callers can observe an unhealthy adapter
+  private isConnected = false;
 
   constructor(config: MySQLConfig) {
     this.initPromise = this.initialize(config);
@@ -55,6 +57,15 @@ export class MySQLAdapter implements DatabaseAdapter {
         queueLimit: 0,
         ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
       });
+
+      // The mysql2 pool is an EventEmitter; without an 'error' listener an idle
+      // connection error (e.g. after a server restart) would crash the process.
+      this.pool.on('error', (err: Error) => {
+        this.isConnected = false;
+        this.logger.error('MySQL pool error', 'Pool', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     } catch {
       throw new Error(
         'mysql2 package is required for MySQL adapter. Install it with: npm install mysql2'
@@ -67,6 +78,7 @@ export class MySQLAdapter implements DatabaseAdapter {
     try {
       const connection = await this.pool.getConnection();
       connection.release();
+      this.isConnected = true;
       this.logger.info('MySQL connection established', 'Connection');
     } catch (error) {
       this.logger.error('MySQL connection failed', 'Connection', {
@@ -94,7 +106,7 @@ export class MySQLAdapter implements DatabaseAdapter {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
@@ -179,7 +191,7 @@ class MySQLTransaction implements DatabaseTransaction {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {

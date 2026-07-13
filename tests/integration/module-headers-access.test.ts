@@ -64,7 +64,7 @@ describe('Module Routes - Headers Access', () => {
       },
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
 
     // Verify the response
     expect(data.success).toBe(true);
@@ -121,7 +121,7 @@ describe('Module Routes - Headers Access', () => {
       }
     );
 
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(data.hasHost).toBe(true);
     expect(data.hasUserAgent).toBe(true);
@@ -164,7 +164,7 @@ describe('Module Routes - Headers Access', () => {
       },
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
     expect(data.apiKey).toBe('secret-key');
     expect(data.hasHeaders).toBe(true);
   });
@@ -203,7 +203,7 @@ describe('Module Routes - Headers Access', () => {
       },
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
     expect(data.hasAuth).toBe(true);
     expect(data.hasCookies).toBe(true);
     expect(data.cookieCount).toBeGreaterThan(0);

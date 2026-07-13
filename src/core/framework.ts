@@ -21,10 +21,8 @@ import {
   normalizeSSLConfig,
   sslForNode,
   sslForUws,
-  sslForEngine,
   sslIsComplete,
 } from './http/utils/ssl-config.js';
-import type { EngineCapabilities } from './utilities/package-utils.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
@@ -45,9 +43,9 @@ export interface ServerKind {
   server: 'engine' | 'node' | 'http2';
   /** Package backing the native engine ('@morojs/engine' or 'uWebSockets.js') */
   enginePackage?: string;
-  engineVersion?: string;
+  engineVersion?: string | undefined;
   /** Present when the native engine was requested but the Node server booted */
-  fallbackReason?: string;
+  fallbackReason?: string | undefined;
   /** Protocols the booted server can speak (observability for app.engine). */
   protocols?: Array<'http/1.1' | 'h2'>;
 }
@@ -101,7 +99,7 @@ export interface MoroOptions extends CoreMoroOptions {
 export class Moro extends EventEmitter {
   private httpServer: MoroHttpServer | UWebSocketsHttpServer | MoroEngineServer | MoroHttp2Server;
   private server: Server | any; // HTTP/2 server type or uWebSockets app
-  private websocketAdapter?: WebSocketAdapter;
+  private websocketAdapter?: WebSocketAdapter | undefined;
   private container: Container;
   private moduleLoader: ModuleLoader;
   private websocketManager?: WebSocketManager;
@@ -174,26 +172,26 @@ export class Moro extends EventEmitter {
         ) {
           this.httpServer = new MoroEngineServer({
             ssl,
-            capabilities: caps,
             limits: rt,
-            http2Settings: engineChoice.h2 ? this.resolveH2Settings(options) : undefined,
             maxBodySize: rt.maxBodySize,
             maxUploadSize: rt.maxUploadSize,
             engineModule: engineChoice.engine.module,
             // Cluster workers each bind the port; SO_REUSEPORT lets the kernel
             // balance accepts across them (Windows is gated to Node earlier).
             reusePort: this.config.performance?.clustering?.enabled === true,
+            ...(caps ? { capabilities: caps } : {}),
+            ...(engineChoice.h2 ? { http2Settings: this.resolveH2Settings(options) } : {}),
           });
           this.server = (this.httpServer as MoroEngineServer).getServer();
           this.usingEngine = true;
         } else {
           this.httpServer = new UWebSocketsHttpServer({
-            ssl: ssl ? sslForUws(ssl) : undefined,
             sslInlineOnly: ssl ? !sslForUws(ssl) : false,
             limits: rt,
             maxBodySize: rt.maxBodySize,
             maxUploadSize: rt.maxUploadSize,
             engineModule: engineChoice.engine.module,
+            ...(ssl ? { ssl: sslForUws(ssl) } : {}),
           });
           this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
           this.usingUWebSockets = true;
@@ -222,10 +220,10 @@ export class Moro extends EventEmitter {
         this.usingEngine = false;
         this.engineInfo = { server: 'node', fallbackReason: reason };
         this.httpServer = new MoroHttpServer({
-          ssl: ssl && sslIsComplete(ssl) ? sslForNode(ssl) : undefined,
           limits: rt,
           maxBodySize: rt.maxBodySize,
           maxUploadSize: rt.maxUploadSize,
+          ...(ssl && sslIsComplete(ssl) ? { ssl: sslForNode(ssl) } : {}),
         });
         this.server = (this.httpServer as MoroHttpServer).getServer();
       }
@@ -255,13 +253,10 @@ export class Moro extends EventEmitter {
     } else {
       // Use standard HTTP/1.1 (Node), now with optional in-process HTTPS.
       this.httpServer = new MoroHttpServer({
-        ssl:
-          ssl && require('./http/utils/ssl-config.js').sslIsComplete(ssl)
-            ? sslForNode(ssl)
-            : undefined,
         limits: rt,
         maxBodySize: rt.maxBodySize,
         maxUploadSize: rt.maxUploadSize,
+        ...(ssl && sslIsComplete(ssl) ? { ssl: sslForNode(ssl) } : {}),
       });
       this.server = (this.httpServer as MoroHttpServer).getServer();
       this.engineInfo = { server: 'node', fallbackReason: engineChoice.fallbackReason };
@@ -1395,6 +1390,17 @@ export class Moro extends EventEmitter {
     const size = (v: unknown): number | undefined =>
       v === undefined ? undefined : parseSizeToBytes(v as string | number);
     const multipart = limits.multipart ?? {};
+    const maxPartHeaderBytes = size(multipart.maxPartHeaderBytes);
+    const maxFileSize = size(multipart.maxFileSize);
+    // undefined = use that server's own documented default, so omit the key
+    // entirely rather than pass an explicit undefined (exactOptionalPropertyTypes).
+    const maxHeaderSize = size(limits.maxHeaderSize);
+    const wsMaxMessageSize = size(
+      limits.wsMaxMessageSize ?? this.config.websocket?.options?.maxPayloadLength
+    );
+    const wsBackpressureLimit = size(limits.wsBackpressureLimit);
+    const writeHighWaterMark = size(limits.writeHighWaterMark);
+    const maxPendingBytes = size(limits.maxPendingBytes);
     return {
       maxBodySize: parseSizeToBytes(s.bodySizeLimit ?? '10mb'),
       maxUploadSize: parseSizeToBytes(s.maxUploadSize ?? '100mb'),
@@ -1406,19 +1412,17 @@ export class Moro extends EventEmitter {
         keepAlive: timeouts.keepAlive,
         headers: timeouts.headers,
       },
-      maxHeaderSize: size(limits.maxHeaderSize),
       maxHeaders: limits.maxHeaders,
-      wsMaxMessageSize: size(
-        limits.wsMaxMessageSize ?? this.config.websocket?.options?.maxPayloadLength
-      ),
-      wsBackpressureLimit: size(limits.wsBackpressureLimit),
-      writeHighWaterMark: size(limits.writeHighWaterMark),
-      maxPendingBytes: size(limits.maxPendingBytes),
+      ...(maxHeaderSize !== undefined ? { maxHeaderSize } : {}),
+      ...(wsMaxMessageSize !== undefined ? { wsMaxMessageSize } : {}),
+      ...(wsBackpressureLimit !== undefined ? { wsBackpressureLimit } : {}),
+      ...(writeHighWaterMark !== undefined ? { writeHighWaterMark } : {}),
+      ...(maxPendingBytes !== undefined ? { maxPendingBytes } : {}),
       multipart: {
         maxParts: multipart.maxParts,
-        maxPartHeaderBytes: size(multipart.maxPartHeaderBytes),
         maxFiles: multipart.maxFiles,
-        maxFileSize: size(multipart.maxFileSize),
+        ...(maxPartHeaderBytes !== undefined ? { maxPartHeaderBytes } : {}),
+        ...(maxFileSize !== undefined ? { maxFileSize } : {}),
       },
     };
   }

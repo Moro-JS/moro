@@ -27,10 +27,10 @@ export class BodySizeCore {
     const match = size.toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
     if (!match) return 10 * 1024 * 1024; // Default 10MB
 
-    const value = parseFloat(match[1]);
+    const value = parseFloat(match[1] ?? '');
     const unit = match[2] || 'b';
 
-    return Math.round(value * units[unit]);
+    return Math.round(value * (units[unit] ?? 1));
   }
 
   checkBodySize(req: HttpRequest, res: HttpResponse): boolean {

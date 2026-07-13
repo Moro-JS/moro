@@ -188,7 +188,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.before) phases.before = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.before.push(middleware[i]);
+      phases.before.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -199,7 +199,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.after) phases.after = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.after.push(middleware[i]);
+      phases.after.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -210,7 +210,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     // Avoid spread, use push for better performance
     if (!phases.transform) phases.transform = [];
     for (let i = 0; i < middleware.length; i++) {
-      phases.transform.push(middleware[i]);
+      phases.transform.push(middleware[i] as Middleware);
     }
     return this;
   }
@@ -228,7 +228,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     // Avoid spread, use push for better performance
     if (!this.schema.tags) this.schema.tags = [];
     for (let i = 0; i < tags.length; i++) {
-      this.schema.tags.push(tags[i]);
+      this.schema.tags.push(tags[i] as string);
     }
     return this;
   }

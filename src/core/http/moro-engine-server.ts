@@ -188,11 +188,13 @@ export class EngineRequest extends LazyEventEmitter {
       if (flat) {
         for (let i = 0; i + 1 < flat.length; i += 2) {
           const key = flat[i];
+          const val = flat[i + 1];
+          if (key === undefined || val === undefined) continue;
           const existing = h[key];
           if (existing === undefined) {
-            h[key] = flat[i + 1];
+            h[key] = val;
           } else {
-            h[key] = existing + (key === 'cookie' ? '; ' : ', ') + flat[i + 1];
+            h[key] = existing + (key === 'cookie' ? '; ' : ', ') + val;
           }
         }
       }
@@ -213,6 +215,7 @@ export class EngineRequest extends LazyEventEmitter {
         const parts = header.split(';');
         for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
+          if (part === undefined) continue;
           const eq = part.indexOf('=');
           if (eq > 0) {
             const name = part.substring(0, eq).trim();
@@ -310,12 +313,12 @@ export class EngineRequest extends LazyEventEmitter {
 
   get hostname(): string {
     const host = this.headers.host || '';
-    return host ? host.split(':')[0] : '';
+    return host ? (host.split(':')[0] ?? '') : '';
   }
 
   get protocol(): string {
     const forwardedProto = this.headers['x-forwarded-proto'];
-    if (forwardedProto) return forwardedProto.split(',')[0].trim();
+    if (forwardedProto) return (forwardedProto.split(',')[0] ?? '').trim();
     return this._server && (this._server as any).isSsl ? 'https' : 'http';
   }
 
@@ -362,7 +365,7 @@ export class EngineRequest extends LazyEventEmitter {
   is(type: string): boolean {
     const ct = this.headers['content-type'] || '';
     if (!ct) return false;
-    const mime = ct.split(';')[0].trim().toLowerCase();
+    const mime = (ct.split(';')[0] ?? '').trim().toLowerCase();
     const t = type.toLowerCase();
     if (t.indexOf('/') === -1) {
       return mime.endsWith(`/${t}`) || mime.endsWith(`+${t}`);
@@ -378,7 +381,7 @@ export class EngineRequest extends LazyEventEmitter {
     if (!types) return accept;
     const wanted = Array.isArray(types) ? types : [types];
     if (accept === '*/*' || accept === '') return wanted[0] || false;
-    const acceptTypes = accept.split(',').map(s => s.split(';')[0].trim().toLowerCase());
+    const acceptTypes = accept.split(',').map(s => (s.split(';')[0] ?? '').trim().toLowerCase());
     for (const w of wanted) {
       const wl = w.toLowerCase();
       const wMime = wl.indexOf('/') === -1 ? `application/${wl}` : wl;
@@ -400,7 +403,7 @@ export class EngineRequest extends LazyEventEmitter {
       .split(',')
       .map(s => {
         const parts = s.trim().split(';');
-        const tag = parts[0].toLowerCase();
+        const tag = (parts[0] ?? '').toLowerCase();
         const qPart = parts.find(p => p.trim().startsWith('q='));
         const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
         return { tag, q: isNaN(q) ? 0 : q };
@@ -1338,7 +1341,7 @@ export class MoroEngineServer {
   };
   // Handshake info for the upgrade currently in flight: set just before
   // upgradeToWebSocket() (which fires onWsOpen synchronously), consumed there.
-  private _pendingWsInfo?: { ip: string; headers: Record<string, string> };
+  private _pendingWsInfo?: { ip: string; headers: Record<string, string> } | undefined;
 
   // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
   private maxBodySize: number = 10 * 1024 * 1024;
@@ -1404,10 +1407,10 @@ export class MoroEngineServer {
     if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
     if (options.maxUploadSize) this.maxUploadSize = options.maxUploadSize;
     this.reusePort = options.reusePort === true;
-    this._capabilities = options.capabilities;
-    this._limits = options.limits;
-    this._ssl = options.ssl ?? undefined;
-    this._http2Settings = options.http2Settings;
+    if (options.capabilities) this._capabilities = options.capabilities;
+    if (options.limits) this._limits = options.limits;
+    if (options.ssl) this._ssl = options.ssl;
+    if (options.http2Settings) this._http2Settings = options.http2Settings;
     if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
 
     // The framework preloads the engine synchronously (loadNativeEngine) and
@@ -1513,11 +1516,13 @@ export class MoroEngineServer {
         serveOptions.writeHighWaterMark = limits.writeHighWaterMark;
       if (limits?.backlog !== undefined) serveOptions.backlog = limits.backlog;
     }
-    // TLS (engine >= 1.2.0).
+    // TLS: gated on the engine's own capability flag (caps.tls), not a version
+    // number, so a mismatched engine build is never handed an ssl option it
+    // can't parse.
     if (caps?.tls && this._ssl) {
       serveOptions.ssl = this._ssl;
     }
-    // HTTP/2 (engine >= 1.4.0).
+    // HTTP/2: likewise gated on caps.http2.
     if (caps?.http2 && this._http2Settings) {
       serveOptions.http2 = {
         ...(this._http2Settings.settings ?? {}),
@@ -1598,7 +1603,8 @@ export class MoroEngineServer {
     handlers: Array<Middleware | HttpHandler>
   ): void {
     const compiled = PathMatcher.compile(path);
-    const pattern = compiled.pattern || new RegExp(`^${path.split('?')[0].replace(/\//g, '\\/')}$`);
+    const pattern =
+      compiled.pattern || new RegExp(`^${(path.split('?')[0] ?? '').replace(/\//g, '\\/')}$`);
     this.directRoutes.push({ method, pattern, paramNames: compiled.paramNames, handlers });
   }
 
@@ -1640,16 +1646,18 @@ export class MoroEngineServer {
       if (route.paramNames.length > 0) {
         const params: Record<string, string> = {};
         for (let i = 0; i < route.paramNames.length; i++) {
+          const paramName = route.paramNames[i];
+          if (paramName === undefined) continue;
           const raw = matches[i + 1];
           if (raw === undefined) {
-            params[route.paramNames[i]] = '';
+            params[paramName] = '';
           } else {
             // Malformed escapes (e.g. /users/%zz) keep the raw text - a
             // URIError here would turn an odd URL into a 500
             try {
-              params[route.paramNames[i]] = decodeURIComponent(raw);
+              params[paramName] = decodeURIComponent(raw);
             } catch {
-              params[route.paramNames[i]] = raw;
+              params[paramName] = raw;
             }
           }
         }
@@ -1729,11 +1737,11 @@ export class MoroEngineServer {
           // hide the earlier one from IP-based WS auth / rate-limiting.
           for (let i = 0; i + 1 < flat.length; i += 2) {
             const key = flat[i];
+            const val = flat[i + 1];
+            if (key === undefined || val === undefined) continue;
             const existing = headers[key];
             headers[key] =
-              existing === undefined
-                ? flat[i + 1]
-                : existing + (key === 'cookie' ? '; ' : ', ') + flat[i + 1];
+              existing === undefined ? val : existing + (key === 'cookie' ? '; ' : ', ') + val;
           }
         }
         this._pendingWsInfo = { ip, headers };
@@ -1751,7 +1759,6 @@ export class MoroEngineServer {
     const httpReq = new EngineRequest(this, reqId, method, path);
     const httpRes = new EngineResponse(this, reqId, this.logger);
     httpRes._moroReq = httpReq;
-    this.inflight.set(reqId, httpRes);
 
     // Apply app.decorateRequest/decorateReply values (rare; opt-in)
     if (this.requestDecorationKeys.length > 0) {
@@ -1766,6 +1773,15 @@ export class MoroEngineServer {
     }
 
     void this.handleRequest(httpReq, httpRes);
+
+    // Register for onAborted/onWritable routing only when the response is
+    // still in flight after the synchronous dispatch window. Sync handlers
+    // have already ended by here, and the engine never fires those callbacks
+    // for a completed reqId - registering every request just churns this
+    // long-lived Map's old-space backing store, and entries alive at a
+    // scavenge promote the whole request/response graph (at ~570k pipelined
+    // req/s that meant full GCs every ~400ms and a ~150 MB heap vs ~30 MB).
+    if (!httpRes.writableEnded) this.inflight.set(reqId, httpRes);
   }
 
   private onAborted(reqId: number): void {

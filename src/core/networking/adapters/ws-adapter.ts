@@ -23,6 +23,7 @@ export class WSAdapter implements WebSocketAdapter {
   private wsLogger = createFrameworkLogger('WEBSOCKET_ADAPTER');
   private customIdGenerator?: () => string;
   private connectionCounter = 0;
+  private heartbeatTimer?: ReturnType<typeof setInterval> | undefined;
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
@@ -33,7 +34,14 @@ export class WSAdapter implements WebSocketAdapter {
       this.wss = new WebSocketServer({
         server: httpServer,
         path: options.path || '/ws',
-        maxPayload: options.maxPayloadLength || 100 * 1024 * 1024, // 100MB default
+        // Matches the ws library's own default (100 MiB) so behavior is
+        // unchanged; apps concerned about per-message buffering can lower it
+        // via maxPayloadLength.
+        maxPayload: options.maxPayloadLength || 100 * 1024 * 1024,
+        // Origin allowlist + optional custom upgrade-auth hook. Without this a
+        // cookie-authenticated app is open to cross-site WebSocket hijacking:
+        // the browser sends auth cookies on a ws:// upgrade from any page.
+        verifyClient: this.buildVerifyClient(options),
         // Note: ws doesn't have built-in compression like socket.io
         // but browsers handle compression at the transport level
       });
@@ -42,6 +50,26 @@ export class WSAdapter implements WebSocketAdapter {
       this.wss.on('connection', (ws: any, request: any) => {
         this.handleConnection(ws, request);
       });
+
+      // Protocol-level ping/pong dead-peer detection: terminate half-open
+      // sockets that stop answering so they neither leak nor block close().
+      const heartbeatMs =
+        options.idleTimeout && options.idleTimeout > 0 ? options.idleTimeout : 30000;
+      this.heartbeatTimer = setInterval(() => {
+        for (const ws of this.wss.clients) {
+          if (ws.isAlive === false) {
+            ws.terminate();
+            continue;
+          }
+          ws.isAlive = false;
+          try {
+            ws.ping();
+          } catch {
+            // socket already going away
+          }
+        }
+      }, heartbeatMs);
+      this.heartbeatTimer.unref?.();
 
       // Setup default namespace
       this.createNamespace('/');
@@ -53,9 +81,84 @@ export class WSAdapter implements WebSocketAdapter {
     }
   }
 
+  /**
+   * Build a `ws` verifyClient callback enforcing the configured CORS origin
+   * allowlist and any user-supplied upgrade-auth hook (`options.verifyClient`).
+   *
+   * `cors.origin` accepts:
+   *   - undefined / true / '*'  -> allow any origin (permissive, back-compat)
+   *   - false                   -> same-origin only
+   *   - string                  -> that exact origin
+   *   - string[]                -> any origin in the list
+   *   - (requestOrigin) => ...  -> dynamic: return true (allow), false (deny),
+   *                                '*' (allow), or the allowed origin string
+   *                                (allowed when it equals the request origin).
+   */
+  private buildVerifyClient(
+    options: WebSocketAdapterOptions
+  ): ((info: { origin?: string; req: any; secure: boolean }) => boolean) | undefined {
+    const corsOrigin = options.cors?.origin;
+    const userVerify =
+      typeof (options as any).verifyClient === 'function'
+        ? ((options as any).verifyClient as (info: any) => boolean)
+        : undefined;
+
+    // Allow-all cases need no enforcement at all.
+    const allowAll = corsOrigin === undefined || corsOrigin === true || corsOrigin === '*';
+    if (allowAll && !userVerify) {
+      return undefined;
+    }
+
+    return (info: { origin?: string; req: any; secure: boolean }): boolean => {
+      // allowAll (undefined/true/'*') is handled above; here corsOrigin is a
+      // specific rule to enforce.
+      if (!allowAll) {
+        const origin = info.origin;
+        let ok = false;
+        if (corsOrigin === false) {
+          // Same-origin only: no Origin header (non-browser client) or the
+          // Origin host equals the request Host.
+          if (!origin) {
+            ok = true;
+          } else {
+            try {
+              const host = info.req?.headers?.host;
+              ok = !!host && new URL(origin).host === host;
+            } catch {
+              ok = false;
+            }
+          }
+        } else if (typeof corsOrigin === 'function') {
+          // Dynamic: allow based on the function's decision for this origin.
+          const decision = (corsOrigin as (o: string | undefined) => boolean | string)(origin);
+          ok = decision === true || decision === '*' || (!!origin && decision === origin);
+        } else if (corsOrigin instanceof RegExp) {
+          ok = !!origin && corsOrigin.test(origin);
+        } else if (typeof corsOrigin === 'string') {
+          ok = origin === corsOrigin;
+        } else if (Array.isArray(corsOrigin)) {
+          ok = !!origin && corsOrigin.includes(origin);
+        }
+        if (!ok) {
+          this.wsLogger.warn(
+            `Rejected WebSocket upgrade from disallowed origin: ${origin ?? '(none)'}`
+          );
+          return false;
+        }
+      }
+      return userVerify ? userVerify(info) : true;
+    };
+  }
+
   private handleConnection(ws: any, request: any): void {
     const id = this.generateId();
     const connection = new WSConnectionWrapper(id, ws, request);
+
+    // Liveness tracking for the heartbeat sweep (see initialize()).
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
 
     this.connections.set(id, connection);
 
@@ -88,7 +191,21 @@ export class WSAdapter implements WebSocketAdapter {
   }
 
   async close(): Promise<void> {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
     if (this.wss) {
+      // Terminate live clients first: wss.close() only stops accepting new
+      // connections and does not resolve while sockets remain open, which would
+      // otherwise stall the app's graceful shutdown until its timeout.
+      for (const ws of this.wss.clients) {
+        try {
+          ws.terminate();
+        } catch {
+          // socket already going away
+        }
+      }
       return new Promise(resolve => {
         this.wss.close(() => {
           this.connections.clear();
@@ -161,7 +278,7 @@ class WSNamespaceWrapper implements WebSocketNamespace {
       const handlers = this.connectionHandlers;
       const len = handlers.length;
       for (let i = 0; i < len; i++) {
-        handlers[i](connection);
+        handlers[i]?.(connection);
       }
     });
 
@@ -181,7 +298,7 @@ class WSNamespaceWrapper implements WebSocketNamespace {
       }
 
       const middleware = this.middlewares[index++];
-      middleware(connection, next);
+      middleware?.(connection, next);
     };
 
     next();
@@ -301,7 +418,7 @@ class WSConnectionWrapper implements WebSocketConnection {
       if (handlers) {
         const len = handlers.length;
         for (let i = 0; i < len; i++) {
-          handlers[i](data);
+          handlers[i]?.(data);
         }
       }
       return;
@@ -322,7 +439,7 @@ class WSConnectionWrapper implements WebSocketConnection {
     if (Array.isArray(room)) {
       const len = room.length;
       for (let i = 0; i < len; i++) {
-        this.rooms.add(room[i]);
+        this.rooms.add(room[i] as string);
       }
     } else {
       this.rooms.add(room);
@@ -333,7 +450,7 @@ class WSConnectionWrapper implements WebSocketConnection {
     if (Array.isArray(room)) {
       const len = room.length;
       for (let i = 0; i < len; i++) {
-        this.rooms.delete(room[i]);
+        this.rooms.delete(room[i] as string);
       }
     } else {
       this.rooms.delete(room);
@@ -373,7 +490,7 @@ class WSConnectionWrapper implements WebSocketConnection {
       const anyHandlers = this.anyHandlers;
       const anyLen = anyHandlers.length;
       for (let i = 0; i < anyLen; i++) {
-        anyHandlers[i](event, messageData);
+        anyHandlers[i]?.(event, messageData);
       }
 
       // Call specific event handlers - optimized with for loop
@@ -381,7 +498,7 @@ class WSConnectionWrapper implements WebSocketConnection {
       if (handlers) {
         const len = handlers.length;
         for (let i = 0; i < len; i++) {
-          handlers[i](messageData, callback);
+          handlers[i]?.(messageData, callback);
         }
       }
     } catch {
@@ -437,7 +554,7 @@ class WSEmitterWrapper implements WebSocketEmitter {
         let hasTargetRoom = false;
         const len = this.targetRooms.length;
         for (let i = 0; i < len; i++) {
-          if (rooms.has(this.targetRooms[i])) {
+          if (rooms.has(this.targetRooms[i] as string)) {
             hasTargetRoom = true;
             break;
           }
@@ -453,7 +570,7 @@ class WSEmitterWrapper implements WebSocketEmitter {
       if (Array.isArray(this.excludeRooms)) {
         const len = this.excludeRooms.length;
         for (let i = 0; i < len; i++) {
-          if (rooms.has(this.excludeRooms[i])) return false;
+          if (rooms.has(this.excludeRooms[i] as string)) return false;
         }
       } else {
         if (rooms.has(this.excludeRooms)) return false;

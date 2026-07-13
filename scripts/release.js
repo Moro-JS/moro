@@ -72,6 +72,28 @@ function updateVersion(versionType) {
   return { currentVersion, newVersion };
 }
 
+// Enforce semver: a breaking change must go out as a MAJOR release. Scans the
+// commit messages since the last tag for conventional-commits breaking markers
+// (`type!:` or a `BREAKING CHANGE` note) and refuses a patch/minor bump.
+function assertSemverForBreakingChanges(versionType) {
+  let commits = '';
+  try {
+    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    commits = execSync(`git log ${lastTag}..HEAD --format=%B`, { encoding: 'utf8' });
+  } catch {
+    commits = execSync('git log --format=%B', { encoding: 'utf8' });
+  }
+  const hasBreaking = /(^|\n)\s*\w+(\([^)]*\))?!:/.test(commits) || /BREAKING CHANGE/.test(commits);
+  if (hasBreaking && versionType !== 'major') {
+    log('\n❌ Breaking-change commits detected since the last release, but the', 'red');
+    log(`   requested bump is "${versionType}". A breaking change requires a MAJOR bump.`, 'red');
+    log('   Re-run with `major`, or drop the breaking change.', 'red');
+    log('   Policy: anything marked breaking (a `!` commit or a Breaking heading)', 'red');
+    log('   must bump the major version.', 'red');
+    process.exit(1);
+  }
+}
+
 function updatePackageJson(newVersion) {
   const packagePath = 'package.json';
   const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
@@ -330,6 +352,9 @@ function main() {
     updatePackageJson(newVersion);
     updatePackageLockJson(newVersion);
   } else {
+    // Semver policy: a breaking change must bump major. Refuse to cut a
+    // patch/minor when the commits since the last tag contain breaking markers.
+    assertSemverForBreakingChanges(versionType);
     const versions = updateVersion(versionType);
     currentVersion = versions.currentVersion;
     newVersion = versions.newVersion;
@@ -355,9 +380,10 @@ function main() {
   exec(`git commit -m "chore: release v${newVersion}"`);
   log('✅ Changes committed', 'green');
 
-  // Step 10: Create git tag
-  log('\n🏷️  Step 10: Creating git tag', 'blue');
-  exec(`git tag v${newVersion}`);
+  // Step 10: Create git tag (annotated so the tag carries author/date/message
+  // and leaves an audit trail; never move a published tag - cut a new patch).
+  log('\n🏷️  Step 10: Creating annotated git tag', 'blue');
+  exec(`git tag -a v${newVersion} -m "Release v${newVersion}"`);
   log('✅ Git tag created', 'green');
 
   // Step 11: Push to GitHub
@@ -375,10 +401,13 @@ function main() {
   log(`GitHub: https://github.com/morojs/moro/releases/tag/v${newVersion}`, 'cyan');
 
   log('\n📋 Next steps:', 'yellow');
-  log('1. Create GitHub release at the URL above', 'yellow');
-  log('2. Publish to npm: npm publish', 'yellow');
-  log('3. Verify the release on npm and GitHub', 'yellow');
-  log('4. Announce the release on social media/community channels', 'yellow');
+  log('1. Create a GitHub release at the URL above (Publishing a release runs', 'yellow');
+  log('   the CI publish job, which builds, validates the tarball, checks the', 'yellow');
+  log('   tag matches package.json, and runs `npm publish --provenance`).', 'yellow');
+  log('2. Do NOT run `npm publish` from a laptop - CI is the only publish path,', 'yellow');
+  log('   so every published artifact carries provenance and passed the gates.', 'yellow');
+  log('3. Verify the release on npm (attestations) and GitHub.', 'yellow');
+  log('4. Announce the release on social media/community channels.', 'yellow');
 }
 
 main();

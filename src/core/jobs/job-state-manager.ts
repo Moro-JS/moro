@@ -16,7 +16,7 @@ export interface JobExecution {
   status: 'running' | 'completed' | 'failed' | 'timeout' | 'cancelled';
   error?: {
     message: string;
-    stack?: string;
+    stack?: string | undefined;
     code?: string;
   };
   retryCount: number;
@@ -26,7 +26,7 @@ export interface JobExecution {
     external: number;
     rss: number;
   };
-  metadata?: Record<string, any>;
+  metadata?: Record<string, any> | undefined;
 }
 
 export interface JobState {
@@ -41,7 +41,7 @@ export interface JobState {
   averageDuration: number;
   createdAt: Date;
   updatedAt: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, any> | undefined;
 }
 
 export interface JobHistory {
@@ -58,13 +58,20 @@ export interface StateManagerOptions {
   enableRecovery?: boolean;
 }
 
+interface RunningJobRef {
+  jobId: string;
+  executionId: string;
+}
+
 interface PersistedState {
   version: string;
   timestamp: Date;
   hostname: string;
   pid: number;
   jobs: Record<string, JobState>;
-  runningJobs: string[];
+  // Current: {jobId, executionId} pairs. Legacy files persisted bare id strings,
+  // which loadState() tolerates.
+  runningJobs: Array<RunningJobRef | string>;
 }
 
 /**
@@ -75,7 +82,7 @@ export class JobStateManager extends EventEmitter {
   private states = new Map<string, JobState>();
   private history = new Map<string, JobHistory>();
   private runningExecutions = new Map<string, JobExecution>();
-  private persistTimer?: NodeJS.Timeout;
+  private persistTimer?: NodeJS.Timeout | undefined;
   private persistPath?: string;
   private historySize: number;
   private enableAutoPersist: boolean;
@@ -108,7 +115,9 @@ export class JobStateManager extends EventEmitter {
 
     // Load persisted state if recovery enabled
     if (this.enableRecovery && this.persistPath) {
-      this.loadState();
+      void this.loadState().catch(err =>
+        this.logger.error('Failed to load persisted job state', this.loggerContext, { error: err })
+      );
     }
 
     this.logger.debug('JobStateManager initialized', this.loggerContext, {
@@ -484,7 +493,12 @@ export class JobStateManager extends EventEmitter {
         hostname: os.hostname(),
         pid: process.pid,
         jobs: Object.fromEntries(this.states),
-        runningJobs: Array.from(this.runningExecutions.keys()),
+        // Persist {jobId, executionId} pairs so crash recovery can match on the
+        // stable jobId (the map is keyed by executionId, which is not).
+        runningJobs: Array.from(this.runningExecutions.values()).map(execution => ({
+          jobId: execution.jobId,
+          executionId: execution.executionId,
+        })),
       };
 
       const json = JSON.stringify(stateData, null, 2);
@@ -547,8 +561,23 @@ export class JobStateManager extends EventEmitter {
         this.states.set(jobId, state);
       }
 
-      // Handle crashed jobs (were running but no longer are)
-      const crashedJobs = stateData.runningJobs.filter(id => this.states.has(id));
+      // Handle crashed jobs (were running when the process died but no longer are).
+      // Match on the stable jobId. Legacy files stored bare id strings; those are
+      // only usable if the string happens to match a known jobId.
+      const runningRefs = Array.isArray(stateData.runningJobs) ? stateData.runningJobs : [];
+      const crashedJobIds = new Set<string>();
+      for (const ref of runningRefs) {
+        let jobId: string | undefined;
+        if (typeof ref === 'string') {
+          jobId = this.states.has(ref) ? ref : undefined;
+        } else if (ref && typeof ref === 'object') {
+          jobId = ref.jobId;
+        }
+        if (jobId && this.states.has(jobId)) {
+          crashedJobIds.add(jobId);
+        }
+      }
+      const crashedJobs = Array.from(crashedJobIds);
       if (crashedJobs.length > 0) {
         this.logger.warn(
           `Detected ${crashedJobs.length} jobs that were running during crash`,

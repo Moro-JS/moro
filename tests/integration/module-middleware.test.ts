@@ -58,7 +58,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.success).toBe(true);
     expect(data.hadModuleMiddleware).toBe(true);
@@ -103,7 +103,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.executionOrder).toEqual(['module-middleware', 'route-middleware', 'route-handler']);
   });
@@ -142,7 +142,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.success).toBe(true);
     expect(data.customProperty).toBe('custom-value');
@@ -191,7 +191,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.executionOrder).toEqual([
       'middleware-1',
@@ -238,7 +238,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.executionOrder).toEqual(['custom-middleware-1', 'custom-middleware-2', 'handler']);
   });
@@ -324,7 +324,7 @@ describe('Module Middleware - Integration Tests', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
     expect(data.executionOrder).toEqual(['async-middleware', 'handler']);
   });

@@ -14,14 +14,14 @@ import type { Logger } from '../../../types/logger.js';
 export class SESAdapter extends BaseMailAdapter {
   private client: any;
   private logger: Logger;
-  private configurationSet?: string;
+  private configurationSet?: string | undefined;
 
   constructor() {
     super();
     this.logger = createFrameworkLogger('Mail:SES');
   }
 
-  async initialize(config: SESConnection): Promise<void> {
+  override async initialize(config: SESConnection): Promise<void> {
     if (!config.region) {
       throw new Error('AWS region is required for SES adapter');
     }
@@ -145,7 +145,7 @@ export class SESAdapter extends BaseMailAdapter {
     return 'AWS SES';
   }
 
-  async verify(): Promise<boolean> {
+  override async verify(): Promise<boolean> {
     if (!this.client) {
       return false;
     }

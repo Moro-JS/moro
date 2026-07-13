@@ -183,12 +183,12 @@ export function withAuth(options: AuthRouteOptions = {}) {
     descriptor.value = async function (req: any, res: any, next: any) {
       if (options.requireAuth !== false) {
         const authMiddleware = requireAuth({
-          roles: options.roles,
-          redirectTo: options.redirectTo,
+          ...(options.roles !== undefined ? { roles: options.roles } : {}),
+          ...(options.redirectTo !== undefined ? { redirectTo: options.redirectTo } : {}),
         });
 
         await new Promise<void>((resolve, reject) => {
-          authMiddleware(req, res, (error: any) => {
+          void authMiddleware(req, res, (error: any) => {
             if (error) reject(error);
             else resolve();
           });
@@ -337,7 +337,7 @@ export function protectedRoute(
     const authMiddleware = requireAuth(options);
 
     return new Promise<void>((resolve, reject) => {
-      authMiddleware(req, res, (error: any) => {
+      void authMiddleware(req, res, (error: any) => {
         if (error) {
           reject(error);
         } else {

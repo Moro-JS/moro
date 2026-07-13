@@ -5,6 +5,7 @@ MoroJS includes a custom, native Auth.js adapter that provides seamless integrat
 ## Overview
 
 The native adapter provides:
+
 - **Zero Dependencies**: No reliance on `@auth/express` or other framework adapters
 - **Full Auth.js Compatibility**: Complete feature parity with Auth.js core
 - **Native MoroJS Integration**: Built specifically for MoroJS request/response handling
@@ -16,26 +17,28 @@ The native adapter provides:
 ### Basic Setup
 
 ```typescript
-import { Moro } from '../src/moro';
-import { createAuthMiddleware } from '../src/core/auth/morojs-adapter';
+import { Moro } from '@morojs/moro';
+import { createAuthMiddleware } from '@morojs/moro';
 
 const app = new Moro();
 
-app.use(createAuthMiddleware({
-  providers: [
-    {
-      id: 'github',
-      name: 'GitHub',
-      type: 'oauth',
-      authorization: 'https://github.com/login/oauth/authorize',
-      token: 'https://github.com/login/oauth/access_token',
-      userinfo: 'https://api.github.com/user',
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    },
-  ],
-  secret: process.env.AUTH_SECRET!,
-}));
+app.use(
+  createAuthMiddleware({
+    providers: [
+      {
+        id: 'github',
+        name: 'GitHub',
+        type: 'oauth',
+        authorization: 'https://github.com/login/oauth/authorize',
+        token: 'https://github.com/login/oauth/access_token',
+        userinfo: 'https://api.github.com/user',
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      },
+    ],
+    secret: process.env.AUTH_SECRET!,
+  })
+);
 
 app.get('/', (req, res) => {
   res.json({
@@ -58,44 +61,46 @@ app.listen(3000);
 The adapter supports all standard Auth.js providers with native configuration:
 
 ```typescript
-app.use(createAuthMiddleware({
-  providers: [
-    // GitHub Provider
-    {
-      id: 'github',
-      name: 'GitHub',
-      type: 'oauth',
-      authorization: 'https://github.com/login/oauth/authorize',
-      token: 'https://github.com/login/oauth/access_token',
-      userinfo: 'https://api.github.com/user',
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-    },
+app.use(
+  createAuthMiddleware({
+    providers: [
+      // GitHub Provider
+      {
+        id: 'github',
+        name: 'GitHub',
+        type: 'oauth',
+        authorization: 'https://github.com/login/oauth/authorize',
+        token: 'https://github.com/login/oauth/access_token',
+        userinfo: 'https://api.github.com/user',
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      },
 
-    // Google Provider
-    {
-      id: 'google',
-      name: 'Google',
-      type: 'oauth',
-      authorization: 'https://accounts.google.com/oauth/authorize',
-      token: 'https://oauth2.googleapis.com/token',
-      userinfo: 'https://www.googleapis.com/oauth2/v2/userinfo',
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    },
+      // Google Provider
+      {
+        id: 'google',
+        name: 'Google',
+        type: 'oauth',
+        authorization: 'https://accounts.google.com/oauth/authorize',
+        token: 'https://oauth2.googleapis.com/token',
+        userinfo: 'https://www.googleapis.com/oauth2/v2/userinfo',
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      },
 
-    // Custom OIDC Provider
-    {
-      id: 'custom-oidc',
-      name: 'Custom OIDC',
-      type: 'oidc',
-      issuer: 'https://accounts.example.com',
-      clientId: process.env.CUSTOM_CLIENT_ID!,
-      clientSecret: process.env.CUSTOM_CLIENT_SECRET!,
-    },
-  ],
-  secret: process.env.AUTH_SECRET!,
-}));
+      // Custom OIDC Provider
+      {
+        id: 'custom-oidc',
+        name: 'Custom OIDC',
+        type: 'oidc',
+        issuer: 'https://accounts.example.com',
+        clientId: process.env.CUSTOM_CLIENT_ID!,
+        clientSecret: process.env.CUSTOM_CLIENT_SECRET!,
+      },
+    ],
+    secret: process.env.AUTH_SECRET!,
+  })
+);
 ```
 
 ### Callbacks and Events
@@ -103,52 +108,56 @@ app.use(createAuthMiddleware({
 Full Auth.js callback and event support:
 
 ```typescript
-app.use(createAuthMiddleware({
-  providers: [/* your providers */],
-  secret: process.env.AUTH_SECRET!,
+app.use(
+  createAuthMiddleware({
+    providers: [
+      /* your providers */
+    ],
+    secret: process.env.AUTH_SECRET!,
 
-  // Custom callbacks
-  callbacks: {
-    async signIn({ user, account, profile }: any) {
-      console.log(`🔐 User ${user.email} signing in via ${account?.provider}`);
+    // Custom callbacks
+    callbacks: {
+      async signIn({ user, account, profile }: any) {
+        console.log(`🔐 User ${user.email} signing in via ${account?.provider}`);
 
-      // Custom business logic
-      if (user.email?.endsWith('@blockedcompany.com')) {
-        return false; // Block this user
-      }
+        // Custom business logic
+        if (user.email?.endsWith('@blockedcompany.com')) {
+          return false; // Block this user
+        }
 
-      return true;
+        return true;
+      },
+
+      async session({ session, token }: any) {
+        // Add custom data to session
+        session.customData = {
+          loginTime: new Date(),
+          provider: token.provider,
+        };
+        return session;
+      },
+
+      async jwt({ token, user, account }: any) {
+        if (user) {
+          token.provider = account?.provider;
+          token.userId = user.id;
+        }
+        return token;
+      },
     },
 
-    async session({ session, token }: any) {
-      // Add custom data to session
-      session.customData = {
-        loginTime: new Date(),
-        provider: token.provider,
-      };
-      return session;
-    },
+    // Auth.js events
+    events: {
+      async signIn({ user, account, isNewUser }: any) {
+        console.log(`✅ Sign in event: ${user.email} (new: ${isNewUser})`);
+      },
 
-    async jwt({ token, user, account }: any) {
-      if (user) {
-        token.provider = account?.provider;
-        token.userId = user.id;
-      }
-      return token;
+      async signOut({ session }: any) {
+        console.log(`👋 Sign out event: ${session.user.email}`);
+      },
     },
-  },
-
-  // Auth.js events
-  events: {
-    async signIn({ user, account, isNewUser }: any) {
-      console.log(`✅ Sign in event: ${user.email} (new: ${isNewUser})`);
-    },
-
-    async signOut({ session }: any) {
-      console.log(`👋 Sign out event: ${session.user.email}`);
-    },
-  },
-}));
+  })
+);
 ```
 
 ## Request Enhancement
@@ -222,57 +231,65 @@ app.get('/api/auth/custom-signin', (req, res) => {
 ### Custom Request/Response Transformers
 
 ```typescript
-app.use(createAuthMiddleware({
-  providers: [/* your providers */],
-  secret: process.env.AUTH_SECRET!,
+app.use(
+  createAuthMiddleware({
+    providers: [
+      /* your providers */
+    ],
+    secret: process.env.AUTH_SECRET!,
 
-  // Custom transformers
-  morojs: {
-    debug: true,
-    transformers: {
-      // Transform MoroJS request for Auth.js
-      request: (req) => {
-        // Add custom headers or modify request
-        return {
-          ...req,
-          headers: {
-            ...req.headers,
-            'x-forwarded-proto': 'https',
-          },
-        };
-      },
+    // Custom transformers
+    morojs: {
+      debug: true,
+      transformers: {
+        // Transform MoroJS request for Auth.js
+        request: req => {
+          // Add custom headers or modify request
+          return {
+            ...req,
+            headers: {
+              ...req.headers,
+              'x-forwarded-proto': 'https',
+            },
+          };
+        },
 
-      // Transform Auth.js response for MoroJS
-      response: (res) => {
-        // Add custom response handling
-        return res;
+        // Transform Auth.js response for MoroJS
+        response: res => {
+          // Add custom response handling
+          return res;
+        },
       },
     },
-  },
-}));
+  })
+);
 ```
 
 ### Security Configuration
 
 ```typescript
-app.use(createAuthMiddleware({
-  providers: [/* your providers */],
-  secret: process.env.AUTH_SECRET!,
+app.use(
+  createAuthMiddleware({
+    providers: [
+      /* your providers */
+    ],
+    secret: process.env.AUTH_SECRET!,
 
-  // Security settings
-  session: {
-    strategy: 'jwt',
-    maxAge: 8 * 60 * 60, // 8 hours
-    updateAge: 2 * 60 * 60, // Update every 2 hours
-  },
+    // Security settings
+    session: {
+      strategy: 'jwt',
+      maxAge: 8 * 60 * 60, // 8 hours
+      updateAge: 2 * 60 * 60, // Update every 2 hours
+    },
 
-  useSecureCookies: process.env.NODE_ENV === 'production',
-  trustHost: true,
-  debug: process.env.NODE_ENV === 'development',
+    useSecureCookies: process.env.NODE_ENV === 'production',
+    trustHost: true,
+    debug: process.env.NODE_ENV === 'development',
 
-  // CSRF protection
-  skipCSRFCheck: ['/api/webhook'],
-}));
+    // CSRF protection
+    skipCSRFCheck: ['/api/webhook'],
+  })
+);
 ```
 
 ## Request/Response Types
@@ -330,13 +347,13 @@ src/core/auth/morojs-adapter.ts
 
 ## Comparison with Express Adapter
 
-| Feature | Native MoroJS | @auth/express |
-|---------|---------------|---------------|
-| Dependencies | Zero external | Requires Express |
-| Performance | Optimized for MoroJS | Express overhead |
-| Integration | Native hooks system | Middleware chain |
-| TypeScript | Full MoroJS types | Express types |
-| Customization | MoroJS-specific | Express-specific |
+| Feature       | Native MoroJS        | @auth/express    |
+| ------------- | -------------------- | ---------------- |
+| Dependencies  | Zero external        | Requires Express |
+| Performance   | Optimized for MoroJS | Express overhead |
+| Integration   | Native hooks system  | Middleware chain |
+| TypeScript    | Full MoroJS types    | Express types    |
+| Customization | MoroJS-specific      | Express-specific |
 
 ## Production Deployment
 
@@ -360,37 +377,41 @@ GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
 ### Production Configuration
 
 ```typescript
-app.use(createAuthMiddleware({
-  providers: [/* your providers */],
-  secret: process.env.AUTH_SECRET!,
+app.use(
+  createAuthMiddleware({
+    providers: [
+      /* your providers */
+    ],
+    secret: process.env.AUTH_SECRET!,
 
-  // Production settings
-  useSecureCookies: true,
-  trustHost: true,
-  debug: false,
+    // Production settings
+    useSecureCookies: true,
+    trustHost: true,
+    debug: false,
 
-  session: {
-    strategy: 'jwt',
-    maxAge: 8 * 60 * 60, // 8 hours for security
-  },
-
-  callbacks: {
-    async signIn({ user, account }: any) {
-      // Production sign-in validation
-      const isAllowed = await validateUserAccess(user.email);
-
-      if (!isAllowed) {
-        await logSecurityEvent('blocked_signin_attempt', {
-          email: user.email,
-          provider: account?.provider,
-        });
-        return false;
-      }
-
-      return true;
+    session: {
+      strategy: 'jwt',
+      maxAge: 8 * 60 * 60, // 8 hours for security
     },
-  },
-}));
+
+    callbacks: {
+      async signIn({ user, account }: any) {
+        // Production sign-in validation
+        const isAllowed = await validateUserAccess(user.email);
+
+        if (!isAllowed) {
+          await logSecurityEvent('blocked_signin_attempt', {
+            email: user.email,
+            provider: account?.provider,
+          });
+          return false;
+        }
+
+        return true;
+      },
+    },
+  })
+);
 ```
 
 ## Contributing to Auth.js
@@ -414,10 +435,12 @@ Once contributed to Auth.js, the adapter will be available as:
 import { MoroJS } from '@auth/morojs';
 import { GitHub, Google } from '@auth/core/providers';
 
-app.use(MoroJS({
-  providers: [GitHub, Google],
-  secret: process.env.AUTH_SECRET!,
-}));
+app.use(
+  MoroJS({
+    providers: [GitHub, Google],
+    secret: process.env.AUTH_SECRET!,
+  })
+);
 ```
 
 ## Examples
@@ -447,13 +470,16 @@ See the `examples/` directory for complete implementations:
 ### Debug Mode
 
 ```typescript
-app.use(createAuthMiddleware({
-  debug: true, // Enable debug logging
-  // ... other config
-}));
+app.use(
+  createAuthMiddleware({
+    debug: true, // Enable debug logging
+    // ... other config
+  })
+);
 ```
 
 This will log detailed information about:
+
 - Request transformations
 - Auth.js handler execution
 - Response transformations

@@ -114,84 +114,89 @@ export class WebSocketManager {
     wsConfig: WebSocketDefinition,
     moduleConfig: ModuleConfig
   ): void {
-    socket.on(wsConfig.event, async (data: any, callback?: CallableFunction) => {
-      const handlerKey = `${moduleConfig.name}.${wsConfig.handler}`;
+    socket.on(wsConfig.event, (data: any, callback?: CallableFunction) => {
+      void (async () => {
+        const handlerKey = `${moduleConfig.name}.${wsConfig.handler}`;
 
-      try {
-        // Rate limiting
-        if (wsConfig.rateLimit && !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)) {
-          const error = {
-            success: false,
-            error: 'Rate limit exceeded',
-            code: 'RATE_LIMIT',
-          };
-          if (callback) callback(error);
-          else socket.emit('error', error);
-          return;
-        }
-
-        // Universal validation (works with any ValidationSchema)
-        if (wsConfig.validation) {
-          try {
-            data = await wsConfig.validation.parseAsync(data);
-          } catch (validationError: any) {
-            // Handle universal validation errors
-            const normalizedError = normalizeValidationError(validationError);
+        try {
+          // Rate limiting
+          if (
+            wsConfig.rateLimit &&
+            !this.checkRateLimit(socket.id, handlerKey, wsConfig.rateLimit)
+          ) {
             const error = {
               success: false,
-              error: 'Validation failed',
-              details: normalizedError.issues.map((issue: any) => ({
-                field: issue.path.length > 0 ? issue.path.join('.') : 'data',
-                message: issue.message,
-                code: issue.code,
-              })),
+              error: 'Rate limit exceeded',
+              code: 'RATE_LIMIT',
             };
             if (callback) callback(error);
             else socket.emit('error', error);
             return;
           }
+
+          // Universal validation (works with any ValidationSchema)
+          if (wsConfig.validation) {
+            try {
+              data = await wsConfig.validation.parseAsync(data);
+            } catch (validationError: any) {
+              // Handle universal validation errors
+              const normalizedError = normalizeValidationError(validationError);
+              const error = {
+                success: false,
+                error: 'Validation failed',
+                details: normalizedError.issues.map((issue: any) => ({
+                  field: issue.path.length > 0 ? issue.path.join('.') : 'data',
+                  message: issue.message,
+                  code: issue.code,
+                })),
+              };
+              if (callback) callback(error);
+              else socket.emit('error', error);
+              return;
+            }
+          }
+
+          // Circuit breaker protection
+          const circuitBreaker = this.getCircuitBreaker(handlerKey);
+
+          const result = await circuitBreaker.execute(async () => {
+            const controller = this.container.resolve(moduleConfig.name);
+            return await (controller as any)[wsConfig.handler](socket, data);
+          });
+
+          // Handle response
+          if (callback) {
+            callback({ success: true, data: result });
+          } else if (result !== undefined) {
+            socket.emit(`${wsConfig.event}:response`, { success: true, data: result });
+          }
+
+          // Handle room operations
+          if (wsConfig.rooms) {
+            wsConfig.rooms.forEach(room => socket.join(room));
+          }
+
+          // Handle broadcasting
+          if (wsConfig.broadcast && result !== undefined) {
+            socket.broadcast.emit(wsConfig.event, { success: true, data: result });
+          }
+        } catch (error) {
+          this.logger.error('WebSocket handler error', 'HandlerError', {
+            handler: handlerKey,
+            error: error instanceof Error ? error.message : String(error),
+            socketId: socket.id,
+          });
+
+          const errorResponse = {
+            success: false,
+            error: 'Internal server error',
+            code: 'HANDLER_ERROR',
+          };
+
+          if (callback) callback(errorResponse);
+          else socket.emit('error', errorResponse);
         }
-
-        // Circuit breaker protection
-        const circuitBreaker = this.getCircuitBreaker(handlerKey);
-
-        const result = await circuitBreaker.execute(async () => {
-          const controller = this.container.resolve(moduleConfig.name);
-          return await (controller as any)[wsConfig.handler](socket, data);
-        });
-
-        // Handle response
-        if (callback) {
-          callback({ success: true, data: result });
-        } else if (result !== undefined) {
-          socket.emit(`${wsConfig.event}:response`, { success: true, data: result });
-        }
-
-        // Handle room operations
-        if (wsConfig.rooms) {
-          wsConfig.rooms.forEach(room => socket.join(room));
-        }
-
-        // Handle broadcasting
-        if (wsConfig.broadcast && result !== undefined) {
-          socket.broadcast.emit(wsConfig.event, { success: true, data: result });
-        }
-      } catch (error) {
-        this.logger.error('WebSocket handler error', 'HandlerError', {
-          handler: handlerKey,
-          error: error instanceof Error ? error.message : String(error),
-          socketId: socket.id,
-        });
-
-        const errorResponse = {
-          success: false,
-          error: 'Internal server error',
-          code: 'HANDLER_ERROR',
-        };
-
-        if (callback) callback(errorResponse);
-        else socket.emit('error', errorResponse);
-      }
+      })();
     });
   }
 

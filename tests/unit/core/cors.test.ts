@@ -1,7 +1,8 @@
-/* eslint-disable no-unused-vars */
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { cors } from '../../../src/core/middleware/built-in/cors/hook.js';
 import { createCORSMiddleware } from '../../../src/core/middleware/built-in/cors/middleware.js';
+import { OriginFunction } from '../../../src/core/middleware/built-in/cors/core.js';
+import { HttpRequest } from '../../../src/types/http.js';
 
 describe('CORS Middleware', () => {
   describe('CORS Hook', () => {
@@ -210,13 +211,15 @@ describe('CORS Middleware', () => {
     });
 
     it('should support async origin validation', async () => {
-      const mockOriginCheck = jest.fn().mockResolvedValue(true);
+      const mockOriginCheck = jest
+        .fn<(origin?: string) => Promise<boolean>>()
+        .mockResolvedValue(true);
 
       const corsMiddleware = cors({
-        origin: async (origin, _req) => {
+        origin: (async (origin: string | undefined, _req: HttpRequest) => {
           const isAllowed = await mockOriginCheck(origin);
           return isAllowed ? origin : false;
-        },
+        }) as OriginFunction,
       });
 
       await corsMiddleware.install(mockHooks, {});
@@ -299,7 +302,7 @@ describe('CORS Middleware', () => {
         origin: 'https://example.com',
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -315,7 +318,7 @@ describe('CORS Middleware', () => {
 
       mockRequest.method = 'OPTIONS';
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.status).toHaveBeenCalledWith(204);
       expect(mockResponse.end).toHaveBeenCalled();
@@ -330,7 +333,7 @@ describe('CORS Middleware', () => {
 
       mockRequest.method = 'OPTIONS';
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.status).not.toHaveBeenCalled();
       expect(mockResponse.end).not.toHaveBeenCalled();
@@ -340,7 +343,7 @@ describe('CORS Middleware', () => {
     it('should apply default CORS settings', async () => {
       const middleware = createCORSMiddleware();
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Origin', '*');
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
@@ -360,7 +363,7 @@ describe('CORS Middleware', () => {
         methods: ['GET', 'POST'],
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Methods',
@@ -374,7 +377,7 @@ describe('CORS Middleware', () => {
         allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Headers',
@@ -388,7 +391,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Credentials',
@@ -402,7 +405,7 @@ describe('CORS Middleware', () => {
         credentials: false,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       const credentialsCalls = (mockResponse.setHeader as jest.Mock).mock.calls.filter(
         call => call[0] === 'Access-Control-Allow-Credentials'
@@ -429,7 +432,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest1, mockResponse1, mockNext1);
+      await middleware(mockRequest1 as any, mockResponse1 as any, mockNext1);
 
       // Should match the request origin from the allowed list
       expect(mockResponse1.setHeader).toHaveBeenCalledWith(
@@ -455,7 +458,7 @@ describe('CORS Middleware', () => {
       };
       const mockNext2 = jest.fn();
 
-      await middleware(mockRequest2, mockResponse2, mockNext2);
+      await middleware(mockRequest2 as any, mockResponse2 as any, mockNext2);
 
       expect(mockResponse2.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -482,7 +485,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       // Should not call next or set origin header - request should be denied
       expect(mockNext).not.toHaveBeenCalled();
@@ -506,7 +509,7 @@ describe('CORS Middleware', () => {
         credentials: false,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       // Without credentials, should join with comma (though not ideal)
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
@@ -535,7 +538,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Headers',
@@ -562,7 +565,7 @@ describe('CORS Middleware', () => {
         exposedHeaders: ['X-Total-Count', 'X-Page-Number', 'X-Custom-Header'],
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Expose-Headers',
@@ -589,7 +592,7 @@ describe('CORS Middleware', () => {
         maxAge: 7200,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith('Access-Control-Max-Age', '7200');
       expect(mockNext).toHaveBeenCalled();
@@ -618,7 +621,7 @@ describe('CORS Middleware', () => {
         preflightContinue: false,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -662,7 +665,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       // Should use first origin in list for same-origin requests
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
@@ -692,7 +695,7 @@ describe('CORS Middleware', () => {
         credentials: true,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -721,7 +724,7 @@ describe('CORS Middleware', () => {
         maxAge: 3600,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -760,7 +763,7 @@ describe('CORS Middleware', () => {
         },
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
@@ -786,7 +789,7 @@ describe('CORS Middleware', () => {
         origin: origin => origin === 'https://allowed.com',
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockResponse.status).toHaveBeenCalledWith(403);
       expect(mockResponse.end).toHaveBeenCalled();
@@ -794,7 +797,7 @@ describe('CORS Middleware', () => {
     });
 
     it('should support async origin validation in middleware', async () => {
-      const mockDbCheck = jest.fn().mockResolvedValue(true);
+      const mockDbCheck = jest.fn<(origin?: string) => Promise<boolean>>().mockResolvedValue(true);
       const mockRequest = {
         method: 'GET',
         path: '/test',
@@ -808,13 +811,13 @@ describe('CORS Middleware', () => {
       const mockNext = jest.fn();
 
       const middleware = createCORSMiddleware({
-        origin: async (origin, _req) => {
+        origin: (async (origin: string | undefined, _req: HttpRequest) => {
           const allowed = await mockDbCheck(origin);
           return allowed ? origin : false;
-        },
+        }) as OriginFunction,
       });
 
-      await middleware(mockRequest, mockResponse, mockNext);
+      await middleware(mockRequest as any, mockResponse as any, mockNext);
 
       expect(mockDbCheck).toHaveBeenCalledWith('https://dynamic.com');
       expect(mockResponse.setHeader).toHaveBeenCalledWith(

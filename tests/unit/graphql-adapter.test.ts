@@ -1,8 +1,8 @@
 /* eslint-disable */
 // GraphQL Adapter Tests
 import { describe, it, expect, afterEach } from '@jest/globals';
-import { GraphQLJsAdapter } from '../../src/core/graphql/adapters/graphql-js-adapter';
-import type { GraphQLAdapterOptions } from '../../src/core/graphql/adapter';
+import { GraphQLJsAdapter } from '../../src/core/graphql/adapters/graphql-js-adapter.js';
+import type { GraphQLAdapterOptions } from '../../src/core/graphql/adapter.js';
 
 describe('GraphQL Adapter', () => {
   let adapter: GraphQLJsAdapter;
@@ -159,7 +159,7 @@ describe('GraphQL Adapter', () => {
       const stats = adapter.getStats();
       // JIT may or may not be available depending on if graphql-jit is installed
       expect(stats.jit).toBeDefined();
-      expect(typeof stats.jit.enabled).toBe('boolean');
+      expect(typeof stats.jit!.enabled).toBe('boolean');
     });
 
     it('should disable JIT when requested', async () => {
@@ -171,7 +171,7 @@ describe('GraphQL Adapter', () => {
       });
 
       const stats = adapter.getStats();
-      expect(stats.jit.enabled).toBe(false);
+      expect(stats.jit!.enabled).toBe(false);
     });
 
     it('should cache JIT compiled queries', async () => {
@@ -191,8 +191,8 @@ describe('GraphQL Adapter', () => {
 
       // If JIT is enabled, cache should have entries
       const stats = adapter.getStats();
-      if (stats.jit.enabled) {
-        expect(stats.jit.cacheSize).toBeGreaterThanOrEqual(0);
+      if (stats.jit!.enabled) {
+        expect(stats.jit!.cacheSize).toBeGreaterThanOrEqual(0);
       }
     });
   });
@@ -292,7 +292,7 @@ describe('GraphQL Adapter', () => {
 
       // After cleanup, cache should be empty
       const stats = adapter.getStats();
-      expect(stats.jit.cacheSize).toBe(0);
+      expect(stats.jit!.cacheSize).toBe(0);
     });
 
     it('should clear JIT timeouts on cleanup', async () => {
@@ -313,7 +313,7 @@ describe('GraphQL Adapter', () => {
       // Cleanup should clear timeouts without hanging
       await adapter.cleanup();
 
-      expect(adapter.getStats().jit.cacheSize).toBe(0);
+      expect(adapter.getStats().jit!.cacheSize).toBe(0);
     });
   });
 

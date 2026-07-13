@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createApp } from '../../src/index';
+import { createApp } from '../../src/index.js';
 
 describe('DI Container Public API', () => {
-  let app;
+  let app: Awaited<ReturnType<typeof createApp>>;
 
   beforeEach(async () => {
     app = await createApp({

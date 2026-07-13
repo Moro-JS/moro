@@ -354,7 +354,7 @@ class UWSNamespaceWrapper implements WebSocketNamespace {
       }
 
       const middleware = this.middlewares[index++];
-      middleware(connection, next);
+      middleware?.(connection, next);
     };
 
     next();
@@ -607,7 +607,7 @@ class UWSEmitterWrapper implements WebSocketEmitter {
         let inTargetRoom = false;
         const targetLen = this.targetRooms.length;
         for (let i = 0; i < targetLen; i++) {
-          if (connectionRooms.has(this.targetRooms[i])) {
+          if (connectionRooms.has(this.targetRooms[i] as string)) {
             inTargetRoom = true;
             break;
           }
@@ -620,7 +620,7 @@ class UWSEmitterWrapper implements WebSocketEmitter {
         let inExcludedRoom = false;
         const excludeLen = this.excludedRooms.length;
         for (let i = 0; i < excludeLen; i++) {
-          if (connectionRooms.has(this.excludedRooms[i])) {
+          if (connectionRooms.has(this.excludedRooms[i] as string)) {
             inExcludedRoom = true;
             break;
           }

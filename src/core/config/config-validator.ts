@@ -1604,9 +1604,8 @@ function validateStringArray(value: any, path: string): string[] {
       // Avoid chained map().filter() - use single pass
       const parts = value.split(',');
       const result: string[] = [];
-      const len = parts.length;
-      for (let i = 0; i < len; i++) {
-        const trimmed = parts[i].trim();
+      for (const part of parts) {
+        const trimmed = part.trim();
         if (trimmed.length > 0) {
           result.push(trimmed);
         }

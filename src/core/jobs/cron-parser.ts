@@ -69,7 +69,12 @@ export class CronParser {
   /**
    * Parse individual cron field
    */
-  private parseField(field: string, min: number, max: number, fieldName: string): number[] {
+  private parseField(
+    field: string | undefined,
+    min: number,
+    max: number,
+    fieldName: string
+  ): number[] {
     if (!field || field.trim() === '') {
       throw new Error(`Empty field for ${fieldName}`);
     }
@@ -87,7 +92,9 @@ export class CronParser {
     for (const part of parts) {
       // Step values: */5 or 1-10/2
       if (part.includes('/')) {
-        const [rangeOrWildcard, stepStr] = part.split('/');
+        const slashParts = part.split('/');
+        const rangeOrWildcard = slashParts[0] ?? '';
+        const stepStr = slashParts[1] ?? '';
         const step = parseInt(stepStr, 10);
 
         if (isNaN(step) || step <= 0) {
@@ -100,8 +107,8 @@ export class CronParser {
         if (rangeOrWildcard !== '*') {
           if (rangeOrWildcard.includes('-')) {
             const [start, end] = rangeOrWildcard.split('-').map(v => parseInt(v, 10));
-            rangeStart = start;
-            rangeEnd = end;
+            rangeStart = start ?? min;
+            rangeEnd = end ?? max;
           } else {
             rangeStart = parseInt(rangeOrWildcard, 10);
             rangeEnd = max;
@@ -117,8 +124,8 @@ export class CronParser {
       // Range: 1-5
       else if (part.includes('-')) {
         const [startStr, endStr] = part.split('-');
-        const start = parseInt(startStr, 10);
-        const end = parseInt(endStr, 10);
+        const start = parseInt(startStr ?? '', 10);
+        const end = parseInt(endStr ?? '', 10);
 
         if (isNaN(start) || isNaN(end)) {
           throw new Error(`Invalid range "${part}" in ${fieldName}`);

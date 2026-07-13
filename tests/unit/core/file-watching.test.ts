@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Unit Tests - File Watching and Hot Reloading
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { ModuleDiscovery } from '../../../src/core/modules/auto-discovery.js';
@@ -170,8 +169,9 @@ describe('Module File Watching and Hot Reloading', () => {
 
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      // Test passes if no errors are thrown
-      expect(true).toBe(true);
+      // watchModulesAdvanced must have registered a filesystem watcher for the
+      // configured module path (rather than silently no-op'ing).
+      expect((discovery as any).watchers.length).toBeGreaterThan(0);
     });
   });
 
@@ -267,8 +267,8 @@ describe('Module File Watching and Hot Reloading', () => {
 
       await new Promise(resolve => setTimeout(resolve, 300));
 
-      // Test passes if no errors are thrown
-      expect(true).toBe(true);
+      // Both configured paths must each have registered a watcher.
+      expect((discovery as any).watchers.length).toBeGreaterThanOrEqual(2);
     });
   });
 });

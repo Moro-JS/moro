@@ -43,8 +43,8 @@ export class LeaderElection extends EventEmitter {
   private lockPath?: string;
   private lockTimeout: number;
   private heartbeatInterval: number;
-  private heartbeatTimer?: NodeJS.Timeout;
-  private checkTimer?: NodeJS.Timeout;
+  private heartbeatTimer?: NodeJS.Timeout | undefined;
+  private checkTimer?: NodeJS.Timeout | undefined;
   private logger: Logger;
   private loggerContext = 'LeaderElection';
   private instanceId: string;
@@ -52,6 +52,30 @@ export class LeaderElection extends EventEmitter {
   private redisClient?: any;
   private isShuttingDown = false;
   private lockAcquireAttempts = 0;
+
+  private static readonly REDIS_LOCK_KEY = 'moro:jobs:leader:lock';
+
+  // Compare-and-refresh: rewrite the value and extend the TTL only if the stored
+  // lock still belongs to this instance (ownership is fenced by instanceId).
+  private static readonly REDIS_REFRESH_SCRIPT = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 0 end
+local ok, decoded = pcall(cjson.decode, cur)
+if ok and decoded['instanceId'] == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+  return 1
+end
+return 0`;
+
+  // Compare-and-delete: release the lock only if it still belongs to this instance.
+  private static readonly REDIS_RELEASE_SCRIPT = `
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 0 end
+local ok, decoded = pcall(cjson.decode, cur)
+if ok and decoded['instanceId'] == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`;
 
   constructor(logger: Logger, options: LeaderElectionOptions = { strategy: 'file' }) {
     super();
@@ -172,56 +196,74 @@ export class LeaderElection extends EventEmitter {
 
   /**
    * Try to acquire file-based lock
+   *
+   * Uses O_EXCL (open flag 'wx') for the common "no lock yet" case so exactly one
+   * instance can win the create race. An expired lock is taken over via an atomic
+   * temp-write + rename. A takeover race between two instances is a last-writer-wins
+   * rename, which is then reconciled by the periodic verifyLeadership() check and the
+   * ownership-checked heartbeat below, so a single leader is still guaranteed.
    */
   private async tryAcquireFileLock(): Promise<boolean> {
     if (!this.lockPath) {
       throw new Error('Lock path not configured');
     }
 
+    const lockInfo: LeaderInfo = {
+      instanceId: this.instanceId,
+      hostname: os.hostname(),
+      pid: process.pid,
+      electedAt: new Date(),
+      lastHeartbeat: new Date(),
+      metadata: this.getInstanceMetadata(),
+    };
+    const serialized = JSON.stringify(lockInfo);
+
+    // Fast path: atomically create the lock file (O_EXCL). Fails with EEXIST if
+    // another instance already holds the lock.
     try {
-      // Check if lock file exists
-      const exists = await fs.promises
-        .access(this.lockPath)
-        .then(() => true)
-        .catch(() => false);
-
-      if (exists) {
-        // Read existing lock
-        const lockData = await fs.promises.readFile(this.lockPath, 'utf-8');
-        const existingLeader: LeaderInfo = JSON.parse(lockData);
-
-        // Check if lock is expired
-        const lockAge = Date.now() - new Date(existingLeader.lastHeartbeat).getTime();
-
-        if (lockAge < this.lockTimeout) {
-          // Lock is still valid
-          this.leaderInfo = existingLeader;
-          this.logger.debug('Leader lock held by another instance', this.loggerContext, {
-            leader: existingLeader.instanceId,
-            age: lockAge,
-          });
-          return false;
-        }
-
-        // Lock expired, take over
-        this.logger.warn('Leader lock expired, taking over', this.loggerContext, {
-          previousLeader: existingLeader.instanceId,
-          lockAge,
+      const handle = await fs.promises.open(this.lockPath, 'wx');
+      try {
+        await handle.writeFile(serialized, 'utf-8');
+      } finally {
+        await handle.close();
+      }
+      this.leaderInfo = lockInfo;
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        this.logger.error('Failed to acquire file lock', this.loggerContext, {
+          error,
+          lockPath: this.lockPath,
         });
+        return false;
+      }
+      // Lock file already exists — fall through to the expiry/takeover check.
+    }
+
+    try {
+      // Read existing lock and decide whether we may take it over.
+      const lockData = await fs.promises.readFile(this.lockPath, 'utf-8');
+      const existingLeader: LeaderInfo = JSON.parse(lockData);
+
+      const lockAge = Date.now() - new Date(existingLeader.lastHeartbeat).getTime();
+
+      if (lockAge < this.lockTimeout) {
+        // Lock is still valid and held by another instance.
+        this.leaderInfo = existingLeader;
+        this.logger.debug('Leader lock held by another instance', this.loggerContext, {
+          leader: existingLeader.instanceId,
+          age: lockAge,
+        });
+        return false;
       }
 
-      // Create/update lock file
-      const lockInfo: LeaderInfo = {
-        instanceId: this.instanceId,
-        hostname: os.hostname(),
-        pid: process.pid,
-        electedAt: new Date(),
-        lastHeartbeat: new Date(),
-        metadata: this.getInstanceMetadata(),
-      };
+      // Lock expired — take over with an atomic temp-write + rename.
+      this.logger.warn('Leader lock expired, taking over', this.loggerContext, {
+        previousLeader: existingLeader.instanceId,
+        lockAge,
+      });
 
-      await fs.promises.writeFile(this.lockPath, JSON.stringify(lockInfo), 'utf-8');
-
+      await this.atomicWriteLock(serialized);
       this.leaderInfo = lockInfo;
       return true;
     } catch (error) {
@@ -234,6 +276,26 @@ export class LeaderElection extends EventEmitter {
   }
 
   /**
+   * Atomically (re)write the lock file: write to a unique temp file, then rename
+   * over the target. rename() is atomic on POSIX so readers never see a partial
+   * lock file.
+   */
+  private async atomicWriteLock(serialized: string): Promise<void> {
+    if (!this.lockPath) {
+      throw new Error('Lock path not configured');
+    }
+
+    const tempPath = `${this.lockPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    await fs.promises.writeFile(tempPath, serialized, 'utf-8');
+    try {
+      await fs.promises.rename(tempPath, this.lockPath);
+    } catch (error) {
+      await fs.promises.unlink(tempPath).catch(() => {});
+      throw error;
+    }
+  }
+
+  /**
    * Try to acquire Redis-based lock
    */
   private async tryAcquireRedisLock(): Promise<boolean> {
@@ -242,7 +304,7 @@ export class LeaderElection extends EventEmitter {
     }
 
     try {
-      const lockKey = 'moro:jobs:leader:lock';
+      const lockKey = LeaderElection.REDIS_LOCK_KEY;
       const lockInfo: LeaderInfo = {
         instanceId: this.instanceId,
         hostname: os.hostname(),
@@ -318,12 +380,27 @@ export class LeaderElection extends EventEmitter {
     this.isLeader = false;
     this.stopHeartbeat();
 
-    // Release lock
+    // Release lock — only if we still own it, so we never delete a lock that
+    // another instance has since acquired.
     try {
       if (this.strategy === 'file' && this.lockPath) {
-        await fs.promises.unlink(this.lockPath).catch(() => {});
+        try {
+          const lockData = await fs.promises.readFile(this.lockPath, 'utf-8');
+          const currentLeader: LeaderInfo = JSON.parse(lockData);
+          if (currentLeader.instanceId === this.instanceId) {
+            await fs.promises.unlink(this.lockPath).catch(() => {});
+          }
+        } catch {
+          // Lock file missing or unreadable — nothing to release.
+        }
       } else if (this.strategy === 'redis' && this.redisClient) {
-        await this.redisClient.del('moro:jobs:leader:lock');
+        // Compare-and-delete: only DEL if the stored lock still belongs to us.
+        await this.redisClient.eval(
+          LeaderElection.REDIS_RELEASE_SCRIPT,
+          1,
+          LeaderElection.REDIS_LOCK_KEY,
+          this.instanceId
+        );
       }
     } catch (error) {
       this.logger.error('Failed to release lock during step down', this.loggerContext, { error });
@@ -340,21 +417,25 @@ export class LeaderElection extends EventEmitter {
       return;
     }
 
-    this.heartbeatTimer = setInterval(async () => {
-      if (this.isShuttingDown) {
-        return;
-      }
+    this.heartbeatTimer = setInterval(() => {
+      void (async () => {
+        if (this.isShuttingDown) {
+          return;
+        }
 
-      try {
-        await this.sendHeartbeat();
-      } catch (error) {
-        this.logger.error('Heartbeat failed', this.loggerContext, { error });
-        // Lost leadership
-        await this.stepDown();
-        // Try to reacquire
-        const retryTimer = setTimeout(() => this.tryAcquireLeadership(), 1000);
-        retryTimer.unref(); // Don't keep process alive
-      }
+        try {
+          await this.sendHeartbeat();
+        } catch (error) {
+          this.logger.error('Heartbeat failed', this.loggerContext, { error });
+          // Lost leadership
+          await this.stepDown();
+          // Try to reacquire
+          const retryTimer = setTimeout(() => {
+            void this.tryAcquireLeadership();
+          }, 1000);
+          retryTimer.unref(); // Don't keep process alive
+        }
+      })();
     }, this.heartbeatInterval);
 
     // Don't keep process alive
@@ -382,10 +463,28 @@ export class LeaderElection extends EventEmitter {
     this.leaderInfo.lastHeartbeat = new Date();
 
     if (this.strategy === 'file' && this.lockPath) {
-      await fs.promises.writeFile(this.lockPath, JSON.stringify(this.leaderInfo), 'utf-8');
+      // Verify we still own the lock before refreshing it. If the file is gone or
+      // now owned by another instance, we have lost leadership — throw so the
+      // heartbeat handler steps us down and attempts a clean re-acquire.
+      const lockData = await fs.promises.readFile(this.lockPath, 'utf-8');
+      const currentLeader: LeaderInfo = JSON.parse(lockData);
+      if (currentLeader.instanceId !== this.instanceId) {
+        throw new Error('Lost leadership: file lock is owned by another instance');
+      }
+      await this.atomicWriteLock(JSON.stringify(this.leaderInfo));
     } else if (this.strategy === 'redis' && this.redisClient) {
-      const lockKey = 'moro:jobs:leader:lock';
-      await this.redisClient.set(lockKey, JSON.stringify(this.leaderInfo), 'PX', this.lockTimeout);
+      // Compare-and-refresh: only rewrite + extend the TTL if we still own the lock.
+      const refreshed = await this.redisClient.eval(
+        LeaderElection.REDIS_REFRESH_SCRIPT,
+        1,
+        LeaderElection.REDIS_LOCK_KEY,
+        this.instanceId,
+        JSON.stringify(this.leaderInfo),
+        this.lockTimeout
+      );
+      if (Number(refreshed) !== 1) {
+        throw new Error('Lost leadership: redis lock is no longer owned by this instance');
+      }
     }
 
     this.logger.debug('Heartbeat sent', this.loggerContext, { instanceId: this.instanceId });
@@ -405,18 +504,20 @@ export class LeaderElection extends EventEmitter {
 
     const checkInterval = Math.floor(this.heartbeatInterval * 1.5);
 
-    this.checkTimer = setInterval(async () => {
-      if (this.isShuttingDown) {
-        return;
-      }
+    this.checkTimer = setInterval(() => {
+      void (async () => {
+        if (this.isShuttingDown) {
+          return;
+        }
 
-      if (!this.isLeader) {
-        // Try to acquire leadership
-        await this.tryAcquireLeadership();
-      } else {
-        // Verify we still hold the lock
-        await this.verifyLeadership();
-      }
+        if (!this.isLeader) {
+          // Try to acquire leadership
+          await this.tryAcquireLeadership();
+        } else {
+          // Verify we still hold the lock
+          await this.verifyLeadership();
+        }
+      })();
     }, checkInterval);
 
     // Don't keep process alive
@@ -449,7 +550,7 @@ export class LeaderElection extends EventEmitter {
         const currentLeader: LeaderInfo = JSON.parse(lockData);
         stillLeader = currentLeader.instanceId === this.instanceId;
       } else if (this.strategy === 'redis' && this.redisClient) {
-        const lockData = await this.redisClient.get('moro:jobs:leader:lock');
+        const lockData = await this.redisClient.get(LeaderElection.REDIS_LOCK_KEY);
         if (lockData) {
           const currentLeader: LeaderInfo = JSON.parse(lockData);
           stillLeader = currentLeader.instanceId === this.instanceId;

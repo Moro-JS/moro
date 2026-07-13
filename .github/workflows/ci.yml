@@ -8,6 +8,10 @@ on:
   release:
     types: [published]
 
+# Least-privilege default for every job; jobs that need more opt in explicitly.
+permissions:
+  contents: read
+
 jobs:
   lint-and-format:
     name: Lint and Format
@@ -15,10 +19,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -28,6 +32,9 @@ jobs:
 
       - name: Run linter
         run: npm run lint
+
+      - name: Type-check tests
+        run: npm run typecheck:tests
 
       - name: Check formatting
         run: npm run format:check
@@ -40,16 +47,15 @@ jobs:
     strategy:
       matrix:
         # Oldest engine-supported line (20) through newest (26) — test what we
-        # ship binaries for. Node 20 is EOL upstream but still within MoroJS's
-        # engines claim; drop it when the engines floor moves.
+        # ship binaries for and what @morojs/engine requires (Node >=20).
         node-version: [20, 22, 24, 26]
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -77,17 +83,37 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      # - name: Generate coverage report
-      #   run: npm run test:coverage
-      #   env:
-      #     NODE_OPTIONS: --max-old-space-size=4096
+  # Coverage runs once (not per matrix leg) and enforces the coverageThreshold
+  # floor in jest.config.mjs, so a drop below the ratchet fails the build.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
 
-      # - name: Upload coverage to Codecov
-      #   uses: codecov/codecov-action@v4
-      #   with:
-      #     file: ./coverage/lcov.info
-      #     flags: unittests
-      #     name: codecov-umbrella
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate coverage report (enforces coverageThreshold)
+        run: npm run test:coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        continue-on-error: true
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
 
   build:
     name: Build
@@ -96,10 +122,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -111,7 +137,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -122,10 +148,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -139,31 +165,59 @@ jobs:
   publish:
     name: Publish to NPM
     runs-on: ubuntu-latest
-    needs: [lint-and-format, test, build, security-audit]
+    needs: [lint-and-format, test, coverage, build, security-audit]
     if: github.event_name == 'release' && github.event.release.prerelease == false
+    permissions:
+      contents: read
+      id-token: write # required for npm provenance / trusted publishing
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
+      # OIDC trusted publishing (tokenless publish) needs npm >= 11.5.1. Node 20
+      # ships npm 10.x, and npm@latest is now 12.x (which dropped Node 20 support),
+      # so pin the 11.x line — it supports Node 20.17+ and does trusted publishing.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11
+
       - name: Install dependencies
         run: npm ci
+
+      # The tag the release was cut from must match the version being published,
+      # so a moved/mismatched tag can never ship a wrong-versioned tarball.
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+          echo "package.json: ${PKG_VERSION}   release tag: ${TAG}"
+          if [ "${PKG_VERSION}" != "${TAG}" ]; then
+            echo "::error::Release tag ${TAG} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
 
       - name: Build project
         run: npm run build
 
-      - name: Verify package contents
-        run: npm pack --dry-run
+      # Run the project's own tarball validators (pack + install into a temp
+      # project + import as a consumer) instead of only `npm pack --dry-run`.
+      - name: Validate dist
+        run: node scripts/validate-dist.mjs
 
+      - name: Validate published package
+        run: node scripts/validate-package.mjs
+
+      # OIDC trusted publishing: npm authenticates via the id-token exchange
+      # (id-token: write above + the trusted publisher configured on npmjs.com),
+      # so no NPM_TOKEN is needed. --provenance publishes a signed
+      # build-provenance attestation, giving consumers source-to-artifact
+      # traceability.
       - name: Publish to NPM
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+        run: npm publish --access public --provenance

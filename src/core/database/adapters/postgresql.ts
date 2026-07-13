@@ -99,7 +99,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
@@ -178,7 +178,7 @@ class PostgreSQLTransaction implements DatabaseTransaction {
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const results = await this.query<T>(sql, params);
-    return results.length > 0 ? results[0] : null;
+    return results[0] ?? null;
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {

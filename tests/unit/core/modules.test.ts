@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Unit Tests - Module System
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { defineModule, defineRoute, z } from '../../../src/index.js';

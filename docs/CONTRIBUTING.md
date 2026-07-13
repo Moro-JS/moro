@@ -30,7 +30,7 @@ Thank you for considering contributing to MoroJS! This guide will help you get s
 
 1. Check existing [issues](https://github.com/Moro-JS/moro/issues) and [pull requests](https://github.com/Moro-JS/moro/pulls)
 2. Join our [Discord community](https://morojs.com/discord) for discussions
-3. Read our [Code of Conduct](./CODE_OF_CONDUCT.md)
+3. Read our [Code of Conduct](../CODE_OF_CONDUCT.md)
 4. Review this contributing guide
 
 ---
@@ -72,7 +72,7 @@ npm install --dev
 npm run build
 
 # Build and watch for changes
-npm run build:watch
+npm run dev:watch
 ```
 
 ### Run Tests
@@ -173,10 +173,7 @@ npm run format
  * @param path - Route path pattern
  * @returns RouteBuilder instance for method chaining
  */
-export function createRouteBuilder(
-  method: HttpMethod,
-  path: string
-): RouteBuilder {
+export function createRouteBuilder(method: HttpMethod, path: string): RouteBuilder {
   return new RouteBuilder(method, path);
 }
 
@@ -189,8 +186,8 @@ interface RouteConfig {
 }
 
 // Prefer functional patterns
-const validateRequest = (schema: ZodSchema) =>
-  (req: Request, res: Response, next: NextFunction) => {
+const validateRequest =
+  (schema: ZodSchema) => (req: Request, res: Response, next: NextFunction) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
       return res.status(400).json({ error: result.error });
@@ -247,12 +244,12 @@ describe('Validation System', () => {
   test('should validate valid data', () => {
     const schema = z.object({
       name: z.string().min(2),
-      email: z.string().email()
+      email: z.string().email(),
     });
 
     const validData = {
       name: 'John Doe',
-      email: 'john@example.com'
+      email: 'john@example.com',
     };
 
     const result = schema.safeParse(validData);
@@ -262,12 +259,12 @@ describe('Validation System', () => {
   test('should reject invalid data', () => {
     const schema = z.object({
       name: z.string().min(2),
-      email: z.string().email()
+      email: z.string().email(),
     });
 
     const invalidData = {
       name: 'J',
-      email: 'invalid-email'
+      email: 'invalid-email',
     };
 
     const result = schema.safeParse(invalidData);
@@ -299,7 +296,7 @@ const runtimes = [
   { name: 'node', factory: createApp },
   { name: 'vercel-edge', factory: createAppEdge },
   { name: 'aws-lambda', factory: createAppLambda },
-  { name: 'cloudflare-workers', factory: createAppWorker }
+  { name: 'cloudflare-workers', factory: createAppWorker },
 ];
 
 describe.each(runtimes)('$name runtime', ({ name, factory }) => {
@@ -328,7 +325,7 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
 
 ### Writing Documentation
 
-```typescript
+````typescript
 /**
  * Validates request data using Zod schema
  *
@@ -345,12 +342,10 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
  * @param schema - Zod schema for validation
  * @returns Middleware function that validates request data
  */
-export function validateBody<T extends ZodSchema>(
-  schema: T
-): ValidationMiddleware<z.infer<T>> {
+export function validateBody<T extends ZodSchema>(schema: T): ValidationMiddleware<z.infer<T>> {
   // Implementation
 }
-```
+````
 
 ### Documentation Guidelines
 
@@ -435,7 +430,7 @@ Brief description of changes and motivation.
 
 ### Code of Conduct
 
-We are committed to providing a welcoming and inclusive environment. Please read our [Code of Conduct](./CODE_OF_CONDUCT.md) and help us maintain a positive community.
+We are committed to providing a welcoming and inclusive environment. Please read our [Code of Conduct](../CODE_OF_CONDUCT.md) and help us maintain a positive community.
 
 ### Recognition
 

@@ -312,14 +312,16 @@ describe('Mail System', () => {
         data: { name: 'John' },
       });
 
-      await mailManager.send({
+      const secondResult = await mailManager.send({
         to: 'recipient@example.com',
         subject: 'Second Email',
         template: 'cached',
         data: { name: 'Jane' },
       });
 
-      expect(true).toBe(true);
+      // The second send (reusing the cached compiled template) must still
+      // produce a valid MailResult.
+      expect(secondResult).toHaveProperty('success');
     });
   });
 
@@ -440,7 +442,8 @@ describe('Mail System', () => {
       });
 
       engine.clearCache();
-      expect(true).toBe(true);
+      // Clearing an already-empty cache must be safe and idempotent.
+      expect(() => engine.clearCache()).not.toThrow();
     });
   });
 

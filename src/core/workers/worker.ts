@@ -407,7 +407,7 @@ function validateTransformerShape(code: string): void {
 function checkDangerousPatterns(code: string): void {
   // Check dangerous global identifiers
   for (let i = 0; i < DANGEROUS_IDENTIFIER_PATTERNS.length; i++) {
-    if (DANGEROUS_IDENTIFIER_PATTERNS[i].test(code)) {
+    if (DANGEROUS_IDENTIFIER_PATTERNS[i]?.test(code)) {
       throw new Error(
         `Transformer code contains blocked identifier: "${DANGEROUS_GLOBALS[i]}". ` +
           'Transformer functions must be pure data transforms without access to Node.js internals.'
@@ -534,11 +534,13 @@ async function handleJSONTransform(data: { data: any; transformer: string }): Pr
 
 // Worker thread message handling
 if (parentPort) {
-  parentPort.on('message', async (task: WorkerTask) => {
-    const result = await executeTask(task);
+  parentPort.on('message', (task: WorkerTask) => {
+    void (async () => {
+      const result = await executeTask(task);
 
-    if (parentPort) {
-      parentPort.postMessage(result);
-    }
+      if (parentPort) {
+        parentPort.postMessage(result);
+      }
+    })();
   });
 }

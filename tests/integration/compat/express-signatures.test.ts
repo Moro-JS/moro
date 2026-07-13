@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Express-compatibility tests — verify that classic Express idioms run on Moro
 // without rewrites. Covers Tier 1 (handler-as-arg, 4-arg error mw, next(err),
 // req/res helpers, createRouter, head/options) and native additions (req.context,

@@ -52,7 +52,7 @@ export function resolveCompressionSettings(config?: {
  */
 export function isCompressible(contentType: string | undefined): boolean {
   if (!contentType) return false;
-  const ct = contentType.split(';')[0].trim().toLowerCase();
+  const ct = (contentType.split(';')[0] ?? '').trim().toLowerCase();
   if (ct.startsWith('text/')) return true;
   if (ct.endsWith('+json') || ct.endsWith('+xml')) return true;
   return (
@@ -80,12 +80,12 @@ export function negotiateEncoding(
   const q = new Map<string, number>();
   for (const part of acceptEncoding.split(',')) {
     const [tokenRaw, ...params] = part.trim().split(';');
-    const token = tokenRaw.trim().toLowerCase();
+    const token = (tokenRaw ?? '').trim().toLowerCase();
     if (!token) continue;
     let weight = 1;
     for (const p of params) {
       const m = /^\s*q=([0-9.]+)\s*$/i.exec(p);
-      if (m) weight = parseFloat(m[1]);
+      if (m && m[1] !== undefined) weight = parseFloat(m[1]);
     }
     q.set(token, weight);
   }

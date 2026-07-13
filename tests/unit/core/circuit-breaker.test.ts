@@ -6,11 +6,18 @@ describe('CircuitBreaker', () => {
   let circuitBreaker: CircuitBreaker;
 
   beforeEach(() => {
+    // Fake timers make the reset-timeout transitions deterministic and instant
+    // (the breaker resets off Date.now()); no more real 1100ms sleeps / flake margins.
+    jest.useFakeTimers();
     circuitBreaker = new CircuitBreaker({
       failureThreshold: 3,
       resetTimeout: 1000,
       monitoringPeriod: 5000,
     });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   describe('CLOSED state (normal operation)', () => {
@@ -94,8 +101,8 @@ describe('CircuitBreaker', () => {
       // Verify it's open
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('Circuit breaker is OPEN');
 
-      // Wait for reset timeout (using fake timers would be better, but this works)
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // Advance past the 1000ms reset timeout
+      jest.advanceTimersByTime(1100);
 
       // Next call should attempt execution (HALF_OPEN state)
       const result = await circuitBreaker.execute(mockSuccessFn);
@@ -114,8 +121,8 @@ describe('CircuitBreaker', () => {
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('fail');
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('fail');
 
-      // Wait for reset timeout
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // Advance past the 1000ms reset timeout
+      jest.advanceTimersByTime(1100);
 
       // Successful call should close the circuit
       await circuitBreaker.execute(mockSuccessFn);
@@ -134,8 +141,8 @@ describe('CircuitBreaker', () => {
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('fail');
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('fail');
 
-      // Wait for reset timeout
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // Advance past the 1000ms reset timeout
+      jest.advanceTimersByTime(1100);
 
       // Failure should reopen the circuit
       await expect(circuitBreaker.execute(mockFailFn)).rejects.toThrow('fail');
@@ -184,8 +191,8 @@ describe('CircuitBreaker', () => {
       // Verify it's open
       await expect(fastBreaker.execute(mockFailFn)).rejects.toThrow('Circuit breaker is OPEN');
 
-      // Wait for shorter reset timeout
-      await new Promise(resolve => setTimeout(resolve, 600));
+      // Advance past the 500ms reset timeout
+      jest.advanceTimersByTime(600);
 
       // Should allow execution again
       const result = await fastBreaker.execute(mockSuccessFn);

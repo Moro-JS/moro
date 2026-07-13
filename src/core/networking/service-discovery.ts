@@ -214,10 +214,9 @@ export class ServiceRegistry {
   // Health checking
   private startHealthChecks(): void {
     if (this.options.healthCheckInterval) {
-      this.healthCheckInterval = setInterval(
-        () => this.performHealthChecks(),
-        this.options.healthCheckInterval
-      );
+      this.healthCheckInterval = setInterval(() => {
+        void this.performHealthChecks();
+      }, this.options.healthCheckInterval);
     }
   }
 
@@ -277,15 +276,15 @@ export class ServiceRegistry {
 
     switch (strategy) {
       case 'random':
-        return services[Math.floor(Math.random() * services.length)];
+        return services[Math.floor(Math.random() * services.length)] ?? null;
       case 'round-robin':
         // Simple round-robin (in production, maintain state)
-        return services[Date.now() % services.length];
+        return services[Date.now() % services.length] ?? null;
       case 'least-connections':
         // For demo, just return the first (in production, track connections)
-        return services[0];
+        return services[0] ?? null;
       default:
-        return services[0];
+        return services[0] ?? null;
     }
   }
 

@@ -1,12 +1,11 @@
-/* eslint-disable */
 /**
  * Queue Integration Tests
  * Tests for queue system integration with Moro framework
  */
 
 import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
-import { createApp } from '../../src/moro';
-import type { Moro } from '../../src/moro';
+import { createApp } from '../../src/moro.js';
+import type { Moro } from '../../src/moro.js';
 
 describe('Queue Integration with Moro', () => {
   let app: Moro;
@@ -111,7 +110,7 @@ describe('Queue Integration with Moro', () => {
     test('should process jobs with simple handler', async () => {
       const processedJobs: any[] = [];
 
-      await app.processQueue('test-queue', async job => {
+      await app.processQueue('test-queue', async (job: any) => {
         processedJobs.push(job.data);
       });
 
@@ -127,7 +126,7 @@ describe('Queue Integration with Moro', () => {
     test('should process jobs with concurrency', async () => {
       const processedJobs: any[] = [];
 
-      await app.processQueue('test-queue', 2, async job => {
+      await app.processQueue('test-queue', 2, async (job: any) => {
         processedJobs.push(job.data);
       });
 
@@ -142,7 +141,7 @@ describe('Queue Integration with Moro', () => {
     });
 
     test('should handle job failures', async () => {
-      await app.processQueue('test-queue', async job => {
+      await app.processQueue('test-queue', async (job: any) => {
         if (job.data.shouldFail) {
           throw new Error('Job failed');
         }
@@ -223,17 +222,17 @@ describe('Queue Integration with Moro', () => {
     test('should emit events through Moro event bus', async () => {
       const events: any[] = [];
 
-      app.events.on('queue:job:added', event => {
+      app.events.on('queue:job:added', (event: any) => {
         events.push({ type: 'added', event });
       });
 
-      app.events.on('queue:job:completed', event => {
+      app.events.on('queue:job:completed', (event: any) => {
         events.push({ type: 'completed', event });
       });
 
       app.queueInit('test-queue', { adapter: 'memory' });
 
-      await app.processQueue('test-queue', async job => {
+      await app.processQueue('test-queue', async (job: any) => {
         return { success: true };
       });
 
@@ -277,7 +276,7 @@ describe('Queue Integration with Moro', () => {
 
       const sentEmails: any[] = [];
 
-      await app.processQueue('emails', async job => {
+      await app.processQueue('emails', async (job: any) => {
         // Simulate email sending
         sentEmails.push({
           to: job.data.to,
@@ -307,7 +306,7 @@ describe('Queue Integration with Moro', () => {
 
       const processedImages: any[] = [];
 
-      await app.processQueue('images', async job => {
+      await app.processQueue('images', async (job: any) => {
         // Simulate image processing
         await job.updateProgress(50);
         await new Promise(resolve => setTimeout(resolve, 10));

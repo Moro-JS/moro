@@ -22,7 +22,7 @@ export class SendGridAdapter extends BaseMailAdapter {
     this.sandboxMode = false;
   }
 
-  async initialize(config: SendGridConnection): Promise<void> {
+  override async initialize(config: SendGridConnection): Promise<void> {
     if (!config.apiKey) {
       throw new Error('SendGrid API key is required');
     }
@@ -158,7 +158,7 @@ export class SendGridAdapter extends BaseMailAdapter {
     }
   }
 
-  async sendBulk(options: MailOptions[]): Promise<MailResult[]> {
+  override async sendBulk(options: MailOptions[]): Promise<MailResult[]> {
     this.ensureInitialized();
 
     if (!this.client) {
@@ -195,7 +195,7 @@ export class SendGridAdapter extends BaseMailAdapter {
     return 'SendGrid';
   }
 
-  async verify(): Promise<boolean> {
+  override async verify(): Promise<boolean> {
     return this.initialized;
   }
 

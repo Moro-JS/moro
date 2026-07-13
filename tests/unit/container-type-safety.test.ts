@@ -4,9 +4,7 @@
  * Tests for automatic type safety in the DI container
  */
 
-/* eslint-disable no-unused-vars */
-
-import { FunctionalContainer, TypedServiceReference } from '../../src/core/utilities/container';
+import { FunctionalContainer, TypedServiceReference } from '../../src/core/utilities/container.js';
 
 describe('Container Type Safety', () => {
   let container: FunctionalContainer;
@@ -253,17 +251,19 @@ describe('Container Type Safety', () => {
       let connected = false;
       container
         .register<DatabaseConnection>('dbConnection')
-        .factory(() => ({
-          isConnected: false,
-          async connect() {
-            this.isConnected = true;
-            connected = true;
-          },
-          async disconnect() {
-            this.isConnected = false;
-            connected = false;
-          },
-        }))
+        .factory(
+          (): DatabaseConnection => ({
+            isConnected: false,
+            async connect() {
+              this.isConnected = true;
+              connected = true;
+            },
+            async disconnect() {
+              this.isConnected = false;
+              connected = false;
+            },
+          })
+        )
         .singleton()
         .onInit(async () => {
           const db = await container.resolve<DatabaseConnection>('dbConnection');

@@ -852,7 +852,8 @@ if (app.getRuntimeType() === 'aws-lambda') {
 ```typescript
 // test/runtime.test.ts
 import { createApp, createAppEdge, createAppLambda, createAppWorker } from '@morojs/moro';
-import { setupRoutes } from '../src/shared/app.js';
+// setupRoutes is your own application code (not a framework export)
+import { setupRoutes } from './shared/app.js';
 
 const runtimes = [
   { name: 'node', factory: createApp },

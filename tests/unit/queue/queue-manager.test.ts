@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * Queue Manager - Unit Tests
  * Tests for the queue manager and unified API

@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Integration Tests - app.group() route grouping
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import request from 'supertest';

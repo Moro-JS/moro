@@ -20,7 +20,7 @@ export class NodemailerAdapter extends BaseMailAdapter {
     this.logger = createFrameworkLogger('Mail:Nodemailer');
   }
 
-  async initialize(config: NodemailerConnection): Promise<void> {
+  override async initialize(config: NodemailerConnection): Promise<void> {
     if (!isPackageAvailable('nodemailer')) {
       throw new Error(
         'Nodemailer is not installed.\n' +
@@ -182,7 +182,7 @@ export class NodemailerAdapter extends BaseMailAdapter {
     return 'Nodemailer';
   }
 
-  async verify(): Promise<boolean> {
+  override async verify(): Promise<boolean> {
     if (!this.transporter) {
       return false;
     }
@@ -196,7 +196,7 @@ export class NodemailerAdapter extends BaseMailAdapter {
     }
   }
 
-  async close(): Promise<void> {
+  override async close(): Promise<void> {
     if (this.transporter) {
       this.transporter.close();
     }

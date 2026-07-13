@@ -17,12 +17,17 @@ function normalizeRoute(route: ModuleRoute | CompiledRoute): ModuleRoute {
     method: route.schema.method as ModuleRoute['method'],
     path: route.schema.path,
     handler: route.schema.handler as ModuleRoute['handler'],
-    validation: route.schema.validation,
-    auth: route.schema.auth,
-    cache: route.schema.cache,
-    rateLimit: route.schema.rateLimit
-      ? { requests: route.schema.rateLimit.requests, window: route.schema.rateLimit.window }
-      : undefined,
+    ...(route.schema.validation !== undefined ? { validation: route.schema.validation } : {}),
+    ...(route.schema.auth !== undefined ? { auth: route.schema.auth } : {}),
+    ...(route.schema.cache !== undefined ? { cache: route.schema.cache } : {}),
+    ...(route.schema.rateLimit
+      ? {
+          rateLimit: {
+            requests: route.schema.rateLimit.requests,
+            window: route.schema.rateLimit.window,
+          },
+        }
+      : {}),
   };
 }
 
@@ -31,7 +36,7 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
   const moduleConfig: ModuleConfig = {
     name: definition.name,
     version: definition.version,
-    dependencies: definition.dependencies,
+    ...(definition.dependencies !== undefined ? { dependencies: definition.dependencies } : {}),
   };
 
   // Store module-level middleware
@@ -48,9 +53,9 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
       path: route.path,
       handler: `route_handler_${index}`, // Standardized naming
       validation: route.validation,
-      cache: route.cache,
-      rateLimit: route.rateLimit,
-      middleware: route.middleware, // Route-level middleware
+      ...(route.cache !== undefined ? { cache: route.cache } : {}),
+      ...(route.rateLimit !== undefined ? { rateLimit: route.rateLimit } : {}),
+      ...(route.middleware !== undefined ? { middleware: route.middleware } : {}), // Route-level middleware
       // Copy all additional properties for extensibility
       ...Object.fromEntries(
         Object.entries(route).filter(
@@ -84,9 +89,9 @@ export function defineModule(definition: ModuleDefinition): ModuleConfig {
       event: socket.event,
       handler: `socket_handler_${index}`, // Standardized naming
       validation: socket.validation,
-      rateLimit: socket.rateLimit,
-      rooms: socket.rooms,
-      broadcast: socket.broadcast,
+      ...(socket.rateLimit !== undefined ? { rateLimit: socket.rateLimit } : {}),
+      ...(socket.rooms !== undefined ? { rooms: socket.rooms } : {}),
+      ...(socket.broadcast !== undefined ? { broadcast: socket.broadcast } : {}),
     }));
 
     // Store the actual socket handler functions

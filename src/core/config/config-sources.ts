@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion --
+ * This module walks the config tree along paths that were just created or
+ * validated in the same function (e.g. the parent object is assigned on the
+ * line above), so the non-null assertions are provably safe. Consolidated here
+ * rather than repeated as ~23 inline disables. */
 /**
  * Configuration Sources - Load from Environment, Files, and Options
  *
@@ -133,19 +138,16 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
   // Server configuration
   if (process.env.PORT || process.env.MORO_PORT) {
     if (!config.server) config.server = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.port = parseInt(process.env.PORT || process.env.MORO_PORT || '3001', 10);
   }
 
   if (process.env.HOST || process.env.MORO_HOST) {
     if (!config.server) config.server = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.host = process.env.HOST || process.env.MORO_HOST || 'localhost';
   }
 
   if (process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS) {
     if (!config.server) config.server = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.maxConnections = parseInt(
       process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '0',
       10
@@ -156,7 +158,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
     if (!config.server) config.server = {} as any;
     if (!config.server!.timeouts) config.server!.timeouts = {} as any;
     // Now writes the canonical timeouts.request (timeout is its deprecated alias).
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.timeouts!.request = parseInt(
       process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '0',
       10
@@ -168,7 +169,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
     if (process.env[envName]) {
       if (!config.server) config.server = {} as any;
       if (!config.server!.timeouts) config.server!.timeouts = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       (config.server!.timeouts as any)[key] = parseInt(process.env[envName] as string, 10);
     }
   };
@@ -178,7 +178,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
 
   if (process.env.MORO_BACKLOG) {
     if (!config.server) config.server = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.server!.backlog = parseInt(process.env.MORO_BACKLOG, 10);
   }
 
@@ -248,37 +247,31 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
           : undefined;
     if (engineValue) {
       if (!config.server) config.server = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.server!.engine = engineValue;
     }
   }
 
   // Database configuration
-  if (process.env.DATABASE_URL || process.env.MORO_DATABASE_URL) {
+  const databaseUrl = process.env.DATABASE_URL || process.env.MORO_DATABASE_URL;
+  if (databaseUrl) {
     if (!config.database) config.database = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    config.database!.url = process.env.DATABASE_URL || process.env.MORO_DATABASE_URL;
+    config.database!.url = databaseUrl;
   }
 
   // Redis configuration
   if (process.env.REDIS_URL || process.env.MORO_REDIS_URL) {
     if (!config.database) config.database = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     if (!config.database!.redis) config.database!.redis = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.database!.redis!.url =
       process.env.REDIS_URL || process.env.MORO_REDIS_URL || 'redis://localhost:6379';
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.database!.redis!.maxRetries = parseInt(
       process.env.REDIS_MAX_RETRIES || process.env.MORO_REDIS_MAX_RETRIES || '3',
       10
     );
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.database!.redis!.retryDelay = parseInt(
       process.env.REDIS_RETRY_DELAY || process.env.MORO_REDIS_RETRY_DELAY || '1000',
       10
     );
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.database!.redis!.keyPrefix =
       process.env.REDIS_KEY_PREFIX || process.env.MORO_REDIS_KEY_PREFIX || 'moro:';
   }
@@ -286,7 +279,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
   // MySQL configuration - only include if MYSQL_HOST is set
   if (process.env.MYSQL_HOST || process.env.MORO_MYSQL_HOST) {
     if (!config.database) config.database = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     config.database!.mysql = {
       host: process.env.MYSQL_HOST || process.env.MORO_MYSQL_HOST || 'localhost',
       port: parseInt(process.env.MYSQL_PORT || process.env.MORO_MYSQL_PORT || '3306', 10),
@@ -308,7 +300,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
   // Logging configuration
   const ensureLoggingBlock = (): NonNullable<DeepPartial<AppConfig>['logging']> => {
     if (!config.logging) config.logging = {} as any;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return config.logging!;
   };
 
@@ -459,61 +450,47 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
 
     // Cache configuration
     if (process.env.CACHE_ENABLED || process.env.MORO_CACHE_ENABLED) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.cache) config.modules!.cache = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.cache!.enabled =
         (process.env.CACHE_ENABLED || process.env.MORO_CACHE_ENABLED) === 'true';
     }
     if (process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.cache) config.modules!.cache = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.cache!.defaultTtl = parseInt(
         process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL || '300',
         10
       );
     }
     if (process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.cache) config.modules!.cache = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.cache!.maxSize = parseInt(
         process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE || '1000',
         10
       );
     }
     if (process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.cache) config.modules!.cache = {} as any;
       const strategy = process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY;
       if (['lru', 'lfu', 'fifo'].includes(strategy || '')) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.modules!.cache!.strategy = strategy as 'lru' | 'lfu' | 'fifo';
       }
     }
 
     // Rate limit configuration
     if (process.env.RATE_LIMIT_ENABLED || process.env.MORO_RATE_LIMIT_ENABLED) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.rateLimit!.enabled =
         (process.env.RATE_LIMIT_ENABLED || process.env.MORO_RATE_LIMIT_ENABLED) === 'true';
     }
     if (process.env.DEFAULT_RATE_LIMIT_REQUESTS || process.env.MORO_RATE_LIMIT_REQUESTS) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.rateLimit!.defaultRequests = parseInt(
         process.env.DEFAULT_RATE_LIMIT_REQUESTS || process.env.MORO_RATE_LIMIT_REQUESTS || '100',
         10
       );
     }
     if (process.env.DEFAULT_RATE_LIMIT_WINDOW || process.env.MORO_RATE_LIMIT_WINDOW) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.rateLimit) config.modules!.rateLimit = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.rateLimit!.defaultWindow = parseInt(
         process.env.DEFAULT_RATE_LIMIT_WINDOW || process.env.MORO_RATE_LIMIT_WINDOW || '60000',
         10
@@ -522,23 +499,18 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
 
     // Validation configuration
     if (process.env.VALIDATION_ENABLED || process.env.MORO_VALIDATION_ENABLED) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.validation) config.modules!.validation = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.validation!.enabled =
         (process.env.VALIDATION_ENABLED || process.env.MORO_VALIDATION_ENABLED) === 'true';
     }
 
     // Auto-Discovery configuration
     if (process.env.AUTO_DISCOVERY_ENABLED || process.env.MORO_AUTO_DISCOVERY_ENABLED) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.autoDiscovery!.enabled =
         (process.env.AUTO_DISCOVERY_ENABLED || process.env.MORO_AUTO_DISCOVERY_ENABLED) === 'true';
     }
     if (process.env.AUTO_DISCOVERY_PATHS || process.env.MORO_AUTO_DISCOVERY_PATHS) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
       const paths = (
         process.env.AUTO_DISCOVERY_PATHS ||
@@ -549,12 +521,10 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
         .map(p => p.trim())
         .filter(Boolean);
       if (paths.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.modules!.autoDiscovery!.paths = paths;
       }
     }
     if (process.env.AUTO_DISCOVERY_PATTERNS || process.env.MORO_AUTO_DISCOVERY_PATTERNS) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
       const patterns = (
         process.env.AUTO_DISCOVERY_PATTERNS ||
@@ -565,7 +535,6 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
         .map(p => p.trim())
         .filter(Boolean);
       if (patterns.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.modules!.autoDiscovery!.patterns = patterns;
       }
     }
@@ -573,13 +542,11 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
       process.env.AUTO_DISCOVERY_LOADING_STRATEGY ||
       process.env.MORO_AUTO_DISCOVERY_LOADING_STRATEGY
     ) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
       const strategy =
         process.env.AUTO_DISCOVERY_LOADING_STRATEGY ||
         process.env.MORO_AUTO_DISCOVERY_LOADING_STRATEGY;
       if (['eager', 'lazy', 'conditional'].includes(strategy || '')) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.modules!.autoDiscovery!.loadingStrategy = strategy as
           | 'eager'
           | 'lazy'
@@ -590,20 +557,16 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
       process.env.AUTO_DISCOVERY_WATCH_FOR_CHANGES ||
       process.env.MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES
     ) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.autoDiscovery!.watchForChanges =
         (process.env.AUTO_DISCOVERY_WATCH_FOR_CHANGES ||
           process.env.MORO_AUTO_DISCOVERY_WATCH_FOR_CHANGES) === 'true';
     }
     if (process.env.AUTO_DISCOVERY_LOAD_ORDER || process.env.MORO_AUTO_DISCOVERY_LOAD_ORDER) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
       const loadOrder =
         process.env.AUTO_DISCOVERY_LOAD_ORDER || process.env.MORO_AUTO_DISCOVERY_LOAD_ORDER;
       if (['alphabetical', 'dependency', 'custom'].includes(loadOrder || '')) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.modules!.autoDiscovery!.loadOrder = loadOrder as
           | 'alphabetical'
           | 'dependency'
@@ -611,17 +574,13 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
       }
     }
     if (process.env.AUTO_DISCOVERY_FAIL_ON_ERROR || process.env.MORO_AUTO_DISCOVERY_FAIL_ON_ERROR) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.autoDiscovery!.failOnError =
         (process.env.AUTO_DISCOVERY_FAIL_ON_ERROR ||
           process.env.MORO_AUTO_DISCOVERY_FAIL_ON_ERROR) === 'true';
     }
     if (process.env.AUTO_DISCOVERY_MAX_DEPTH || process.env.MORO_AUTO_DISCOVERY_MAX_DEPTH) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       if (!config.modules!.autoDiscovery) config.modules!.autoDiscovery = {} as any;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       config.modules!.autoDiscovery!.maxDepth = parseInt(
         process.env.AUTO_DISCOVERY_MAX_DEPTH || process.env.MORO_AUTO_DISCOVERY_MAX_DEPTH || '5',
         10

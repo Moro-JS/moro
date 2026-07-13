@@ -1,7 +1,7 @@
 // GraphQL Core Tests
 import { describe, it, expect, afterEach } from '@jest/globals';
-import { GraphQLCore } from '../../src/core/graphql/core';
-import type { GraphQLOptions } from '../../src/core/graphql/types';
+import { GraphQLCore } from '../../src/core/graphql/core.js';
+import type { GraphQLOptions } from '../../src/core/graphql/types.js';
 
 describe('GraphQL Core', () => {
   let core: GraphQLCore;
@@ -188,7 +188,7 @@ describe('GraphQL Core', () => {
             },
           },
         },
-        context: (req, res) => ({
+        context: (req: any, res: any) => ({
           request: req,
           response: res,
           customValue: 'test-value',
@@ -400,7 +400,7 @@ describe('GraphQL Core', () => {
 
       // Stats should show empty cache
       const stats = core.getStats();
-      expect(stats.jit.cacheSize).toBe(0);
+      expect(stats.jit!.cacheSize).toBe(0);
     });
   });
 });

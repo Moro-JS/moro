@@ -17,8 +17,8 @@ export abstract class BaseRuntimeAdapter implements RuntimeAdapter {
   protected generateUUID(): string {
     const bytes = randomBytes(16);
     // Set version (4) and variant bits
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+    bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
 
     // Convert to hex string directly without intermediate operations
     const hex = bytes.toString('hex');

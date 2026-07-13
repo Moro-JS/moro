@@ -1,3 +1,32 @@
+## [1.8.1] - 2026-07-13
+
+### Security
+
+- **Better Auth: missing secret now fails loudly in production.** When the Better Auth adapter is used with no `secret`/`AUTH_SECRET` under `NODE_ENV=production`, startup now throws instead of silently running with an empty secret. `trustedOrigins` is derived from the configured `baseURL` (override via `trustedOrigins`) rather than defaulting to `*`. Apps that set a secret are unaffected.
+- **WebSocket adapters: no silent wildcard CORS.** The socket.io and `ws` adapters default to same-origin _only when `cors` is unset_. `'*'`, a string, an array, a RegExp, or a function returning the allowed origin are all still supported.
+- **Logger: sensitive-field redaction now applies to metadata.** `logger.x(msg, ctx, { password })` previously bypassed the redaction filter and logged the metadata unredacted; redaction now runs on every log call when filters are configured.
+- **uWebSockets: response-splitting hardening.** CR/LF bytes are stripped from `redirect()` `Location` and all response header values.
+- **HTTP/2: a malformed `Cookie` header no longer crashes the server.**
+
+### Changed
+
+- **Graceful shutdown is now on by default.** `SIGINT`/`SIGTERM` (Ctrl-C) drain in-flight work via `close()` before exit; a second signal force-exits so a stuck drain can't hang. Opt out with `server.gracefulShutdown: false`. Handlers are installed once per process, so nothing leaks across instances.
+- **Node.js ≥ 20 is now required.** Node 18 (end-of-life) is no longer supported, matching the native engine.
+- **Circuit breaker `monitoringPeriod` is now honored** — a sliding failure window instead of accumulate-forever. Only affects apps that set it; breakers may trip differently.
+
+### Added
+
+- **Dynamic WebSocket CORS origin.** `cors.origin` on the WS adapters accepts a RegExp or a function returning the allowed origin per request.
+- **Opt-in uncaught-error draining.** `server.handleUncaught: true` logs an `unhandledRejection`/`uncaughtException`, drains via `close()`, and exits non-zero.
+
+### Fixed
+
+- **uWebSockets: multiple `Set-Cookie` headers are all emitted now** (the second was previously dropped).
+- **Node backend: 5–10 MB request bodies parse correctly** (was an undocumented body-descriptor path).
+- **Logger no longer calls `process.exit()` on signals** — it was short-circuiting cluster/graceful shutdown.
+- **Queued email is now delivered** instead of being infinitely requeued.
+- **SQS adapter now processes messages** instead of deleting them unprocessed (data-loss fix).
+
 ## [1.8.0] - 2026-07-10
 
 ### Added

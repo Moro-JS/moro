@@ -7,6 +7,7 @@
  * @see https://better-auth.com/
  */
 
+import { randomBytes } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { resolveUserPackage } from '../utilities/package-utils.js';
 
@@ -155,8 +156,52 @@ function toWebRequest(req: MoroJSRequest, basePath: string): Request {
   return new Request(url.toString(), {
     method: req.method || 'GET',
     headers,
-    body,
+    ...(body !== undefined ? { body } : {}),
   });
+}
+
+/**
+ * Parse a single Set-Cookie header value and apply it to the MoroJS response.
+ */
+function applySetCookie(moroResponse: MoroJSResponse, cookie: string): void {
+  const [nameValue, ...options] = cookie.split('; ');
+  if (nameValue === undefined) return;
+  const eq = nameValue.indexOf('=');
+  if (eq <= 0) return;
+  const name = nameValue.slice(0, eq);
+  const cookieValue = nameValue.slice(eq + 1);
+
+  const cookieOptions: any = {};
+  options.forEach(option => {
+    const optEq = option.indexOf('=');
+    const optKey = (optEq === -1 ? option : option.slice(0, optEq)).toLowerCase();
+    const optValue = optEq === -1 ? '' : option.slice(optEq + 1);
+    switch (optKey) {
+      case 'max-age':
+        cookieOptions.maxAge = parseInt(optValue, 10);
+        break;
+      case 'expires':
+        cookieOptions.expires = new Date(optValue);
+        break;
+      case 'httponly':
+        cookieOptions.httpOnly = true;
+        break;
+      case 'secure':
+        cookieOptions.secure = true;
+        break;
+      case 'samesite':
+        cookieOptions.sameSite = optValue;
+        break;
+      case 'path':
+        cookieOptions.path = optValue;
+        break;
+      case 'domain':
+        cookieOptions.domain = optValue;
+        break;
+    }
+  });
+
+  moroResponse.cookie(name, cookieValue, cookieOptions);
 }
 
 /**
@@ -166,53 +211,33 @@ async function fromWebResponse(webResponse: Response, moroResponse: MoroJSRespon
   // Set status
   moroResponse.status(webResponse.status);
 
-  // Set headers
+  // Set-Cookie is multi-valued and MUST be read via getSetCookie(): the Fetch
+  // Headers.forEach() folds multiple Set-Cookie headers into a single
+  // comma-joined string, and splitting that on ', ' corrupts any cookie whose
+  // Expires attribute contains a comma ("Expires=Wed, 21 Oct 2025 ..."),
+  // silently dropping or garbling auth cookies.
+  const getSetCookie = (webResponse.headers as any).getSetCookie;
+  const setCookies: string[] =
+    typeof getSetCookie === 'function' ? getSetCookie.call(webResponse.headers) : [];
+  for (const cookie of setCookies) {
+    applySetCookie(moroResponse, cookie);
+  }
+
+  // Set remaining headers
   webResponse.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie') {
-      // Handle cookies specially for MoroJS
-      const cookies = value.split(', ');
-      cookies.forEach(cookie => {
-        const [nameValue, ...options] = cookie.split('; ');
-        const [name, cookieValue] = nameValue.split('=');
-
-        // Parse cookie options
-        const cookieOptions: any = {};
-        options.forEach(option => {
-          const [optKey, optValue] = option.split('=');
-          switch (optKey.toLowerCase()) {
-            case 'max-age':
-              cookieOptions.maxAge = parseInt(optValue, 10);
-              break;
-            case 'expires':
-              cookieOptions.expires = new Date(optValue);
-              break;
-            case 'httponly':
-              cookieOptions.httpOnly = true;
-              break;
-            case 'secure':
-              cookieOptions.secure = true;
-              break;
-            case 'samesite':
-              cookieOptions.sameSite = optValue;
-              break;
-            case 'path':
-              cookieOptions.path = optValue;
-              break;
-            case 'domain':
-              cookieOptions.domain = optValue;
-              break;
-          }
-        });
-
-        moroResponse.cookie(name, cookieValue, cookieOptions);
-      });
-    } else if (key.toLowerCase() === 'location') {
+    const lower = key.toLowerCase();
+    if (lower === 'set-cookie') {
+      // Handled above via getSetCookie(). Fallback for legacy runtimes without
+      // it: apply the (best-effort) folded value as a single cookie.
+      if (setCookies.length === 0 && value) applySetCookie(moroResponse, value);
+      return;
+    }
+    if (lower === 'location') {
       // Handle redirects
       moroResponse.redirect(value);
       return;
-    } else {
-      moroResponse.setHeader(key, value);
     }
+    moroResponse.setHeader(key, value);
   });
 
   // Handle response body
@@ -267,12 +292,48 @@ export async function MoroJSAuth(config: MoroJSAuthConfig): Promise<{
     }
   }
 
+  // Resolve the auth secret. Never fall back to an empty string: an empty
+  // secret disables the signing/encryption Better Auth relies on. Fail fast in
+  // production, and warn-plus-generate elsewhere (matching the built-in auth
+  // middleware's behavior).
+  const secret =
+    config.secret ||
+    process.env.AUTH_SECRET ||
+    (() => {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          '[MoroJS Security] No auth secret configured. Set config.secret or the AUTH_SECRET environment variable before starting in production.'
+        );
+      }
+      const generated = randomBytes(32).toString('hex');
+      logger.warn(
+        '[MoroJS Security] No auth secret configured. A random secret was generated — sessions will NOT survive restarts. Set config.secret or AUTH_SECRET for production use.',
+        'AuthAdapter'
+      );
+      return generated;
+    })();
+
+  const baseURL =
+    config.baseURL || process.env.BASE_URL || process.env.AUTH_URL || 'http://localhost:3000';
+
+  // Default trustedOrigins to the app's own origin instead of a wildcard.
+  // trustedOrigins is Better Auth's origin/CSRF defense for state-changing auth
+  // routes and its callback/redirect-URL allowlist; ['*'] trusts every origin.
+  // Users can override or extend it via config.trustedOrigins.
+  let defaultOrigin: string;
+  try {
+    defaultOrigin = new URL(baseURL).origin;
+  } catch {
+    defaultOrigin = baseURL;
+  }
+  const trustedOrigins = config.trustedOrigins ?? [defaultOrigin];
+
   // Initialize Better Auth
   const betterAuthInstance = betterAuth({
-    secret: config.secret || process.env.AUTH_SECRET || '',
-    baseURL: process.env.BASE_URL || process.env.AUTH_URL || 'http://localhost:3000',
+    secret,
+    baseURL,
     basePath,
-    trustedOrigins: ['*'],
+    trustedOrigins,
     session: {
       expiresIn: config.session?.maxAge || 30 * 24 * 60 * 60,
       updateAge: config.session?.updateAge || 24 * 60 * 60,

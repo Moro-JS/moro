@@ -50,7 +50,7 @@ describe('Module Routes - Direct Registration Fix', () => {
 
     // Test request
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/route-table-test/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -101,7 +101,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     const noAuthResponse = await fetch(
       `http://localhost:${port}/api/v1.0.0/middleware-test/protected`
     );
-    const noAuthData = await noAuthResponse.json();
+    const noAuthData: any = await noAuthResponse.json();
 
     expect(noAuthResponse.status).toBe(401);
     expect(noAuthData.error).toBe('Unauthorized');
@@ -113,7 +113,7 @@ describe('Module Routes - Direct Registration Fix', () => {
         headers: { Authorization: 'Bearer test' },
       }
     );
-    const withAuthData = await withAuthResponse.json();
+    const withAuthData: any = await withAuthResponse.json();
 
     expect(withAuthResponse.status).toBe(200);
     expect(withAuthData.success).toBe(true);
@@ -157,7 +157,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     });
 
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/global-mw-test/test`);
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -171,7 +171,7 @@ describe('Module Routes - Direct Registration Fix', () => {
         compression: {
           enabled: true,
           threshold: 100, // Low threshold for testing
-        },
+        } as any,
       },
     });
 
@@ -208,7 +208,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     const response = await fetch(`http://localhost:${testPort}/api/v1.0.0/compression-test/large`, {
       headers: { 'Accept-Encoding': 'gzip' },
     });
-    const data = await response.json();
+    const data: any = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
@@ -252,7 +252,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     const notFoundResponse = await fetch(
       `http://localhost:${port}/api/v1.0.0/404-test/does-not-exist`
     );
-    const notFoundData = await notFoundResponse.json();
+    const notFoundData: any = await notFoundResponse.json();
 
     expect(notFoundResponse.status).toBe(404);
     expect(notFoundData.success).toBe(false);
@@ -293,13 +293,13 @@ describe('Module Routes - Direct Registration Fix', () => {
     // Test both modules
     const response1 = await fetch(`http://localhost:${port}/api/v1.0.0/module1/test`);
     expect(response1.status).toBe(200);
-    const data1 = await response1.json();
+    const data1: any = await response1.json();
     expect(data1.success).toBe(true);
     expect(data1.module).toBe('1');
 
     const response2 = await fetch(`http://localhost:${port}/api/v1.0.0/module2/test`);
     expect(response2.status).toBe(200);
-    const data2 = await response2.json();
+    const data2: any = await response2.json();
     expect(data2.success).toBe(true);
     expect(data2.module).toBe('2');
   });
@@ -352,7 +352,7 @@ describe('Module Routes - Direct Registration Fix', () => {
 
     // Test app root - should NOT be overridden by module
     const appRootResponse = await fetch(`http://localhost:${port}/`);
-    const appRootData = await appRootResponse.json();
+    const appRootData: any = await appRootResponse.json();
     expect(appRootResponse.status).toBe(200);
     expect(appRootCalled).toBe(true);
     expect(appRootData.success).toBe(true);
@@ -360,7 +360,7 @@ describe('Module Routes - Direct Registration Fix', () => {
 
     // Test module root - should map to /api/v1.0.0/health
     const moduleRootResponse = await fetch(`http://localhost:${port}/api/v1.0.0/health`);
-    const moduleRootData = await moduleRootResponse.json();
+    const moduleRootData: any = await moduleRootResponse.json();
     expect(moduleRootResponse.status).toBe(200);
     expect(moduleRootCalled).toBe(true);
     expect(moduleRootData.success).toBe(true);
@@ -369,7 +369,7 @@ describe('Module Routes - Direct Registration Fix', () => {
 
     // Test module status route - should map to /api/v1.0.0/health/status
     const moduleStatusResponse = await fetch(`http://localhost:${port}/api/v1.0.0/health/status`);
-    const moduleStatusData = await moduleStatusResponse.json();
+    const moduleStatusData: any = await moduleStatusResponse.json();
     expect(moduleStatusResponse.status).toBe(200);
     expect(moduleStatusCalled).toBe(true);
     expect(moduleStatusData.success).toBe(true);
@@ -378,7 +378,7 @@ describe('Module Routes - Direct Registration Fix', () => {
     // Verify app root was not overridden - test again
     appRootCalled = false;
     const appRootResponse2 = await fetch(`http://localhost:${port}/`);
-    const appRootData2 = await appRootResponse2.json();
+    const appRootData2: any = await appRootResponse2.json();
     expect(appRootResponse2.status).toBe(200);
     expect(appRootCalled).toBe(true);
     expect(appRootData2.message).toBe('App root');

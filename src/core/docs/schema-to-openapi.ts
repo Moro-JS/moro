@@ -47,7 +47,7 @@ export function schemaToOpenAPI(
   logger.debug('Using generic schema conversion for unknown validation type');
   return {
     type: 'object',
-    description: options.includeDescriptions ? 'Validated object' : undefined,
+    ...(options.includeDescriptions ? { description: 'Validated object' } : {}),
     additionalProperties: true,
   };
 }
@@ -118,7 +118,7 @@ function convertJoiToOpenAPI(
       return {
         type: 'object',
         properties,
-        required: required.length > 0 ? required : undefined,
+        ...(required.length > 0 ? { required } : {}),
         description: options.includeDescriptions ? joiSchema._description : undefined,
       };
     }
@@ -139,7 +139,7 @@ function convertJoiToOpenAPI(
       return {
         type: 'object',
         additionalProperties: true,
-        description: options.includeDescriptions ? 'Complex validation schema' : undefined,
+        ...(options.includeDescriptions ? { description: 'Complex validation schema' } : {}),
       };
   }
 }

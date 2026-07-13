@@ -181,7 +181,7 @@ export class FunctionalContainer extends EventEmitter {
   private requestScopes = new Map<string, Map<string, ServiceInstance>>();
   private moduleScopes = new Map<string, Map<string, ServiceInstance>>();
   private globalInterceptors: ServiceInterceptor[] = [];
-  private cleanupInterval?: NodeJS.Timeout;
+  private cleanupInterval?: NodeJS.Timeout | undefined;
 
   constructor() {
     super();
@@ -273,7 +273,7 @@ export class FunctionalContainer extends EventEmitter {
         lifecycle: ServiceLifecycle.INITIALIZED,
         lastAccessed: Date.now(),
         accessCount: 1,
-        context,
+        ...(context !== undefined ? { context } : {}),
       };
       instanceMap.set(scopeKey, instance);
     }
@@ -399,7 +399,7 @@ export class FunctionalContainer extends EventEmitter {
       lifecycle: ServiceLifecycle.INITIALIZING,
       lastAccessed: Date.now(),
       accessCount: 0,
-      context,
+      ...(context !== undefined ? { context } : {}),
     };
 
     try {
@@ -551,13 +551,13 @@ export class FunctionalContainer extends EventEmitter {
         interceptor
           .toString()
           .match(/\(([^)]*)\)/)?.[1]
-          .split(',')
+          ?.split(',')
           .map(p => p.trim()) || [];
+      const secondParam = paramNames[1];
       const isFactoryPattern =
         paramNames.length >= 2 &&
-        (paramNames[1].includes('factory') ||
-          paramNames[1].includes('fn') ||
-          paramNames[1] === 'f');
+        secondParam !== undefined &&
+        (secondParam.includes('factory') || secondParam.includes('fn') || secondParam === 'f');
 
       if (isFactoryPattern || paramNames.length !== 4) {
         // Pattern 1: (name, factory, deps, context) => wrappedFactory
@@ -840,9 +840,9 @@ export class ServiceRegistrationBuilder<T> {
         dependencies: this.metadata.dependencies!,
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         optional: this.metadata.optional!,
-        lifecycle: this.metadata.lifecycle,
-        fallback: this.metadata.fallback,
-        timeout: this.metadata.timeout,
+        ...(this.metadata.lifecycle !== undefined ? { lifecycle: this.metadata.lifecycle } : {}),
+        ...(this.metadata.fallback !== undefined ? { fallback: this.metadata.fallback } : {}),
+        ...(this.metadata.timeout !== undefined ? { timeout: this.metadata.timeout } : {}),
       },
       interceptors: this.interceptors,
       decorators: this.decorators,

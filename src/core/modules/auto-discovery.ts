@@ -591,10 +591,12 @@ export class ModuleDiscovery {
 
         modulePaths.forEach(path => {
           try {
-            fs.watchFile(path, async () => {
-              this.discoveryLogger.info(`Module file changed: ${path}`);
-              const modules = await this.discoverModules();
-              callback(modules);
+            fs.watchFile(path, () => {
+              void (async () => {
+                this.discoveryLogger.info(`Module file changed: ${path}`);
+                const modules = await this.discoverModules();
+                callback(modules);
+              })().catch(err => this.discoveryLogger.error(`Module reload failed: ${String(err)}`));
             });
           } catch {
             // File watching not supported or failed
@@ -630,12 +632,15 @@ export class ModuleDiscovery {
               const watcher = fs.watch(
                 fullPath,
                 { recursive: config.recursive },
-                async (eventType: string, filename: string | null) => {
-                  if (filename && this.matchesPatterns(filename, config.patterns)) {
+                (eventType: string, filename: string | null) => {
+                  if (!filename || !this.matchesPatterns(filename, config.patterns)) return;
+                  void (async () => {
                     this.discoveryLogger.info(`Module file changed: ${filename}`);
                     const modules = await this.discoverModulesAdvanced(config);
                     callback(modules);
-                  }
+                  })().catch(err =>
+                    this.discoveryLogger.error(`Module reload failed: ${String(err)}`)
+                  );
                 }
               );
 

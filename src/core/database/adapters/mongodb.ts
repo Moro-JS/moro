@@ -37,6 +37,8 @@ export class MongoDBAdapter implements DatabaseAdapter {
   private db: any;
   private logger = createFrameworkLogger('MongoDB');
   private initPromise: Promise<void>;
+  // Marked false on a client 'error'/'close' so callers can observe an unhealthy adapter
+  private isConnected = false;
 
   constructor(config: MongoDBConfig) {
     this.initPromise = this.initialize(config);
@@ -74,6 +76,20 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
       this.client = new MongoClient(url, clientOptions);
 
+      // MongoClient is an EventEmitter; without an 'error' listener a topology
+      // error (e.g. after a server restart) could surface as an unhandled 'error'
+      // and crash the process.
+      this.client.on('error', (err: Error) => {
+        this.isConnected = false;
+        this.logger.error('MongoDB client error', 'Connection', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      this.client.on('close', () => {
+        this.isConnected = false;
+        this.logger.warn('MongoDB connection closed', 'Connection');
+      });
+
       this.db = this.client.db(config.database || 'moro_app');
 
       this.logger.info('MongoDB adapter initialized', 'MongoDB');
@@ -98,6 +114,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     try {
       await this.client.connect();
       await this.client.db('admin').command({ ping: 1 });
+      this.isConnected = true;
       this.logger.info('MongoDB connection established', 'Connection');
     } catch (error) {
       this.logger.error('MongoDB connection failed', 'Connection', {
