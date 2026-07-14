@@ -7,6 +7,7 @@ export default {
     // CommonJS, where import.meta is a load-time SyntaxError. Must precede the
     // generic .js->ts rule below (first match wins).
     'worker-entry\\.js$': '<rootDir>/tests/mocks/worker-entry.ts',
+    'self-require\\.js$': '<rootDir>/tests/mocks/self-require.ts',
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {

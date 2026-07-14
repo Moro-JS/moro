@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { pathToFileURL } from 'url';
+import { selfRequire } from './self-require.js';
 
 /**
  * Check if a package is available in the user's node_modules
@@ -154,6 +155,12 @@ let engineLoadErrors: string[] = [];
  * Inside the framework repo itself (tests, examples) cwd is the framework dir.
  */
 function findFrameworkAnchor(): ReturnType<typeof createRequire> | null {
+  // Primary: anchor to moro's OWN compiled location, so moro's `@morojs/engine`
+  // dependency resolves relative to where moro is installed regardless of
+  // `process.cwd()` (Docker WORKDIR, supervisord, pm2, a subdirectory, …). The
+  // cwd-based walk below is a defensive fallback for exotic layouts.
+  if (selfRequire) return selfRequire;
+
   try {
     const cwdPackageJson = join(process.cwd(), 'package.json');
     if (existsSync(cwdPackageJson)) {
