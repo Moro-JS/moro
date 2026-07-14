@@ -1,3 +1,9 @@
+## [1.8.3] - 2026-07-14
+
+### Added
+
+- bug: add self-require utility for ESM module resolution and corresponding Jest stub
+
 ## [1.8.2] - 2026-07-14
 
 ### Added
