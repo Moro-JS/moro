@@ -1,3 +1,9 @@
+## [1.8.2] - 2026-07-14
+
+### Added
+
+- feat: enhance WebSocket support by adding query string handling and routing by URL path
+
 ## [1.8.1] - 2026-07-13
 
 ### Changed
