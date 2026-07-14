@@ -1334,14 +1334,16 @@ export class MoroEngineServer {
     onOpen(
       wsId: number,
       path: string,
-      info?: { ip: string; headers: Record<string, string> }
+      info?: { ip: string; headers: Record<string, string>; query?: string }
     ): void;
     onMessage(wsId: number, data: any, isBinary: boolean): void;
     onClose(wsId: number, code: number): void;
   };
   // Handshake info for the upgrade currently in flight: set just before
   // upgradeToWebSocket() (which fires onWsOpen synchronously), consumed there.
-  private _pendingWsInfo?: { ip: string; headers: Record<string, string> } | undefined;
+  private _pendingWsInfo?:
+    | { ip: string; headers: Record<string, string>; query: string }
+    | undefined;
 
   // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
   private maxBodySize: number = 10 * 1024 * 1024;
@@ -1744,7 +1746,10 @@ export class MoroEngineServer {
               existing === undefined ? val : existing + (key === 'cookie' ? '; ' : ', ') + val;
           }
         }
-        this._pendingWsInfo = { ip, headers };
+        // Capture the query string too (invalidated by the upgrade like the
+        // rest), so handlers can read handshake query params (e.g. orgId).
+        const query: string = this._engine.getQuery(reqId) || '';
+        this._pendingWsInfo = { ip, headers, query };
         const wsId = this._engine.upgradeToWebSocket(reqId);
         this._pendingWsInfo = undefined;
         if (wsId !== -1) return; // WS took over this connection

@@ -36,6 +36,29 @@ const tryConnect = (url: string, timeoutMs = 3000): Promise<boolean> =>
     };
   });
 
+// Connect, send one { event, data } envelope, resolve with the first reply parsed.
+const roundtrip = (url: string, out: any, timeoutMs = 3000): Promise<any> =>
+  new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const timer = setTimeout(() => {
+      try {
+        ws.close();
+      } catch {}
+      reject(new Error('timeout'));
+    }, timeoutMs);
+    ws.onopen = () => ws.send(JSON.stringify(out));
+    ws.onmessage = (ev: any) => {
+      clearTimeout(timer);
+      ws.close();
+      const text = typeof ev.data === 'string' ? ev.data : ev.data.toString();
+      resolve(JSON.parse(text));
+    };
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error('ws error'));
+    };
+  });
+
 describeEngine('Native engine integrated WebSockets', () => {
   let app: any;
 
@@ -66,5 +89,45 @@ describeEngine('Native engine integrated WebSockets', () => {
 
     const connected = await tryConnect(`ws://localhost:${port}/`);
     expect(connected).toBe(true);
+  });
+
+  it('routes upgrades by URL path to the matching app.websocket() namespace', async () => {
+    app = await createApp({
+      logger: { level: 'fatal' },
+      server: { engine: 'moro' },
+      websocket: {},
+    });
+    expect(app.engine.server).toBe('engine');
+
+    app.websocket('/command-center', {
+      ping: (socket: any, data: any) =>
+        socket.emit('pong', {
+          ns: 'command-center',
+          echo: data,
+          org: socket.handshake?.query?.orgId, // handshake query exposed on the engine
+        }),
+    });
+    app.websocket('/', {
+      ping: (socket: any, data: any) => socket.emit('pong', { ns: 'root', echo: data }),
+    });
+
+    const port = testPort();
+    await listen(app, port);
+
+    // A connection to /command-center must reach the /command-center handlers,
+    // not the default namespace (the engine adapter used to route every upgrade
+    // to '/').
+    const nsRes = await roundtrip(`ws://localhost:${port}/command-center?orgId=abc`, {
+      event: 'ping',
+      data: 'x',
+    });
+    expect(nsRes.event).toBe('pong');
+    expect(nsRes.data.ns).toBe('command-center');
+    expect(nsRes.data.echo).toBe('x');
+    expect(nsRes.data.org).toBe('abc'); // handshake.query.orgId reached the handler
+
+    // Isolation: '/' still routes to the default namespace's handlers.
+    const rootRes = await roundtrip(`ws://localhost:${port}/`, { event: 'ping', data: 'y' });
+    expect(rootRes.data.ns).toBe('root');
   });
 });

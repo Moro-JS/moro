@@ -15,6 +15,17 @@ import {
 } from '../websocket-adapter.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 
+// Parse a raw upgrade query string (`orgId=1&x=y`, with or without a leading
+// `?`) into a flat object for `socket.handshake.query`. Last value wins on
+// duplicate keys, matching URLSearchParams / Socket.IO.
+function parseQueryString(qs: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!qs) return out;
+  const params = new URLSearchParams(qs.startsWith('?') ? qs.slice(1) : qs);
+  for (const [key, value] of params) out[key] = value;
+  return out;
+}
+
 export class EngineWebSocketAdapter implements WebSocketAdapter {
   private server: any; // MoroEngineServer
   private namespaces = new Map<string, EngineNamespaceWrapper>();
@@ -37,7 +48,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
       onOpen: (
         wsId: number,
         path: string,
-        info?: { ip: string; headers: Record<string, string> }
+        info?: { ip: string; headers: Record<string, string>; query?: string }
       ) => this.handleOpen(wsId, path, info),
       onMessage: (wsId: number, data: any, isBinary: boolean) =>
         this.handleMessage(wsId, data, isBinary),
@@ -51,7 +62,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
   private handleOpen(
     wsId: number,
     path: string,
-    info?: { ip: string; headers: Record<string, string> }
+    info?: { ip: string; headers: Record<string, string>; query?: string }
   ): void {
     const id = this.customIdGenerator ? this.customIdGenerator() : this.generateId();
     const connection = new EngineConnectionWrapper(
@@ -64,7 +75,16 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
     );
     this.connections.set(id, connection);
     this.byWsId.set(wsId, connection);
-    this.getDefaultNamespaceImpl().handleConnection(connection);
+    // Route to the namespace whose registered path matches the upgrade URL
+    // (Socket.IO parity for `app.websocket('/name', ...)`), falling back to the
+    // default namespace when nothing matches. Query/hash are stripped so a
+    // client connecting to `/name?token=…` still resolves to the `/name`
+    // namespace.
+    const nsPath = (path || '/').split(/[?#]/)[0] || '/';
+    const ns =
+      (this.namespaces.get(nsPath) as EngineNamespaceWrapper | undefined) ??
+      this.getDefaultNamespaceImpl();
+    ns.handleConnection(connection);
   }
 
   private handleMessage(wsId: number, data: any, isBinary: boolean): void {
@@ -234,6 +254,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   public data: Record<string, any> = {};
   public connected = true;
   public readonly headers: Record<string, string>;
+  public readonly query: Record<string, string>;
   private rooms = new Set<string>();
   private eventHandlers = new Map<
     string,
@@ -250,16 +271,28 @@ class EngineConnectionWrapper implements WebSocketConnection {
     public readonly id: string,
     public readonly path: string,
     private namespaces: Map<string, EngineNamespaceWrapper>,
-    handshake?: { ip: string; headers: Record<string, string> }
+    handshake?: { ip: string; headers: Record<string, string>; query?: string }
   ) {
     // Handshake snapshot (captured before the upgrade invalidated the reqId):
     // real values for IP-based rate limiting and header/token connection auth.
     this._ip = handshake?.ip ?? '';
     this.headers = handshake?.headers ?? {};
+    this.query = parseQueryString(handshake?.query ?? '');
   }
 
   get ip(): string {
     return this._ip;
+  }
+
+  // Socket.IO-parity handshake view so `socket.handshake.query`/`.headers`
+  // handlers (e.g. reading an `orgId` query param) work against the engine
+  // adapter unchanged.
+  get handshake(): {
+    query: Record<string, string>;
+    headers: Record<string, string>;
+    address: string;
+  } {
+    return { query: this.query, headers: this.headers, address: this._ip };
   }
 
   on(event: string, handler: (data: any, callback?: (response?: any) => void) => void): void {
