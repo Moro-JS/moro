@@ -1,19 +1,41 @@
 version: 2
+
+# Philosophy: this repo publishes @morojs/moro, whose ONLY hard dependency is
+# @morojs/engine (first-party). Every other library here is either build/test
+# tooling that never ships, or an OPTIONAL peer dependency whose version the end
+# user chooses — so a bump in THIS repo cannot change what a user's app runs.
+# Given that, Dependabot is deliberately kept quiet:
+#   * Routine version PRs open ONLY for @morojs/engine (the thing that actually
+#     ships) — reviewed by hand like any other engine release.
+#   * Dev/build tooling gets NO routine bump PRs.
+#   * Security fixes still ALWAYS arrive: Dependabot *security* updates are
+#     independent of the `allow` filter below, so a vulnerable devDependency
+#     still gets a PR. This requires "Dependabot security updates" to be enabled
+#     under repo Settings > Advanced Security (see note at bottom of PR/commit).
 updates:
-  # Keep GitHub Actions pinned versions current (and, once SHA-pinned, bump the
-  # SHAs) so third-party/first-party actions don't drift on mutable tags.
+  # GitHub Actions are SHA-pinned; one grouped PR a month keeps those pins from
+  # going stale. These run CI only — they never ship to users.
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'weekly'
+      interval: 'monthly'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(ci)'
     groups:
       actions:
         patterns:
           - '*'
 
-  # npm devDependencies (runtime deps are a single first-party package).
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
       interval: 'weekly'
+    # Routine PRs for production deps only — currently just @morojs/engine.
+    # Dev tooling is intentionally left alone here. Security advisories are NOT
+    # gated by this filter, so a vulnerable dev dependency still gets its own PR.
+    allow:
+      - dependency-type: 'production'
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(deps)'
