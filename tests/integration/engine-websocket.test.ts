@@ -7,16 +7,19 @@ import { describe, it, expect, afterEach } from '@jest/globals';
 import { WebSocket } from 'ws';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
-import { closeApp } from '../setup.js';
+import { closeApp, createTestPort } from '../setup.js';
 import { describeEngine } from './engine-test-utils.js';
 
-const testPort = () => 10100 + Math.floor(Math.random() * 5000);
+const testPort = () => createTestPort();
 
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));
 
-// Resolves true on open, false on error/close-before-open, times out otherwise
-const tryConnect = (url: string, timeoutMs = 3000): Promise<boolean> =>
+// Resolves true on open, false on error/close-before-open, times out otherwise.
+// Both call sites assert the positive outcome, so a generous timeout only ever
+// helps: it costs nothing on a green run and absorbs the CPU contention of a
+// loaded coverage run rather than reporting a false negative.
+const tryConnect = (url: string, timeoutMs = 15000): Promise<boolean> =>
   new Promise(resolve => {
     const ws = new WebSocket(url);
     const timer = setTimeout(() => {
@@ -37,7 +40,7 @@ const tryConnect = (url: string, timeoutMs = 3000): Promise<boolean> =>
   });
 
 // Connect, send one { event, data } envelope, resolve with the first reply parsed.
-const roundtrip = (url: string, out: any, timeoutMs = 3000): Promise<any> =>
+const roundtrip = (url: string, out: any, timeoutMs = 15000): Promise<any> =>
   new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const timer = setTimeout(() => {

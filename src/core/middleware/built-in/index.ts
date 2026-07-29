@@ -3,9 +3,14 @@ export { auth } from './auth/index.js';
 export { rateLimit } from './rate-limit/index.js';
 export { cors, corsHook } from './cors/index.js';
 export { validation } from './validation/index.js';
-export { requestLogger } from './request-logger/index.js';
-export { performanceMonitor } from './performance-monitor/index.js';
-export { errorTracker } from './error-tracker/index.js';
+export { requestLogger, createRequestLoggerMiddleware } from './request-logger/index.js';
+export { prometheus, createPrometheusMiddleware } from './prometheus/index.js';
+export { cloudWatch, createCloudWatchMiddleware } from './cloudwatch/index.js';
+export {
+  performanceMonitor,
+  createPerformanceMonitorMiddleware,
+} from './performance-monitor/index.js';
+export { errorTracker, createErrorTrackerMiddleware } from './error-tracker/index.js';
 
 // Advanced Security & Performance Middleware
 export { cookie } from './cookie/index.js';
@@ -69,6 +74,8 @@ import { validation } from './validation/index.js';
 import { requestLogger } from './request-logger/index.js';
 import { performanceMonitor } from './performance-monitor/index.js';
 import { errorTracker } from './error-tracker/index.js';
+import { prometheus } from './prometheus/index.js';
+import { cloudWatch } from './cloudwatch/index.js';
 import { cookie } from './cookie/index.js';
 import { csrf } from './csrf/index.js';
 import { csp } from './csp/index.js';
@@ -86,11 +93,21 @@ import { upload } from './upload/index.js';
 import { template } from './template/index.js';
 import { range } from './range/index.js';
 
+// The built-in middleware collection. Internal framework code references
+// `builtInMiddleware` (the `middleware` identifier is a common local/parameter
+// name inside the framework); the public API exposes the same object under
+// the friendly `middleware` name.
 export const builtInMiddleware = {
   auth,
   rateLimit,
   cors: corsHook,
   validation,
+  // Observability
+  requestLogger,
+  performanceMonitor,
+  errorTracker,
+  prometheus,
+  cloudWatch,
   // Advanced middleware
   cookie,
   csrf,
@@ -114,8 +131,25 @@ export const builtInMiddleware = {
   range,
 };
 
-export const simpleMiddleware = {
-  requestLogger,
-  performanceMonitor,
-  errorTracker,
+// The Moro middleware namespace: every entry is a factory — called with
+// options (or without, for defaults) and returns middleware. Referenced as
+// middleware.cors(...), middleware.helmet(), middleware.requestLogger(), etc.
+export const middleware = builtInMiddleware;
+
+// Brand every built-in factory so the framework can recognize an UNCALLED
+// factory passed where middleware is expected (app.use(middleware.helmet)
+// instead of app.use(middleware.helmet())) and fail loudly at registration
+// time instead of silently misbehaving at request time.
+export const MIDDLEWARE_FACTORY = Symbol.for('morojs.middleware-factory');
+
+const brandFactories = (collection: Record<string, unknown>): void => {
+  for (const value of Object.values(collection)) {
+    if (typeof value === 'function') {
+      (value as any)[MIDDLEWARE_FACTORY] = true;
+    } else if (value && typeof value === 'object') {
+      // Nested namespaces of factories (e.g. http2.push)
+      brandFactories(value as Record<string, unknown>);
+    }
+  }
 };
+brandFactories(builtInMiddleware);

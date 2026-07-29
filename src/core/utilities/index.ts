@@ -15,9 +15,6 @@ export { HookManager, HOOK_EVENTS } from './hooks.js';
 export { isPackageAvailable, resolveUserPackage, createUserRequire } from './package-utils.js';
 export { buildModuleBasePath } from './module-path.js';
 
-// Re-export middleware from hooks
-export { middleware } from './hooks.js';
-
 // Standardized Response Helpers (namespace object only to avoid polluting global exports)
 export { response, ResponseBuilder } from './response-helpers.js';
 

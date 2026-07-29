@@ -1,6 +1,7 @@
 import { createApp, defineModule } from '../../src/index.js';
 import { Moro } from '../../src/moro.js';
 import { ModuleDefinition } from '../../src/types/module.js';
+import { createTestPort } from '../setup.js';
 
 describe('Module Routes - Headers Access', () => {
   let app: Moro;
@@ -8,7 +9,7 @@ describe('Module Routes - Headers Access', () => {
 
   beforeEach(async () => {
     // Use dynamic port allocation to avoid conflicts in CI
-    port = 3100 + Math.floor(Math.random() * 1000);
+    port = createTestPort();
     app = await createApp({ logging: { level: 'error' } });
   });
 

@@ -1388,7 +1388,7 @@ app.use(
 app.use(
   middleware.staticFiles({
     root: './public',
-    maxAge: 3600000,
+    maxAge: 3600, // seconds
     etag: true,
   })
 );

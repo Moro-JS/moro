@@ -62,13 +62,13 @@ const app = new Moro({
 
 ### Automatic Push (Recommended)
 
-Use the `http2Push` middleware with auto-detection:
+Use the `http2.push` middleware with auto-detection:
 
 ```typescript
 import { middleware } from '@morojs/moro';
 
 app.use(
-  middleware.http2Push({
+  middleware.http2.push({
     autoDetect: true, // Auto-detect CSS/JS from HTML
     resources: [
       {
@@ -197,11 +197,11 @@ Only push resources that are:
 
 ```typescript
 app.use(
-  middleware.http2Push({
+  middleware.http2.push({
     autoDetect: true, // Let MoroJS detect from HTML
     resources: [
       // Only push critical resources
-      { path: '/critical.css', type: 'text/css', priority: 200 },
+      { path: '/critical.css', as: 'style', type: 'text/css', priority: 200 },
     ],
   })
 );
@@ -227,9 +227,7 @@ const app = new Moro({
   http2: {
     allowHTTP1: true, // Clients without HTTP/2 support
   },
-  https: {
-    /* ... */
-  },
+  https: {/* ... */},
 });
 ```
 
@@ -353,7 +351,7 @@ const app = new Moro({
   },
 });
 
-app.use(middleware.http2Push({ autoDetect: true }));
+app.use(middleware.http2.push({ autoDetect: true }));
 
 app.get('/', (req, res) => {
   // Optionally use HTTP/2 features
@@ -450,12 +448,12 @@ res.setPriority(options?: {
 
 ### Middleware
 
-#### `middleware.http2Push(options)`
+#### `middleware.http2.push(options)`
 
 Configure server push behavior.
 
 ```typescript
-middleware.http2Push({
+middleware.http2.push({
   autoDetect?: boolean;
   resources?: Array<{
     path: string;

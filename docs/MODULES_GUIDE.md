@@ -414,14 +414,14 @@ export const apiModule = defineModule({
       path: '/secure',
       // Middleware specific to this route only
       middleware: [
-        'auth', // Built-in by string name
-        'rateLimit', // Built-in by string name
+        'helmet', // Built-in by string name (default options)
         (req, res, next) => {
           // Custom middleware function
           console.log('Processing secure request');
           next();
         },
       ],
+      rateLimit: { requests: 10, window: 60000 }, // Rate limiting via route config
       handler: async (req, res) => {
         return { data: 'secure data' };
       },
@@ -432,18 +432,32 @@ export const apiModule = defineModule({
 
 #### Built-in Middleware Names
 
-You can reference these built-in middleware by string name:
+These built-in middleware work by string name (instantiated with default options):
 
-- `'auth'` - Authentication middleware
-- `'cors'` - CORS headers
 - `'helmet'` - Security headers
-- `'rateLimit'` - Rate limiting
-- `'validation'` - Request validation
-- `'cache'` - Response caching
 - `'compression'` - Response compression
 - `'bodySize'` - Body size limiting
-- `'csrf'` - CSRF protection
-- `'session'` - Session management
+- `'upload'` - File uploads
+- `'range'` - Range requests
+- `'requestLogger'` - Request logging
+- `'performanceMonitor'` - Slow-request warnings
+
+String names resolve in this order:
+
+1. **User-installed middleware** registered with the middleware manager (e.g. a
+   named function installed via `app.use()`), matched by function or metadata name.
+2. **Built-in middleware factories**, instantiated once with **default options**.
+
+Hook-based built-ins (`auth`, `cors`, `rateLimit`, `validation`, `cache`, `csrf`,
+`csp`, `session`, `sse`, `cdn`, `graphql`) install globally with `app.use(...)`
+and cannot run per-route by string name. Built-ins that require configuration
+(`staticFiles`, `template`) must be passed as configured middleware functions.
+For rate limiting, caching, auth enforcement, and validation, prefer the route's
+own config fields (`rateLimit`, `cache`, `auth`, `validation`).
+
+A name that cannot be resolved **fails the request with a 500** rather than being
+silently skipped — a declared middleware (such as an auth guard) never quietly
+disappears from the chain.
 
 #### Combined Module and Route Middleware
 
@@ -454,8 +468,8 @@ export const apiModule = defineModule({
 
   // Module-level: runs on ALL routes
   middleware: [
-    'cors',
     'helmet',
+    'compression',
     async (req, res, next) => {
       req.startTime = Date.now();
       next();
@@ -475,7 +489,8 @@ export const apiModule = defineModule({
       method: 'POST',
       path: '/admin',
       // Route-level: runs AFTER module middleware
-      middleware: ['auth', 'rateLimit'],
+      middleware: ['bodySize'],
+      rateLimit: { requests: 10, window: 60000 },
       auth: { roles: ['admin'] },
       handler: async (req, res) => {
         // Both module AND route middleware have run
@@ -552,9 +567,7 @@ export const myModule = defineModule({
   name: 'myModule',
   version: '1.0.0',
   middleware: [asyncLogger, errorHandler, conditionalAuth],
-  routes: [
-    /* ... */
-  ],
+  routes: [/* ... */],
 });
 ```
 

@@ -190,5 +190,5 @@ export class MiddlewareManager extends EventEmitter {
 }
 
 // Built-in middleware exports
-export { builtInMiddleware, simpleMiddleware } from './built-in/index.js';
+export { middleware, builtInMiddleware } from './built-in/index.js';
 export * from './built-in/index.js';

@@ -1,4 +1,6 @@
 // Request Logger - Main entry point
-// Re-exports the request logger middleware
+export { createRequestLoggerMiddleware } from './middleware.js';
 
-export { requestLogger } from './middleware.js';
+import { createRequestLoggerMiddleware } from './middleware.js';
+
+export const requestLogger = createRequestLoggerMiddleware;

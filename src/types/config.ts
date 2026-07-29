@@ -103,8 +103,7 @@ export interface ServerConfig {
   /** HTTP/2: true, or an options object. Served natively by the engine when
    *  it supports h2 (feature-detected), else by the Node http2 server. */
   http2?:
-    | boolean
-    | { allowHTTP1?: boolean; maxSessionMemory?: number; settings?: Http2SettingsConfig };
+    boolean | { allowHTTP1?: boolean; maxSessionMemory?: number; settings?: Http2SettingsConfig };
   requestTracking: {
     enabled: boolean;
   };

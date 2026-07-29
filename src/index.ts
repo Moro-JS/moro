@@ -96,7 +96,23 @@ export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-worke
 
 // Core exports
 export { MoroHttpServer, UWebSocketsHttpServer, MoroEngineServer } from './core/http/index.js';
-export { builtInMiddleware, simpleMiddleware } from './core/middleware/built-in/index.js';
+export { middleware } from './core/middleware/built-in/index.js';
+
+// Re-declared (not re-exported) so the @deprecated tag reaches consumers:
+// TypeScript does not propagate deprecation through `export { x } from '...'`,
+// only through an actual declaration. Framework-internal code imports
+// builtInMiddleware from ./core/middleware/built-in/index.js directly, where
+// the declaration carries no tag, so this flags user code only.
+import { builtInMiddleware as builtInMiddlewareImpl } from './core/middleware/built-in/index.js';
+/** @deprecated Use `middleware` instead. `builtInMiddleware` will be removed in a future release. */
+export const builtInMiddleware = builtInMiddlewareImpl;
+
+// Worker Threads (CPU-intensive task offloading)
+export { WorkerManager, getWorkerManager, workerTasks } from './core/workers/index.js';
+export type { WorkerTask, WorkerResult } from './core/workers/index.js';
+
+// Object Pooling & Caching
+export { ObjectPool, LRUCache, ObjectPoolManager } from './core/pooling/index.js';
 
 // Networking System
 export { WebSocketManager, ServiceRegistry } from './core/networking/index.js';
@@ -116,7 +132,6 @@ export {
   CircuitBreaker,
   HookManager,
   HOOK_EVENTS,
-  middleware,
   isPackageAvailable,
   resolveUserPackage,
   createUserRequire,

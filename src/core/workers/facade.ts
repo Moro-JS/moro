@@ -26,8 +26,21 @@ export interface WorkerHelpers {
   verifyJWT(token: string, secret: string, options?: any): Promise<any>;
   signJWT(payload: any, secret: string, options?: any): Promise<string>;
   hash(data: string, algorithm?: string): Promise<string>;
+  compress(
+    data: string | Buffer | Uint8Array,
+    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+  ): Promise<Buffer>;
+  decompress(
+    data: Buffer | Uint8Array,
+    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+  ): Promise<Buffer>;
   heavyComputation(data: any): Promise<any>;
   transformJSON(data: any, transformer: (data: any) => any): Promise<any>;
+}
+
+export interface WorkerPoolOptions {
+  workerCount?: number;
+  maxQueueSize?: number;
 }
 
 /**
@@ -40,14 +53,16 @@ export class WorkerThreadsFacade {
   private initialized = false;
 
   /**
-   * Lazy initialize worker threads
+   * Lazy initialize worker threads.
+   * Pool options only take effect on the first initialization (the underlying
+   * manager is a singleton).
    */
-  async ensureInitialized(): Promise<void> {
+  async ensureInitialized(options?: WorkerPoolOptions): Promise<void> {
     if (this.initialized) return;
 
     try {
       const workers = await import('./index.js');
-      this.workerManager = workers.getWorkerManager();
+      this.workerManager = workers.getWorkerManager(options);
       this.workerTasks = workers.workerTasks;
       this.executeOnWorker = workers.executeOnWorker;
     } catch {
@@ -74,18 +89,22 @@ export class WorkerThreadsFacade {
   }
 
   /**
-   * Get worker thread statistics
+   * Get worker thread statistics.
+   * Returns null when workers were never initialized — observing stats
+   * must not spawn a pool.
    */
   async getStats(): Promise<WorkerStats | null> {
-    await this.ensureInitialized();
+    if (!this.initialized) return null;
     return this.workerManager?.getStats() || null;
   }
 
   /**
-   * Shutdown worker threads
+   * Shutdown worker threads.
+   * A no-op when workers were never initialized — never spin up a pool
+   * just to tear it down.
    */
   async shutdown(): Promise<void> {
-    await this.ensureInitialized();
+    if (!this.initialized) return;
     await this.workerManager?.shutdown();
   }
 

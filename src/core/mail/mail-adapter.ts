@@ -88,10 +88,7 @@ export abstract class BaseMailAdapter implements MailAdapter {
    */
   protected normalizeAddresses(
     addresses:
-      | string
-      | string[]
-      | { name?: string; email: string }
-      | { name?: string; email: string }[]
+      string | string[] | { name?: string; email: string } | { name?: string; email: string }[]
   ): { name?: string; email: string }[] {
     if (!addresses) {
       return [];

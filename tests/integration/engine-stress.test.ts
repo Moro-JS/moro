@@ -13,11 +13,11 @@ import http from 'node:http';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { UnifiedRouter } from '../../src/core/routing/unified-router.js';
-import { closeApp, delay } from '../setup.js';
+import { closeApp, delay, createTestPort } from '../setup.js';
 import { describeEngine } from './engine-test-utils.js';
 
 // Ports above 10080 avoid the WHATWG fetch bad-port blocklist entirely
-const testPort = () => 10100 + Math.floor(Math.random() * 5000);
+const testPort = () => createTestPort();
 
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));

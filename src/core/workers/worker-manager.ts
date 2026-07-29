@@ -499,6 +499,41 @@ export const workerTasks = {
   },
 
   /**
+   * Data compression (CPU-intensive for large payloads)
+   */
+  async compress(
+    data: string | Buffer | Uint8Array,
+    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+  ): Promise<Buffer> {
+    const result = await executeOnWorker<Uint8Array>({
+      id: `data-compress-${Date.now()}-${++taskIdCounter}`,
+      type: WORKER_TASKS.DATA_COMPRESS,
+      data: { input: data, format: options?.format ?? 'gzip' },
+      priority: 'normal',
+      timeout: 30000,
+    });
+    // Buffers cross the thread boundary as plain Uint8Array
+    return Buffer.isBuffer(result) ? result : Buffer.from(result);
+  },
+
+  /**
+   * Data decompression (CPU-intensive for large payloads)
+   */
+  async decompress(
+    data: Buffer | Uint8Array,
+    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+  ): Promise<Buffer> {
+    const result = await executeOnWorker<Uint8Array>({
+      id: `data-decompress-${Date.now()}-${++taskIdCounter}`,
+      type: WORKER_TASKS.DATA_DECOMPRESS,
+      data: { input: data, format: options?.format ?? 'gzip' },
+      priority: 'normal',
+      timeout: 30000,
+    });
+    return Buffer.isBuffer(result) ? result : Buffer.from(result);
+  },
+
+  /**
    * Heavy computation example
    */
   async heavyComputation(data: any): Promise<any> {

@@ -5,8 +5,7 @@ import { WSAdapter } from '../../../src/core/networking/adapters/ws-adapter.js';
 function build(cors: any) {
   const adapter = new WSAdapter();
   return (adapter as any).buildVerifyClient({ cors }) as
-    | ((info: { origin?: string; req: any; secure: boolean }) => boolean)
-    | undefined;
+    ((info: { origin?: string; req: any; secure: boolean }) => boolean) | undefined;
 }
 
 const reqFor = (host = 'api.example.com') => ({ req: { headers: { host } }, secure: false });

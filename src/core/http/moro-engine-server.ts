@@ -1342,8 +1342,7 @@ export class MoroEngineServer {
   // Handshake info for the upgrade currently in flight: set just before
   // upgradeToWebSocket() (which fires onWsOpen synchronously), consumed there.
   private _pendingWsInfo?:
-    | { ip: string; headers: Record<string, string>; query: string }
-    | undefined;
+    { ip: string; headers: Record<string, string>; query: string } | undefined;
 
   // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
   private maxBodySize: number = 10 * 1024 * 1024;

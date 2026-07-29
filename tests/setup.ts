@@ -31,8 +31,16 @@ if (process.env.CI === 'true' || process.argv.includes('--coverage')) {
   logger.setLevel('error');
 }
 
-// Extend Jest timeout for integration tests
-jest.setTimeout(10000);
+// Extend Jest timeout for integration tests.
+// Deliberately generous: integration suites boot a real server (sometimes the
+// native engine) inside the test body, and under `test:coverage` — where
+// instrumentation plus parallel workers saturate the machine — a boot that
+// normally takes milliseconds can take seconds. These tests assert protocol
+// correctness, not latency, so a high ceiling costs nothing on green runs and
+// removes a whole class of load-dependent flakes. Per-socket/per-request
+// timeouts inside tests must stay BELOW this so failures surface with their own
+// diagnostic rather than a bare Jest timeout.
+jest.setTimeout(30000);
 
 // Global test utilities
 declare global {
@@ -95,6 +103,32 @@ afterAll(async () => {
 export const createTestPort = () => allocTestPort();
 
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Wait until `condition` is truthy, polling until a deadline.
+ *
+ * Prefer this over `await delay(n)` before an assertion. A fixed sleep is
+ * simultaneously too slow on an idle machine and too short on a loaded one —
+ * it is the usual source of load-dependent flakes. Polling returns as soon as
+ * the condition holds (usually faster than the sleep it replaces) while still
+ * tolerating a slow run.
+ *
+ * Throws with the supplied description on timeout, so a failure reads as
+ * "waited for X" rather than a bare assertion mismatch.
+ */
+export const waitFor = async (
+  condition: () => boolean | Promise<boolean>,
+  { timeout = 5000, interval = 25, description = 'condition' } = {}
+): Promise<void> => {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await condition()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out after ${timeout}ms waiting for ${description}`);
+    }
+    await delay(interval);
+  }
+};
 
 /**
  * Properly close a Moro app instance with logger cleanup

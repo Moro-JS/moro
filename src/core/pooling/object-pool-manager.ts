@@ -3,144 +3,9 @@
 
 import { createFrameworkLogger } from '../logger/index.js';
 import * as crypto from 'crypto';
+import { ObjectPool } from './object-pool.js';
+import { LRUCache } from './lru-cache.js';
 const logger = createFrameworkLogger('ObjectPoolManager');
-
-/**
- * Generic object pool for reusable objects
- */
-class ObjectPool<T> {
-  private pool: T[] = [];
-  private readonly factory: () => T;
-  private readonly reset?: ((obj: T) => void) | undefined;
-  private readonly maxSize: number;
-  private acquireCount = 0;
-  private releaseCount = 0;
-  private createCount = 0;
-
-  constructor(factory: () => T, maxSize: number = 100, reset?: (obj: T) => void) {
-    this.factory = factory;
-    this.maxSize = maxSize;
-    this.reset = reset;
-  }
-
-  acquire(): T {
-    this.acquireCount++;
-
-    if (this.pool.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      return this.pool.pop()!;
-    }
-
-    this.createCount++;
-    return this.factory();
-  }
-
-  release(obj: T): void {
-    if (this.pool.length >= this.maxSize) {
-      return; // Pool is full, let it be garbage collected
-    }
-
-    this.releaseCount++;
-
-    // Reset object if reset function provided
-    if (this.reset) {
-      this.reset(obj);
-    }
-
-    this.pool.push(obj);
-  }
-
-  get size(): number {
-    return this.pool.length;
-  }
-
-  get stats() {
-    return {
-      poolSize: this.pool.length,
-      maxSize: this.maxSize,
-      acquireCount: this.acquireCount,
-      releaseCount: this.releaseCount,
-      createCount: this.createCount,
-      utilization: this.maxSize > 0 ? this.pool.length / this.maxSize : 0,
-    };
-  }
-
-  clear(): void {
-    this.pool = [];
-  }
-}
-
-/**
- * LRU Cache for route lookups
- */
-class LRUCache<K, V> {
-  private cache = new Map<K, V>();
-  private readonly maxSize: number;
-  private hits = 0;
-  private misses = 0;
-
-  constructor(maxSize: number = 500) {
-    this.maxSize = maxSize;
-  }
-
-  get(key: K): V | undefined {
-    const value = this.cache.get(key);
-    if (value !== undefined) {
-      this.hits++;
-      // Move to end (most recently used)
-      this.cache.delete(key);
-      this.cache.set(key, value);
-      return value;
-    }
-    this.misses++;
-    return undefined;
-  }
-
-  set(key: K, value: V): void {
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    }
-
-    this.cache.set(key, value);
-
-    // Evict oldest if over capacity
-    if (this.cache.size > this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey !== undefined) {
-        this.cache.delete(firstKey);
-      }
-    }
-  }
-
-  has(key: K): boolean {
-    return this.cache.has(key);
-  }
-
-  delete(key: K): boolean {
-    return this.cache.delete(key);
-  }
-
-  clear(): void {
-    this.cache.clear();
-    this.hits = 0;
-    this.misses = 0;
-  }
-
-  get size(): number {
-    return this.cache.size;
-  }
-
-  get stats() {
-    const total = this.hits + this.misses;
-    return {
-      size: this.cache.size,
-      maxSize: this.maxSize,
-      hits: this.hits,
-      misses: this.misses,
-      hitRate: total > 0 ? this.hits / total : 0,
-    };
-  }
-}
 
 /**
  * ObjectPoolManager - Singleton for managing all object pools
@@ -386,12 +251,31 @@ export class ObjectPoolManager {
 
   acquireQuery(): Record<string, string> {
     this.performanceStats.totalAcquisitions++;
-    return this.queryPool.acquire();
+    const obj = this.queryPool.acquire();
+
+    const history = this.poolUsageHistory.get('query');
+    if (history) {
+      if (history.length >= 100) {
+        history.shift();
+      }
+      history.push(this.queryPool.size);
+    } else {
+      this.poolUsageHistory.set('query', [this.queryPool.size]);
+    }
+
+    return obj;
   }
 
   releaseQuery(obj: Record<string, string>): void {
     this.performanceStats.totalReleases++;
     this.queryPool.release(obj);
+
+    if (
+      this.adaptiveMode &&
+      Date.now() - this.performanceStats.lastAdjustment > this.performanceStats.adjustmentInterval
+    ) {
+      this.adjustPoolSizes();
+    }
   }
 
   // Request ID Generation
@@ -509,49 +393,53 @@ export class ObjectPoolManager {
   }
 
   /**
-   * Adaptively adjust pool sizes based on usage patterns
+   * Adaptively adjust pool sizes based on usage patterns.
+   * Each pool is sized to ~120% of its average observed size, clamped to a
+   * [min, max] range, and only resized when the change exceeds a threshold.
    */
   private adjustPoolSizes(): void {
     this.performanceStats.lastAdjustment = Date.now();
 
-    // Adjust parameter pool size
-    const paramHistory = this.poolUsageHistory.get('params') || [];
-    if (paramHistory.length >= 10) {
-      const avgUsage = paramHistory.reduce((sum, size) => sum + size, 0) / paramHistory.length;
-      const targetSize = Math.min(Math.max(Math.round(avgUsage * 1.2), 50), 200); // 20% buffer, 50-200 range
+    const applyFromHistory = (
+      pool: ObjectPool<any>,
+      historyKey: string,
+      min: number,
+      max: number,
+      threshold: number,
+      label: string
+    ): void => {
+      const history = this.poolUsageHistory.get(historyKey) || [];
+      if (history.length < 10) return;
 
-      if (Math.abs(this.paramPool.stats.maxSize - targetSize) > 10) {
+      const avgUsage = history.reduce((sum, size) => sum + size, 0) / history.length;
+      const targetSize = Math.min(Math.max(Math.round(avgUsage * 1.2), min), max);
+
+      if (Math.abs(pool.stats.maxSize - targetSize) > threshold) {
         logger.debug(
-          `Adjusting param pool size from ${this.paramPool.stats.maxSize} to ${targetSize}`,
+          `Adjusting ${label} pool size from ${pool.stats.maxSize} to ${targetSize}`,
           'PoolManager'
         );
-        // Note: We can't directly change maxSize, but we can log the recommendation
-        // In a real implementation, we'd recreate the pool with the new size
+        pool.setMaxSize(targetSize);
       }
-    }
+    };
 
-    // Adjust buffer pool sizes
+    applyFromHistory(this.paramPool, 'params', 50, 200, 10, 'param');
+    applyFromHistory(this.queryPool, 'query', 50, 200, 10, 'query');
+
     const bufferSizesLen = this.bufferSizes.length;
     for (let i = 0; i < bufferSizesLen; i++) {
       const size = this.bufferSizes[i];
       if (size === undefined) continue;
-      const poolKey = `buffer_${size}`;
-      const history = this.poolUsageHistory.get(poolKey) || [];
-      if (history.length >= 10) {
-        const avgUsage = history.reduce((sum, size) => sum + size, 0) / history.length;
-        const pool = this.bufferPools.get(size);
-        if (pool) {
-          const currentMax = pool.stats.maxSize;
-          const targetMax = this.getOptimalPoolSize(size);
-
-          if (Math.abs(currentMax - targetMax) > 5) {
-            logger.debug(
-              `Buffer pool ${size}B: usage ${avgUsage.toFixed(1)}/${currentMax}, target ${targetMax}`,
-              'PoolManager'
-            );
-          }
-        }
-      }
+      const pool = this.bufferPools.get(size);
+      if (!pool) continue;
+      applyFromHistory(
+        pool,
+        `buffer_${size}`,
+        10,
+        this.getOptimalPoolSize(size) * 2,
+        5,
+        `buffer ${size}B`
+      );
     }
 
     logger.debug('Pool size adjustment cycle completed', 'PoolManager');

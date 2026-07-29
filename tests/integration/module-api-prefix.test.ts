@@ -1,5 +1,6 @@
 import { createApp, defineModule, resetConfig } from '../../src/index.js';
 import { ModuleDefinition } from '../../src/types/module.js';
+import { createTestPort } from '../setup.js';
 
 /* eslint-disable no-undef */
 
@@ -8,7 +9,7 @@ describe('Module API Prefix Configuration', () => {
   let port: number;
 
   beforeEach(async () => {
-    port = 3100 + Math.floor(Math.random() * 1000);
+    port = createTestPort();
     // Reset config before each test to allow different configurations
     resetConfig();
   });

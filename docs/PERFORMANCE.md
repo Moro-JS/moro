@@ -756,13 +756,11 @@ const app = await createAppEdge({
 });
 
 // Optimized for edge
+// Route-level cache config is { ttl, key?, tags? }.
+// Vary-by-header belongs on the cache middleware: middleware.cache({ vary: [...] })
 app
   .get('/api/geo-data')
-  .cache({
-    ttl: 3600,
-    strategy: 'edge',
-    vary: ['CF-IPCountry'], // Cache per country
-  })
+  .cache({ ttl: 3600, tags: ['geo'] })
   .handler((req, res) => {
     return {
       country: req.headers['cf-ipcountry'],
@@ -775,11 +773,12 @@ app
 
 ```typescript
 // Lambda-optimized configuration
+// (memory and timeout are set on the Lambda function itself, not in the app)
 const app = await createAppLambda({
-  memorySize: 1024, // Optimize memory allocation
-  timeout: 30, // Set appropriate timeout
-  coldStartOptimization: true,
-  connectionReuse: true, // Reuse database connections
+  // Reuse connections between invocations
+  server: {
+    timeouts: { keepAlive: 5000 },
+  },
 });
 
 // Warm-up handler to prevent cold starts

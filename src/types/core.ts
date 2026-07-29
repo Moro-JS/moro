@@ -64,6 +64,7 @@ export interface MoroOptions {
 
   // Worker threads configuration
   workers?: {
+    enabled?: boolean;
     count?: number;
     maxQueueSize?: number;
   };

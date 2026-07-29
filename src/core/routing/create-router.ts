@@ -90,13 +90,7 @@ export class MoroRouter {
       const fullPath = cleanPrefix + (route.path.startsWith('/') ? route.path : `/${route.path}`);
       const combinedMiddleware = [...this.globalMiddlewares, ...route.middlewares];
       const method = route.method.toLowerCase() as
-        | 'get'
-        | 'post'
-        | 'put'
-        | 'delete'
-        | 'patch'
-        | 'head'
-        | 'options';
+        'get' | 'post' | 'put' | 'delete' | 'patch' | 'head' | 'options';
       app[method](fullPath, route.handler, { middleware: combinedMiddleware });
     }
   }

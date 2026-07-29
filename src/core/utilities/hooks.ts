@@ -365,6 +365,3 @@ export class HookManager extends EventEmitter {
     return allHooks;
   }
 }
-
-// Built-in middleware - now organized in individual files
-export { simpleMiddleware as middleware } from '../middleware/index.js';

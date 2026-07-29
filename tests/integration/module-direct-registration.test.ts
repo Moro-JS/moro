@@ -1,5 +1,6 @@
 import { createApp, defineModule } from '../../src/index.js';
 import { ModuleDefinition } from '../../src/types/module.js';
+import { createTestPort } from '../setup.js';
 
 /* eslint-disable no-undef */
 
@@ -8,7 +9,7 @@ describe('Module Routes - Direct Registration Fix', () => {
   let port: number;
 
   beforeEach(async () => {
-    port = 3100 + Math.floor(Math.random() * 1000);
+    port = createTestPort();
     app = await createApp({ logging: { level: 'error' } });
   });
 

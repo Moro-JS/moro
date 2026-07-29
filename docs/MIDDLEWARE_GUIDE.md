@@ -549,33 +549,33 @@ Serve static files with caching and ETags.
 app.use(
   middleware.staticFiles({
     root: './public',
-    maxAge: 3600000, // 1 hour
+    maxAge: 3600, // seconds -> Cache-Control: public, max-age=3600
     index: ['index.html', 'index.htm'],
   })
 );
 
-// Advanced configuration
+// Full option surface
 app.use(
   middleware.staticFiles({
-    root: './public',
-    maxAge: 86400000, // 24 hours
-    etag: true,
-    lastModified: true,
+    root: './public', // required; resolved to an absolute path
+    maxAge: 86400, // seconds; 0 omits Cache-Control
+    etag: true, // default true; enables conditional 304s
+    index: ['index.html', 'index.htm'],
     dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
-    extensions: ['html', 'htm'],
-    fallthrough: true,
-    redirect: true, // Redirect to trailing slash for directories
-    setHeaders: (res, path, stat) => {
-      if (path.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-cache');
-      }
-    },
   })
 );
+```
 
-// Multiple static directories
-app.use('/assets', middleware.staticFiles({ root: './assets' }));
-app.use('/uploads', middleware.staticFiles({ root: './uploads', maxAge: 0 }));
+`staticFiles` always serves from the URL root — there is no `prefix` option, and
+`app.use('/assets', middleware.staticFiles(...))` is **silently ignored**, because
+a path prefix is only honoured when argument 2 is a `createRouter()` instance.
+Serve one root and lay subdirectories out beneath it:
+
+```typescript
+app.use(middleware.staticFiles({ root: './public' }));
+
+// ./public/assets/app.css  ->  GET /assets/app.css
+// ./public/uploads/a.png   ->  GET /uploads/a.png
 ```
 
 ### File Upload

@@ -32,7 +32,7 @@ import {
   WebSocketAdapterOptions,
   mergeWebSocketConfig,
 } from './networking/websocket-adapter.js';
-import { cors, helmet, compression } from './middleware/built-in/index.js';
+import { cors, helmet, compression, MIDDLEWARE_FACTORY } from './middleware/built-in/index.js';
 
 /**
  * Which HTTP server actually booted, and why, when the native engine was
@@ -1008,69 +1008,70 @@ export class Moro extends EventEmitter {
     }
 
     for (const mw of middleware) {
-      // If middleware is a string, resolve it from built-in or installed middleware
       let resolvedMiddleware: any;
 
       if (typeof mw === 'string') {
-        // Try to resolve from middleware manager
-        if (middlewareManager) {
-          resolvedMiddleware = middlewareManager.get(mw);
-        }
-
-        if (!resolvedMiddleware) {
-          // Try to resolve from built-in middleware
-          const { builtInMiddleware } = await import('./middleware/built-in/index.js');
-          resolvedMiddleware = (builtInMiddleware as any)[mw];
-        }
-
-        if (!resolvedMiddleware) {
-          this.logger.warn(`Middleware '${mw}' not found, skipping`, 'ModuleMiddleware');
+        resolvedMiddleware = await this.resolveNamedMiddleware(mw, middlewareManager);
+        if (resolvedMiddleware === null) {
+          // Name refers to a hook-based middleware already installed globally —
+          // it runs through the hook pipeline, nothing to execute per-route.
           continue;
         }
       } else if (typeof mw === 'function') {
-        // Middleware is already a function
+        if ((mw as any)[MIDDLEWARE_FACTORY]) {
+          // A built-in factory passed uncalled — executing it as middleware
+          // would silently misbehave. Fail loudly with the fix.
+          throw new Error(
+            `Built-in middleware factory '${mw.name || 'unknown'}' was passed uncalled in a middleware array. ` +
+              `Call it first: middleware: [factory(options)] — e.g. middleware: [middleware.helmet()].`
+          );
+        }
         resolvedMiddleware = mw;
+      } else if (mw && typeof mw === 'object' && typeof mw.install === 'function') {
+        // A declared middleware that cannot run must fail the request, not be
+        // silently skipped — it may be an auth guard.
+        throw new Error(
+          `Middleware '${mw.metadata?.name || mw.name || 'unknown'}' is a hook-based MiddlewareInterface and cannot run per-route. ` +
+            `Install it globally with app.use(...) instead of listing it in a middleware array.`
+        );
       } else {
-        this.logger.warn(`Invalid middleware type: ${typeof mw}, skipping`, 'ModuleMiddleware');
-        continue;
+        throw new Error(`Invalid module middleware entry of type ${typeof mw}`);
       }
 
       // Execute the middleware
       try {
-        let middlewareContinue = true;
-
-        // Check if it's a MiddlewareInterface (needs to be converted to standard middleware)
-        if (
-          resolvedMiddleware &&
-          typeof resolvedMiddleware === 'object' &&
-          typeof resolvedMiddleware.install === 'function'
-        ) {
-          // This is a MiddlewareInterface, we can't execute it directly
-          // These should be installed globally via app.use() or via the middleware manager
-          this.logger.warn(
-            `Middleware '${typeof mw === 'string' ? mw : 'unknown'}' is a MiddlewareInterface and cannot be used directly in module middleware. Use app.use() to install it globally instead.`,
-            'ModuleMiddleware'
-          );
-          continue;
-        }
-
         await new Promise<void>((resolve, reject) => {
-          const next = () => {
-            middlewareContinue = true;
-            resolve();
+          let settled = false;
+          const done = () => {
+            if (!settled) {
+              settled = true;
+              if (typeof (res as any).removeListener === 'function') {
+                (res as any).removeListener('finish', done);
+              }
+              resolve();
+            }
           };
 
-          const result = resolvedMiddleware(req, res, next);
+          // Middleware may legitimately end the response instead of calling
+          // next() (auth denial, rate limit, CORS preflight). Resolve on finish
+          // so a sync middleware that responds without next() cannot hang the
+          // request.
+          if (typeof (res as any).once === 'function') {
+            (res as any).once('finish', done);
+          } else if (typeof (res as any).on === 'function') {
+            (res as any).on('finish', done);
+          }
+
+          const result = resolvedMiddleware(req, res, done);
 
           // Handle async middleware
           if (result && typeof result.then === 'function') {
-            result
-              .then(() => {
-                if (middlewareContinue) {
-                  resolve();
-                }
-              })
-              .catch(reject);
+            result.then(done).catch((error: any) => {
+              if (!settled) {
+                settled = true;
+                reject(error);
+              }
+            });
           }
         });
 
@@ -1089,6 +1090,90 @@ export class Moro extends EventEmitter {
     }
 
     return true; // Continue to handler
+  }
+
+  // String middleware names resolved once per framework instance. Unresolvable
+  // names cache their Error so every request fails fast with the same message
+  // without re-importing the built-in collections.
+  private namedMiddlewareCache = new Map<
+    string,
+    ((req: HttpRequest, res: HttpResponse, next: () => void) => any) | Error
+  >();
+
+  /**
+   * Resolve a string middleware name to an executable (req, res, next) function.
+   * Resolution order: user-installed middleware (MiddlewareManager) → built-in
+   * factories instantiated with default options.
+   *
+   * Returns null when the name refers to a hook-based middleware that is
+   * already installed globally (nothing to run per-route). Throws when the name
+   * cannot be resolved — declared middleware is never silently skipped.
+   */
+  private async resolveNamedMiddleware(
+    name: string,
+    middlewareManager: any
+  ): Promise<((req: HttpRequest, res: HttpResponse, next: () => void) => any) | null> {
+    // User-installed middleware first — checked live because the manager's
+    // contents can change at runtime (install/uninstall).
+    const managed = middlewareManager?.get?.(name);
+    if (managed) {
+      if (typeof managed === 'function') {
+        return managed;
+      }
+      // Hook-based MiddlewareInterface installed via app.use(): already active
+      // for every request through the hook pipeline.
+      this.logger.debug(
+        `Middleware '${name}' is installed globally as a hook; skipping per-route execution`,
+        'ModuleMiddleware'
+      );
+      return null;
+    }
+
+    const cached = this.namedMiddlewareCache.get(name);
+    if (cached) {
+      if (cached instanceof Error) {
+        throw cached;
+      }
+      return cached;
+    }
+
+    const { builtInMiddleware } = await import('./middleware/built-in/index.js');
+
+    let resolved: ((req: HttpRequest, res: HttpResponse, next: () => void) => any) | null = null;
+    let failure: Error | null = null;
+
+    const factory = (builtInMiddleware as any)[name];
+
+    if (typeof factory === 'function') {
+      // Built-in factories take an options object; instantiate once with
+      // defaults. Factories that require configuration throw here.
+      try {
+        const instance = factory();
+        if (typeof instance === 'function') {
+          resolved = instance;
+        } else {
+          failure = new Error(
+            `Built-in middleware '${name}' is hook-based and cannot run per-route. ` +
+              `Install it globally with app.use(${name}(options)) instead of using the string name.`
+          );
+        }
+      } catch (error: any) {
+        failure = new Error(
+          `Built-in middleware '${name}' requires configuration and cannot be used by name alone (${error.message}). ` +
+            `Pass the configured middleware function in the middleware array, or install it globally with app.use(${name}(options)).`
+        );
+      }
+    } else {
+      failure = new Error(
+        `Middleware '${name}' not found. Use a built-in middleware name or install middleware before referencing it by name.`
+      );
+    }
+
+    this.namedMiddlewareCache.set(name, resolved ?? (failure as Error));
+    if (failure) {
+      throw failure;
+    }
+    return resolved;
   }
 
   private mountRouter(basePath: string, router: Router): void {

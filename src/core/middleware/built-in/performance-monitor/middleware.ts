@@ -10,26 +10,28 @@ const logger = createFrameworkLogger('PerformanceMonitor');
  *
  * @example
  * ```ts
- * import { performanceMonitor } from '@/middleware/built-in/performance-monitor';
+ * import { middleware } from '@morojs/moro';
  *
- * app.use(performanceMonitor);
+ * app.use(middleware.performanceMonitor());
  * ```
  */
-export const performanceMonitor = (req: HttpRequest, res: HttpResponse, next: () => void): void => {
-  const startTime = Date.now();
+export function createPerformanceMonitorMiddleware() {
+  return (req: HttpRequest, res: HttpResponse, next: () => void): void => {
+    const startTime = Date.now();
 
-  res.on('finish', () => {
-    const duration = Date.now() - startTime;
+    res.on('finish', () => {
+      const duration = Date.now() - startTime;
 
-    // Log slow requests
-    if (duration > 1000) {
-      logger.warn(`Slow request detected: ${req.path} took ${duration}ms`, 'SlowRequest', {
-        path: req.path,
-        method: req.method,
-        duration,
-      });
-    }
-  });
+      // Log slow requests
+      if (duration > 1000) {
+        logger.warn(`Slow request detected: ${req.path} took ${duration}ms`, 'SlowRequest', {
+          path: req.path,
+          method: req.method,
+          duration,
+        });
+      }
+    });
 
-  next();
-};
+    next();
+  };
+}

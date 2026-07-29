@@ -5,8 +5,7 @@ import type { CompiledRoute } from '../core/routing/index.js';
 
 // Middleware can be a string name (resolved from built-in) or actual function
 export type ModuleMiddleware =
-  | string
-  | ((req: any, res: any, next: () => void) => void | Promise<void>);
+  string | ((req: any, res: any, next: () => void) => void | Promise<void>);
 
 export interface ModuleRoute {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';

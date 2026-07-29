@@ -18,6 +18,10 @@ const jwtAvailable = isPackageAvailable('jsonwebtoken');
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
+const deflate = promisify(zlib.deflate);
+const inflate = promisify(zlib.inflate);
+const brotliCompress = promisify(zlib.brotliCompress);
+const brotliDecompress = promisify(zlib.brotliDecompress);
 
 // Import task types
 import { WorkerTask, WorkerResult, WORKER_TASKS } from './worker-manager.js';
@@ -216,45 +220,51 @@ async function handleCryptoDecrypt(data: {
   return decrypted;
 }
 
+export type CompressionFormat = 'gzip' | 'deflate' | 'brotli';
+
 /**
  * Data compression handler
+ * Exported for direct unit testing; normally invoked via the worker task registry.
  */
-async function handleDataCompress(data: {
-  input: string | Buffer;
-  format?: 'gzip' | 'deflate';
+export async function handleDataCompress(data: {
+  input: string | Buffer | Uint8Array;
+  format?: CompressionFormat;
 }): Promise<Buffer> {
   const { input, format = 'gzip' } = data;
+  const buffer = Buffer.from(input as any);
 
-  if (format === 'gzip') {
-    return gzip(Buffer.from(input));
-  } else {
-    return new Promise((resolve, reject) => {
-      zlib.deflate(Buffer.from(input), (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
-      });
-    });
+  switch (format) {
+    case 'gzip':
+      return gzip(buffer);
+    case 'deflate':
+      return deflate(buffer);
+    case 'brotli':
+      return brotliCompress(buffer);
+    default:
+      throw new Error(`Unknown compression format: ${format}`);
   }
 }
 
 /**
  * Data decompression handler
+ * Exported for direct unit testing; normally invoked via the worker task registry.
  */
-async function handleDataDecompress(data: {
-  input: Buffer;
-  format?: 'gzip' | 'deflate';
+export async function handleDataDecompress(data: {
+  input: Buffer | Uint8Array;
+  format?: CompressionFormat;
 }): Promise<Buffer> {
   const { input, format = 'gzip' } = data;
+  const buffer = Buffer.from(input as any);
 
-  if (format === 'gzip') {
-    return gunzip(input);
-  } else {
-    return new Promise((resolve, reject) => {
-      zlib.inflate(input, (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
-      });
-    });
+  switch (format) {
+    case 'gzip':
+      return gunzip(buffer);
+    case 'deflate':
+      return inflate(buffer);
+    case 'brotli':
+      return brotliDecompress(buffer);
+    default:
+      throw new Error(`Unknown compression format: ${format}`);
   }
 }
 

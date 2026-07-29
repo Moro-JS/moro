@@ -248,16 +248,21 @@ app.get('/api/geo', (req, res) => {
 ### Edge Caching
 
 ```typescript
+// Route-level cache config is { ttl, key?, tags? }
 app
   .get('/api/content/:id')
-  .cache({
-    ttl: 3600,
-    strategy: 'edge',
-    vary: ['x-vercel-ip-country'], // Cache per country
-  })
+  .cache({ ttl: 3600, tags: ['content'] })
   .handler((req, res) => {
     return { content: getLocalizedContent(req.params.id, req.headers['x-vercel-ip-country']) };
   });
+
+// To vary cached entries by header, configure it on the cache middleware:
+app.use(
+  middleware.cache({
+    defaultTtl: 3600,
+    vary: ['x-vercel-ip-country'], // Cache per country
+  })
+);
 ```
 
 ### Vercel Configuration
@@ -331,11 +336,16 @@ app.get('/api/info', (req, res) => {
 
 ### Cold Start Optimization
 
+MoroJS keeps cold starts small by default — optional subsystems (worker
+threads, job scheduler, adapters) are lazy-loaded on first use, so an
+unconfigured app pays nothing for them at startup.
+
 ```typescript
 const app = await createAppLambda({
-  coldStartOptimization: true,
-  connectionReuse: true,
-  preloadModules: ['database', 'auth'],
+  // Reuse connections between invocations
+  server: {
+    timeouts: { keepAlive: 5000 },
+  },
 });
 
 // Warm-up handler
@@ -770,9 +780,9 @@ export function getRuntimeConfig(runtime: string) {
     case 'aws-lambda':
       return {
         ...baseConfig,
-        coldStartOptimization: true,
-        memorySize: 1024,
-        timeout: 30,
+        // Reuse connections between invocations; memory and timeout are
+        // configured on the Lambda function itself, not in the app
+        server: { timeouts: { keepAlive: 5000 } },
       };
 
     case 'cloudflare-workers':
@@ -828,22 +838,39 @@ app.get('/api/features', (req, res) => {
 
 ### 3. Optimize for Target Runtime
 
+Clustering and socket reuse are configuration, not middleware — they are settled
+when the app is created, so pass them to `createApp()`:
+
+```typescript
+const app = await createApp({
+  // Node.js: fork workers across cores (SO_REUSEPORT; Node server on Windows)
+  performance: {
+    clustering: { enabled: true, workers: 'auto' },
+  },
+  // Keep sockets warm between invocations
+  server: {
+    timeouts: { keepAlive: 5000 },
+  },
+});
+```
+
+Middleware is what varies per runtime:
+
 ```typescript
 // Node.js optimization
 if (app.getRuntimeType() === 'node') {
   app.use(middleware.compression({ level: 9 }));
-  app.use(middleware.cluster());
 }
 
 // Edge optimization
 if (['vercel-edge', 'cloudflare-workers'].includes(app.getRuntimeType())) {
-  app.use(middleware.cache({ strategy: 'edge' }));
+  app.use(middleware.cache({ defaultTtl: 60 }));
 }
 
-// Lambda optimization
+// Lambda observability: CloudWatch metrics via Embedded Metric Format
+// (zero-dependency — emitted through stdout, ingested by CloudWatch Logs)
 if (app.getRuntimeType() === 'aws-lambda') {
-  app.use(middleware.connectionReuse());
-  app.use(middleware.coldStartOptimization());
+  app.use(middleware.cloudWatch({ namespace: 'MoroAPI' }));
 }
 ```
 
@@ -913,7 +940,7 @@ export function setupMonitoring(app: any) {
       break;
 
     case 'cloudflare-workers':
-      app.use(middleware.analytics({ datadog: true }));
+      app.use(middleware.requestLogger());
       break;
   }
 }

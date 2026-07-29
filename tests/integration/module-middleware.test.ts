@@ -1,7 +1,8 @@
 /* eslint-disable no-undef */
-import { createApp, defineModule } from '../../src/index.js';
+import { createApp, defineModule, middleware } from '../../src/index.js';
 import { Moro } from '../../src/moro.js';
 import { ModuleDefinition } from '../../src/types/module.js';
+import { createTestPort } from '../setup.js';
 
 describe('Module Middleware - Integration Tests', () => {
   let app: Moro;
@@ -9,7 +10,7 @@ describe('Module Middleware - Integration Tests', () => {
 
   beforeEach(async () => {
     // Use dynamic port allocation to avoid conflicts in CI
-    port = 3100 + Math.floor(Math.random() * 1000);
+    port = createTestPort();
     app = await createApp({ logging: { level: 'error' } });
   });
 
@@ -289,6 +290,202 @@ describe('Module Middleware - Integration Tests', () => {
     expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route1');
     expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route2');
     expect(middleware1Calls).toContain('/api/v1.0.0/test-module/route3');
+  });
+
+  it('should resolve built-in chain middleware by string name', async () => {
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: ['helmet'],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    // helmet with default options sets security headers
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('should fail closed for hook-based built-ins referenced by string name', async () => {
+    // builtInMiddleware.cors is a hook-style factory (MiddlewareInterface) and
+    // cannot run per-route — the request must fail rather than silently skip
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      middleware: ['cors'],
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    expect(response.status).toBe(500);
+  });
+
+  it('should resolve simple middleware by string name', async () => {
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: ['requestLogger'],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
+
+  it('should resolve user-installed middleware from the middleware manager by name', async () => {
+    let ran = false;
+    function taggedMiddleware(req: any, res: any, next: () => void) {
+      ran = true;
+      next();
+    }
+    (app as any).middlewareManager.install(taggedMiddleware);
+
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: ['taggedMiddleware'],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(ran).toBe(true);
+  });
+
+  it('should fail the request instead of hanging or skipping when a named middleware cannot be resolved', async () => {
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: ['doesNotExist'],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    // Unresolvable declared middleware must fail closed (500), never run the handler
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    expect(response.status).toBe(500);
+  });
+
+  it('should throw at registration when a built-in factory is passed uncalled to app.use()', async () => {
+    // app.use(middleware.helmet) — missing parens — must fail loudly, not
+    // silently no-op through the app-plugin dispatch path
+    await expect(app.use((middleware as any).helmet)).rejects.toThrow(/uncalled/);
+  });
+
+  it('should fail the request when a built-in factory is passed uncalled in a middleware array', async () => {
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: [(middleware as any).helmet],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    expect(response.status).toBe(500);
+  });
+
+  it('should not hang when middleware ends the response without calling next()', async () => {
+    const rejectingMiddleware = (_req: any, res: any, _next: () => void) => {
+      res.status(403).json({ success: false, error: 'denied' });
+    };
+
+    const testModule: ModuleDefinition = {
+      name: 'test-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/test',
+          middleware: [rejectingMiddleware],
+          handler: () => ({ success: true }),
+        },
+      ],
+    };
+
+    await app.loadModule(defineModule(testModule));
+    await new Promise<void>(resolve => {
+      app.listen(port, () => resolve());
+    });
+
+    const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test`);
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(403);
+    expect(data.success).toBe(false);
   });
 
   it('should handle async middleware functions', async () => {

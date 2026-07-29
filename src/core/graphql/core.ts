@@ -14,8 +14,7 @@ export class GraphQLCore {
   private adapter!: GraphQLAdapter;
   private options: GraphQLOptions;
   private contextFactory?:
-    | ((req: HttpRequest, res: HttpResponse) => GraphQLContext | Promise<GraphQLContext>)
-    | undefined;
+    ((req: HttpRequest, res: HttpResponse) => GraphQLContext | Promise<GraphQLContext>) | undefined;
 
   constructor(options: GraphQLOptions) {
     this.options = options;

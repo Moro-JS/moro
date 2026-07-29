@@ -1,4 +1,6 @@
 // Performance Monitor - Main entry point
-// Re-exports the performance monitor middleware
+export { createPerformanceMonitorMiddleware } from './middleware.js';
 
-export { performanceMonitor } from './middleware.js';
+import { createPerformanceMonitorMiddleware } from './middleware.js';
+
+export const performanceMonitor = createPerformanceMonitorMiddleware;

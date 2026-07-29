@@ -15,10 +15,10 @@ import { describe, it, expect, afterEach } from '@jest/globals';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { UnifiedRouter } from '../../src/core/routing/unified-router.js';
-import { closeApp } from '../setup.js';
+import { closeApp, createTestPort } from '../setup.js';
 import { describeEngine } from './engine-test-utils.js';
 
-const testPort = () => 10100 + Math.floor(Math.random() * 5000);
+const testPort = () => createTestPort();
 
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));

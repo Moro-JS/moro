@@ -329,9 +329,7 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
 
   if (process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT) {
     const fmt = (process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT) as
-      | 'pretty'
-      | 'json'
-      | 'compact';
+      'pretty' | 'json' | 'compact';
     if (fmt === 'pretty' || fmt === 'json' || fmt === 'compact') {
       ensureLoggingBlock().format = fmt;
     }
@@ -548,9 +546,7 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
         process.env.MORO_AUTO_DISCOVERY_LOADING_STRATEGY;
       if (['eager', 'lazy', 'conditional'].includes(strategy || '')) {
         config.modules!.autoDiscovery!.loadingStrategy = strategy as
-          | 'eager'
-          | 'lazy'
-          | 'conditional';
+          'eager' | 'lazy' | 'conditional';
       }
     }
     if (
@@ -568,9 +564,7 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
         process.env.AUTO_DISCOVERY_LOAD_ORDER || process.env.MORO_AUTO_DISCOVERY_LOAD_ORDER;
       if (['alphabetical', 'dependency', 'custom'].includes(loadOrder || '')) {
         config.modules!.autoDiscovery!.loadOrder = loadOrder as
-          | 'alphabetical'
-          | 'dependency'
-          | 'custom';
+          'alphabetical' | 'dependency' | 'custom';
       }
     }
     if (process.env.AUTO_DISCOVERY_FAIL_ON_ERROR || process.env.MORO_AUTO_DISCOVERY_FAIL_ON_ERROR) {

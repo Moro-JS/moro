@@ -1,4 +1,6 @@
 // Error Tracker - Main entry point
-// Re-exports the error tracker middleware
+export { createErrorTrackerMiddleware } from './middleware.js';
 
-export { errorTracker } from './middleware.js';
+import { createErrorTrackerMiddleware } from './middleware.js';
+
+export const errorTracker = createErrorTrackerMiddleware;

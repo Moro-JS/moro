@@ -251,19 +251,17 @@ describe('Container Type Safety', () => {
       let connected = false;
       container
         .register<DatabaseConnection>('dbConnection')
-        .factory(
-          (): DatabaseConnection => ({
-            isConnected: false,
-            async connect() {
-              this.isConnected = true;
-              connected = true;
-            },
-            async disconnect() {
-              this.isConnected = false;
-              connected = false;
-            },
-          })
-        )
+        .factory((): DatabaseConnection => ({
+          isConnected: false,
+          async connect() {
+            this.isConnected = true;
+            connected = true;
+          },
+          async disconnect() {
+            this.isConnected = false;
+            connected = false;
+          },
+        }))
         .singleton()
         .onInit(async () => {
           const db = await container.resolve<DatabaseConnection>('dbConnection');

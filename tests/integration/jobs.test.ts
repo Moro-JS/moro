@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createApp } from '../../src/index.js';
+import { createTestPort } from '../setup.js';
 
 describe('Jobs Integration', () => {
   let app;
@@ -227,7 +228,7 @@ describe('Jobs Integration', () => {
       const handler = jest.fn().mockResolvedValue('success');
       app.job('test-job', '* * * * *', handler);
 
-      const port = 3100 + Math.floor(Math.random() * 1000);
+      const port = createTestPort();
 
       app.listen(port, () => {
         const stats = app.getJobStats();
@@ -248,7 +249,7 @@ describe('Jobs Integration', () => {
 
       const jobId = app.job('test-job', '* * * * *', handler);
 
-      const port = 3100 + Math.floor(Math.random() * 1000);
+      const port = createTestPort();
 
       await new Promise<void>(resolve => {
         app.listen(port, () => resolve());

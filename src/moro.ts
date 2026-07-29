@@ -9,7 +9,7 @@ import { ModuleDefaultsConfig } from './types/config.js';
 import { MoroEventBus } from './core/events/index.js';
 import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger/index.js';
 import { Logger } from './types/logger.js';
-import { MiddlewareManager } from './core/middleware/index.js';
+import { MiddlewareManager, MIDDLEWARE_FACTORY } from './core/middleware/index.js';
 import { IntelligentRoutingManager } from './core/routing/app-integration.js';
 import { RouteSchema } from './core/routing/index.js';
 import {
@@ -310,6 +310,10 @@ export class Moro extends EventEmitter {
     // Initialize middleware system
     this.middlewareManager = new MiddlewareManager();
 
+    // Expose the manager to the core framework so module routes can resolve
+    // user-installed middleware by name (middleware: ['myMiddleware'])
+    this.coreFramework.getContainer().register('middlewareManager', () => this.middlewareManager);
+
     // Integrate hooks system with HTTP server
     const httpServer = (this.coreFramework as any).httpServer;
     if (httpServer && httpServer.setHookManager) {
@@ -374,6 +378,20 @@ export class Moro extends EventEmitter {
 
     // Initialize worker threads facade (optional - lazy loaded)
     this.workerFacade = new WorkerThreadsFacade();
+
+    // Eagerly initialize the worker pool when configured via createApp options.
+    // Without this option the pool is created lazily on first worker usage.
+    if (options.workers && options.workers.enabled !== false) {
+      const workerOptions = {
+        ...(options.workers.count !== undefined ? { workerCount: options.workers.count } : {}),
+        ...(options.workers.maxQueueSize !== undefined
+          ? { maxQueueSize: options.workers.maxQueueSize }
+          : {}),
+      };
+      void this.workerFacade.ensureInitialized(workerOptions).then(() => {
+        this.logger.info('Worker thread pool initialized', 'Workers', workerOptions);
+      });
+    }
 
     // Setup default middleware if enabled - use config defaults with options override
     this.setupDefaultMiddleware({
@@ -680,6 +698,19 @@ export class Moro extends EventEmitter {
       return this;
     }
 
+    // Built-in factory passed uncalled (app.use(middleware.helmet) instead of
+    // app.use(middleware.helmet())). The arity dispatch below would misroute it
+    // as an app-plugin and silently discard the result — fail loudly instead.
+    if (
+      typeof middlewareOrFunction === 'function' &&
+      (middlewareOrFunction as any)[MIDDLEWARE_FACTORY]
+    ) {
+      throw new Error(
+        `Built-in middleware factory '${middlewareOrFunction.name || 'unknown'}' was passed uncalled. ` +
+          `Call it first: app.use(factory(options)) — e.g. app.use(middleware.helmet()).`
+      );
+    }
+
     // Standard middleware integration (req, res, next pattern)
     if (typeof middlewareOrFunction === 'function' && middlewareOrFunction.length >= 3) {
       this.coreFramework.addMiddleware(middlewareOrFunction);
@@ -760,8 +791,7 @@ export class Moro extends EventEmitter {
 
   /** Internal: retrieve the registered error handler (used by the HTTP server). */
   getErrorHandler():
-    | ((err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>)
-    | undefined {
+    ((err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>) | undefined {
     return this.errorHandler;
   }
 

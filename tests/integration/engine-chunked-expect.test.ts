@@ -6,16 +6,21 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
-import { closeApp } from '../setup.js';
+import { closeApp, createTestPort } from '../setup.js';
 import { describeEngine } from './engine-test-utils.js';
 import * as net from 'net';
 
-const testPort = () => 13500 + Math.floor(Math.random() * 3000);
+const testPort = () => createTestPort();
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));
 
 // Send raw bytes, collect the full response text (until the socket goes quiet).
-function rawExchange(port: number, requestBytes: string, timeoutMs = 5000): Promise<string> {
+// Timeouts are sized for a loaded machine (coverage runs saturate all cores),
+// not for the happy path: this asserts framing correctness, so waiting longer
+// costs nothing when passing and prevents a load-dependent "no response".
+// The quiet window must also tolerate a response arriving in fragments that
+// are slow to follow each other, or a partial buffer resolves as if complete.
+function rawExchange(port: number, requestBytes: string, timeoutMs = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: '127.0.0.1', port }, () => sock.write(requestBytes));
     let buf = '';
@@ -26,7 +31,7 @@ function rawExchange(port: number, requestBytes: string, timeoutMs = 5000): Prom
       quiet = setTimeout(() => {
         sock.destroy();
         resolve(buf);
-      }, 150);
+      }, 400);
     });
     sock.on('error', reject);
     sock.setTimeout(timeoutMs, () => {

@@ -10,26 +10,26 @@ const logger = createFrameworkLogger('ErrorTracker');
  * Errors are logged and re-thrown so the framework's error handling
  * (registered error handler / default 500) still applies.
  *
+ * The returned middleware uses the 4-arg (err, req, res, next)
+ * error-handler shape.
+ *
  * @example
  * ```ts
- * import { errorTracker } from '@/middleware/built-in/error-tracker';
+ * import { middleware } from '@morojs/moro';
  *
- * app.use(errorTracker);
+ * app.use(middleware.errorTracker());
  * ```
  */
-export const errorTracker = (
-  err: Error,
-  req: HttpRequest,
-  _res: HttpResponse,
-  next: (err?: Error) => void
-): void => {
-  logger.error('Request error', 'ErrorTracking', {
-    error: err.message,
-    stack: err.stack,
-    url: req.url,
-    method: req.method,
-    timestamp: new Date().toISOString(),
-  });
-  // Pass the error along so downstream error handling still runs
-  next(err);
-};
+export function createErrorTrackerMiddleware() {
+  return (err: Error, req: HttpRequest, _res: HttpResponse, next: (err?: Error) => void): void => {
+    logger.error('Request error', 'ErrorTracking', {
+      error: err.message,
+      stack: err.stack,
+      url: req.url,
+      method: req.method,
+      timestamp: new Date().toISOString(),
+    });
+    // Pass the error along so downstream error handling still runs
+    next(err);
+  };
+}

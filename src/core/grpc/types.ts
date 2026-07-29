@@ -124,10 +124,7 @@ export type BidirectionalStreamingHandler<TRequest = any, TResponse = any> = (
 ) => void | Promise<void>;
 
 export type GrpcHandler =
-  | UnaryHandler
-  | ServerStreamingHandler
-  | ClientStreamingHandler
-  | BidirectionalStreamingHandler;
+  UnaryHandler | ServerStreamingHandler | ClientStreamingHandler | BidirectionalStreamingHandler;
 
 /**
  * Moro middleware-compatible gRPC handler
