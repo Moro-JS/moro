@@ -1,3 +1,13 @@
+## [1.8.4] - 2026-07-29
+
+### Changed
+
+- chore: update dependabot configuration for GitHub Actions and npm dependencies
+
+### Other
+
+- ## Middleware namespace unification, built-in observability, and real worker/pooling APIs
+
 ## [1.8.3] - 2026-07-14
 
 ### Added
