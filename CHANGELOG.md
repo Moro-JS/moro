@@ -1,3 +1,9 @@
+## [1.8.5] - 2026-07-30
+
+### Fixed
+
+- **Hooks: the lifecycle is now complete.** Response hooks actually fire, request errors are observable, and serverless runtimes get full lifecycle parity.
+
 ## [1.8.4] - 2026-07-29
 
 ### Changed
