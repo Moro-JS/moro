@@ -27,7 +27,18 @@ export function requireAuth(options: AuthGuardOptions = {}) {
     const auth: AuthRequest = req.auth;
 
     if (!auth) {
-      throw new Error('Auth middleware must be installed before using requireAuth');
+      // Server misconfiguration, not a client error. Throwing here surfaced as
+      // a generic "Internal server error" with no hint at the cause, which is
+      // a miserable first-run experience for anyone who declares .auth() on a
+      // route but forgets to install the middleware.
+      return res.status(500).json({
+        success: false,
+        error: 'Auth middleware not installed',
+        message:
+          'This route requires authentication, but no auth middleware is installed. ' +
+          'Add `app.use(auth({ ... }))` during setup before using .auth() on a route ' +
+          'or requireAuth() directly.',
+      });
     }
 
     // Check if already authenticated and should redirect

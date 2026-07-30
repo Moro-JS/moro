@@ -34,6 +34,8 @@
     "test:force": "jest --forceExit",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "test:dist": "npm run build && node scripts/validate-dist.mjs",
+    "test:fuzz": "jest --testPathPatterns=fuzz --detectOpenHandles",
+    "test:fuzz:deep": "MORO_FUZZ_RUNS=200000 jest --testPathPatterns=fuzz --testTimeout=600000",
     "test:package": "npm run build && node scripts/validate-package.mjs",
     "lint": "eslint src --ext .ts --max-warnings 0",
     "lint:fix": "eslint src --ext .ts --fix",

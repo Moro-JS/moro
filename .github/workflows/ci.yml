@@ -83,6 +83,15 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
+      # Zero third-party deps means we own query/cookie/multipart/route parsing,
+      # so the fuzz suite runs on every push. The seed is fixed for
+      # reproducibility; the nightly job below re-runs it with a rotating seed
+      # and a much higher iteration count to explore new inputs over time.
+      - name: Run parser fuzz suite
+        run: npm run test:fuzz
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
   # Coverage runs once (not per matrix leg) and enforces the coverageThreshold
   # floor in jest.config.mjs, so a drop below the ratchet fails the build.
   coverage:

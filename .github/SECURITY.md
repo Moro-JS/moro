@@ -62,9 +62,36 @@ MoroJS includes several built-in security features:
 
 - Input validation with Zod schemas
 - CSRF protection middleware
-- Rate limiting capabilities
+- Rate limiting, applied before authentication and validation so unauthenticated
+  floods are shed before any token verification or schema parsing runs
 - Content Security Policy (CSP) support
 - Secure headers middleware
 - Circuit breaker patterns
 
 For guidance on configuring these securely, see the framework docs at https://morojs.com.
+
+## How We Verify
+
+MoroJS ships with zero third-party runtime dependencies. That removes a large
+supply-chain surface, but it also means we own the parsing code most frameworks
+delegate — query strings, cookies, multipart bodies, and route patterns. We test
+that surface directly rather than asserting it is safe:
+
+- **Parser fuzzing** (`npm run test:fuzz`) runs on every push. It generates
+  hostile inputs — prototype-pollution keys, malformed percent-escapes, CRLF
+  sequences, lone surrogates, quoted-string confusion — and asserts four
+  invariants for any input: never throw, never mutate `Object.prototype`,
+  terminate promptly (no ReDoS), and round-trip encoded values faithfully.
+- **Nightly deep fuzz** (`.github/workflows/fuzz.yml`) re-runs the same
+  properties with a rotating seed and 500,000 iterations per property, so the
+  input space keeps expanding instead of re-testing the same cases. Failures
+  print the seed; reproduce with
+  `MORO_FUZZ_SEED=<seed> npm run test:fuzz`.
+- **Header injection** is neutralised at the write boundary on every backend:
+  Node throws `ERR_INVALID_CHAR`, uWebSockets.js strips CR/LF, and the native
+  engine drops the offending header.
+- **Dependency audit** runs in CI; releases are published with npm provenance
+  attestations via OIDC trusted publishing.
+
+If you find an input class the fuzz suite does not cover, a PR adding it to
+`tests/fuzz/` is as welcome as a vulnerability report.

@@ -236,18 +236,18 @@ app
   .handler(createOrder);
 ```
 
-**Execution order is always optimal:**
+**Execution order is fixed, whatever order you chain in:**
 
-1. Security (CORS, Helmet) - framework managed
-2. Parsing (body/query) - framework managed
-3. Rate limiting
-4. Before middleware (your custom middleware)
-5. Authentication
-6. Validation
-7. Transform middleware
-8. Caching
-9. After middleware (your custom middleware)
-10. Handler
+1. Security (CORS, Helmet) - global middleware
+2. Parsing (body/query) - global middleware
+3. Before middleware (`.before()`, your custom middleware)
+4. Rate limiting (`.rateLimit()`) - runs before auth so floods are shed early
+5. Authentication (`.auth()`)
+6. Validation (`.body()`/`.query()`/`.params()`/`.headers()`/`.validate()`)
+7. Transform middleware (`.transform()`)
+8. Caching (`.cache()`) - a cache hit responds here and skips steps 9-10
+9. After middleware (`.after()`, and `.use()` which is an alias for it)
+10. Handler (`.handler()`) - terminal, must be chained last
 
 ### 6. Error Handling
 

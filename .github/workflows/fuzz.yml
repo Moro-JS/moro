@@ -1,0 +1,76 @@
+name: Nightly Fuzz
+
+# MoroJS ships zero third-party dependencies, so it owns query, cookie,
+# multipart and route-pattern parsing outright. CI runs the fuzz suite on every
+# push with a fixed seed (regression protection); this job runs it nightly with
+# a rotating seed and a much larger iteration count, so the input space keeps
+# being explored instead of re-testing the same 2,000 cases forever.
+#
+# A failure prints the seed. Reproduce locally with:
+#   MORO_FUZZ_SEED=<seed> MORO_FUZZ_RUNS=<runs> npm run test:fuzz
+
+on:
+  schedule:
+    # 03:17 UTC daily - off the hour to avoid the scheduler stampede.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Fuzz seed (decimal). Blank = derive from the run number.'
+        required: false
+        type: string
+      runs:
+        description: 'Iterations per property'
+        required: false
+        default: '500000'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Deep fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # A new seed each night; deterministic within a run so a failure is
+      # reproducible from the value echoed below.
+      - name: Choose seed
+        id: seed
+        run: |
+          if [ -n "${{ inputs.seed }}" ]; then
+            SEED="${{ inputs.seed }}"
+          else
+            SEED=$(( ${{ github.run_number }} * 2654435761 % 2147483647 ))
+          fi
+          echo "value=$SEED" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing with MORO_FUZZ_SEED=$SEED"
+
+      - name: Run deep fuzz
+        run: npx jest --testPathPatterns=fuzz --testTimeout=1800000
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          MORO_FUZZ_SEED: ${{ steps.seed.outputs.value }}
+          MORO_FUZZ_RUNS: ${{ inputs.runs || '500000' }}
+
+      - name: Report reproduction command on failure
+        if: failure()
+        run: |
+          echo "::error::Fuzz failure. Reproduce with:"
+          echo "::error::MORO_FUZZ_SEED=${{ steps.seed.outputs.value }} MORO_FUZZ_RUNS=${{ inputs.runs || '500000' }} npm run test:fuzz"

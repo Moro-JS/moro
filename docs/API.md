@@ -449,15 +449,18 @@ The RouteBuilder provides a chainable API for defining routes with automatic mid
 
 #### Execution Phases
 
-MoroJS automatically orders middleware execution in these phases:
+Route features execute in this fixed order, whatever order you chain them in:
 
-1. **SECURITY** - CORS, Helmet, CSRF protection
-2. **PARSING** - Body parsing, query parsing
-3. **RATE_LIMITING** - Request rate limiting
-4. **AUTHENTICATION** - User authentication and authorization
-5. **VALIDATION** - Request validation with Zod
-6. **CACHING** - Response caching logic
-7. **HANDLER** - Route handler execution
+1. **SECURITY** - CORS, Helmet, CSRF protection (global middleware)
+2. **PARSING** - Body parsing, query parsing (global middleware)
+3. **BEFORE** - `.before()` custom middleware
+4. **RATE_LIMITING** - `.rateLimit()`, before auth so floods are shed early
+5. **AUTHENTICATION** - `.auth()`
+6. **VALIDATION** - `.body()` / `.query()` / `.params()` / `.headers()` / `.validate()`
+7. **TRANSFORM** - `.transform()` custom middleware
+8. **CACHING** - `.cache()` lookup; a hit responds here and skips 9-10
+9. **AFTER** - `.after()` custom middleware (`.use()` is an alias)
+10. **HANDLER** - `.handler()`, terminal and always chained last
 
 #### Validation Methods
 

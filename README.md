@@ -8,9 +8,9 @@
 
 [![npm version](https://badge.fury.io/js/@morojs%2Fmoro.svg)](https://badge.fury.io/js/@morojs%2Fmoro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 
-[**Website**](https://morojs.com) • [**Documentation**](https://morojs.com/docs) • [**Quick Start**](https://morojs.com/docs/getting-started) • [**Discord**](https://morojs.com/discord)
+[**Website**](https://morojs.com) • [**Documentation**](https://morojs.com/docs) • [**Quick Start**](https://morojs.com/docs/quick-start) • [**Discord**](https://morojs.com/discord)
 
 </div>
 
@@ -18,12 +18,12 @@
 
 ## Why MoroJS?
 
-Build high-performance APIs with intelligent routing that automatically orders middleware execution. Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
+Build high-performance APIs with intelligent routing: declare what a route needs and MoroJS runs it in the optimal, security-first order every time — rate limiting sheds floods before auth, auth gates the cache. Middleware ordering stops being something you can get wrong. Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
 
 **Key Features:**
 
 - **Native C++ Engine** - ~102k req/s real-world through the full framework, 572k pipelined, on a single thread
-- **Intelligent Routing** - Automatic middleware ordering, no configuration needed
+- **Intelligent Routing** - Declare auth, validation, rate limits and caching in any order; they always execute in the optimal, security-first one
 - **Enterprise Auth** - Built-in Better Auth with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
 - **Message Queues** - Production-ready queues (Bull, RabbitMQ, SQS, Kafka)
@@ -53,6 +53,7 @@ import { createApp, z } from '@morojs/moro';
   const app = await createApp();
 
   // Intelligent routing - order doesn't matter!
+  // (rate limit -> auth -> validation -> cache -> handler)
   app
     .post('/users')
     .body(
@@ -196,7 +197,7 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 ## Why Choose MoroJS?
 
-**vs Express** - Intelligent middleware ordering eliminates configuration complexity and race conditions
+**vs Express** - Intelligent security-first middleware pipeline eliminates ordering bugs and configuration complexity
 
 **vs Fastify** - ~1.5x the throughput out of the box (Moro's native engine), plus multi-runtime deployment without adapters
 
@@ -216,6 +217,6 @@ MIT © [Moro Framework Team](https://morojs.com)
 
 **Ready to build high-performance APIs?**
 
-[Get Started](https://morojs.com/docs/getting-started) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro) • [Discord](https://morojs.com/discord)
+[Get Started](https://morojs.com/docs/quick-start) • [GitHub](https://github.com/Moro-JS/moro) • [npm](https://www.npmjs.com/package/@morojs/moro) • [Discord](https://morojs.com/discord)
 
 </div>

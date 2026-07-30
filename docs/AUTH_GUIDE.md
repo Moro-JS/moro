@@ -402,9 +402,7 @@ authResponses.authError(res, 'error_code', 'Error message');
 ```typescript
 app.use(
   auth({
-    providers: [
-      /* your providers */
-    ],
+    providers: [/* your providers */],
     callbacks: {
       signIn: async ({ user, account, profile }: any) => {
         // Custom sign-in logic
@@ -460,9 +458,7 @@ app.use(
 ```typescript
 app.use(
   auth({
-    providers: [
-      /* your providers */
-    ],
+    providers: [/* your providers */],
     events: {
       signIn: async ({ user, account, isNewUser }: any) => {
         await logSecurityEvent('signin_success', {
@@ -488,9 +484,7 @@ app.use(
 ```typescript
 app.use(
   auth({
-    providers: [
-      /* your providers */
-    ],
+    providers: [/* your providers */],
     session: {
       strategy: 'jwt', // or 'database'
       maxAge: 8 * 60 * 60, // 8 hours
@@ -640,7 +634,7 @@ See the `examples/` directory for complete working examples:
 
 ### Common Issues
 
-1. **"Auth middleware must be installed"** - Ensure the `auth()` middleware is properly installed with `app.use()`
+1. **"Auth middleware not installed"** - A route used `.auth()` or `requireAuth()` but no auth middleware is present. Install it during setup with `app.use(auth({ ... }))`
 2. **"AUTH_SECRET is not set"** - Set the `AUTH_SECRET` environment variable (minimum 32 characters)
 3. **OAuth redirect mismatch** - Check your provider's redirect URI configuration
 4. **Session not persisting** - Verify cookie settings and domain configuration

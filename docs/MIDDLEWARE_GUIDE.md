@@ -1278,27 +1278,40 @@ app.use(errorHandler);
 
 ### Middleware Execution Order
 
-MoroJS automatically orders middleware in the following phases:
+Route features execute in a fixed order, regardless of the order you chain
+them. Global middleware (`app.use()`) runs ahead of all of it:
 
-1. **SECURITY** - CORS, Helmet, CSRF, CSP
-2. **PARSING** - Body parsing, Cookie parsing, Body size
-3. **RATE_LIMITING** - Rate limit checks
-4. **AUTHENTICATION** - Auth and session
-5. **VALIDATION** - Request validation
-6. **CACHING** - Cache lookup
-7. **HANDLER** - Route handler
-8. **AFTER** - Response processing
+1. **SECURITY** - CORS, Helmet, CSRF, CSP (global middleware)
+2. **PARSING** - Body parsing, Cookie parsing, Body size (global middleware)
+3. **`.before()`** - your custom middleware, ahead of every route feature
+4. **RATE_LIMITING** - `.rateLimit()`, keyed by client IP + method:path
+5. **AUTHENTICATION** - `.auth()`
+6. **VALIDATION** - `.body()` / `.query()` / `.params()` / `.headers()` / `.validate()`
+7. **`.transform()`** - your custom middleware, post-validation
+8. **CACHING** - `.cache()` lookup (a hit responds here and skips the rest)
+9. **`.after()` / `.use()`** - your custom middleware, just before the handler
+10. **HANDLER** - `.handler()`
+
+Rate limiting runs before authentication and validation on purpose: an
+over-limit client is rejected before any token verification or schema parsing
+is done on its behalf.
 
 ```typescript
-// Middleware executes in this order regardless of definition order
+// Chained in "wrong" order on purpose - execution order is unaffected.
+// .handler() is terminal: it registers the route and returns nothing,
+// so it must come last.
 app
   .post('/api/users')
-  .handler(createUser) // 7. Handler
-  .validate({ body: UserSchema }) // 5. Validation
-  .auth({ required: true }) // 4. Authentication
-  .rateLimit({ requests: 10 }) // 3. Rate limiting
-  .cors({ origin: '*' }); // 1. Security
+  .cache({ ttl: 30_000 }) // 8. Caching
+  .validate({ body: UserSchema }) // 6. Validation
+  .auth({ roles: ['admin'] }) // 5. Authentication
+  .rateLimit({ requests: 10, window: 60_000 }) // 4. Rate limiting
+  .handler(createUser); // 10. Handler - always last
 ```
+
+> **Note:** CORS and other security middleware are applied globally with
+> `app.use(middleware.cors({ ... }))`, not per route — there is no
+> `.cors()` method on the route builder.
 
 ---
 

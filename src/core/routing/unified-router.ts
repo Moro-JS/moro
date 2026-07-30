@@ -95,6 +95,11 @@ export class RouteBuilder {
       if (config.query !== undefined) this.schema.validation.query = config.query;
       if (config.params !== undefined) this.schema.validation.params = config.params;
       if (config.headers !== undefined) this.schema.validation.headers = config.headers;
+      // Without this, `.body(schema).validate({ onValidationError })` silently
+      // dropped the handler and fell back to the default 400 response.
+      if (config.onValidationError !== undefined) {
+        this.schema.validation.onValidationError = config.onValidationError;
+      }
     }
     return this;
   }
