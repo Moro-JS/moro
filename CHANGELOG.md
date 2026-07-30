@@ -1,3 +1,9 @@
+## [1.8.6] - 2026-07-30
+
+### Other
+
+- Two correctness fixes, a security-testing harness, and corrected middleware-ordering documentation.
+
 ## [1.8.5] - 2026-07-30
 
 ### Fixed
