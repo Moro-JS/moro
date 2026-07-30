@@ -1825,6 +1825,18 @@ export class MoroEngineServer {
         });
       }
 
+      // Post-response hooks (session persistence, auth session refresh, CDN
+      // invalidation) run after the response is flushed, off the critical path.
+      if (hookManager && (hookManager.hasHooks === undefined || hookManager.hasHooks('response'))) {
+        httpRes.once('finish', () => {
+          void Promise.resolve(
+            hookManager.execute('response', { request: httpReq, response: httpRes })
+          ).catch((error: any) =>
+            this.logger?.error?.(`Response hook error: ${error?.message || error}`, 'Hooks')
+          );
+        });
+      }
+
       // Execute global middleware chain
       if (this.globalMiddleware.length > 0) {
         await this.executeMiddleware(
@@ -1886,6 +1898,17 @@ export class MoroEngineServer {
         `Request handling error: ${error instanceof Error ? error.message : String(error)}`,
         'RequestError'
       );
+
+      // Error hooks are observational: fire-and-forget so a slow or throwing
+      // observer can never delay or alter the error response.
+      const errorHooks = this.hookManager;
+      if (errorHooks && (errorHooks.hasHooks === undefined || errorHooks.hasHooks('error'))) {
+        void Promise.resolve(
+          errorHooks.execute('error', { request: httpReq, response: httpRes, error })
+        ).catch((hookError: any) =>
+          this.logger?.error?.(`Error hook error: ${hookError?.message || hookError}`, 'Hooks')
+        );
+      }
 
       // The app's global error handler (Moro.setErrorHandler) gets first shot
       // at shaping the response - same contract as the Node server.

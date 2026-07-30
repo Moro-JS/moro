@@ -110,6 +110,12 @@ export class MiddlewareManager extends EventEmitter {
     return this.middleware.get(name)?.metadata;
   }
 
+  // The live hook manager that MiddlewareInterface.install() receives.
+  // Exposed so the app can offer a public `app.hooks` accessor.
+  getHookManager(): HookManager {
+    return this.hooks;
+  }
+
   // Check if middleware is installed
   isInstalled(name: string): boolean {
     return this.middleware.has(name);

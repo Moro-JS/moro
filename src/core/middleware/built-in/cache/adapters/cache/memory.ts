@@ -32,11 +32,15 @@ export class MemoryCacheAdapter implements CacheAdapter {
     // Set new value
     this.cache.set(key, { value, expires });
 
-    // Set expiration timer
+    // Set expiration timer. unref() so eviction housekeeping never holds the
+    // process open — a pending TTL (sessions default to ~24h) must not block
+    // shutdown. Entries are also expiry-checked on read, so eviction stays
+    // correct even if the process exits and restarts before the timer fires.
     const timer = setTimeout(() => {
       this.cache.delete(key);
       this.timers.delete(key);
     }, ttl * 1000);
+    timer.unref?.();
 
     this.timers.set(key, timer);
     logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, 'MemoryCache');

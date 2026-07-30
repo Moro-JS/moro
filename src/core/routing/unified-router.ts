@@ -251,8 +251,17 @@ export class UnifiedRouter {
   // User-registered global error handler (set via Moro.setErrorHandler)
   private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
 
+  // Lifecycle hook manager (set via Moro) so 'error' hooks observe handler
+  // errors — the router swallows them here, so the server-level error
+  // boundary never sees them.
+  private hookManager?: any;
+
   setErrorHandler(fn: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>): void {
     this.errorHandler = fn;
+  }
+
+  setHookManager(hookManager: any): void {
+    this.hookManager = hookManager;
   }
 
   // Invoke the registered error handler (if any). Returns true if it produced a response.
@@ -261,6 +270,21 @@ export class UnifiedRouter {
     req: HttpRequest,
     res: HttpResponse
   ): Promise<boolean> {
+    // Error hooks are observational: fire-and-forget so a slow or throwing
+    // observer can never delay or alter the error response.
+    if (
+      this.hookManager &&
+      (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('error'))
+    ) {
+      void Promise.resolve(
+        this.hookManager.execute('error', { request: req, response: res, error: err })
+      ).catch((hookError: any) =>
+        logger.error('Error hook error', 'Hooks', {
+          error: hookError instanceof Error ? hookError.message : String(hookError),
+        })
+      );
+    }
+
     if (!this.errorHandler || res.headersSent) return false;
     try {
       const result = this.errorHandler(err, req, res);

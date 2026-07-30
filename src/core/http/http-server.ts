@@ -1263,7 +1263,9 @@ export class MoroHttpServer {
     const hookManager = this.hookManager;
     const hasHooks = !!(
       hookManager &&
-      (hookManager.hasHooks === undefined || hookManager.hasHooks('request'))
+      (hookManager.hasHooks === undefined ||
+        hookManager.hasHooks('request') ||
+        hookManager.hasHooks('response'))
     );
 
     if (needsBody || hasHooks || this.globalMiddleware.length > 0) {
@@ -1323,6 +1325,19 @@ export class MoroHttpServer {
           request: httpReq,
           response: httpRes,
         });
+
+        // Post-response hooks (session persistence, auth session refresh,
+        // CDN invalidation) run after the response is flushed, off the
+        // request's critical path.
+        if (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('response')) {
+          httpRes.once('finish', () => {
+            void Promise.resolve(
+              this.hookManager.execute('response', { request: httpReq, response: httpRes })
+            ).catch((error: any) =>
+              this.logger?.error?.(`Response hook error: ${error?.message || error}`, 'Hooks')
+            );
+          });
+        }
       }
 
       // executeMiddleware returns undefined when the whole chain completed
@@ -1422,6 +1437,20 @@ export class MoroHttpServer {
     httpRes: HttpResponse & MoroServerResponse,
     req: IncomingMessage
   ): Promise<void> {
+    // Error hooks are observational (Sentry-style reporting, audit trails):
+    // fire-and-forget so a slow or throwing observer can never delay or
+    // alter the error response.
+    if (
+      this.hookManager &&
+      (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('error'))
+    ) {
+      void Promise.resolve(
+        this.hookManager.execute('error', { request: httpReq, response: httpRes, error })
+      ).catch((hookError: any) =>
+        this.logger?.error?.(`Error hook error: ${hookError?.message || hookError}`, 'Hooks')
+      );
+    }
+
     try {
       // Debug: Log the actual error and where it came from
       this.logger.debug('Request error details', 'RequestHandler', {

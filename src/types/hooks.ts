@@ -10,6 +10,8 @@ export interface StandardMiddleware {
 export interface HookContext {
   request?: HttpRequest;
   response?: HttpResponse;
+  /** The thrown value, present in 'error' hook contexts */
+  error?: any;
   data?: any;
   metadata?: Record<string, any>;
 }

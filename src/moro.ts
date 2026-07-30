@@ -318,6 +318,9 @@ export class Moro extends EventEmitter {
     const httpServer = (this.coreFramework as any).httpServer;
     if (httpServer && httpServer.setHookManager) {
       httpServer.setHookManager((this.middlewareManager as any).hooks);
+      // The router swallows handler errors (it produces the 500), so it needs
+      // the hook manager too for 'error' hooks to observe them.
+      this.unifiedRouter.setHookManager((this.middlewareManager as any).hooks);
     }
 
     // Configure HTTP server performance based on config
@@ -1296,24 +1299,53 @@ export class Moro extends EventEmitter {
       });
     });
 
-    // Create a unified request handler that works with the runtime adapter
+    // Create a unified request handler that works with the runtime adapter.
+    // Lifecycle hooks run here so serverless runtimes (Lambda, Edge, Workers)
+    // have parity with the long-running servers. Unlike those servers,
+    // 'response' hooks are awaited before returning — post-return work would
+    // be frozen or dropped by the platform.
+    const hookManager = this.middlewareManager.getHookManager();
     const handler = async (req: HttpRequest, res: HttpResponse) => {
-      // Add documentation middleware first (if enabled)
       try {
-        const docsMiddleware = this.documentation.getDocsMiddleware();
-        await docsMiddleware(req, res, () => {});
-        if (res.headersSent) return;
-      } catch {
-        // Documentation not enabled, that's fine
-      }
+        if (hookManager.hasHooks('request')) {
+          await hookManager.execute('request', { request: req, response: res });
+          if (res.headersSent) return;
+        }
 
-      // Try unified router first (handles all routes)
-      const handled = await this.unifiedRouter.handleRequest(req, res);
-      if (handled) return;
+        // Add documentation middleware first (if enabled)
+        try {
+          const docsMiddleware = this.documentation.getDocsMiddleware();
+          await docsMiddleware(req, res, () => {});
+          if (res.headersSent) return;
+        } catch {
+          // Documentation not enabled, that's fine
+        }
 
-      // Handle legacy direct routes (backward compatibility)
-      if (this.routes.length > 0) {
-        await this.handleDirectRoutes(req, res);
+        // Try unified router first (handles all routes)
+        const handled = await this.unifiedRouter.handleRequest(req, res);
+        if (handled) return;
+
+        // Handle legacy direct routes (backward compatibility)
+        if (this.routes.length > 0) {
+          await this.handleDirectRoutes(req, res);
+        }
+      } catch (error) {
+        if (hookManager.hasHooks('error')) {
+          try {
+            await hookManager.execute('error', { request: req, response: res, error });
+          } catch (hookError: any) {
+            this.logger.error(`Error hook error: ${hookError?.message || hookError}`, 'Hooks');
+          }
+        }
+        throw error;
+      } finally {
+        if (hookManager.hasHooks('response')) {
+          try {
+            await hookManager.execute('response', { request: req, response: res });
+          } catch (hookError: any) {
+            this.logger.error(`Response hook error: ${hookError?.message || hookError}`, 'Hooks');
+          }
+        }
       }
     };
 
@@ -1461,6 +1493,14 @@ export class Moro extends EventEmitter {
   // Access enterprise event system for advanced integrations
   get events() {
     return this.eventBus;
+  }
+
+  // The application's live hook manager — the same instance
+  // MiddlewareInterface.install() receives. Register request-lifecycle hooks
+  // directly: app.hooks.before('request', ctx => {...}),
+  // app.hooks.after('response', ctx => {...}).
+  get hooks() {
+    return this.middlewareManager.getHookManager();
   }
 
   // Access to core framework for advanced usage

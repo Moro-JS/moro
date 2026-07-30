@@ -334,6 +334,18 @@ export class MoroHttp2Server {
           request: httpReq,
           response: httpRes,
         });
+
+        // Post-response hooks. The HTTP/2 response object is a plain object
+        // (no event emitter), so listen on the underlying stream instead.
+        if (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('response')) {
+          stream.once('close', () => {
+            void Promise.resolve(
+              this.hookManager.execute('response', { request: httpReq, response: httpRes })
+            ).catch((error: any) =>
+              this.logger?.error?.(`Response hook error: ${error?.message || error}`, 'Hooks')
+            );
+          });
+        }
       }
 
       // Execute global middleware
@@ -388,6 +400,19 @@ export class MoroHttp2Server {
         requestId: httpReq.requestId,
         path: httpReq.path,
       });
+
+      // Error hooks are observational: fire-and-forget so a slow or throwing
+      // observer can never delay or alter the error response.
+      if (
+        this.hookManager &&
+        (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('error'))
+      ) {
+        void Promise.resolve(
+          this.hookManager.execute('error', { request: httpReq, response: httpRes, error })
+        ).catch((hookError: any) =>
+          this.logger?.error?.(`Error hook error: ${hookError?.message || hookError}`, 'Hooks')
+        );
+      }
 
       if (!httpRes.headersSent) {
         httpRes.status(500).json({

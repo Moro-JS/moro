@@ -563,7 +563,9 @@ export class UWebSocketsHttpServer {
         if (
           this.globalMiddleware.length !== 0 ||
           (this.hookManager &&
-            (this.hookManager.hasHooks === undefined || this.hookManager.hasHooks('request')))
+            (this.hookManager.hasHooks === undefined ||
+              this.hookManager.hasHooks('request') ||
+              this.hookManager.hasHooks('response')))
         ) {
           void this.handleRequest(req, res);
           return;
@@ -785,6 +787,18 @@ export class UWebSocketsHttpServer {
         });
       }
 
+      // Post-response hooks (session persistence, auth session refresh, CDN
+      // invalidation) run after the response is flushed, off the critical path.
+      if (hookManager && (hookManager.hasHooks === undefined || hookManager.hasHooks('response'))) {
+        httpRes.once('finish', () => {
+          void Promise.resolve(
+            hookManager.execute('response', { request: httpReq, response: httpRes })
+          ).catch((error: any) =>
+            this.logger?.error?.(`Response hook error: ${error?.message || error}`, 'Hooks')
+          );
+        });
+      }
+
       // Execute global middleware chain
       if (this.globalMiddleware.length > 0) {
         httpReq.materialize();
@@ -835,6 +849,17 @@ export class UWebSocketsHttpServer {
         `Request handling error: ${error instanceof Error ? error.message : String(error)}`,
         'RequestError'
       );
+
+      // Error hooks are observational: fire-and-forget so a slow or throwing
+      // observer can never delay or alter the error response.
+      const errorHooks = this.hookManager;
+      if (errorHooks && (errorHooks.hasHooks === undefined || errorHooks.hasHooks('error'))) {
+        void Promise.resolve(
+          errorHooks.execute('error', { request: httpReq, response: httpRes, error })
+        ).catch((hookError: any) =>
+          this.logger?.error?.(`Error hook error: ${hookError?.message || hookError}`, 'Hooks')
+        );
+      }
 
       // Send error response if not already sent
       if (!res.aborted) {

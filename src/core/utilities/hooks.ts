@@ -3,11 +3,16 @@ import { EventEmitter } from 'events';
 import { HookFunction, HookContext } from '../../types/hooks.js';
 import { createFrameworkLogger } from '../logger/index.js';
 
+// The lifecycle events the servers actually execute. These are the exact
+// strings passed to before()/after() — the before/after phase is expressed by
+// which method you call, not by the event name. (Earlier versions exported
+// 'before:request'-style values here that were never valid registration keys.)
 export const HOOK_EVENTS = {
-  BEFORE_REQUEST: 'before:request',
-  AFTER_REQUEST: 'after:request',
-  BEFORE_RESPONSE: 'before:response',
-  AFTER_RESPONSE: 'after:response',
+  /** Pre-routing, after body parse: hooks.before/after('request', ...) */
+  REQUEST: 'request',
+  /** After the response is flushed: hooks.before/after('response', ...) */
+  RESPONSE: 'response',
+  /** When a request fails at the server error boundary: hooks.before/after('error', ...) */
   ERROR: 'error',
 } as const;
 
