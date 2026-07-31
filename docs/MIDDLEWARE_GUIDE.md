@@ -1302,7 +1302,7 @@ is done on its behalf.
 // so it must come last.
 app
   .post('/api/users')
-  .cache({ ttl: 30_000 }) // 8. Caching
+  .cache({ ttl: 30 }) // 8. Caching (ttl is in SECONDS)
   .validate({ body: UserSchema }) // 6. Validation
   .auth({ roles: ['admin'] }) // 5. Authentication
   .rateLimit({ requests: 10, window: 60_000 }) // 4. Rate limiting
