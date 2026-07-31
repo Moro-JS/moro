@@ -2,8 +2,31 @@
 // Handles job execution with retry logic, timeout, circuit breaker, and memory monitoring
 
 import { EventEmitter } from 'events';
+import { getHeapStatistics } from 'v8';
 import { Logger } from '../../types/logger.js';
 import { CircuitBreaker } from '../utilities/circuit-breaker.js';
+
+/**
+ * Default memory ceiling for job execution, in MB.
+ *
+ * Derived from the process's actual V8 heap limit rather than a fixed number.
+ * A hardcoded default (previously 512MB) is meaningless in isolation: 64-bit
+ * Node defaults to a ~4GB heap, so 512MB is only ~12% of what the process may
+ * legitimately use. Every job would refuse to run once the process crossed
+ * that line — and because heap usage rarely falls back, the failure was
+ * permanent rather than transient.
+ *
+ * 90% of the heap limit is the point where allocation pressure is real and
+ * refusing new work is the right call. An explicit `memoryThreshold` option
+ * still wins, so existing configuration is unaffected.
+ */
+function defaultMemoryThresholdMB(): number {
+  const limitMB = getHeapStatistics().heap_size_limit / 1024 / 1024;
+  // No floor: V8's own minimum heap is ~256MB, so any absolute floor would
+  // meet or exceed the limit in a memory-constrained container and disable
+  // the guard entirely. A percentage of the real limit is correct at any size.
+  return Math.round(limitMB * 0.9);
+}
 
 // Type definitions for native Node.js AbortController (available in Node.js 15+)
 type AbortSignal = {
@@ -38,7 +61,8 @@ export interface JobExecutorOptions {
   circuitBreakerThreshold?: number;
   circuitBreakerResetTimeout?: number;
   enableMemoryMonitoring?: boolean;
-  memoryThreshold?: number; // MB
+  /** Heap ceiling in MB. Defaults to 90% of the process's V8 heap limit. */
+  memoryThreshold?: number;
 }
 
 export interface JobFunction {
@@ -96,7 +120,7 @@ export class JobExecutor extends EventEmitter {
       circuitBreakerThreshold: options.circuitBreakerThreshold ?? 5,
       circuitBreakerResetTimeout: options.circuitBreakerResetTimeout ?? 60000,
       enableMemoryMonitoring: options.enableMemoryMonitoring ?? true,
-      memoryThreshold: options.memoryThreshold ?? 512, // 512MB default
+      memoryThreshold: options.memoryThreshold ?? defaultMemoryThresholdMB(),
     };
 
     this.logger.debug('JobExecutor initialized', 'JobExecutor', { options: this.options });

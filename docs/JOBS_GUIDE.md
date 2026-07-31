@@ -366,14 +366,24 @@ const app = await createApp({
   jobs: {
     executor: {
       enableMemoryMonitoring: true,
+      // Optional. Defaults to 90% of the process's V8 heap limit — set this
+      // only if you want a tighter ceiling than the heap the process actually
+      // has. A fixed value below your normal working-set size will refuse to
+      // run jobs indefinitely, since heap usage rarely falls back.
       memoryThreshold: 512, // MB
     },
   },
 });
 
-// Job execution stops if heap usage exceeds threshold
-// Automatic garbage collection is triggered when near threshold
+// Job execution stops if heap usage exceeds the threshold.
+// Garbage collection is attempted first when running with --expose-gc;
+// if usage is still over the line after GC, the job is refused.
 ```
+
+> **Note:** the threshold is measured against **process-wide** heap usage, not
+> the memory a single job allocates. It is a back-pressure guard for the whole
+> process, so size it against your app's real working set — or leave it unset
+> and let it track the heap limit.
 
 ## Best Practices
 

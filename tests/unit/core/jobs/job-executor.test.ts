@@ -305,4 +305,53 @@ describe('JobExecutor', () => {
       await shutdownPromise;
     });
   });
+
+  describe('Memory Monitoring', () => {
+    // The default ceiling used to be a hardcoded 512MB, measured against
+    // process-wide heap. Since 64-bit Node defaults to a ~4GB heap, any
+    // process past ~12% of its available memory had EVERY job refuse to run —
+    // and heap rarely falls back, so the failure was permanent. It surfaced
+    // here as CI failures under --coverage, where istanbul's instrumentation
+    // pushes the worker past 512MB.
+    const realMemoryUsage = process.memoryUsage;
+
+    afterEach(() => {
+      process.memoryUsage = realMemoryUsage;
+    });
+
+    function stubHeapUsedMB(mb: number) {
+      const base = realMemoryUsage.call(process);
+      const stub: any = () => ({ ...base, heapUsed: mb * 1024 * 1024 });
+      stub.rss = (realMemoryUsage as any).rss;
+      process.memoryUsage = stub;
+    }
+
+    it('still runs jobs when process heap exceeds the legacy 512MB constant', async () => {
+      stubHeapUsedMB(600);
+
+      const memExecutor = new JobExecutor(logger, { maxRetries: 0, timeout: 5000 });
+      const result = await memExecutor.execute('job1', 'exec1', async () => 'success');
+
+      expect(result.success).toBe(true);
+      expect(result.value).toBe('success');
+
+      await memExecutor.shutdown(500);
+    });
+
+    it('still enforces an explicitly configured threshold', async () => {
+      stubHeapUsedMB(600);
+
+      const memExecutor = new JobExecutor(logger, {
+        maxRetries: 0,
+        timeout: 5000,
+        memoryThreshold: 256,
+      });
+
+      await expect(memExecutor.execute('job1', 'exec1', async () => 'success')).rejects.toThrow(
+        /Memory threshold exceeded/
+      );
+
+      await memExecutor.shutdown(500);
+    });
+  });
 });
