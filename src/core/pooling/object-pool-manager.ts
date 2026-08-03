@@ -133,23 +133,18 @@ export class ObjectPoolManager {
     const querySize = sizes?.query ?? 50;
     const headerSize = sizes?.headers ?? 10;
 
-    // Pre-warm parameter pool
-    for (let i = 0; i < paramSize; i++) {
-      const obj = this.paramPool.acquire();
-      this.paramPool.release(obj);
-    }
+    // Acquire the full batch before releasing: an acquire immediately after a
+    // release just pops the object that was pushed, so an interleaved loop
+    // creates one object no matter the count
+    const warm = <T>(pool: { acquire(): T; release(obj: T): void }, count: number): void => {
+      const objs: T[] = new Array(count);
+      for (let i = 0; i < count; i++) objs[i] = pool.acquire();
+      for (let i = 0; i < count; i++) pool.release(objs[i] as T);
+    };
 
-    // Pre-warm query pool
-    for (let i = 0; i < querySize; i++) {
-      const obj = this.queryPool.acquire();
-      this.queryPool.release(obj);
-    }
-
-    // Pre-warm header pool
-    for (let i = 0; i < headerSize; i++) {
-      const obj = this.headerPool.acquire();
-      this.headerPool.release(obj);
-    }
+    warm(this.paramPool, paramSize);
+    warm(this.queryPool, querySize);
+    warm(this.headerPool, headerSize);
 
     // Pre-warm buffer pools with configurable sizes
     const bufferSizes = sizes?.buffers ?? {};
@@ -159,11 +154,7 @@ export class ObjectPoolManager {
       if (size === undefined) continue;
       const pool = this.bufferPools.get(size);
       if (pool) {
-        const warmCount = bufferSizes[size] ?? Math.min(25, pool.stats.maxSize);
-        for (let j = 0; j < warmCount; j++) {
-          const buffer = pool.acquire();
-          pool.release(buffer);
-        }
+        warm(pool, bufferSizes[size] ?? Math.min(25, pool.stats.maxSize));
       }
     }
 

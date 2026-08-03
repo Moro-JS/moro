@@ -2084,11 +2084,25 @@ export class Moro extends EventEmitter {
       // Provides better load distribution than shared socket approach
       cluster.schedulingPolicy = cluster.SCHED_RR;
 
+      // Workers inherit the primary's execArgv; additionally bound each
+      // worker's V8 young generation unless the user tuned it themselves.
+      // On big machines V8 sizes the nursery from total RAM and grows it
+      // under sustained load (~10-34 MB extra RSS per process, measured on a
+      // 64 GB box) - and in cluster mode that cost multiplies by the worker
+      // count. A/B-benched 2026-08-01: identical throughput at 4 MB semi-space
+      // in both the realistic profile (~92k vs ~90k req/s) and the pipelined
+      // x10 microbenchmark (~560k both ways), while sustained-load RSS drops
+      // ~30 MB per worker (115 -> 81 MB on the 25-route POST soak).
+      const userTunedGC =
+        process.execArgv.some(a => a.includes('--max-semi-space-size')) ||
+        (process.env.NODE_OPTIONS || '').includes('--max-semi-space-size');
+
       // Set cluster settings for better performance
       cluster.setupMaster({
         exec: process.argv[1] || process.execPath,
         args: process.argv.slice(2),
         silent: false,
+        ...(userTunedGC ? {} : { execArgv: [...process.execArgv, '--max-semi-space-size=4'] }),
       });
 
       // IPC Optimization: Reduce communication overhead between master and workers

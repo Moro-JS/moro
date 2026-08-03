@@ -57,10 +57,17 @@ export interface RouteSchema {
   tags?: string[];
 }
 
+// Canonical uppercase methods - lets dispatch skip toUpperCase for the
+// interned method strings every adapter hands over
+const UPPERCASE_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+
 // Internal route representation
 interface InternalRoute {
   schema: RouteSchema;
   compiledPath: CompiledPath;
+  // Hoisted from schema at registration so the per-request dispatch is a
+  // single monomorphic load instead of a two-level property chase
+  handler: RouteSchema['handler'];
   isFastPath: boolean; // No middleware, auth, validation, rate limiting
   executionOrder: string[]; // Ordered list of execution phases
   // Route-specific configs (not middleware)
@@ -219,15 +226,18 @@ export class UnifiedRouter {
 
   // Route storage optimized for different access patterns
   // OPTIMIZATION: Separate maps per method for faster lookup (no string concat needed)
-  private staticRoutesByMethod = {
-    GET: new Map<string, InternalRoute>(),
-    POST: new Map<string, InternalRoute>(),
-    PUT: new Map<string, InternalRoute>(),
-    DELETE: new Map<string, InternalRoute>(),
-    PATCH: new Map<string, InternalRoute>(),
-    HEAD: new Map<string, InternalRoute>(),
-    OPTIONS: new Map<string, InternalRoute>(),
-  };
+  // Method -> path -> route. A Map (not a plain object) so the per-request
+  // lookup keyed by a non-constant method string stays a monomorphic Map.get
+  // instead of a megamorphic keyed object load.
+  private staticRoutesByMethod = new Map<string, Map<string, InternalRoute>>([
+    ['GET', new Map<string, InternalRoute>()],
+    ['POST', new Map<string, InternalRoute>()],
+    ['PUT', new Map<string, InternalRoute>()],
+    ['DELETE', new Map<string, InternalRoute>()],
+    ['PATCH', new Map<string, InternalRoute>()],
+    ['HEAD', new Map<string, InternalRoute>()],
+    ['OPTIONS', new Map<string, InternalRoute>()],
+  ]);
   private dynamicRoutesBySegments = new Map<number, InternalRoute[]>(); // Grouped by segment count
   private fastPathRoutes = new Set<InternalRoute>(); // Routes with no middleware
   private allRoutes: InternalRoute[] = []; // For iteration/inspection
@@ -330,13 +340,7 @@ export class UnifiedRouter {
    * Clear all routes (useful for testing)
    */
   clearAllRoutes(): void {
-    this.staticRoutesByMethod.GET.clear();
-    this.staticRoutesByMethod.POST.clear();
-    this.staticRoutesByMethod.PUT.clear();
-    this.staticRoutesByMethod.DELETE.clear();
-    this.staticRoutesByMethod.PATCH.clear();
-    this.staticRoutesByMethod.HEAD.clear();
-    this.staticRoutesByMethod.OPTIONS.clear();
+    for (const methodMap of this.staticRoutesByMethod.values()) methodMap.clear();
     this.dynamicRoutesBySegments.clear();
     this.fastPathRoutes.clear();
     this.allRoutes = [];
@@ -385,6 +389,7 @@ export class UnifiedRouter {
     const route: InternalRoute = {
       schema,
       compiledPath: null as any, // Will be set lazily if needed
+      handler: schema.handler,
       isFastPath,
       executionOrder,
       rateLimitConfig: schema.rateLimit,
@@ -395,7 +400,7 @@ export class UnifiedRouter {
 
     // Store in appropriate structures
     if (isStatic) {
-      const methodMap = this.staticRoutesByMethod[schema.method as HttpMethod];
+      const methodMap = this.staticRoutesByMethod.get(schema.method);
       if (methodMap) {
         methodMap.set(schema.path, route);
       }
@@ -556,24 +561,27 @@ export class UnifiedRouter {
   handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> | boolean {
     this.stats.requestCount++;
 
-    const method = req.method?.toUpperCase() as HttpMethod;
+    // Adapters hand over interned uppercase method strings - the Set probe
+    // skips a per-request toUpperCase call (and its scan) in the common case
+    const rawMethod = req.method;
+    const method = (
+      rawMethod && UPPERCASE_METHODS.has(rawMethod) ? rawMethod : rawMethod?.toUpperCase()
+    ) as HttpMethod;
     const path = req.path;
 
     // FAST PATH 1: Try static route Map lookup first (fastest possible - no string concat)
-    const methodMap = this.staticRoutesByMethod[method];
+    const methodMap = this.staticRoutesByMethod.get(method);
     if (methodMap) {
       const staticRoute = methodMap.get(path);
 
       if (staticRoute) {
-        // OPTIMIZATION: Reuse empty params object to avoid allocation
-        if (!req.params) {
-          req.params = {};
-        }
+        // (params untouched here: every adapter req initializes params, and
+        // the engine adapter materializes it lazily on first handler access)
 
         // Fast-path execution (no middleware)
         if (staticRoute.isFastPath) {
           try {
-            const result = staticRoute.schema.handler(req, res);
+            const result = staticRoute.handler(req, res);
 
             if (result && typeof (result as any).then === 'function') {
               return (result as Promise<any>)
@@ -624,7 +632,7 @@ export class UnifiedRouter {
       // Fast-path dynamic routes (no middleware)
       if (route.isFastPath) {
         try {
-          const result = route.schema.handler(req, res);
+          const result = route.handler(req, res);
 
           if (result && typeof (result as any).then === 'function') {
             return (result as Promise<any>)

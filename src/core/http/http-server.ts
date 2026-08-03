@@ -1,7 +1,7 @@
 // src/core/http-server.ts
-import { IncomingMessage, ServerResponse, createServer, Server } from 'http';
-import { createServer as createHttpsServer, Server as HttpsServer } from 'https';
-import * as zlib from 'zlib';
+import type { IncomingMessage, ServerResponse, Server } from 'http';
+import type { Server as HttpsServer } from 'https';
+import { createRequire } from 'module';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
@@ -21,8 +21,37 @@ import {
 import { PathMatcher } from '../routing/path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 
-const gzip = promisify(zlib.gzip);
-const deflate = promisify(zlib.deflate);
+// `node:https` and `node:zlib` are resolved on first use rather than at import
+// time. This module is on every app's startup path, but plaintext HTTP apps
+// never touch https (~1.9 MB RSS, it drags in tls) and uncompressed responses
+// never touch zlib (~0.3 MB). Builtins are always synchronously requirable, so
+// the secure-server and compression paths stay fully synchronous.
+// Resolves Node builtins ONLY, so the base passed to createRequire is
+// irrelevant - 'file:///' is used instead of import.meta.url so this file still
+// compiles under the CJS transform Jest applies to the test suite.
+const requireBuiltin = createRequire('file:///');
+
+// `node:http` is pulled through createRequire rather than `import`. In an ESM
+// package the two are NOT equivalent: building the ESM facade for node:http
+// drags in http2, tls, zlib and worker_threads and costs ~10.4 MB RSS, while
+// require('http') costs ~0.9 MB and pulls only net. Same objects, same
+// semantics - measurably less memory. See also the lazy https/zlib below.
+const http = requireBuiltin('http') as typeof import('http');
+const createServer = http.createServer;
+
+let gzipFn: ((buf: Buffer) => Promise<Buffer>) | undefined;
+let deflateFn: ((buf: Buffer) => Promise<Buffer>) | undefined;
+function compressors() {
+  if (!gzipFn) {
+    const zlib = requireBuiltin('zlib') as typeof import('zlib');
+    gzipFn = promisify(zlib.gzip) as (buf: Buffer) => Promise<Buffer>;
+    deflateFn = promisify(zlib.deflate) as (buf: Buffer) => Promise<Buffer>;
+  }
+  return {
+    gzip: gzipFn,
+    deflate: deflateFn as (buf: Buffer) => Promise<Buffer>,
+  };
+}
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
@@ -100,7 +129,7 @@ function parseCookieHeader(cookieHeader: string): Record<string, string> {
 // compression settings) without any per-request allocation.
 // ---------------------------------------------------------------------------
 
-export class MoroIncomingMessage extends IncomingMessage {
+export class MoroIncomingMessage extends http.IncomingMessage {
   /** Bound on the per-server subclass prototype - no per-request write needed */
   declare _server: MoroHttpServer;
 
@@ -357,7 +386,7 @@ export class MoroIncomingMessage extends IncomingMessage {
   }
 }
 
-export class MoroServerResponse extends ServerResponse {
+export class MoroServerResponse extends http.ServerResponse {
   /** Bound on the per-server subclass prototype - no per-request write needed */
   declare _server: MoroHttpServer;
 
@@ -392,7 +421,8 @@ export class MoroServerResponse extends ServerResponse {
 
       if (acceptEncoding && acceptEncoding.includes('gzip')) {
         const buffer = Buffer.from(jsonString, 'utf8');
-        gzip(buffer)
+        compressors()
+          .gzip(buffer)
           .then(compressed => {
             if (this.headersSent) return;
             this.writeHead(this.statusCode || 200, {
@@ -420,7 +450,8 @@ export class MoroServerResponse extends ServerResponse {
         return;
       } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
         const buffer = Buffer.from(jsonString, 'utf8');
-        deflate(buffer)
+        compressors()
+          .deflate(buffer)
           .then(compressed => {
             if (this.headersSent) return;
             this.writeHead(this.statusCode || 200, {
@@ -1019,7 +1050,8 @@ export class MoroHttpServer {
     if (options?.ssl) {
       // In-process HTTPS. The https ServerOptions extends the http one, so the
       // IncomingMessage/ServerResponse subclass injection carries over.
-      this.server = createHttpsServer(
+      const https = requireBuiltin('https') as typeof import('https');
+      this.server = https.createServer(
         { ...serverOpts, ...options.ssl },
         this.handleRequest.bind(this) as any
       );

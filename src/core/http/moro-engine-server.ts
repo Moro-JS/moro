@@ -102,6 +102,11 @@ function addCharsetIfNeeded(mimeType: string): string {
 // through writeHead/write/end with backpressure respected via 'drain'
 const SENDFILE_BUFFER_LIMIT = 1024 * 1024;
 
+// Shared flat header pair for the json() fast path - passed to respond() when
+// the response has no user-set headers, so no header object or flat array is
+// allocated. The engine only reads it; never mutate.
+const JSON_HEADER_PAIR = ['content-type', 'application/json'];
+
 /**
  * Prototype-based request object for the engine adapter.
  *
@@ -113,11 +118,11 @@ const SENDFILE_BUFFER_LIMIT = 1024 * 1024;
 export class EngineRequest extends LazyEventEmitter {
   method: string;
   path: string;
-  params: Record<string, string> = {};
   body: any = null;
 
   _server: MoroEngineServer;
   _reqId: number;
+  _params: Record<string, string> | undefined = undefined;
   _url: string | undefined = undefined;
   _queryString: string | undefined = undefined;
   _query: Record<string, string> | undefined = undefined;
@@ -140,11 +145,26 @@ export class EngineRequest extends LazyEventEmitter {
    *  interface parity with UwsRequest so shared dispatch code can call it. */
   materialize(): void {}
 
+  // Lazy like context: dispatch writes params through the setter only for
+  // parametric routes, so a handler that never reads req.params on a static
+  // route pays no allocation.
+  get params(): Record<string, string> {
+    let p = this._params;
+    if (p === undefined) {
+      p = {};
+      this._params = p;
+    }
+    return p;
+  }
+  set params(value: Record<string, string>) {
+    this._params = value;
+  }
+
   private _rawQueryString(): string {
     let qs = this._queryString;
     if (qs === undefined) {
       // Safe no-op (undefined) after the response terminates - coerce to ''
-      qs = this._server._engine.getQuery(this._reqId) ?? '';
+      qs = this._server._getQuery(this._reqId) ?? '';
       this._queryString = qs as string;
     }
     return qs as string;
@@ -184,7 +204,7 @@ export class EngineRequest extends LazyEventEmitter {
       // Duplicate header lines are joined like Node's IncomingMessage ('; '
       // for cookie, ', ' otherwise) - last-wins would let a client hide
       // earlier X-Forwarded-For entries from IP-based middleware.
-      const flat: string[] | undefined = this._server._engine.getHeaders(this._reqId);
+      const flat: string[] | undefined = this._server._getHeaders(this._reqId);
       if (flat) {
         for (let i = 0; i + 1 < flat.length; i += 2) {
           const key = flat[i];
@@ -266,7 +286,7 @@ export class EngineRequest extends LazyEventEmitter {
   get ip(): string {
     let ip = this._ip;
     if (ip === undefined) {
-      ip = this._server._engine.getRemoteAddress(this._reqId) ?? '';
+      ip = this._server._getRemoteAddress(this._reqId) ?? '';
       this._ip = ip as string;
     }
     return ip as string;
@@ -432,16 +452,19 @@ export class EngineRequest extends LazyEventEmitter {
 export class EngineResponse extends LazyEventEmitter {
   public headersSent = false;
   public statusCode = 200;
-  public responseHeaders: Record<string, string | string[]> = {};
-  public locals: Record<string, any> = {};
   // The EngineRequest wrapper, linked by the server so lifecycle events reach
   // req.on('close') listeners (SSE cleanup, monitors)
   public _moroReq: any = null;
+  /** @internal true while this response is in the server's inflight map */
+  _registered = false;
 
   private _server: MoroEngineServer;
-  private _engine: any;
   private _reqId: number;
   private _logger: any;
+  // Lazy: json/send/end on a response with no user-set headers never
+  // materialize a header object (see _headersFlat / the json fast path)
+  private _responseHeaders: Record<string, string | string[]> | undefined = undefined;
+  private _locals: Record<string, any> | undefined = undefined;
   // Terminal-write latch: headersSent means "head flushed" (true mid-stream
   // after writeHead/write), _ended means the body is complete
   private _ended = false;
@@ -450,9 +473,32 @@ export class EngineResponse extends LazyEventEmitter {
   constructor(server: MoroEngineServer, reqId: number, logger: any) {
     super();
     this._server = server;
-    this._engine = server._engine;
     this._reqId = reqId;
     this._logger = logger;
+  }
+
+  get responseHeaders(): Record<string, string | string[]> {
+    let h = this._responseHeaders;
+    if (h === undefined) {
+      h = {};
+      this._responseHeaders = h;
+    }
+    return h;
+  }
+  set responseHeaders(value: Record<string, string | string[]>) {
+    this._responseHeaders = value;
+  }
+
+  get locals(): Record<string, any> {
+    let l = this._locals;
+    if (l === undefined) {
+      l = {};
+      this._locals = l;
+    }
+    return l;
+  }
+  set locals(value: Record<string, any>) {
+    this._locals = value;
   }
 
   get writableEnded() {
@@ -476,7 +522,12 @@ export class EngineResponse extends LazyEventEmitter {
   // Also releases the reqId from the server's in-flight map.
   private _emitDone() {
     this._ended = true;
-    this._server._complete(this._reqId);
+    // Sync responses end before onRequest's registration window, so they were
+    // never in the inflight map - skip the wasted delete on a missing key
+    if (this._registered) {
+      this._registered = false;
+      this._server._complete(this._reqId);
+    }
     if (this._events) {
       this.emit('finish');
       this.emit('close');
@@ -492,6 +543,7 @@ export class EngineResponse extends LazyEventEmitter {
     if (this._ended) return;
     this._ended = true;
     this._aborted = true;
+    this._registered = false; // onAborted already dropped the map entry
     if (this._events) this.emit('close');
     const req = this._moroReq;
     if (req && req._events) {
@@ -510,7 +562,8 @@ export class EngineResponse extends LazyEventEmitter {
   // actually set. Multi-value headers (set-cookie) become separate pairs so
   // each goes out as its own header line.
   private _headersFlat(): string[] | null {
-    const headers = this.responseHeaders;
+    const headers = this._responseHeaders;
+    if (headers === undefined) return null;
     let flat: string[] | null = null;
     // Performance: for...in is the fastest way to iterate response headers
     for (const key in headers) {
@@ -538,14 +591,15 @@ export class EngineResponse extends LazyEventEmitter {
   }
 
   getHeader(name: string) {
-    const lowerName = name.toLowerCase();
-    return this.responseHeaders[lowerName];
+    const headers = this._responseHeaders;
+    return headers === undefined ? undefined : headers[name.toLowerCase()];
   }
 
   removeHeader(name: string) {
-    const lowerName = name.toLowerCase();
-    if (lowerName in this.responseHeaders) {
-      delete this.responseHeaders[lowerName];
+    const headers = this._responseHeaders;
+    if (headers !== undefined) {
+      const lowerName = name.toLowerCase();
+      if (lowerName in headers) delete headers[lowerName];
     }
     return this;
   }
@@ -604,11 +658,19 @@ export class EngineResponse extends LazyEventEmitter {
       body = JSON.stringify(data);
     }
 
-    if (!('content-type' in this.responseHeaders)) {
-      this.responseHeaders['content-type'] = 'application/json';
-    }
-
     try {
+      const rh = this._responseHeaders;
+      if (rh === undefined && !this._server._compression.enabled) {
+        // Hot path: no user-set headers, no compression - one native call
+        // with the shared content-type pair; zero per-response header work
+        this._server._respond(this._reqId, this.statusCode, JSON_HEADER_PAIR, body);
+        this.headersSent = true;
+        this._emitDone();
+        return;
+      }
+      if (rh === undefined || !('content-type' in rh)) {
+        this.responseHeaders['content-type'] = 'application/json';
+      }
       this._respondMaybeCompressed(body, 'application/json');
     } catch (err) {
       this._failSafe('Failed to send JSON response', err);
@@ -626,14 +688,15 @@ export class EngineResponse extends LazyEventEmitter {
     // work (byteLength scans the string; header reads allocate nothing but
     // still cost). The default config must pay zero for this feature.
     if (!s.enabled) {
-      this._engine.respond(this._reqId, this.statusCode, this._headersFlat(), body);
+      this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
       this.headersSent = true;
       this._emitDone();
       return;
     }
     const bytes = typeof body === 'string' ? Buffer.byteLength(body) : body.length;
-    const alreadyEncoded = 'content-encoding' in this.responseHeaders;
-    const ctHeader = this.responseHeaders['content-type'];
+    const rh = this._responseHeaders;
+    const alreadyEncoded = rh !== undefined && 'content-encoding' in rh;
+    const ctHeader = rh?.['content-type'];
     const ct = contentType ?? (Array.isArray(ctHeader) ? ctHeader[0] : ctHeader);
     if (
       alreadyEncoded ||
@@ -642,16 +705,16 @@ export class EngineResponse extends LazyEventEmitter {
       this.statusCode === 204 ||
       this.statusCode === 304
     ) {
-      this._engine.respond(this._reqId, this.statusCode, this._headersFlat(), body);
+      this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
       this.headersSent = true;
       this._emitDone();
       return;
     }
 
-    const accept = this._engine.getHeader(this._reqId, 'accept-encoding') as string | undefined;
+    const accept = this._server._getHeader(this._reqId, 'accept-encoding') as string | undefined;
     const encoding = negotiateEncoding(accept, s.encodings);
     if (!encoding) {
-      this._engine.respond(this._reqId, this.statusCode, this._headersFlat(), body);
+      this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
       this.headersSent = true;
       this._emitDone();
       return;
@@ -661,11 +724,11 @@ export class EngineResponse extends LazyEventEmitter {
     // raced the await - the reqId would be invalid).
     void compressBuffer(body, encoding, s.level)
       .then(compressed => {
-        if (this._ended || this._engine.isAborted(this._reqId)) return;
+        if (this._ended || this._server._isAborted(this._reqId)) return;
         this.responseHeaders['content-encoding'] = encoding;
         const vary = this.responseHeaders['vary'];
         this.responseHeaders['vary'] = vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding';
-        this._engine.respond(this._reqId, this.statusCode, this._headersFlat(), compressed);
+        this._server._respond(this._reqId, this.statusCode, this._headersFlat(), compressed);
         this.headersSent = true;
         this._emitDone();
       })
@@ -682,7 +745,7 @@ export class EngineResponse extends LazyEventEmitter {
     );
     if (!this._ended) {
       try {
-        this._engine.respond(
+        this._server._respond(
           this._reqId,
           500,
           null,
@@ -743,7 +806,7 @@ export class EngineResponse extends LazyEventEmitter {
     }
 
     try {
-      this._engine.writeHead(this._reqId, statusCode, this._headersFlat());
+      this._server._writeHead(this._reqId, statusCode, this._headersFlat());
       this.headersSent = true;
     } catch {
       this._logger.error('Failed to write response head', 'ResponseError');
@@ -765,10 +828,10 @@ export class EngineResponse extends LazyEventEmitter {
     let ok = true;
     try {
       if (!this.headersSent) {
-        this._engine.writeHead(this._reqId, this.statusCode, this._headersFlat());
+        this._server._writeHead(this._reqId, this.statusCode, this._headersFlat());
         this.headersSent = true;
       }
-      ok = this._engine.write(this._reqId, chunk) !== false;
+      ok = this._server._write(this._reqId, chunk) !== false;
     } catch {
       this._logger.error('Failed to write response chunk', 'ResponseError');
       return false;
@@ -793,7 +856,7 @@ export class EngineResponse extends LazyEventEmitter {
     try {
       if (!this.headersSent) {
         // Terminal single-shot: status + headers + body in one native call
-        this._engine.respond(
+        this._server._respond(
           this._reqId,
           this.statusCode,
           this._headersFlat(),
@@ -801,7 +864,7 @@ export class EngineResponse extends LazyEventEmitter {
         );
         this.headersSent = true;
       } else {
-        this._engine.end(this._reqId, data !== undefined && data !== null ? data : undefined);
+        this._server._end(this._reqId, data !== undefined && data !== null ? data : undefined);
       }
       this._emitDone();
       if (typeof callback === 'function') callback();
@@ -821,7 +884,7 @@ export class EngineResponse extends LazyEventEmitter {
     this.setHeader('location', url.replace(/[\r\n]/g, ''));
 
     try {
-      this._engine.respond(this._reqId, redirectCode, this._headersFlat(), null);
+      this._server._respond(this._reqId, redirectCode, this._headersFlat(), null);
       this.headersSent = true;
       this._emitDone();
     } catch (err) {
@@ -1307,6 +1370,27 @@ export class EngineResponse extends LazyEventEmitter {
 export class MoroEngineServer {
   /** @internal read by EngineRequest/EngineResponse for lazy fetchers */
   _engine: any;
+  // Hot-path native functions hoisted off the loader's module Proxy: every
+  // property access on the engine module runs its `get` trap (a Set probe +
+  // binding load) that V8 cannot inline-cache. Hoisted once here, each
+  // per-request native call becomes a plain monomorphic field load. The
+  // functions are plain N-API exports with no `this` dependence.
+  /** @internal */ _respond!: (
+    reqId: number,
+    status: number,
+    headers: string[] | null,
+    body: any
+  ) => void;
+  /** @internal */ _writeHead!: (reqId: number, status: number, headers: string[] | null) => void;
+  /** @internal */ _write!: (reqId: number, chunk: any) => boolean;
+  /** @internal */ _end!: (reqId: number, data?: any) => void;
+  /** @internal */ _isAborted!: (reqId: number) => boolean;
+  /** @internal */ _getQuery!: (reqId: number) => string | undefined;
+  /** @internal */ _getHeaders!: (reqId: number) => string[] | undefined;
+  /** @internal */ _getHeader!: (reqId: number, name: string) => string | undefined;
+  /** @internal */ _getBody!: (reqId: number) => ArrayBuffer | null;
+  /** @internal */ _getRemoteAddress!: (reqId: number) => string | undefined;
+  /** @internal */ _getMethod!: (reqId: number) => string | undefined;
   /** @internal read by EngineRequest#protocol/socket.encrypted - true when the
    *  engine is terminating TLS for this server (engine >= 1.2.0 + ssl passed) */
   isSsl = false;
@@ -1431,6 +1515,17 @@ export class MoroEngineServer {
       );
     }
     this._engine = surface;
+    this._respond = surface.respond;
+    this._writeHead = surface.writeHead;
+    this._write = surface.write;
+    this._end = surface.end;
+    this._isAborted = surface.isAborted;
+    this._getQuery = surface.getQuery;
+    this._getHeaders = surface.getHeaders;
+    this._getHeader = surface.getHeader;
+    this._getBody = surface.getBody;
+    this._getRemoteAddress = surface.getRemoteAddress;
+    this._getMethod = surface.getMethod;
 
     // TLS: pass it through when the engine supports it; otherwise keep the
     // (now capability-gated) warning so a proxy/node fallback is clear.
@@ -1725,13 +1820,13 @@ export class MoroEngineServer {
     // request, hand the connection to the engine's native WS path. The engine
     // sends the 101 handshake and drives onWsOpen/Message/Close.
     if (this._wsBridge) {
-      const upgrade = this._engine.getHeader(reqId, 'upgrade');
+      const upgrade = this._getHeader(reqId, 'upgrade');
       if (upgrade && upgrade.toLowerCase() === 'websocket') {
         // Snapshot handshake data now - the upgrade invalidates the reqId,
         // after which these fetchers return empty values.
-        const ip: string = this._engine.getRemoteAddress(reqId) || '';
+        const ip: string = this._getRemoteAddress(reqId) || '';
         const headers: Record<string, string> = {};
-        const flat: string[] | undefined = this._engine.getHeaders(reqId);
+        const flat: string[] | undefined = this._getHeaders(reqId);
         if (flat) {
           // Join duplicates exactly like the EngineRequest.headers getter -
           // last-wins would let a client send two X-Forwarded-For lines and
@@ -1747,7 +1842,7 @@ export class MoroEngineServer {
         }
         // Capture the query string too (invalidated by the upgrade like the
         // rest), so handlers can read handshake query params (e.g. orgId).
-        const query: string = this._engine.getQuery(reqId) || '';
+        const query: string = this._getQuery(reqId) || '';
         this._pendingWsInfo = { ip, headers, query };
         const wsId = this._engine.upgradeToWebSocket(reqId);
         this._pendingWsInfo = undefined;
@@ -1758,7 +1853,9 @@ export class MoroEngineServer {
 
     // methodIdx 7 (OTHER) needs the extra crossing; the seven common methods
     // resolve from the static table
-    const method = methodIdx === 7 ? this._engine.getMethod(reqId) || 'OTHER' : METHODS[methodIdx];
+    const method = (
+      methodIdx === 7 ? this._getMethod(reqId) || 'OTHER' : METHODS[methodIdx]
+    ) as string;
 
     const httpReq = new EngineRequest(this, reqId, method, path);
     const httpRes = new EngineResponse(this, reqId, this.logger);
@@ -1776,7 +1873,49 @@ export class MoroEngineServer {
       }
     }
 
-    void this.handleRequest(httpReq, httpRes);
+    this.requestCounter++;
+
+    // SYNC FAST PATH (parity with MoroHttpServer's handleRequest split): with
+    // no body to parse, no request/response hooks and no global middleware,
+    // the router dispatch runs synchronously in this frame - the async
+    // handleRequest below would allocate a promise + async context per
+    // request only to reach zero awaits. Only the framework's own frame is
+    // de-asynced: an async route handler still returns its promise through
+    // the router and is driven to completion here.
+    const hookManager = this.hookManager;
+    const hooksActive =
+      hookManager &&
+      (hookManager.hasHooks === undefined ||
+        hookManager.hasHooks('request') ||
+        hookManager.hasHooks('response'));
+    const needsBody =
+      method.charCodeAt(0) === 80 && // 'P' char code
+      (method === 'POST' || method === 'PUT' || method === 'PATCH');
+
+    if (!needsBody && !hooksActive && this.globalMiddleware.length === 0 && this.routerHandler) {
+      let handled: boolean | Promise<boolean> = true;
+      try {
+        handled = this.routerHandler(httpReq as any as HttpRequest, httpRes as any as HttpResponse);
+      } catch (error) {
+        // Error path owns the response from here (handled stays true)
+        void this.handleDispatchError(error, httpReq, httpRes);
+      }
+      if (handled !== true) {
+        if (handled && typeof (handled as any).then === 'function') {
+          (handled as Promise<boolean>).then(
+            ok => {
+              if (!ok) void this.finishUnrouted(httpReq, httpRes);
+            },
+            error => void this.handleDispatchError(error, httpReq, httpRes)
+          );
+        } else {
+          // Sync miss from the router - direct-route fallback, then 404
+          void this.finishUnrouted(httpReq, httpRes);
+        }
+      }
+    } else {
+      void this.handleRequest(httpReq, httpRes);
+    }
 
     // Register for onAborted/onWritable routing only when the response is
     // still in flight after the synchronous dispatch window. Sync handlers
@@ -1785,7 +1924,10 @@ export class MoroEngineServer {
     // long-lived Map's old-space backing store, and entries alive at a
     // scavenge promote the whole request/response graph (at ~570k pipelined
     // req/s that meant full GCs every ~400ms and a ~150 MB heap vs ~30 MB).
-    if (!httpRes.writableEnded) this.inflight.set(reqId, httpRes);
+    if (!httpRes.writableEnded) {
+      httpRes._registered = true;
+      this.inflight.set(reqId, httpRes);
+    }
   }
 
   private onAborted(reqId: number): void {
@@ -1801,9 +1943,22 @@ export class MoroEngineServer {
     if (httpRes) httpRes._handleWritable();
   }
 
-  private async handleRequest(httpReq: EngineRequest, httpRes: EngineResponse): Promise<void> {
-    this.requestCounter++;
+  // Router-miss continuation shared by the sync fast path: direct-route
+  // fallback, then 404 - with the same error shaping as handleRequest.
+  private async finishUnrouted(httpReq: EngineRequest, httpRes: EngineResponse): Promise<void> {
+    try {
+      if (await this.dispatchDirectRoute(httpReq, httpRes)) return;
+      if (!httpRes.headersSent && !httpRes.writableEnded) {
+        httpRes.statusCode = 404;
+        httpRes.setHeader('Content-Type', 'application/json');
+        httpRes.end('{"success":false,"error":"Not found"}');
+      }
+    } catch (error) {
+      await this.handleDispatchError(error, httpReq, httpRes);
+    }
+  }
 
+  private async handleRequest(httpReq: EngineRequest, httpRes: EngineResponse): Promise<void> {
     try {
       const method = httpReq.method;
 
@@ -1878,6 +2033,18 @@ export class MoroEngineServer {
         httpRes.end('{"success":false,"error":"Not found"}');
       }
     } catch (error) {
+      await this.handleDispatchError(error, httpReq, httpRes);
+    }
+  }
+
+  // Error shaping shared by the async pipeline and the sync fast path:
+  // 413/400 client responses, error hooks, the app's error handler, then 500.
+  private async handleDispatchError(
+    error: unknown,
+    httpReq: EngineRequest,
+    httpRes: EngineResponse
+  ): Promise<void> {
+    {
       // Payload-too-large: respond 413 rather than a generic 500
       if ((error as any)?.statusCode === 413 && !httpRes.writableEnded && !httpRes.headersSent) {
         httpRes.statusCode = 413;
@@ -1945,7 +2112,7 @@ export class MoroEngineServer {
   // semantics to the Node and uWS servers' readBody). getBody returns a STABLE
   // ArrayBuffer copy, so Buffer.from() views it with no aliasing hazard.
   private parseBody(httpReq: EngineRequest): void {
-    const raw: ArrayBuffer | null = this._engine.getBody(httpReq._reqId);
+    const raw: ArrayBuffer | null = this._getBody(httpReq._reqId);
     if (!raw || raw.byteLength === 0) return;
 
     const contentType = httpReq.headers['content-type'] || '';

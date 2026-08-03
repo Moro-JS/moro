@@ -53,6 +53,8 @@ function segmentEqualsRange(segment: string, path: string, start: number, end: n
 
 export class RadixTree {
   private root: RadixNode;
+  // Scratch buffer for search() - see the comment there before touching
+  private readonly paramScratch: string[] = [];
 
   constructor() {
     this.root = {
@@ -193,7 +195,10 @@ export class RadixTree {
    * Search for a route in the radix tree - HASH-BASED
    */
   search(path: string): MatchResult | null {
-    const paramValues: string[] = [];
+    // Reused across calls: search is synchronous and the values are copied
+    // into the fresh params object below before returning, so nothing escapes
+    const paramValues = this.paramScratch;
+    paramValues.length = 0;
     const result = this.searchNode(this.root, path, 0, paramValues);
 
     if (result) {

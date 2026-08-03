@@ -1,14 +1,20 @@
 // HTTP/2 Server Implementation for Moro Framework
-import {
-  createSecureServer as createHttp2SecureServer,
-  createServer as createHttp2Server,
+//
+// `node:http2` and `node:zlib` are resolved on first use, not at import time.
+// framework.ts imports this module unconditionally (it has to - the HTTP/2
+// branch is chosen at construction), but the vast majority of apps never take
+// that branch. Loading node:http2 eagerly costs every app ~1 MB RSS on top of
+// http/https, and the zlib compressors another ~0.3 MB, for code they never
+// run. Builtins are always synchronously requirable on every supported Node,
+// so this needs no dynamic import and no engines bump.
+import type {
   Http2Server,
   Http2SecureServer,
   ServerHttp2Stream,
   IncomingHttpHeaders,
   OutgoingHttpHeaders,
 } from 'http2';
-import * as zlib from 'zlib';
+import { createRequire } from 'module';
 import { promisify } from 'util';
 import { createFrameworkLogger } from '../logger/index.js';
 import {
@@ -26,8 +32,26 @@ import {
 } from './utils/multipart-parser.js';
 import type { HttpRuntimeLimits } from './utils/size.js';
 
-const gzip = promisify(zlib.gzip);
-const deflate = promisify(zlib.deflate);
+// Builtins only, so the base is irrelevant; 'file:///' keeps this compiling
+// under the CJS transform Jest applies to the test suite (import.meta is a
+// syntax error there).
+const requireBuiltin = createRequire('file:///');
+
+let http2Mod: typeof import('http2') | undefined;
+function http2(): typeof import('http2') {
+  return (http2Mod ??= requireBuiltin('http2') as typeof import('http2'));
+}
+
+let gzip: ((buf: Buffer) => Promise<Buffer>) | undefined;
+let deflate: ((buf: Buffer) => Promise<Buffer>) | undefined;
+function compressors() {
+  if (!gzip) {
+    const zlib = requireBuiltin('zlib') as typeof import('zlib');
+    gzip = promisify(zlib.gzip) as (buf: Buffer) => Promise<Buffer>;
+    deflate = promisify(zlib.deflate) as (buf: Buffer) => Promise<Buffer>;
+  }
+  return { gzip: gzip, deflate: deflate as (buf: Buffer) => Promise<Buffer> };
+}
 
 export interface Http2ServerOptions {
   key?: string | Buffer;
@@ -148,10 +172,10 @@ export class MoroHttp2Server {
 
     // Create server
     if (this.isSecure) {
-      this.server = createHttp2SecureServer(serverOptions);
+      this.server = http2().createSecureServer(serverOptions);
       this.logger.info('HTTP/2 secure server created', 'ServerInit');
     } else {
-      this.server = createHttp2Server(serverOptions);
+      this.server = http2().createServer(serverOptions);
       this.logger.info('HTTP/2 server created', 'ServerInit');
     }
 
@@ -581,7 +605,7 @@ export class MoroHttp2Server {
         const acceptEncoding = req.headers['accept-encoding'];
 
         if (acceptEncoding && acceptEncoding.includes('gzip')) {
-          const compressed = await gzip(finalBuffer);
+          const compressed = await compressors().gzip(finalBuffer);
           httpRes._headers['content-encoding'] = 'gzip';
           httpRes._headers['content-length'] = compressed.length;
 
@@ -593,7 +617,7 @@ export class MoroHttp2Server {
           httpRes.headersSent = true;
           return;
         } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
-          const compressed = await deflate(finalBuffer);
+          const compressed = await compressors().deflate(finalBuffer);
           httpRes._headers['content-encoding'] = 'deflate';
           httpRes._headers['content-length'] = compressed.length;
 
