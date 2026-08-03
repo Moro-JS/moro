@@ -1,3 +1,13 @@
+## [1.8.7] - 2026-08-03
+
+### Fixed
+
+- fix: update cache TTL to seconds in middleware example
+
+### Other
+
+- Engine-path performance: synchronous dispatch, an allocation-free hot path, and a leaner memory baseline.
+
 ## [1.8.6] - 2026-07-30
 
 ### Other
