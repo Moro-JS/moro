@@ -10,6 +10,8 @@ export interface HttpRequest extends IncomingMessage {
   ip: string;
   requestId: string;
   cookies?: Record<string, string>;
+  /** Signed cookies whose signature verified; requires a cookie middleware secret. */
+  signedCookies?: Record<string, string>;
   files?: Record<string, any>;
 
   // Per-request typed context (pass data between middlewares without monkey-patching req)
@@ -41,6 +43,7 @@ export interface CookieOptions {
   domain?: string;
   path?: string;
   // Security options
+  signed?: boolean; // Sign the value; needs a cookie middleware secret
   critical?: boolean; // Mark as critical for security (throws on late set)
   throwOnLateSet?: boolean; // Force throw if headers already sent
 }

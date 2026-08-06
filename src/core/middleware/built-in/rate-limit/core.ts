@@ -9,7 +9,44 @@ const logger = createFrameworkLogger('RateLimitCore');
 export interface RateLimitConfig {
   requests: number;
   window: number;
+  /**
+   * Don't count requests that completed successfully (status < 400) against the
+   * limit — the request is counted up front and refunded once the response
+   * finishes, so a burst still can't exceed the limit mid-flight.
+   */
   skipSuccessfulRequests?: boolean;
+  /** The mirror of the above: don't count requests that failed (status >= 400). */
+  skipFailedRequests?: boolean;
+}
+
+/** Whether a finished response should give its counted request back. */
+export function shouldRefund(
+  statusCode: number,
+  config: { skipSuccessfulRequests?: boolean; skipFailedRequests?: boolean }
+): boolean {
+  const failed = statusCode >= 400;
+  return failed ? !!config.skipFailedRequests : !!config.skipSuccessfulRequests;
+}
+
+/**
+ * Run `cb` once the response has been fully sent. Prefers the 'finish' event
+ * (node, engine and uWS responses all emit it) and falls back to wrapping
+ * end() for the HTTP/2 response, which is a plain object with no emitter.
+ */
+export function onResponseFinished(res: HttpResponse, cb: () => void): void {
+  const emitter = res as any;
+  if (typeof emitter.once === 'function') {
+    emitter.once('finish', cb);
+    return;
+  }
+
+  const originalEnd = emitter.end;
+  if (typeof originalEnd !== 'function') return;
+  emitter.end = function patchedEnd(this: unknown, ...args: unknown[]) {
+    const result = originalEnd.apply(this, args);
+    cb();
+    return result;
+  };
 }
 
 interface RateLimitStore {
@@ -77,12 +114,19 @@ export class RateLimitCore {
 
     if (!allowed) {
       const retryAfter = this.getRetryAfter(clientId, routeKey);
+      res.setHeader('Retry-After', String(retryAfter));
       res.status(429).json({
         success: false,
         error: 'Rate limit exceeded',
         retryAfter,
       });
       return;
+    }
+
+    if (config.skipSuccessfulRequests || config.skipFailedRequests) {
+      onResponseFinished(res, () => {
+        if (shouldRefund(res.statusCode || 200, config)) this.refund(clientId, routeKey);
+      });
     }
   }
 
@@ -129,6 +173,19 @@ export class RateLimitCore {
 
     limitData.count++;
     return true;
+  }
+
+  /**
+   * Give a counted request back — used by skipSuccessfulRequests once a
+   * response finishes successfully. Never drops below zero, and ignores
+   * entries whose window has already rolled over.
+   */
+  refund(clientId: string, routeKey: string): void {
+    const key = `${routeKey}:${clientId}`;
+    const limitData = this.store.get(key);
+    if (!limitData) return;
+    if (RateLimitCore.getTime() > limitData.resetTime) return;
+    if (limitData.count > 0) limitData.count--;
   }
 
   /**

@@ -6,6 +6,7 @@ import { MemoryCacheAdapter } from '../cache/adapters/cache/memory.js';
 import { RedisCacheAdapter } from '../cache/adapters/cache/redis.js';
 import { FileCacheAdapter } from '../cache/adapters/cache/file.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
+import { signCookieValue, unsignCookieValue, isSignedCookieValue } from '../cookie/core.js';
 
 const logger = createFrameworkLogger('SessionCore');
 
@@ -245,12 +246,41 @@ export class SessionCore {
     }
   }
 
+  /** Cookie value carrying an id — signed when a secret is configured. */
+  private encodeSessionId(id: string): string {
+    return this.options.secret ? signCookieValue(id, this.options.secret) : id;
+  }
+
+  /**
+   * The session id the request carries, or undefined when there is none and
+   * when a signed id fails verification — a tampered id must start a fresh
+   * session rather than load someone else's.
+   */
+  readSessionId(req: HttpRequest): string | undefined {
+    const name = this.options.name || 'connect.sid';
+    // The cookie middleware verifies and strips signatures when it shares the
+    // secret, in which case the id arrives already unwrapped.
+    const verified = (req as any).signedCookies?.[name] as string | undefined;
+    const raw = verified ?? req.cookies?.[name];
+    if (!raw) return undefined;
+
+    const secret = this.options.secret;
+    if (!secret) return raw;
+
+    if (isSignedCookieValue(raw)) {
+      return unsignCookieValue(raw, secret) ?? undefined;
+    }
+
+    // A bare value is only trustworthy if it was verified upstream
+    return verified;
+  }
+
   async createSession(req: HttpRequest, res: HttpResponse, sessionId?: string): Promise<Session> {
     const id = sessionId || this.generateSessionId();
     const session = Session.create(id, this.store, this.options, {}, true);
 
     // Set session cookie
-    res.cookie(this.options.name || 'connect.sid', id, {
+    res.cookie(this.options.name || 'connect.sid', this.encodeSessionId(id), {
       ...this.options.cookie,
       secure: !!(
         this.options.cookie?.secure ||
@@ -293,7 +323,7 @@ export class SessionCore {
 
     // Set session cookie if new or rolling
     if (isNew || this.options.rolling) {
-      res.cookie(this.options.name || 'connect.sid', id, {
+      res.cookie(this.options.name || 'connect.sid', this.encodeSessionId(id), {
         ...this.options.cookie,
         secure: !!(
           this.options.cookie?.secure ||

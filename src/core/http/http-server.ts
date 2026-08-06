@@ -1372,6 +1372,10 @@ export class MoroHttpServer {
         }
       }
 
+      // A request hook may answer the request itself (rate limiting, auth
+      // rejection). Registration of the response hooks above still stands.
+      if (httpRes.headersSent) return;
+
       // executeMiddleware returns undefined when the whole chain completed
       // synchronously, so a sync chain costs zero promise allocations.
       if (this.globalMiddleware.length > 0) {

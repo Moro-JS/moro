@@ -77,12 +77,23 @@ describe('rate-limit enforcement', () => {
         statusCode: 0,
         body: undefined,
         headersSent: false,
+        headers: {} as Record<string, any>,
+        setHeader(name: string, value: any) {
+          this.headers[name.toLowerCase()] = value;
+          return this;
+        },
         status(code: number) {
           this.statusCode = code;
           return this;
         },
         json(payload: any) {
           this.body = payload;
+          this.headersSent = true;
+          return this;
+        },
+        // No event emitter here, so skipSuccessfulRequests takes the
+        // wrapped-end() path — the same one the HTTP/2 response uses.
+        end() {
           this.headersSent = true;
           return this;
         },
@@ -116,6 +127,70 @@ describe('rate-limit enforcement', () => {
       expect(res3.statusCode).toBe(429);
       expect(res3.body).toMatchObject({ success: false, error: 'Rate limit exceeded' });
       expect(typeof res3.body.retryAfter).toBe('number');
+      // Clients need to know when to come back
+      expect(res3.headers['retry-after']).toBe(String(res3.body.retryAfter));
+    });
+
+    it('refunds successful responses when skipSuccessfulRequests is set', async () => {
+      const mw = createRateLimitMiddleware({
+        requests: 2,
+        window: 60000,
+        skipSuccessfulRequests: true,
+      });
+      const ip = 'mw-client-skip-success';
+      const next = (() => {}) as () => Promise<void>;
+
+      // Every response finishes with a 200, so nothing is ever counted
+      for (let i = 0; i < 5; i++) {
+        const res = makeRes();
+        res.statusCode = 200;
+        await mw(makeReq(ip), res, next);
+        expect(res.statusCode).toBe(200);
+        res.end();
+      }
+
+      // Failures still count: two of them fill the window
+      for (let i = 0; i < 2; i++) {
+        const res = makeRes();
+        res.statusCode = 500;
+        await mw(makeReq(ip), res, next);
+        res.end();
+      }
+
+      const blocked = makeRes();
+      await mw(makeReq(ip), blocked, next);
+      expect(blocked.statusCode).toBe(429);
+    });
+
+    it('refunds failed responses when skipFailedRequests is set', async () => {
+      const mw = createRateLimitMiddleware({
+        requests: 2,
+        window: 60000,
+        skipFailedRequests: true,
+      });
+      const ip = 'mw-client-skip-failed';
+      const next = (() => {}) as () => Promise<void>;
+
+      // Failures are refunded, so they never fill the window
+      for (let i = 0; i < 5; i++) {
+        const res = makeRes();
+        res.statusCode = 404;
+        await mw(makeReq(ip), res, next);
+        expect(res.statusCode).toBe(404);
+        res.end();
+      }
+
+      // Successes still count
+      for (let i = 0; i < 2; i++) {
+        const res = makeRes();
+        res.statusCode = 200;
+        await mw(makeReq(ip), res, next);
+        res.end();
+      }
+
+      const blocked = makeRes();
+      await mw(makeReq(ip), blocked, next);
+      expect(blocked.statusCode).toBe(429);
     });
 
     it('is a passthrough (always calls next) when misconfigured', async () => {

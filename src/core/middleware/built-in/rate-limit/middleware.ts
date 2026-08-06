@@ -1,6 +1,11 @@
 // Rate Limit Middleware - Standard (req, res, next) middleware function
 import { StandardMiddleware } from '../../../../types/hooks.js';
-import { sharedRateLimitCore, type RateLimitConfig } from './core.js';
+import {
+  sharedRateLimitCore,
+  onResponseFinished,
+  shouldRefund,
+  type RateLimitConfig,
+} from './core.js';
 
 /**
  * Create rate limit middleware for use in middleware chains
@@ -28,12 +33,21 @@ export function createRateLimitMiddleware(config: RateLimitConfig): StandardMidd
 
     if (!allowed) {
       const retryAfter = sharedRateLimitCore.getRetryAfter(clientId, routeKey);
+      res.setHeader('Retry-After', String(retryAfter));
       res.status(429).json({
         success: false,
         error: 'Rate limit exceeded',
         retryAfter,
       });
       return;
+    }
+
+    if (config.skipSuccessfulRequests || config.skipFailedRequests) {
+      onResponseFinished(res, () => {
+        if (shouldRefund(res.statusCode || 200, config)) {
+          sharedRateLimitCore.refund(clientId, routeKey);
+        }
+      });
     }
 
     next();

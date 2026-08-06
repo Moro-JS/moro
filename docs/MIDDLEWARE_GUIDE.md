@@ -428,10 +428,10 @@ Protect endpoints from abuse with rate limiting.
 // Global rate limiting
 app.use(
   middleware.rateLimit({
-    requests: 100,
-    window: 60000, // 1 minute
+    requests: 100, // or max: 100
+    window: 60000, // 1 minute; or windowMs: 60000
     message: 'Too many requests',
-    statusCode: 429,
+    statusCode: 429, // default
   })
 );
 
@@ -441,35 +441,33 @@ app
   .rateLimit({
     requests: 5,
     window: 900000, // 15 minutes
-    keyGenerator: req => req.ip,
     skipSuccessfulRequests: false,
-    skipFailedRequests: true,
   })
   .handler((req, res) => {
     return login(req.body);
   });
-
-// Advanced rate limiting with Redis
-app.use(
-  middleware.rateLimit({
-    requests: 1000,
-    window: 60000,
-    store: 'redis',
-    redis: {
-      host: 'localhost',
-      port: 6379,
-    },
-    keyGenerator: req => {
-      // Rate limit by user or IP
-      return req.user?.id || req.ip;
-    },
-    skip: req => {
-      // Skip rate limiting for admins
-      return req.user?.role === 'admin';
-    },
-  })
-);
 ```
+
+A rejected request is answered immediately with the configured status and a
+`Retry-After` header carrying the seconds until the window resets — it never
+reaches your routes:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 47
+
+{ "success": false, "error": "Too many requests", "retryAfter": 47 }
+```
+
+`skipSuccessfulRequests` counts the request up front and refunds it once the
+response finishes below status 400, so a burst can't slip past the limit
+mid-flight while successful traffic still goes uncounted. `skipFailedRequests`
+is the mirror: only successful requests count.
+
+Requests are keyed by client IP and route (`METHOD:path`) in an in-memory store
+per process. There is no `keyGenerator`, `skip`, or external store — a clustered
+deployment limits per worker, so size the limit accordingly or terminate rate
+limiting at your proxy.
 
 ---
 
@@ -536,9 +534,20 @@ app.post('/api/preferences', (req, res) => {
     sameSite: 'strict',
   });
 
+  // Signed individually — no need for signed: true on the middleware
+  res.cookie('user', user.id, { signed: true, httpOnly: true });
+
   return { success: true };
 });
 ```
+
+Signing uses HMAC-SHA256 over the value with your `secret`, and verification is
+constant-time. Verified cookies arrive on `req.signedCookies`, never mixed into
+`req.cookies`; a value whose signature fails appears in neither, so a tampered
+cookie can't be mistaken for a valid one. `signed: true` on the middleware signs
+every cookie by default and individual `res.cookie` calls can still opt out.
+Setting a signed cookie without a configured `secret` throws rather than quietly
+sending it in the clear.
 
 ### Static Files
 
@@ -558,18 +567,29 @@ app.use(
 app.use(
   middleware.staticFiles({
     root: './public', // required; resolved to an absolute path
+    prefix: '/assets', // URL mount point; defaults to the URL root
     maxAge: 86400, // seconds; 0 omits Cache-Control
     etag: true, // default true; enables conditional 304s
+    lastModified: true, // default true; answers If-Modified-Since
+    acceptRanges: true, // default true; serves Range requests as 206
     index: ['index.html', 'index.htm'],
     dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
   })
 );
 ```
 
-`staticFiles` always serves from the URL root — there is no `prefix` option, and
-`app.use('/assets', middleware.staticFiles(...))` is **silently ignored**, because
-a path prefix is only honoured when argument 2 is a `createRouter()` instance.
-Serve one root and lay subdirectories out beneath it:
+Responses carry `ETag` and `Last-Modified`, and a conditional request on either
+gets a 304 (`If-None-Match` wins when both are sent). `Range` requests are
+answered with 206 and a `Content-Range` — what media seeking and resumable
+downloads need — while an unsatisfiable range gets a 416. A request for several
+ranges at once is answered with the whole entity rather than a multipart body,
+and `If-Range` falls back to the full entity when the file has changed since.
+
+Files above 512 KB are streamed rather than read into memory, so serving a large
+asset doesn't cost its full size in RSS per request; a `Range` reads only the
+requested slice. Small files keep the single-read path.
+
+Without a `prefix`, files are served from the URL root:
 
 ```typescript
 app.use(middleware.staticFiles({ root: './public' }));
@@ -577,6 +597,25 @@ app.use(middleware.staticFiles({ root: './public' }));
 // ./public/assets/app.css  ->  GET /assets/app.css
 // ./public/uploads/a.png   ->  GET /uploads/a.png
 ```
+
+With one, the prefix is stripped before the path is resolved against `root`, and
+requests outside it fall straight through to the rest of your app:
+
+```typescript
+app.use(middleware.staticFiles({ root: './public', prefix: '/cdn' }));
+
+// ./public/app.css   ->  GET /cdn/app.css
+// ./public/index.html ->  GET /cdn
+// GET /app.css       ->  not static; continues to your routes
+```
+
+Prefix matching is exact and case-sensitive, and `/cdn` never matches a sibling
+path like `/cdn-backup`. Mount several roots by registering the middleware more
+than once, each with its own prefix.
+
+> Note the prefix belongs in the options object. `app.use('/cdn', middleware.staticFiles(...))`
+> is **silently ignored** — a path passed as argument 1 is only honoured when
+> argument 2 is a `createRouter()` instance.
 
 ### File Upload
 
@@ -614,27 +653,20 @@ app
         filename: f.filename,
         size: f.size,
         mimetype: f.mimetype,
+        path: f.path, // where it was written, when dest is set
       })),
     };
   });
-
-// Multiple file fields
-app
-  .post('/api/profile')
-  .upload({
-    dest: './uploads',
-    fields: {
-      avatar: { maxFiles: 1, maxFileSize: 1024 * 1024 },
-      documents: { maxFiles: 5, maxFileSize: 5 * 1024 * 1024 },
-    },
-  })
-  .handler((req, res) => {
-    return {
-      avatar: req.files.avatar,
-      documents: req.files.documents,
-    };
-  });
 ```
+
+Each uploaded file carries `filename` (sanitized to a basename), `mimetype`,
+`size`, and `data` — the contents in memory. Set `dest` and the file is also
+written there, gaining `path` and `destination`; stored names are randomized so
+two uploads of the same filename cannot overwrite each other. Without `dest`,
+nothing touches disk. Files that fail validation are never written.
+
+There is no per-field configuration — `maxFiles`, `maxFileSize`, and
+`allowedTypes` apply to the whole request.
 
 ### Template Rendering
 
@@ -911,7 +943,7 @@ app.use(
   middleware.session({
     secret: process.env.SESSION_SECRET,
     store: 'redis',
-    redis: {
+    storeOptions: {
       host: 'localhost',
       port: 6379,
       password: process.env.REDIS_PASSWORD,
@@ -942,6 +974,10 @@ app.post('/logout', (req, res) => {
   return { success: true };
 });
 ```
+
+With a `secret`, the session id is signed in the cookie and verified on the way
+back in; an id that fails verification starts a fresh session instead of loading
+one. Without a secret the id is stored as-is.
 
 ---
 

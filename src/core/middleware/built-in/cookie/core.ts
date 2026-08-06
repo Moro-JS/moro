@@ -1,4 +1,5 @@
 // Cookie Core - Reusable cookie parsing and setting logic
+import * as crypto from 'crypto';
 import { HttpResponse } from '../../../../types/http.js';
 
 // ===== Types =====
@@ -11,6 +12,51 @@ export interface CookieOptions {
   sameSite?: 'strict' | 'lax' | 'none';
   domain?: string;
   path?: string;
+  /**
+   * Sign the value so tampering can be detected. Requires a `secret` on the
+   * cookie middleware; signed cookies arrive on `req.signedCookies`, never on
+   * `req.cookies`.
+   */
+  signed?: boolean;
+}
+
+/** Prefix marking a signed value, matching the cookie-parser convention. */
+const SIGNED_PREFIX = 's:';
+
+/** `s:<value>.<signature>` — HMAC-SHA256 of the value, base64url encoded. */
+export function signCookieValue(value: string, secret: string): string {
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(value)
+    .digest('base64')
+    .replace(/=+$/, '');
+  return `${SIGNED_PREFIX}${value}.${signature}`;
+}
+
+/**
+ * Verify a signed value, returning the payload or null when the value isn't
+ * signed or the signature doesn't match. Comparison is constant-time.
+ */
+export function unsignCookieValue(signed: string, secret: string): string | null {
+  if (!signed.startsWith(SIGNED_PREFIX)) return null;
+
+  const body = signed.slice(SIGNED_PREFIX.length);
+  const separator = body.lastIndexOf('.');
+  if (separator <= 0) return null;
+
+  const value = body.slice(0, separator);
+  const provided = Buffer.from(body.slice(separator + 1));
+  const expected = Buffer.from(
+    crypto.createHmac('sha256', secret).update(value).digest('base64').replace(/=+$/, '')
+  );
+
+  if (provided.length !== expected.length) return null;
+  return crypto.timingSafeEqual(provided, expected) ? value : null;
+}
+
+/** Whether a raw cookie value carries the signed marker. */
+export function isSignedCookieValue(value: string): boolean {
+  return value.startsWith(SIGNED_PREFIX);
 }
 
 // ===== Core Logic =====
@@ -100,7 +146,11 @@ export function buildCookieString(
  * Used directly by the router for route-based cookie handling
  */
 export class CookieCore {
-  constructor() {}
+  private secret: string | undefined;
+
+  constructor(secret?: string) {
+    this.secret = secret;
+  }
 
   /**
    * Parse cookies from request header
@@ -110,10 +160,48 @@ export class CookieCore {
   }
 
   /**
+   * Split parsed cookies into plain values and verified signed ones. A signed
+   * cookie whose signature doesn't verify is dropped from both — a tampered
+   * value must never look like a valid one.
+   */
+  splitSignedCookies(cookies: Record<string, string>): {
+    cookies: Record<string, string>;
+    signedCookies: Record<string, string>;
+  } {
+    if (!this.secret) return { cookies, signedCookies: {} };
+
+    const plain: Record<string, string> = {};
+    const signed: Record<string, string> = {};
+
+    for (const name of Object.keys(cookies)) {
+      const value = cookies[name] as string;
+      if (!isSignedCookieValue(value)) {
+        plain[name] = value;
+        continue;
+      }
+      const verified = unsignCookieValue(value, this.secret);
+      if (verified !== null) signed[name] = verified;
+    }
+
+    return { cookies: plain, signedCookies: signed };
+  }
+
+  /**
    * Set a cookie on the response
    */
   setCookie(res: HttpResponse, name: string, value: string, options: CookieOptions = {}): void {
-    const cookieString = buildCookieString(name, value, options);
+    let outgoing = value;
+    if (options.signed) {
+      if (!this.secret) {
+        throw new Error(
+          `Cookie '${name}' was set with signed: true but no secret is configured. ` +
+            `Pass one to the middleware: middleware.cookie({ secret: '...' }).`
+        );
+      }
+      outgoing = signCookieValue(value, this.secret);
+    }
+
+    const cookieString = buildCookieString(name, outgoing, options);
 
     const existingCookies = res.getHeader('Set-Cookie') || [];
     // Avoid spread operator - direct array manipulation

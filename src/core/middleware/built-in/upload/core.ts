@@ -1,4 +1,6 @@
 // File Upload Core Logic
+import * as crypto from 'crypto';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import { HttpRequest } from '../../../../types/http.js';
 
@@ -7,6 +9,11 @@ import { HttpRequest } from '../../../../types/http.js';
 const RE_CONTROL_CHARS = /[\x00-\x1f]/g;
 
 export interface UploadOptions {
+  /**
+   * Directory to write uploads to. Files are also kept in memory on
+   * `file.data`; set this when you want them on disk, and each file gains a
+   * `path`. Left unset, nothing is written.
+   */
   dest?: string;
   maxFileSize?: number;
   maxFiles?: number;
@@ -18,16 +25,22 @@ export interface UploadedFile {
   mimetype: string;
   data: Buffer;
   size: number;
+  /** Absolute path of the written file — present only when `dest` is set. */
+  path?: string;
+  /** Directory the file was written to. */
+  destination?: string;
 }
 
 export class UploadCore {
-  private dest: string;
+  private dest: string | undefined;
   private maxFileSize: number;
   private maxFiles: number;
   private allowedTypes?: string[] | undefined;
 
   constructor(options: UploadOptions = {}) {
-    this.dest = options.dest || '/tmp';
+    // Undefined by default: writing every upload to /tmp behind the user's back
+    // would be a surprise, so files only hit disk when a dest is asked for.
+    this.dest = options.dest;
     this.maxFileSize = options.maxFileSize || 5 * 1024 * 1024; // 5MB default
     this.maxFiles = options.maxFiles || 10;
     this.allowedTypes = options.allowedTypes;
@@ -80,6 +93,36 @@ export class UploadCore {
       }
       req.files = req.body.files;
     }
+  }
+
+  /**
+   * Write the uploaded files to `dest`, recording where each one landed.
+   * Stored names are randomized, so two uploads of the same filename can't
+   * overwrite one another and a crafted name can't pick its own destination.
+   * A no-op when no `dest` is configured.
+   */
+  async persistFiles(files: Record<string, any>): Promise<void> {
+    if (!this.dest) return;
+
+    const destination = path.resolve(this.dest);
+    await fs.mkdir(destination, { recursive: true });
+
+    for (const [, file] of Object.entries(files)) {
+      const uploaded = file as UploadedFile;
+      if (!uploaded.data) continue;
+
+      const safeName =
+        path.basename(uploaded.filename || 'upload').replace(RE_CONTROL_CHARS, '') || 'upload';
+      const target = path.join(destination, `${crypto.randomBytes(8).toString('hex')}-${safeName}`);
+
+      await fs.writeFile(target, uploaded.data);
+      uploaded.path = target;
+      uploaded.destination = destination;
+    }
+  }
+
+  getDest(): string | undefined {
+    return this.dest;
   }
 
   private formatSize(bytes: number): string {

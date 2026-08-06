@@ -22,12 +22,11 @@ const logger = createFrameworkLogger('SessionMiddleware');
  */
 export function createSessionMiddleware(options: SessionOptions = {}): StandardMiddleware {
   const sessionCore = new SessionCore(options);
-  const cookieName = options.name || 'connect.sid';
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
     try {
-      // Get session ID from cookie
-      const sessionId = req.cookies?.[cookieName];
+      // Get session ID from cookie, verifying its signature when one is used
+      const sessionId = sessionCore.readSessionId(req);
 
       // Attach session to request
       (req as any).session = await sessionCore.attachSession(req, res, sessionId);

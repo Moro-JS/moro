@@ -499,59 +499,35 @@ app
 ### Advanced Rate Limiting
 
 ```typescript
-// User-specific rate limiting
+// Expensive endpoints get their own budget — limits are per route,
+// so /api/upload can't be starved by traffic elsewhere
 app
   .post('/api/upload')
   .auth({ required: true })
   .rateLimit({
     requests: 10,
     window: 3600000, // 1 hour
-    keyGenerator: req => `uploads:${req.user.id}`,
-    skipFailedRequests: true,
+    skipFailedRequests: true, // only successful uploads count
   })
   .handler(handleUpload);
 
-// Dynamic rate limiting based on user tier
+// Brute-force protection: successful sign-ins go uncounted,
+// so only failures burn the budget
 app
-  .post('/api/process')
-  .auth({ required: true })
+  .post('/auth/login')
   .rateLimit({
-    requests: req => (req.user.tier === 'premium' ? 1000 : 100),
-    window: 3600000,
-    keyGenerator: req => `api:${req.user.id}`,
-    onLimitReached: (req, res) => {
-      res.status(429).json({
-        error: 'Rate limit exceeded',
-        upgrade: '/upgrade-plan',
-      });
-    },
+    requests: 5,
+    window: 900000, // 15 minutes
+    skipSuccessfulRequests: true,
   })
-  .handler(processRequest);
+  .handler(authenticateUser);
 ```
 
-### Rate Limiting Strategies
-
-```typescript
-// Sliding window rate limiting
-app
-  .post('/api/critical')
-  .rateLimit({
-    requests: 100,
-    window: 60000,
-    strategy: 'sliding-window', // More accurate than fixed window
-  })
-  .handler(criticalHandler);
-
-// Token bucket rate limiting
-app
-  .post('/api/burst')
-  .rateLimit({
-    tokens: 50,
-    refillRate: 10, // tokens per second
-    strategy: 'token-bucket', // Allows bursts
-  })
-  .handler(burstHandler);
-```
+Counting is a fixed window per client IP and route, held in memory in the
+process that served the request. There is no sliding-window or token-bucket
+strategy, no per-user key, and no shared store — under clustering each worker
+counts separately, so either size limits for the worker count or rate limit at
+the proxy in front of them.
 
 ---
 

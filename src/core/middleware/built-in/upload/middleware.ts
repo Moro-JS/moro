@@ -20,7 +20,7 @@ import { UploadCore, UploadOptions } from './core.js';
 export function createUploadMiddleware(options: UploadOptions = {}): Middleware {
   const core = new UploadCore(options);
 
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const contentType = req.headers['content-type'] || '';
 
     if (!contentType.includes('multipart/form-data')) {
@@ -38,6 +38,19 @@ export function createUploadMiddleware(options: UploadOptions = {}): Middleware 
         res.status(400).json({
           success: false,
           error: validation.error,
+        });
+        return;
+      }
+
+      // Only touches disk when a dest was configured
+      try {
+        await core.persistFiles(req.files);
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: `Failed to store uploaded files: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         });
         return;
       }

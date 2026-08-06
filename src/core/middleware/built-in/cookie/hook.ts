@@ -6,7 +6,9 @@ import { CookieCore, type CookieOptions } from './core.js';
 const logger = createFrameworkLogger('CookieMiddleware');
 
 export interface CookieConfig {
+  /** Signing key. Required before any cookie can be set with `signed: true`. */
   secret?: string;
+  /** Sign every cookie by default; individual calls can still opt out. */
   signed?: boolean;
 }
 
@@ -24,7 +26,7 @@ export interface CookieConfig {
  * }));
  * ```
  */
-export const cookie = (_config: CookieConfig = {}): MiddlewareInterface => ({
+export const cookie = (config: CookieConfig = {}): MiddlewareInterface => ({
   name: 'cookie',
   version: '1.0.0',
   metadata: {
@@ -37,18 +39,33 @@ export const cookie = (_config: CookieConfig = {}): MiddlewareInterface => ({
   install: async (hooks: any, _middlewareOptions: any = {}) => {
     logger.debug('Installing cookie middleware', 'Installation');
 
-    const cookieCore = new CookieCore();
+    // Fail at registration rather than silently handing out unsigned cookies
+    if (config.signed && !config.secret) {
+      throw new Error(
+        'middleware.cookie({ signed: true }) requires a secret to sign with. ' +
+          "Pass one: middleware.cookie({ secret: '...', signed: true })."
+      );
+    }
+
+    const cookieCore = new CookieCore(config.secret);
+    const signByDefault = config.signed === true;
 
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
 
-      // Parse cookies from request
-      req.cookies = cookieCore.parseCookies(req.headers.cookie);
+      // Parse cookies from request; signed ones are verified and kept apart
+      const parsed = cookieCore.parseCookies(req.headers.cookie);
+      const split = cookieCore.splitSignedCookies(parsed);
+      req.cookies = split.cookies;
+      req.signedCookies = split.signedCookies;
 
       // Add cookie methods to response
       res.cookie = (name: string, value: string, options: CookieOptions = {}) => {
-        cookieCore.setCookie(res, name, value, options);
+        cookieCore.setCookie(res, name, value, {
+          ...options,
+          signed: options.signed ?? signByDefault,
+        });
         return res;
       };
 

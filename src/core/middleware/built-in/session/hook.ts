@@ -39,14 +39,13 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
     };
 
     const sessionCore = new SessionCore(config);
-    const cookieName = config.name || 'connect.sid';
 
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
 
-      // Get session ID from cookie
-      const sessionId = req.cookies?.[cookieName];
+      // Get session ID from cookie, verifying its signature when one is used
+      const sessionId = sessionCore.readSessionId(req);
 
       // Attach session to request
       req.session = await sessionCore.attachSession(req, res, sessionId);

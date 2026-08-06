@@ -35,6 +35,7 @@ export interface RateLimitConfig {
   requests: number;
   window: number;
   skipSuccessfulRequests?: boolean;
+  skipFailedRequests?: boolean;
 }
 
 export interface CacheConfig {

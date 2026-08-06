@@ -18,15 +18,17 @@ import { CookieCore, type CookieOptions } from './core.js';
  * res.clearCookie('user')
  * ```
  */
-export function createCookieMiddleware(): StandardMiddleware {
-  const cookieCore = new CookieCore();
+export function createCookieMiddleware(secret?: string): StandardMiddleware {
+  const cookieCore = new CookieCore(secret);
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
     const reqAny = req as any;
     const resAny = res as any;
 
-    // Parse cookies from request
-    reqAny.cookies = cookieCore.parseCookies(req.headers.cookie);
+    // Parse cookies from request; signed values are verified and kept apart
+    const split = cookieCore.splitSignedCookies(cookieCore.parseCookies(req.headers.cookie));
+    reqAny.cookies = split.cookies;
+    reqAny.signedCookies = split.signedCookies;
 
     // Add cookie methods to response
     resAny.cookie = (name: string, value: string, options: CookieOptions = {}) => {

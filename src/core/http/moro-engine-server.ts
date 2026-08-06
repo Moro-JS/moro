@@ -1992,6 +1992,10 @@ export class MoroEngineServer {
         });
       }
 
+      // A request hook may answer the request itself (rate limiting, auth
+      // rejection). Registration of the response hooks above still stands.
+      if (httpRes.headersSent) return;
+
       // Execute global middleware chain
       if (this.globalMiddleware.length > 0) {
         await this.executeMiddleware(

@@ -589,7 +589,6 @@ app
   .rateLimit({
     requests: 5,
     window: 60000,
-    keyGenerator: req => `orders:${req.user.id}`,
   })
   .cache({
     ttl: 0, // No caching for orders
@@ -846,7 +845,6 @@ export default defineModule({
       rateLimit: {
         requests: 5,
         window: 60000,
-        keyGenerator: req => `orders:create:${req.user.id}`,
       },
       description: 'Create a new order',
       tags: ['orders', 'create'],
@@ -1357,7 +1355,7 @@ app.use(
   middleware.rateLimit({
     requests: 100,
     window: 60000,
-    keyGenerator: req => req.ip,
+    skipSuccessfulRequests: true,
   })
 );
 ```
@@ -1379,10 +1377,13 @@ app.use(
 ```typescript
 app.use(
   middleware.cookie({
-    secret: 'your-secret-key',
-    signed: true,
+    secret: 'your-secret-key', // required before any cookie can be signed
+    signed: true, // sign every cookie by default
   })
 );
+
+// Verified signed cookies arrive separately from plain ones
+app.get('/me', (req, res) => ({ theme: req.cookies.theme, user: req.signedCookies.user }));
 ```
 
 **Static Files** - Static file serving with caching
@@ -1391,8 +1392,11 @@ app.use(
 app.use(
   middleware.staticFiles({
     root: './public',
+    prefix: '/assets', // optional; defaults to the URL root
     maxAge: 3600, // seconds
     etag: true,
+    lastModified: true, // If-Modified-Since -> 304
+    acceptRanges: true, // Range -> 206 with Content-Range
   })
 );
 ```
@@ -1403,7 +1407,7 @@ app.use(
 app
   .post('/upload')
   .upload({
-    dest: './uploads',
+    dest: './uploads', // written to disk; each file gains a `path`
     maxFileSize: 10 * 1024 * 1024,
     allowedTypes: ['image/jpeg', 'image/png'],
   })
@@ -2885,7 +2889,6 @@ app
   .rateLimit({
     requests: 10,
     window: 3600000, // 1 hour
-    keyGenerator: req => `user:${req.user.id}`,
   })
   .handler(sendEmail);
 ```

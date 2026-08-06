@@ -15,6 +15,11 @@ import { StaticCore, StaticOptions } from './core.js';
  *   index: ['index.html'],
  *   etag: true,
  * }));
+ *
+ * // Mounted under a URL prefix — ./public/app.css is served as /cdn/app.css.
+ * // Note the prefix goes in the options, not as app.use('/cdn', ...), which
+ * // only mounts createRouter() instances.
+ * app.use(staticFiles({ root: './public', prefix: '/cdn' }));
  * ```
  */
 export function createStaticMiddleware(options: StaticOptions): Middleware {
