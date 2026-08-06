@@ -1,3 +1,9 @@
+## [1.8.8] - 2026-08-06
+
+### Other
+
+- ## Middleware: options that were silently ignored now do what they say
+
 ## [1.8.7] - 2026-08-03
 
 ### Fixed
