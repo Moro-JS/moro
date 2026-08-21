@@ -1,3 +1,9 @@
+## [1.8.9] - 2026-08-21
+
+### Other
+
+- MoroHttpServer has dispatched middleware synchronously for a while: a middleware that calls next() before returning advances the chain in a plain loop, with no promise allocated. The engine adapter, the uWS adapter, and the per-route middleware path never got that treatment — each of them allocated a new Promise, a next closure, and an await suspension per middleware, per request, even when the middleware was entirely synchronous.
+
 ## [1.8.8] - 2026-08-06
 
 ### Other
