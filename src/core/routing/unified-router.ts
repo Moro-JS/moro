@@ -747,7 +747,8 @@ export class UnifiedRouter {
 
         const beforeLen = beforeMw.length;
         for (let i = 0; i < beforeLen; i++) {
-          await this.executeMiddleware(beforeMw[i] as Middleware, req, res);
+          const r = this.executeMiddleware(beforeMw[i] as Middleware, req, res);
+          if (r) await r;
           if (res.headersSent) return;
         }
         break;
@@ -774,7 +775,8 @@ export class UnifiedRouter {
               }),
             });
           }
-          await this.executeMiddleware(route.authMiddleware, req, res);
+          const r = this.executeMiddleware(route.authMiddleware, req, res);
+          if (r) await r;
         }
         break;
 
@@ -796,7 +798,8 @@ export class UnifiedRouter {
 
         const transformLen = transformMw.length;
         for (let i = 0; i < transformLen; i++) {
-          await this.executeMiddleware(transformMw[i] as Middleware, req, res);
+          const r = this.executeMiddleware(transformMw[i] as Middleware, req, res);
+          if (r) await r;
           if (res.headersSent) return;
         }
         break;
@@ -820,7 +823,8 @@ export class UnifiedRouter {
 
         const afterLen = afterMw.length;
         for (let i = 0; i < afterLen; i++) {
-          await this.executeMiddleware(afterMw[i] as Middleware, req, res);
+          const r = this.executeMiddleware(afterMw[i] as Middleware, req, res);
+          if (r) await r;
           if (res.headersSent) return;
         }
         break;
@@ -833,7 +837,8 @@ export class UnifiedRouter {
 
         const middlewareLen = middleware.length;
         for (let i = 0; i < middlewareLen; i++) {
-          await this.executeMiddleware(middleware[i] as Middleware, req, res);
+          const r = this.executeMiddleware(middleware[i] as Middleware, req, res);
+          if (r) await r;
           if (res.headersSent) return;
         }
         break;
@@ -841,35 +846,58 @@ export class UnifiedRouter {
     }
   }
 
-  private async executeMiddleware(
+  // Sync-aware: a middleware that returns a non-thenable always settled before
+  // the caller could await it (next() called, or the auto-advance below), so
+  // the promise was pure overhead - one allocation plus an async suspension per
+  // middleware per request. Returns undefined in that case; callers skip the
+  // await. A promise is only built when the middleware is genuinely async.
+  // Error/advance semantics are unchanged.
+  private executeMiddleware(
     middleware: Middleware,
     req: HttpRequest,
     res: HttpResponse
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let resolved = false;
+  ): void | Promise<void> {
+    let resolved = false;
+    let settle: (() => void) | undefined;
 
-      const next = () => {
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
-      };
+    const next = () => {
+      if (resolved) return;
+      resolved = true;
+      if (settle) settle();
+    };
 
-      try {
-        const result = middleware(req, res, next);
-        // Duck typing faster than instanceof
-        if (result && typeof result.then === 'function') {
-          result.then(() => !resolved && next()).catch(reject);
-        } else if (!resolved) {
-          next();
-        }
-      } catch (error) {
-        if (!resolved) {
-          resolved = true;
-          reject(error);
-        }
-      }
+    let result: any;
+    try {
+      result = middleware(req, res, next);
+    } catch (error) {
+      // Matches the previous promise form: a throw after next() already
+      // advanced the chain was swallowed; otherwise it rejects/throws.
+      if (resolved) return;
+      resolved = true;
+      throw error;
+    }
+
+    // Duck typing faster than instanceof
+    const isThenable = result && typeof result.then === 'function';
+
+    if (!isThenable) {
+      // Sync middleware: previously this either resolved via next() or was
+      // auto-advanced - settled either way before any await could observe it.
+      next();
+      return;
+    }
+
+    if (resolved) {
+      // next() ran synchronously, so the chain already advanced. Keep the
+      // returned promise's rejection handled, exactly as the old .catch(reject)
+      // did on an already-resolved promise, so it never surfaces as unhandled.
+      (result as Promise<any>).then(undefined, () => {});
+      return;
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      settle = resolve;
+      (result as Promise<any>).then(() => next(), reject);
     });
   }
 

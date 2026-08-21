@@ -107,6 +107,13 @@ const SENDFILE_BUFFER_LIMIT = 1024 * 1024;
 // allocated. The engine only reads it; never mutate.
 const JSON_HEADER_PAIR = ['content-type', 'application/json'];
 
+// Content-Type sniff for send(): does the body start with '{' or '[' after
+// optional leading whitespace? Regex `\s` matches exactly the set trimStart()
+// strips, and the match stops at the first non-space character, so this costs
+// O(leading whitespace) and allocates nothing - trimStart() copied the entire
+// body just to read one character.
+const JSON_BODY_START = /^\s*[{[]/;
+
 /**
  * Prototype-based request object for the engine adapter.
  *
@@ -767,11 +774,9 @@ export class EngineResponse extends LazyEventEmitter {
     // Buffers, text/plain otherwise.
     if (!('content-type' in this.responseHeaders)) {
       if (typeof data === 'string') {
-        const t = data.trimStart();
-        this.responseHeaders['content-type'] =
-          t.startsWith('{') || t.startsWith('[')
-            ? 'application/json; charset=utf-8'
-            : 'text/plain; charset=utf-8';
+        this.responseHeaders['content-type'] = JSON_BODY_START.test(data)
+          ? 'application/json; charset=utf-8'
+          : 'text/plain; charset=utf-8';
       } else {
         this.responseHeaders['content-type'] = 'application/octet-stream';
       }
@@ -1996,13 +2001,16 @@ export class MoroEngineServer {
       // rejection). Registration of the response hooks above still stands.
       if (httpRes.headersSent) return;
 
-      // Execute global middleware chain
+      // Execute global middleware chain. executeMiddleware returns undefined
+      // when the whole chain completed synchronously, so a sync chain costs
+      // zero promise allocations.
       if (this.globalMiddleware.length > 0) {
-        await this.executeMiddleware(
+        const mwResult = this.executeMiddleware(
           this.globalMiddleware,
           httpReq as any as HttpRequest,
           httpRes as any as HttpResponse
         );
+        if (mwResult) await mwResult;
         if (httpRes.headersSent) return;
       }
 
@@ -2168,41 +2176,121 @@ export class MoroEngineServer {
     }
   }
 
-  private async executeMiddleware(
+  // Middleware execution with Express-compatible error propagation.
+  // Supports: 3-arg (req, res, next), 4-arg (err, req, res, next) error middlewares,
+  // and next(err) to skip forward to the next error middleware.
+  //
+  // Sync-aware dispatch (mirrors MoroHttpServer.executeMiddleware): middleware
+  // that calls next() synchronously (or throws synchronously) advances the
+  // chain in a plain loop with ZERO promise allocations. A promise is only
+  // created when a middleware actually completes asynchronously. Returns
+  // undefined when the whole chain ran synchronously, so the caller can skip
+  // its await - one sync global middleware used to cost a promise, a closure
+  // and an async-context suspension on every single request.
+  private executeMiddleware(
     middleware: Middleware[],
     req: HttpRequest,
     res: HttpResponse
-  ): Promise<void> {
-    // Express error semantics: a middleware that calls next(err) (or throws)
-    // routes to the NEXT 4-arg error handler (err, req, res, next), skipping
-    // the normal 3-arg middleware in between; normal middleware is skipped
-    // while an error is pending, and error handlers are skipped when there is
-    // no error. An uncaught error propagates to handleRequest's 500 path.
-    let error: any = null;
-    for (const mw of middleware) {
-      if (res.headersSent) break;
-      const isErrorHandler = (mw as any).length >= 4;
-      if (error && !isErrorHandler) continue;
-      if (!error && isErrorHandler) continue;
+  ): void | Promise<void> {
+    return this.dispatchMiddleware(middleware, req, res, 0, undefined);
+  }
 
+  private dispatchMiddleware(
+    middleware: Middleware[],
+    req: HttpRequest,
+    res: HttpResponse,
+    startIndex: number,
+    initialError: any
+  ): void | Promise<void> {
+    const len = middleware.length;
+    let activeError: any = initialError;
+    let i = startIndex;
+
+    while (i < len) {
+      if (res.headersSent) return;
+
+      const mw = middleware[i] as any;
+      i++;
+      const isErrorHandler = mw.length >= 4;
+
+      // Non-error middleware is skipped while an error is active; error middleware
+      // is skipped while no error is active. Matches Express semantics.
+      if (activeError !== undefined && !isErrorHandler) continue;
+      if (activeError === undefined && isErrorHandler) continue;
+
+      let settled = false;
+      let settledError: any = undefined;
+      let asyncResolve: ((err: any) => void) | undefined;
+
+      const next = (err?: any) => {
+        if (settled) return;
+        settled = true;
+        settledError = err;
+        if (asyncResolve) asyncResolve(err);
+      };
+
+      let result: any;
       try {
-        await new Promise<void>((resolve, reject) => {
-          const next = (err?: any) => (err ? reject(err) : resolve());
-          try {
-            const result = error ? (mw as any)(error, req, res, next) : mw(req, res, next);
-            if (result && typeof result.then === 'function') {
-              result.then(() => resolve(), reject);
-            }
-          } catch (e) {
-            reject(e);
-          }
-        });
-        error = null; // handler (error or normal) completed cleanly
-      } catch (e) {
-        error = e; // route to the next error handler
+        result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          settledError = err;
+        }
       }
+
+      const isThenable = result && typeof result.then === 'function';
+
+      if (settled) {
+        // Completed synchronously (next() called sync, or threw sync). A still
+        // pending returned promise no longer gates the chain once next() has
+        // been called; swallow late rejections so they never go unhandled.
+        if (isThenable) {
+          (result as Promise<void>).then(undefined, () => {});
+        }
+        activeError = settledError;
+        continue;
+      }
+
+      if (!isThenable && res.headersSent) {
+        // Terminal middleware (Express style): it answered the request and
+        // deliberately never calls next(). The chain is finished - skip
+        // allocating a promise that nothing would ever settle (the response was
+        // already sent, so this only ever produced immediate garbage).
+        return;
+      }
+
+      if (!isThenable) {
+        // Sync-looking middleware that neither called next() nor returned a
+        // promise: it will call next() later (e.g. from an event callback).
+        // Fall back to a promise for the remainder of the chain.
+        const resumeIndex = i;
+        return new Promise<any>(resolve => {
+          asyncResolve = resolve;
+        }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
+      }
+
+      // Async middleware: completion is next() OR promise settle, whichever
+      // happens first (same semantics as the previous implementation).
+      const resumeIndex = i;
+      return new Promise<any>(resolve => {
+        asyncResolve = resolve;
+        (result as Promise<void>).then(
+          () => {
+            if (!settled) next();
+          },
+          (err: any) => {
+            if (!settled) next(err);
+          }
+        );
+      }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
     }
-    if (error) throw error;
+
+    // If an error is still unhandled after the chain, re-throw so the top-level
+    // catch in handleRequest can invoke the registered errorHandler / default 500.
+    if (activeError !== undefined) {
+      throw activeError;
+    }
   }
 
   // Public API - matches MoroHttpServer/UWebSocketsHttpServer interface
