@@ -7,8 +7,15 @@ import { Logger } from '../../types/logger.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import cluster from 'cluster';
-import { isMainThread } from 'worker_threads';
+import { requireBuiltin } from '../utilities/builtin.js';
+
+// worker_threads on first use (core/utilities/builtin.ts). node:cluster is
+// never loaded here: a cluster worker is exactly a process with
+// NODE_UNIQUE_ID in its environment (that is how node:cluster itself decides
+// isWorker), and asking cluster would pull child_process/dgram/net (~7 MB)
+// into every app that starts the job scheduler.
+const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
+const isClusterWorkerProcess = () => process.env.NODE_UNIQUE_ID !== undefined;
 
 export interface LeaderElectionOptions {
   strategy: 'file' | 'redis' | 'none';
@@ -146,12 +153,17 @@ return 0`;
    * Check if this process should participate in leader election
    */
   private shouldParticipate(): boolean {
-    // Only main thread and primary cluster process can be leader
-    if (!isMainThread) {
+    // Only the main thread of a non-worker process can be leader. Under
+    // thread clustering that is exactly the cluster primary (its worker
+    // threads are !isMainThread); under process clustering it is the primary
+    // process (workers have cluster.isWorker). Either way the scheduler runs
+    // in the primary (Moro.startPrimaryServices), so one participant per
+    // cluster - no change needed for threads.
+    if (!wt().isMainThread) {
       return false;
     }
 
-    if (cluster.isWorker) {
+    if (isClusterWorkerProcess()) {
       return false;
     }
 

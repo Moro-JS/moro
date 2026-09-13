@@ -19,11 +19,26 @@ import {
 import { PathMatcher } from './core/routing/path-matcher.js';
 import { AppDocumentationManager, DocsConfig } from './core/docs/index.js';
 import { EventEmitter } from 'events';
-import cluster from 'cluster';
-import os from 'os';
+import { requireBuiltin } from './core/utilities/builtin.js';
+
+// node:cluster (it drags in child_process, dgram and net) is loaded only when
+// process clustering actually runs; worker_threads only on the clustering
+// path. See core/utilities/builtin.ts.
+const nodeCluster = () => requireBuiltin<(typeof import('cluster'))['default']>('cluster');
+const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
+import {
+  ThreadClusterPrimary,
+  ThreadClusterWorker,
+  computeWorkerCount,
+  isUserTunedYoungGen,
+  resolveClusterTransport,
+  threadWorkerInfo,
+  YOUNG_GEN_MB_FOR_SEMI_SPACE_4,
+  type ThreadWorkerInfo,
+} from './core/cluster/thread-cluster.js';
 import { normalizeValidationError } from './core/validation/schema-interface.js';
 import { buildModuleBasePath } from './core/utilities/module-path.js';
-import { filePathToImportURL } from './core/utilities/package-utils.js';
+import { filePathToImportURL, loadNativeEngine } from './core/utilities/package-utils.js';
 // Configuration System Integration
 import { initializeConfig, initializeConfigAsync, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
@@ -1015,7 +1030,8 @@ export class Moro extends EventEmitter {
 
     // Check if clustering is enabled for massive performance gains
     if (this.config.performance?.clustering?.enabled) {
-      this.logger.info('Clustering enabled - using Node.js cluster', 'Cluster');
+      // Worker threads (engine backend, POSIX, engine >= 1.2.0) or node:cluster
+      // processes - startWithClustering picks and logs the transport.
       this.startWithClustering(port, host as string, callback);
       return;
     }
@@ -2040,187 +2056,298 @@ export class Moro extends EventEmitter {
    */
   private clusterWorkers = new Map<number, any>();
 
+  private threadCluster: ThreadClusterPrimary | undefined = undefined;
+
+  // Entry point for performance.clustering: decides whether THIS instance is
+  // a worker (thread or process) or the primary, and which transport the
+  // primary uses. Config keys are unchanged; the transport is automatic.
   private startWithClustering(port: number, host?: string, callback?: () => void): void {
-    // Worker count calculation - respect user choice
-    let workerCount = this.config.performance?.clustering?.workers || os.cpus().length;
+    const { count: workerCount, detail } = computeWorkerCount(this.config.performance?.clustering);
+    const tinfo = threadWorkerInfo();
+    if (tinfo) {
+      this.startClusterWorker({ kind: 'thread', info: tinfo }, port, host);
+      return;
+    }
+    if (nodeCluster().isWorker) {
+      this.startClusterWorker({ kind: 'process' }, port, host);
+      return;
+    }
+    this.logger.info(detail, 'Cluster');
+    const engineKind = this.engine;
+    const transport = resolveClusterTransport({
+      platform: process.platform,
+      isMainThread: wt().isMainThread,
+      argv1: process.argv[1],
+      engineServer: engineKind.server,
+      enginePackage: engineKind.enginePackage,
+      workerThreadsCapable: loadNativeEngine()?.capabilities?.workerThreads === true,
+    });
+    if (transport.kind === 'threads') {
+      this.startThreadPrimary(transport.entry, workerCount, port, host, callback);
+      return;
+    }
+    this.logger.info(
+      `Clustering: ${workerCount} worker processes (node:cluster; ${transport.reason})`,
+      'Cluster'
+    );
+    this.startProcessPrimary(workerCount, port, host, callback);
+  }
 
-    // Only auto-optimize if user hasn't specified a number or set it to 'auto'
-    if (workerCount === 'auto') {
-      const cpuCount = os.cpus().length;
-      const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
+  // Services that must run exactly ONCE per cluster, in the primary: the job
+  // scheduler (leader election already treats the main thread of a
+  // non-cluster-worker process as a participant) and the gRPC server (its own
+  // port). GraphQL registers HTTP/WS routes, so it initialises in every
+  // worker instead. Before 1.9.0 none of these started under clustering.
+  private startPrimaryServices(): void {
+    this.startJobScheduler().catch(err => {
+      this.logger.error(`Failed to start job scheduler: ${String(err)}`);
+    });
+    if (this.grpcManager && !this.grpcStarted) {
+      this.startGrpc().catch(error => {
+        this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+      });
+    }
+  }
 
-      // Get memory per worker from config - if not set by user, calculate dynamically
-      let memoryPerWorkerGB = this.config.performance?.clustering?.memoryPerWorkerGB;
+  private startThreadPrimary(
+    entry: string,
+    workerCount: number,
+    port: number,
+    host: string | undefined,
+    callback?: () => void
+  ): void {
+    // The libuv threadpool is process-wide and sized once at first use;
+    // the process path set this per worker process. Only if the operator
+    // did not choose a size.
+    if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '64';
+    // Same young-generation bound the process path applies through execArgv
+    // (see YOUNG_GEN_MB_FOR_SEMI_SPACE_4), unless the operator tuned GC.
+    const resourceLimits = isUserTunedYoungGen()
+      ? undefined
+      : { maxYoungGenerationSizeMb: YOUNG_GEN_MB_FOR_SEMI_SPACE_4 };
 
-      if (!memoryPerWorkerGB) {
-        // Dynamic calculation: (Total RAM - 4GB headroom) / CPU cores
-        const headroomGB = 4;
-        memoryPerWorkerGB = Math.max(0.5, Math.floor((totalMemoryGB - headroomGB) / cpuCount));
-      }
+    const engineKind = this.engine;
+    this.logger.info(
+      `Clustering: ${workerCount} worker threads (worker_threads + SO_REUSEPORT, ` +
+        `${engineKind.enginePackage}${engineKind.engineVersion ? ` v${engineKind.engineVersion}` : ''})`,
+      'Cluster'
+    );
 
-      // Conservative formula based on general guidelines:
-      // - Don't exceed CPU cores
-      // - Respect user's memory allocation preference
-      // - Let the system resources determine the limit
-      workerCount = Math.min(
-        cpuCount, // Don't exceed CPU cores
-        Math.floor(totalMemoryGB / memoryPerWorkerGB) // User-configurable memory per worker
-      );
-
-      this.logger.info(
-        `Auto-calculated worker count: ${workerCount} (CPU: ${cpuCount}, RAM: ${totalMemoryGB.toFixed(1)}GB, ${memoryPerWorkerGB}GB per worker)`,
+    let fellBack = false;
+    const fallBackToProcesses = (why: string) => {
+      if (fellBack) return;
+      fellBack = true;
+      this.logger.warn(
+        `Worker threads unavailable (${why}); falling back to worker processes`,
         'Cluster'
       );
-    } else if (typeof workerCount === 'number') {
-      // User specified a number - respect their choice
-      this.logger.info(`Using user-specified worker count: ${workerCount}`, 'Cluster');
+      const primary = this.threadCluster;
+      this.threadCluster = undefined;
+      void primary?.shutdown(1000).finally(() => {
+        this.startProcessPrimary(workerCount, port, host, callback);
+      });
+    };
+
+    const primary = new ThreadClusterPrimary({
+      entry,
+      argv: process.argv.slice(2),
+      workerCount,
+      logger: this.logger,
+      ...(resourceLimits ? { resourceLimits } : {}),
+      onReady: () => {
+        this.startPrimaryServices();
+        if (callback) callback();
+      },
+      onFatal: (error, kind) => {
+        if (kind === 'bind') {
+          // Processes would fail identically: surface it like the single-process
+          // path does (Node's server convention; rethrows without a listener).
+          this.emit('error', error);
+          return;
+        }
+        fallBackToProcesses(error.message);
+      },
+    });
+    this.threadCluster = primary;
+    try {
+      primary.start();
+    } catch (error) {
+      fallBackToProcesses(error instanceof Error ? error.message : String(error));
+      return;
     }
 
-    if (cluster.isPrimary) {
-      this.logger.info(`Starting ${workerCount} workers`, 'Cluster');
+    // Graceful shutdown: drain every worker thread (each closes its server),
+    // then the primary's own services; a second signal exits at once.
+    let shuttingDown = false;
+    const gracefulShutdown = (code: number) => {
+      if (shuttingDown) {
+        process.exit(code);
+        return;
+      }
+      shuttingDown = true;
+      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
+      this.close()
+        .then(() => process.exit(code))
+        .catch(() => process.exit(1));
+    };
+    process.on('SIGINT', () => gracefulShutdown(0));
+    process.on('SIGTERM', () => gracefulShutdown(0));
+  }
 
-      // Optimize cluster scheduling for high concurrency
-      // Round-robin is the default on all platforms except Windows (Node.js docs)
-      // Provides better load distribution than shared socket approach
-      cluster.schedulingPolicy = cluster.SCHED_RR;
+  private startProcessPrimary(
+    workerCount: number,
+    port: number,
+    host: string | undefined,
+    callback?: () => void
+  ): void {
+    void port;
+    void host;
+    this.logger.info(`Starting ${workerCount} workers`, 'Cluster');
 
-      // Workers inherit the primary's execArgv; additionally bound each
-      // worker's V8 young generation unless the user tuned it themselves.
-      // On big machines V8 sizes the nursery from total RAM and grows it
-      // under sustained load (~10-34 MB extra RSS per process, measured on a
-      // 64 GB box) - and in cluster mode that cost multiplies by the worker
-      // count. A/B-benched 2026-08-01: identical throughput at 4 MB semi-space
-      // in both the realistic profile (~92k vs ~90k req/s) and the pipelined
-      // x10 microbenchmark (~560k both ways), while sustained-load RSS drops
-      // ~30 MB per worker (115 -> 81 MB on the 25-route POST soak).
-      const userTunedGC =
-        process.execArgv.some(a => a.includes('--max-semi-space-size')) ||
-        (process.env.NODE_OPTIONS || '').includes('--max-semi-space-size');
+    // Optimize cluster scheduling for high concurrency
+    // Round-robin is the default on all platforms except Windows (Node.js docs)
+    // Provides better load distribution than shared socket approach
+    nodeCluster().schedulingPolicy = nodeCluster().SCHED_RR;
 
-      // Set cluster settings for better performance
-      cluster.setupMaster({
-        exec: process.argv[1] || process.execPath,
-        args: process.argv.slice(2),
-        silent: false,
-        ...(userTunedGC ? {} : { execArgv: [...process.execArgv, '--max-semi-space-size=4'] }),
-      });
+    // Workers inherit the primary's execArgv; additionally bound each
+    // worker's V8 young generation unless the user tuned it themselves.
+    // On big machines V8 sizes the nursery from total RAM and grows it
+    // under sustained load (~10-34 MB extra RSS per process, measured on a
+    // 64 GB box) - and in cluster mode that cost multiplies by the worker
+    // count. A/B-benched 2026-08-01: identical throughput at 4 MB semi-space
+    // in both the realistic profile (~92k vs ~90k req/s) and the pipelined
+    // x10 microbenchmark (~560k both ways), while sustained-load RSS drops
+    // ~30 MB per worker (115 -> 81 MB on the 25-route POST soak).
+    const userTunedGC = isUserTunedYoungGen();
 
-      // IPC Optimization: Reduce communication overhead between master and workers
-      // Research shows excessive IPC can create bottlenecks in clustered applications
-      // (Source: BetterStack - Node.js Clustering Guide)
-      process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
-      process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size by disabling color codes
+    // Set cluster settings for better performance
+    nodeCluster().setupMaster({
+      exec: process.argv[1] || process.execPath,
+      args: process.argv.slice(2),
+      silent: false,
+      ...(userTunedGC ? {} : { execArgv: [...process.execArgv, '--max-semi-space-size=4'] }),
+    });
 
-      // Graceful shutdown handler
-      const gracefulShutdown = () => {
-        this.logger.info('Gracefully shutting down cluster...', 'Cluster');
+    // IPC Optimization: Reduce communication overhead between master and workers
+    // Research shows excessive IPC can create bottlenecks in clustered applications
+    // (Source: BetterStack - Node.js Clustering Guide)
+    process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
+    process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size by disabling color codes
 
-        // Clean up all workers
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const [pid, worker] of this.clusterWorkers) {
-          worker.removeAllListeners();
-          worker.kill('SIGTERM');
-        }
+    // Graceful shutdown handler
+    const gracefulShutdown = () => {
+      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
 
-        // Clean up cluster listeners
-        cluster.removeAllListeners();
-        process.exit(0);
-      };
+      // Clean up all workers
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for (const [pid, worker] of this.clusterWorkers) {
+        worker.removeAllListeners();
+        worker.kill('SIGTERM');
+      }
 
-      // Handle process signals for graceful shutdown
-      process.on('SIGINT', gracefulShutdown);
-      process.on('SIGTERM', gracefulShutdown);
+      // Clean up cluster listeners
+      nodeCluster().removeAllListeners();
+      process.exit(0);
+    };
 
-      // Fork workers with basic tracking
-      for (let i = 0; i < workerCount; i++) {
-        const worker = cluster.fork();
+    // Handle process signals for graceful shutdown
+    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', gracefulShutdown);
+
+    // Fork workers with basic tracking
+    for (let i = 0; i < workerCount; i++) {
+      const worker = nodeCluster().fork();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      this.clusterWorkers.set(worker.process.pid!, worker);
+      this.logger.info(`Worker ${worker.process.pid} started`, 'Cluster');
+
+      // Handle individual worker messages
+      worker.on('message', this.handleWorkerMessage.bind(this));
+    }
+
+    // Primary-only services start once the first worker is serving.
+    let servicesStarted = false;
+    nodeCluster().on('listening', () => {
+      if (servicesStarted) return;
+      servicesStarted = true;
+      this.startPrimaryServices();
+    });
+
+    // Simple worker exit handling
+    nodeCluster().on('exit', (worker: any, code: number, signal: string) => {
+      const pid = worker.process.pid;
+      this.clusterWorkers.delete(pid);
+
+      if (code !== 0 && !worker.exitedAfterDisconnect) {
+        this.logger.warn(
+          `Worker ${pid} died unexpectedly (${signal || code}). Restarting...`,
+          'Cluster'
+        );
+
+        // Simple restart
+        const newWorker = nodeCluster().fork();
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.clusterWorkers.set(worker.process.pid!, worker);
-        this.logger.info(`Worker ${worker.process.pid} started`, 'Cluster');
-
-        // Handle individual worker messages
-        worker.on('message', this.handleWorkerMessage.bind(this));
+        this.clusterWorkers.set(newWorker.process.pid!, newWorker);
+        this.logger.info(`Worker ${newWorker.process.pid} restarted`, 'Cluster');
       }
+    });
 
-      // Simple worker exit handling
-      cluster.on('exit', (worker: any, code: number, signal: string) => {
-        const pid = worker.process.pid;
-        this.clusterWorkers.delete(pid);
+    // Master process callback
+    if (callback) callback();
+  }
 
-        if (code !== 0 && !worker.exitedAfterDisconnect) {
-          this.logger.warn(
-            `Worker ${pid} died unexpectedly (${signal || code}). Restarting...`,
-            'Cluster'
-          );
+  // One worker, either a worker_threads thread or a node:cluster process:
+  // boot the app exactly like the single-process path (auto-discovery,
+  // file-based routes, WebSocket registrations, GraphQL) and listen with
+  // SO_REUSEPORT. Signals/exit are the differences: a thread gets 'shutdown'
+  // from the primary over parentPort and never calls process.exit().
+  private startClusterWorker(
+    mode: { kind: 'thread'; info: ThreadWorkerInfo } | { kind: 'process' },
+    port: number,
+    host?: string
+  ): void {
+    const label =
+      mode.kind === 'thread' ? `Worker thread ${wt().threadId}` : `Worker ${process.pid}`;
+    const workerRef = mode.kind === 'thread' ? wt().threadId : process.pid;
+    this.logger.info(`${label} initializing`, 'Worker');
 
-          // Simple restart
-          const newWorker = cluster.fork();
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          this.clusterWorkers.set(newWorker.process.pid!, newWorker);
-          this.logger.info(`Worker ${newWorker.process.pid} restarted`, 'Cluster');
-        }
-      });
-
-      // Master process callback
-      if (callback) callback();
-    } else {
-      // Worker process - start the actual server with proper cleanup
-      this.logger.info(`Worker ${process.pid} initializing`, 'Worker');
-
-      // Worker-specific optimizations for high concurrency
+    if (mode.kind === 'process') {
+      // Worker-specific optimizations for high concurrency (a thread shares
+      // the primary's pool, sized before it was spawned)
       process.env.UV_THREADPOOL_SIZE = '64';
+    }
 
-      // Reduce logging contention in workers (major bottleneck)
-      // Multiple workers writing to same log files creates I/O contention
-      // ONLY reduce log level if user didn't explicitly set one
-      if (!this.userSetLogger) {
-        // Workers log less frequently to reduce I/O contention (only if not explicitly configured)
-        applyLoggingConfiguration(undefined, { level: 'warn' }); // Only warnings and errors
-      }
+    // Reduce logging contention in workers (major bottleneck)
+    // Multiple workers writing to same log files creates I/O contention
+    // ONLY reduce log level if user didn't explicitly set one
+    if (!this.userSetLogger) {
+      // Workers log less frequently to reduce I/O contention (only if not explicitly configured)
+      applyLoggingConfiguration(undefined, { level: 'warn' }); // Only warnings and errors
+    }
 
-      // Research-based memory optimization for workers
-      const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
-      const workerCount = Object.keys(cluster.workers || {}).length || 1;
+    // Optimize garbage collection for workers
+    // eslint-disable-next-line no-undef
+    if ((global as any).gc) {
+      setInterval(() => {
+        // eslint-disable-next-line no-undef
+        if ((global as any).gc) (global as any).gc();
+      }, 60000); // GC every 60 seconds (less frequent)
+    }
 
-      // Conservative memory allocation
-      const heapSizePerWorkerMB = Math.min(
-        Math.floor(((totalMemoryGB * 1024) / workerCount) * 0.8), // 80% of available memory
-        1536 // Cap at 1.5GB (GC efficiency threshold from research)
-      );
-
-      process.env.NODE_OPTIONS = `--max-old-space-size=${heapSizePerWorkerMB}`;
-
-      this.logger.debug(
-        `Worker memory allocated: ${heapSizePerWorkerMB}MB heap (${workerCount} workers, ${totalMemoryGB.toFixed(1)}GB total)`,
-        'Worker'
-      );
-
-      // Optimize V8 flags for better performance
-      if (process.env.NODE_ENV === 'production') {
-        // Aggressive V8 optimizations for maximum performance
-        const v8Flags = [
-          '--optimize-for-size', // Trade memory for speed
-          '--always-opt', // Always optimize functions
-          '--turbo-fast-api-calls', // Optimize API calls
-          '--turbo-escape-analysis', // Escape analysis optimization
-          '--turbo-inline-api-calls', // Inline API calls
-          `--max-old-space-size=${heapSizePerWorkerMB}`, // Limit memory to prevent GC pressure
-        ];
-        process.env.NODE_OPTIONS = (process.env.NODE_OPTIONS || '') + ' ' + v8Flags.join(' ');
-      }
-
-      // Optimize garbage collection for workers
-      // eslint-disable-next-line no-undef
-      if ((global as any).gc) {
-        setInterval(() => {
-          // eslint-disable-next-line no-undef
-          if ((global as any).gc) (global as any).gc();
-        }, 60000); // GC every 60 seconds (less frequent)
-      }
-
+    let tcw: ThreadClusterWorker | null = null;
+    if (mode.kind === 'thread') {
+      tcw = new ThreadClusterWorker(this.logger);
+      // 'shutdown' from the primary: drain and close; the thread then exits
+      // on its own once the engine's handles are gone.
+      tcw.onShutdown(async () => {
+        this.eventBus.removeAllListeners();
+        this.removeAllListeners();
+        await this.close();
+      });
+    } else {
       // Graceful shutdown for worker
       const workerShutdown = () => {
-        this.logger.info(`Worker ${process.pid} shutting down gracefully...`, 'Worker');
+        this.logger.info(`${label} shutting down gracefully...`, 'Worker');
 
         // Clean up event listeners
         this.eventBus.removeAllListeners();
@@ -2240,94 +2367,109 @@ export class Moro extends EventEmitter {
       // Handle worker shutdown signals
       process.on('SIGTERM', workerShutdown);
       process.on('SIGINT', workerShutdown);
+    }
 
-      // Continue with normal server startup for this worker
-      void this.eventBus.emit('server:starting', {
+    const fatal = (code: string, message: string) => {
+      this.logger.error(`${label} ${message}`, 'Worker');
+      if (tcw) {
+        tcw.fatal(code, message);
+        void this.close().finally(() => tcw?.close());
+      } else {
+        process.exit(1);
+      }
+    };
+
+    // Continue with normal server startup for this worker
+    void this.eventBus.emit('server:starting', {
+      port,
+      runtime: this.runtimeType,
+      worker: workerRef,
+    });
+
+    // Add documentation middleware first (if enabled)
+    try {
+      const docsMiddleware = this.documentation.getDocsMiddleware();
+      this.coreFramework.addMiddleware(docsMiddleware);
+    } catch {
+      // Documentation not enabled, that's fine
+    }
+
+    // Attach the unified router (handles both chainable and direct routes)
+    this.attachUnifiedRouter();
+
+    // Register legacy direct routes with the HTTP server (for backward compatibility)
+    if (this.routes.length > 0) {
+      this.registerDirectRoutes();
+    }
+
+    const workerCallback = () => {
+      const displayHost = host || 'localhost';
+      this.logger.info(`${label} ready on ${displayHost}:${port}`, 'Worker');
+      void this.eventBus.emit('server:started', {
         port,
         runtime: this.runtimeType,
-        worker: process.pid,
+        worker: workerRef,
+        engine: this.engine,
       });
+      // GraphQL registers HTTP/WS routes on this app: every worker.
+      this.ensureGraphQLInitialized().catch(error => {
+        this.logger.error(`Failed to initialize GraphQL: ${error}`, 'GraphQL');
+      });
+      tcw?.ready(port);
+    };
 
-      // Add documentation middleware first (if enabled)
-      try {
-        const docsMiddleware = this.documentation.getDocsMiddleware();
-        this.coreFramework.addMiddleware(docsMiddleware);
-      } catch {
-        // Documentation not enabled, that's fine
+    const startWorkerListening = () => {
+      if (host) {
+        this.coreFramework.listen(port, host, workerCallback);
+      } else {
+        this.coreFramework.listen(port, workerCallback);
       }
-
-      // Attach the unified router (handles both chainable and direct routes)
-      this.attachUnifiedRouter();
-
-      // Register legacy direct routes with the HTTP server (for backward compatibility)
-      if (this.routes.length > 0) {
-        this.registerDirectRoutes();
-      }
-
-      const workerCallback = () => {
-        const displayHost = host || 'localhost';
-        this.logger.info(`Worker ${process.pid} ready on ${displayHost}:${port}`, 'Worker');
-        void this.eventBus.emit('server:started', {
-          port,
-          runtime: this.runtimeType,
-          worker: process.pid,
-          engine: this.engine,
-        });
-      };
-
-      // Ensure WebSocket setup is complete before starting worker
-      const startWorkerListening = () => {
-        if (host) {
-          this.coreFramework.listen(port, host, workerCallback);
-        } else {
-          this.coreFramework.listen(port, workerCallback);
+    };
+    // Same init as the single-process path: auto-discovery, file-based
+    // routes, queued WebSocket registrations - before 1.9.0 workers skipped
+    // discovery/route loading entirely.
+    Promise.all([
+      this.ensureAutoDiscoveryComplete().then(() => this.ensureRoutesLoaded()),
+      this.processQueuedWebSocketRegistrations(),
+    ])
+      .then(startWorkerListening)
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = (error as any)?.code;
+        // listen() itself failed (EADDRINUSE etc.): retrying is guaranteed to
+        // fail again and would surface as an unhandled rejection crash-loop.
+        // Report fatally so the primary sees a clean death.
+        if (
+          code === 'EADDRINUSE' ||
+          code === 'EACCES' ||
+          /EADDRINUSE|failed to bind/i.test(message)
+        ) {
+          fatal(
+            code === 'EACCES' ? 'EACCES' : 'EADDRINUSE',
+            `could not bind port ${port}: ${message}`
+          );
+          return;
         }
-      };
-      this.processQueuedWebSocketRegistrations()
-        .then(startWorkerListening)
-        .catch(error => {
-          const message = error instanceof Error ? error.message : String(error);
-          const code = (error as any)?.code;
-          // listen() itself failed (EADDRINUSE etc.): retrying is guaranteed to
-          // fail again and would surface as an unhandled rejection crash-loop.
-          // Log fatally and exit so the cluster primary sees a clean death.
-          // Prefer the code the native/Node servers set; fall back to message.
-          if (
-            code === 'EADDRINUSE' ||
-            code === 'EACCES' ||
-            /EADDRINUSE|failed to bind/i.test(message)
-          ) {
-            this.logger.error(
-              `Worker ${process.pid} could not bind port ${port}: ${message}`,
-              'Worker'
-            );
-            process.exit(1);
-          }
-          this.logger.error('WebSocket initialization failed in worker', 'Worker', {
-            error: message,
-          });
-          // For WebSocket failures with queued registrations, error will propagate
-          if (
-            error instanceof Error &&
-            error.message.includes('WebSocket features require a WebSocket adapter')
-          ) {
-            throw error;
-          }
-          // WebSocket setup failed but the HTTP server can still serve: start
-          // anyway, and surface (not swallow) a listen failure from this path.
-          try {
-            startWorkerListening();
-          } catch (listenError) {
-            this.logger.error(
-              `Worker ${process.pid} failed to start: ${
-                listenError instanceof Error ? listenError.message : String(listenError)
-              }`,
-              'Worker'
-            );
-            process.exit(1);
-          }
-        });
-    }
+        this.logger.error('Initialization failed in worker', 'Worker', { error: message });
+        // For WebSocket failures with queued registrations, error will propagate
+        if (
+          error instanceof Error &&
+          error.message.includes('WebSocket features require a WebSocket adapter')
+        ) {
+          throw error;
+        }
+        // Init failed but the HTTP server can still serve: start anyway, and
+        // surface (not swallow) a listen failure from this path.
+        try {
+          startWorkerListening();
+        } catch (listenError) {
+          const lm = listenError instanceof Error ? listenError.message : String(listenError);
+          fatal(
+            (listenError as any)?.code === 'EACCES' ? 'EACCES' : 'EADDRINUSE',
+            `failed to start: ${lm}`
+          );
+        }
+      });
   }
 
   // Simple worker message handler
@@ -2454,6 +2596,18 @@ export class Moro extends EventEmitter {
         } catch (err) {
           this.logger.error(`onClose hook failed: ${String(err)}`);
         }
+      }
+    }
+
+    // Cluster worker threads first: each drains its server via its own
+    // close(); the primary's services below stop after the traffic did.
+    if (this.threadCluster) {
+      const primary = this.threadCluster;
+      this.threadCluster = undefined;
+      try {
+        await primary.shutdown();
+      } catch (err) {
+        this.logger.error(`Error shutting down cluster worker threads: ${String(err)}`);
       }
     }
 

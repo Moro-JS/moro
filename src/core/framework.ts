@@ -1,4 +1,4 @@
-import { Server } from 'http';
+import type { Server } from 'http';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';

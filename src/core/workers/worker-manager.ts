@@ -1,5 +1,9 @@
 // Worker Thread Manager - Offload CPU-intensive operations
-import { Worker } from 'worker_threads';
+import type { Worker } from 'worker_threads';
+import { requireBuiltin } from '../utilities/builtin.js';
+
+// worker_threads on first use (core/utilities/builtin.ts).
+const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
 import { createFrameworkLogger } from '../logger/index.js';
 import { cpus } from 'os';
 import { isPackageAvailable } from '../utilities/package-utils.js';
@@ -131,7 +135,7 @@ export class WorkerManager {
 
     let worker: Worker;
     try {
-      worker = new Worker(WORKER_ENTRY, {
+      worker = new (wt().Worker)(WORKER_ENTRY, {
         workerData: { type: 'worker' },
       });
     } catch (error) {

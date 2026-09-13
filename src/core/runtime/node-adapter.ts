@@ -1,5 +1,5 @@
 // Node.js runtime adapter
-import { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
 import { BaseRuntimeAdapter } from './base-adapter.js';
 import { HttpRequest, HttpResponse } from '../../types/http.js';
 import { RuntimeHttpResponse } from '../../types/runtime.js';

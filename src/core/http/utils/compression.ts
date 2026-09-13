@@ -8,12 +8,22 @@
  * engine's Content-Length short-write detection. That is a deliberate,
  * documented non-goal.
  */
-import { gzip, deflate, brotliCompress, constants as zlibConstants } from 'zlib';
 import { promisify } from 'util';
+import { requireBuiltin } from '../../utilities/builtin.js';
 
-const gzipAsync = promisify(gzip);
-const deflateAsync = promisify(deflate);
-const brotliAsync = promisify(brotliCompress);
+// zlib is loaded on the first compressed response, not at startup
+// (core/utilities/builtin.ts): compression is off by default.
+const z = () => requireBuiltin<typeof import('zlib')>('zlib');
+type Compressor = (buf: Buffer, opts: any) => Promise<Buffer>;
+let gzipFn: Compressor | undefined;
+let deflateFn: Compressor | undefined;
+let brotliFn: Compressor | undefined;
+const gzipAsync: Compressor = (buf, opts) =>
+  (gzipFn ??= promisify(z().gzip) as unknown as Compressor)(buf, opts);
+const deflateAsync: Compressor = (buf, opts) =>
+  (deflateFn ??= promisify(z().deflate) as unknown as Compressor)(buf, opts);
+const brotliAsync: Compressor = (buf, opts) =>
+  (brotliFn ??= promisify(z().brotliCompress) as unknown as Compressor)(buf, opts);
 
 export type Encoding = 'br' | 'gzip' | 'deflate';
 
@@ -114,11 +124,11 @@ export async function compressBuffer(
     case 'br':
       return brotliAsync(buf, {
         params: {
-          [zlibConstants.BROTLI_PARAM_QUALITY]: Math.max(
+          [z().constants.BROTLI_PARAM_QUALITY]: Math.max(
             0,
             Math.min(11, Math.round((level * 11) / 9))
           ),
-          [zlibConstants.BROTLI_PARAM_SIZE_HINT]: buf.length,
+          [z().constants.BROTLI_PARAM_SIZE_HINT]: buf.length,
         },
       });
     case 'gzip':

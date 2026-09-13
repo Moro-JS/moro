@@ -80,13 +80,56 @@ const FRAMEWORK_PACKAGE_NAME = '@morojs/moro';
 export interface EngineCapabilities {
   /** The full serve() limit surface is parsed (engine >= 1.1.0). */
   limits: boolean;
-  /** In-process TLS termination via options.ssl (engine >= 1.2.0). */
+  /** In-process TLS termination via options.ssl (engine >= 1.1.x). */
   tls: boolean;
-  /** ALPN HTTP/2 via options.http2 (engine >= 1.4.0). */
+  /** ALPN HTTP/2 via options.http2 (reserved). */
   http2: boolean;
-  /** WebSocket permessage-deflate via options.wsDeflate (engine >= 1.5.0). */
+  /** WebSocket permessage-deflate via options.wsDeflate. */
   wsDeflate: boolean;
+  /** responseTimeoutMs / responseBackpressureLimit / maxUriSize are parsed. */
+  responseLimits: boolean;
+  /** ssl.ciphers / ssl.ciphersuites / ssl.ecdhCurve are parsed. */
+  tlsPolicy: boolean;
+  /** setStaticRoute()/clearStaticRoutes() exist (not used by the framework:
+   *  a static route bypasses middleware and hooks, so exposing it is an API
+   *  decision, not an adapter one). */
+  staticRoutes: boolean;
+  /** prepareResponse()/respondPrepared()/respondPreparedEmpty()/endWith()
+   *  exist (engine >= 1.2.0): the adapter replays prepared header blocks for
+   *  the responses it emits itself. */
+  responseTemplates: boolean;
+  /** onAborted/onWritable are delivered on a later loop turn, never from
+   *  inside respond()/write()/end() (engine >= 1.2.0). */
+  asyncNotify: boolean;
+  /** A server left open at environment teardown is closed by the engine's
+   *  cleanup hook, so the engine may run inside worker threads that can be
+   *  terminate()d (engine >= 1.2.0). Gates thread-based clustering. */
+  workerThreads: boolean;
+  /** V8 fast API calls are installed on the hot entry points (informational). */
+  fastCalls: boolean;
+  /** Batched pipelined dispatch (onRequestBatch / getBatchBuffers / getPath). */
+  batchDispatch: boolean;
+  /** I/O transport in use ('uv', 'uring'), when the engine reports it. */
+  transport?: string;
 }
+
+// One place to name every boolean flag: getEngineCapabilities coerces each
+// with `=== true`, and NO_CAPABILITIES is derived from the same list, so a
+// flag added here can never be read on one path and forgotten on the other.
+const CAP_KEYS = [
+  'limits',
+  'tls',
+  'http2',
+  'wsDeflate',
+  'responseLimits',
+  'tlsPolicy',
+  'staticRoutes',
+  'responseTemplates',
+  'asyncNotify',
+  'workerThreads',
+  'fastCalls',
+  'batchDispatch',
+] as const;
 
 export interface NativeEngineLoadResult {
   /** The loaded engine module (CJS namespace: App, SSLApp, ...) */
@@ -100,12 +143,9 @@ export interface NativeEngineLoadResult {
   capabilities?: EngineCapabilities;
 }
 
-const NO_CAPABILITIES: EngineCapabilities = {
-  limits: false,
-  tls: false,
-  http2: false,
-  wsDeflate: false,
-};
+const NO_CAPABILITIES: EngineCapabilities = Object.freeze(
+  Object.fromEntries(CAP_KEYS.map(k => [k, false]))
+) as unknown as EngineCapabilities;
 
 const capabilitiesCache = new WeakMap<object, EngineCapabilities>();
 
@@ -128,12 +168,10 @@ export function getEngineCapabilities(module: any): EngineCapabilities {
       const probe = surface.probe();
       const c = probe?.capabilities;
       if (c && typeof c === 'object') {
-        caps = {
-          limits: c.limits === true,
-          tls: c.tls === true,
-          http2: c.http2 === true,
-          wsDeflate: c.wsDeflate === true,
-        };
+        const next: Record<string, boolean | string> = {};
+        for (const key of CAP_KEYS) next[key] = c[key] === true;
+        if (typeof probe.transport === 'string') next.transport = probe.transport;
+        caps = next as unknown as EngineCapabilities;
       }
     }
   } catch {

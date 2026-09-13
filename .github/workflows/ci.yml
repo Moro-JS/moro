@@ -45,10 +45,15 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         # Oldest engine-supported line (20) through newest (26) — test what we
         # ship binaries for and what @morojs/engine requires (Node >=20).
         node-version: [20, 22, 24, 26]
+        # Both ends of the engine range the framework accepts (^1.1.0): the
+        # oldest (no templates, no worker-thread clustering: every new feature
+        # must fall back cleanly) and the newest published (the features on).
+        engine: [min, latest]
 
     steps:
       - name: Checkout code
@@ -65,10 +70,25 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
+      # Pin the engine leg: --no-save keeps package-lock untouched; the
+      # platform package comes along as the meta package's optionalDependency.
+      - name: Install @morojs/engine (${{ matrix.engine }})
+        run: |
+          if [ "${{ matrix.engine }}" = "min" ]; then npm install --no-save @morojs/engine@1.1.0; else npm install --no-save @morojs/engine@latest; fi
+          node -e "const v=require('@morojs/engine/package.json').version; const p=require('@morojs/engine').probe(); console.log('engine', v, JSON.stringify(p.capabilities||{})); if(!p.ok) { console.error(p.error); process.exit(1) } if (process.env.ENGINE === 'min' && v !== '1.1.0') process.exit(1)"
+        env:
+          ENGINE: ${{ matrix.engine }}
+
       - name: Run unit tests
         run: npm run test:unit
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+
+      # The worker-thread clustering fixture loads the BUILT framework (a
+      # worker thread cannot go through ts-jest/tsx), so build before the
+      # integration suites.
+      - name: Build (cluster fixture loads dist/)
+        run: npm run build
 
       # MORO_REQUIRE_ENGINE=1: the engine-path integration tests must RUN against
       # the npm-installed engine, not describe.skip / fall back to Node's http.

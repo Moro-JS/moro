@@ -107,6 +107,31 @@ const SENDFILE_BUFFER_LIMIT = 1024 * 1024;
 // allocated. The engine only reads it; never mutate.
 const JSON_HEADER_PAIR = ['content-type', 'application/json'];
 
+// Prepared response templates (engine >= 1.2.0, capabilities.responseTemplates).
+// The header sets the framework ITSELF emits - the JSON/text/octet-stream
+// defaults and "no headers at all" - are materialised once per (kind, status)
+// inside the engine (prepareResponse) and replayed per response with
+// respondPrepared: no header object, no flat array, no per-response header
+// walk in the engine, and the call is fast-call eligible. Used only when the
+// response carries NO user-set headers (then the wire bytes are identical to
+// respond() with the same pair - the engine's wire-parity suite proves it)
+// and compression is off. TPL_HEADERS doubles as the respond() fallback for
+// engines without templates, so both paths send exactly these headers.
+const TPL_JSON = 0; // json(): 'application/json'
+const TPL_JSON_UTF8 = 1; // send() of a JSON-looking string
+const TPL_TEXT_UTF8 = 2; // send() of text, sendStatus()
+const TPL_OCTET = 3; // send() of a Buffer
+const TPL_NONE = 4; // end() with no headers set
+const TPL_HEADERS: ReadonlyArray<string[] | null> = [
+  JSON_HEADER_PAIR,
+  ['content-type', 'application/json; charset=utf-8'],
+  ['content-type', 'text/plain; charset=utf-8'],
+  ['content-type', 'application/octet-stream'],
+  null,
+];
+const TPL_CONTENT_TYPE: ReadonlyArray<string | undefined> = TPL_HEADERS.map(h => h?.[1]);
+const TPL_KINDS = TPL_HEADERS.length;
+
 // Content-Type sniff for send(): does the body start with '{' or '[' after
 // optional leading whitespace? Regex `\s` matches exactly the set trimStart()
 // strips, and the match stops at the first non-space character, so this costs
@@ -472,6 +497,11 @@ export class EngineResponse extends LazyEventEmitter {
   // materialize a header object (see _headersFlat / the json fast path)
   private _responseHeaders: Record<string, string | string[]> | undefined = undefined;
   private _locals: Record<string, any> | undefined = undefined;
+  // The default content-type a template reply carried when the app set no
+  // headers: send()/sendStatus()/the framework's own error replies no longer
+  // materialise a header object for it, so getHeader('content-type') and a
+  // late responseHeaders read answer from here (parity with the old path).
+  private _impliedContentType: string | undefined = undefined;
   // Terminal-write latch: headersSent means "head flushed" (true mid-stream
   // after writeHead/write), _ended means the body is complete
   private _ended = false;
@@ -488,6 +518,10 @@ export class EngineResponse extends LazyEventEmitter {
     let h = this._responseHeaders;
     if (h === undefined) {
       h = {};
+      // A reply already sent through a template carried this content-type;
+      // a reader materialising the object afterwards (a 'finish' listener,
+      // a logger) must still see it.
+      if (this._impliedContentType !== undefined) h['content-type'] = this._impliedContentType;
       this._responseHeaders = h;
     }
     return h;
@@ -599,7 +633,11 @@ export class EngineResponse extends LazyEventEmitter {
 
   getHeader(name: string) {
     const headers = this._responseHeaders;
-    return headers === undefined ? undefined : headers[name.toLowerCase()];
+    const lower = name.toLowerCase();
+    if (headers === undefined) {
+      return lower === 'content-type' ? this._impliedContentType : undefined;
+    }
+    return headers[lower];
   }
 
   removeHeader(name: string) {
@@ -668,9 +706,14 @@ export class EngineResponse extends LazyEventEmitter {
     try {
       const rh = this._responseHeaders;
       if (rh === undefined && !this._server._compression.enabled) {
-        // Hot path: no user-set headers, no compression - one native call
-        // with the shared content-type pair; zero per-response header work
-        this._server._respond(this._reqId, this.statusCode, JSON_HEADER_PAIR, body);
+        // Hot path: no user-set headers, no compression - one native call.
+        // With templates (engine >= 1.2.0) the content-type pair was
+        // materialised once in the engine; otherwise the shared pair goes
+        // with the call. Zero per-response header work either way.
+        const tpl = this._server._template(TPL_JSON, this.statusCode);
+        const rp = this._server._respondPrepared;
+        if (tpl > 0 && rp !== undefined) rp(this._reqId, tpl, body);
+        else this._server._respond(this._reqId, this.statusCode, JSON_HEADER_PAIR, body);
         this.headersSent = true;
         this._emitDone();
         return;
@@ -766,24 +809,76 @@ export class EngineResponse extends LazyEventEmitter {
     }
   }
 
+  // Terminal reply carrying one of the framework's fixed header sets (see
+  // TPL_*): through a prepared template when the engine has them, else
+  // respond() with the same pair - identical bytes, no header object either
+  // way. Callers guarantee the app set no headers of its own.
+  private _sendTemplated(kind: number, body: any): void {
+    try {
+      const tpl = this._server._template(kind, this.statusCode);
+      const hasBody = body !== undefined && body !== null && body !== '';
+      const rp = this._server._respondPrepared;
+      const rpe = this._server._respondPreparedEmpty;
+      if (tpl > 0 && rp !== undefined && rpe !== undefined) {
+        if (hasBody) rp(this._reqId, tpl, body);
+        else rpe(this._reqId, tpl);
+      } else {
+        this._server._respond(
+          this._reqId,
+          this.statusCode,
+          TPL_HEADERS[kind] ?? null,
+          hasBody ? body : null
+        );
+      }
+      this.headersSent = true;
+      this._emitDone();
+    } catch (err) {
+      this._failSafe('Failed to send response', err);
+    }
+  }
+
+  /** @internal The framework's own constant JSON replies (404/413/400/500):
+   *  the same bytes as setHeader('Content-Type','application/json') + end(body)
+   *  (setHeader lowercases the name), without allocating a header object when
+   *  the app set none. */
+  _sendConstantJson(status: number, body: string): void {
+    if (this.headersSent || this._ended) return;
+    this.statusCode = status;
+    if (this._responseHeaders === undefined) {
+      this._impliedContentType = TPL_CONTENT_TYPE[TPL_JSON];
+      this._sendTemplated(TPL_JSON, body);
+      return;
+    }
+    this._responseHeaders['content-type'] = 'application/json';
+    this.end(body);
+  }
+
   send(data: string | Buffer) {
     if (this.headersSent || this._ended) return;
 
     // Default a Content-Type to match the Node server (parity for the now-
     // default engine path): JSON for JSON-looking strings, octet-stream for
     // Buffers, text/plain otherwise.
-    if (!('content-type' in this.responseHeaders)) {
-      if (typeof data === 'string') {
-        this.responseHeaders['content-type'] = JSON_BODY_START.test(data)
-          ? 'application/json; charset=utf-8'
-          : 'text/plain; charset=utf-8';
-      } else {
-        this.responseHeaders['content-type'] = 'application/octet-stream';
+    const rh = this._responseHeaders;
+    if (rh === undefined || !('content-type' in rh)) {
+      const kind =
+        typeof data === 'string'
+          ? JSON_BODY_START.test(data)
+            ? TPL_JSON_UTF8
+            : TPL_TEXT_UTF8
+          : TPL_OCTET;
+      if (rh === undefined && !this._server._compression.enabled) {
+        // No app headers, no compression: the implied content-type rides a
+        // prepared template (or the shared pair) - no header object at all.
+        // Buffers pass through binary-safe (the engine accepts Uint8Array).
+        this._impliedContentType = TPL_CONTENT_TYPE[kind];
+        this._sendTemplated(kind, data);
+        return;
       }
+      this.responseHeaders['content-type'] = TPL_CONTENT_TYPE[kind] as string;
     }
 
     try {
-      // Buffers pass through binary-safe (the engine accepts Uint8Array).
       // Compression applies only to compressible content types (isCompressible
       // excludes octet-stream), so binary sends stay on the sync fast path.
       this._respondMaybeCompressed(data);
@@ -859,17 +954,35 @@ export class EngineResponse extends LazyEventEmitter {
     }
 
     try {
+      const hasBody = data !== undefined && data !== null;
       if (!this.headersSent) {
-        // Terminal single-shot: status + headers + body in one native call
-        this._server._respond(
-          this._reqId,
-          this.statusCode,
-          this._headersFlat(),
-          data !== undefined && data !== null ? data : null
-        );
+        // Terminal single-shot: status + headers + body in one native call.
+        // No app headers: the "no headers" template (engine >= 1.2.0) or a
+        // null header list - identical bytes.
+        if (this._responseHeaders === undefined) {
+          const tpl = this._server._template(TPL_NONE, this.statusCode);
+          const rp = this._server._respondPrepared;
+          const rpe = this._server._respondPreparedEmpty;
+          if (tpl > 0 && rp !== undefined && rpe !== undefined) {
+            if (hasBody) rp(this._reqId, tpl, data);
+            else rpe(this._reqId, tpl);
+          } else {
+            this._server._respond(this._reqId, this.statusCode, null, hasBody ? data : null);
+          }
+        } else {
+          this._server._respond(
+            this._reqId,
+            this.statusCode,
+            this._headersFlat(),
+            hasBody ? data : null
+          );
+        }
         this.headersSent = true;
+      } else if (hasBody && this._server._endWith !== undefined) {
+        // Streaming terminal with a chunk: the fixed-arity twin of end()
+        this._server._endWith(this._reqId, data);
       } else {
-        this._server._end(this._reqId, data !== undefined && data !== null ? data : undefined);
+        this._server._end(this._reqId, hasBody ? data : undefined);
       }
       this._emitDone();
       if (typeof callback === 'function') callback();
@@ -1308,6 +1421,11 @@ export class EngineResponse extends LazyEventEmitter {
     // (Node behavior) - never a fabricated "OK" for a non-2xx status.
     const statusString = STATUS_STRINGS.get(code);
     const body = statusString ? statusString.slice(String(code).length + 1) : String(code);
+    if (this._responseHeaders === undefined && !this._ended) {
+      this._impliedContentType = TPL_CONTENT_TYPE[TPL_TEXT_UTF8];
+      this._sendTemplated(TPL_TEXT_UTF8, body);
+      return;
+    }
     this.setHeader('Content-Type', 'text/plain; charset=utf-8');
     this.end(body);
   }
@@ -1396,6 +1514,34 @@ export class MoroEngineServer {
   /** @internal */ _getBody!: (reqId: number) => ArrayBuffer | null;
   /** @internal */ _getRemoteAddress!: (reqId: number) => string | undefined;
   /** @internal */ _getMethod!: (reqId: number) => string | undefined;
+  // Prepared response templates (engine >= 1.2.0): assigned only when the
+  // engine advertises capabilities.responseTemplates AND the functions exist,
+  // so a flag/binary mismatch can never put `undefined` into a hot call site.
+  /** @internal */ _prepareResponse?: (
+    serverId: number,
+    status: number,
+    headers: string[] | null
+  ) => number;
+  /** @internal */ _respondPrepared?: (reqId: number, tplId: number, body: any) => void;
+  /** @internal */ _respondPreparedEmpty?: (reqId: number, tplId: number) => void;
+  /** @internal */ _endWith?: (reqId: number, chunk: any) => void;
+  private _templatesOn = false;
+  // Batched pipelined dispatch (engine >= 1.2.0, capabilities.batchDispatch):
+  // the engine parses complete pipelined requests ahead and delivers them in
+  // one onRequestBatch(count) call; the descriptors/control/paths buffers are
+  // the engine's (getBatchBuffers), fetched once per native server.
+  private _batchDesc: Uint32Array | undefined = undefined;
+  private _batchCtl: Uint32Array | undefined = undefined;
+  private _batchPaths: string[] | undefined = undefined;
+  private _batchOn = false;
+  private _getBatchBuffers?: (serverId: number) => {
+    descriptors: Uint32Array;
+    control: Uint32Array;
+    paths: string[];
+  };
+  private _getPath?: (reqId: number) => string;
+  // (kind -> status -> template id), prepared on first use, per engine server
+  private _tpl: Array<Map<number, number>> = Array.from({ length: TPL_KINDS }, () => new Map());
   /** @internal read by EngineRequest#protocol/socket.encrypted - true when the
    *  engine is terminating TLS for this server (engine >= 1.2.0 + ssl passed) */
   isSsl = false;
@@ -1531,6 +1677,28 @@ export class MoroEngineServer {
     this._getBody = surface.getBody;
     this._getRemoteAddress = surface.getRemoteAddress;
     this._getMethod = surface.getMethod;
+    if (
+      this._capabilities?.responseTemplates === true &&
+      typeof surface.prepareResponse === 'function' &&
+      typeof surface.respondPrepared === 'function' &&
+      typeof surface.respondPreparedEmpty === 'function' &&
+      typeof surface.endWith === 'function'
+    ) {
+      this._prepareResponse = surface.prepareResponse;
+      this._respondPrepared = surface.respondPrepared;
+      this._respondPreparedEmpty = surface.respondPreparedEmpty;
+      this._endWith = surface.endWith;
+      this._templatesOn = true;
+    }
+    if (
+      this._capabilities?.batchDispatch === true &&
+      typeof surface.getBatchBuffers === 'function' &&
+      typeof surface.getPath === 'function'
+    ) {
+      this._getBatchBuffers = surface.getBatchBuffers;
+      this._getPath = surface.getPath;
+      this._batchOn = true;
+    }
 
     // TLS: pass it through when the engine supports it; otherwise keep the
     // (now capability-gated) warning so a proxy/node fallback is clear.
@@ -1576,6 +1744,36 @@ export class MoroEngineServer {
   /** @internal terminal write/abort cleanup - drops the reqId mapping */
   _complete(reqId: number): void {
     this.inflight.delete(reqId);
+  }
+
+  /** @internal Template id for one of the framework's fixed header sets
+   *  (TPL_*) at a status, materialised in the engine on first use; -1 when
+   *  the engine has no templates (callers then respond() with the same
+   *  headers) or the engine's per-server store is full. */
+  _template(kind: number, status: number): number {
+    const prep = this._prepareResponse;
+    if (!this._templatesOn || prep === undefined) return -1;
+    let m = this._tpl[kind];
+    if (m === undefined) {
+      m = new Map();
+      this._tpl[kind] = m;
+    }
+    let id = m.get(status);
+    if (id === undefined) {
+      try {
+        id = prep(this.serverId, status, TPL_HEADERS[kind] as string[] | null);
+      } catch {
+        id = -1; // store full (4096/server) - a caller bug elsewhere; respond() still works
+      }
+      m.set(status, id);
+    }
+    return id;
+  }
+
+  // Template ids belong to one native server: forget them whenever that
+  // server is replaced (close() then listen() registers a fresh one).
+  private _resetTemplates(): void {
+    for (const m of this._tpl) m.clear();
   }
 
   // Register callbacks + limits with the native engine, returning the new
@@ -1629,20 +1827,78 @@ export class MoroEngineServer {
         ...(this._http2Settings.settings ?? {}),
       };
     }
-    return this._engine.serve(
-      {
-        onRequest: (reqId: number, methodIdx: number, path: string) =>
-          this.onRequest(reqId, methodIdx, path),
-        onAborted: (reqId: number) => this.onAborted(reqId),
-        onWritable: (reqId: number) => this.onWritable(reqId),
-        onWsOpen: (wsId: number, path: string) =>
-          this._wsBridge?.onOpen(wsId, path, this._pendingWsInfo),
-        onWsMessage: (wsId: number, data: any, isBinary: boolean) =>
-          this._wsBridge?.onMessage(wsId, data, isBinary),
-        onWsClose: (wsId: number, code: number) => this._wsBridge?.onClose(wsId, code),
-      },
-      serveOptions
-    );
+    const callbacks: Record<string, any> = {
+      onRequest: (reqId: number, methodIdx: number, path: string) =>
+        this.dispatchOne(reqId, methodIdx, path),
+      onAborted: (reqId: number) => this.onAborted(reqId),
+      onWritable: (reqId: number) => this.onWritable(reqId),
+      onWsOpen: (wsId: number, path: string) =>
+        this._wsBridge?.onOpen(wsId, path, this._pendingWsInfo),
+      onWsMessage: (wsId: number, data: any, isBinary: boolean) =>
+        this._wsBridge?.onMessage(wsId, data, isBinary),
+      onWsClose: (wsId: number, code: number) => this._wsBridge?.onClose(wsId, code),
+    };
+    if (this._batchOn) callbacks.onRequestBatch = (count: number) => this.onRequestBatch(count);
+    const serverId: number = this._engine.serve(callbacks, serveOptions);
+    if (this._batchOn && this._getBatchBuffers) {
+      const b = this._getBatchBuffers(serverId);
+      this._batchDesc = b.descriptors;
+      this._batchCtl = b.control;
+      this._batchPaths = b.paths;
+    }
+    return serverId;
+  }
+
+  // Batched pipelined dispatch: `count` requests are ready, described three
+  // Uint32 per slot (reqId, methodIdx, pathIdx). Dispatch in order; after
+  // each, the control cell says which slot the engine has activated (the next
+  // one only if this handler completed synchronously) - continue there, or
+  // stop when it still points at the slot just dispatched (async handler;
+  // the engine re-delivers the rest once that response completes).
+  private onRequestBatch(count: number): number {
+    const d = this._batchDesc;
+    const ctl = this._batchCtl;
+    const paths = this._batchPaths;
+    const getPath = this._getPath;
+    if (d === undefined || ctl === undefined || paths === undefined || getPath === undefined)
+      return 0;
+    let i = 0;
+    for (;;) {
+      const reqId = d[3 * i] as number;
+      const methodIdx = d[3 * i + 1] as number;
+      const pi = d[3 * i + 2] as number;
+      const path = pi === 0xffffffff ? getPath(reqId) : (paths[pi] as string);
+      this.dispatchOne(reqId, methodIdx, path);
+      const next = ctl[0] as number;
+      if (next === i) return i + 1;
+      if (next >= count) return count;
+      i = next;
+    }
+  }
+
+  // One request from the engine (single dispatch or a batch slot).
+  private dispatchOne(reqId: number, methodIdx: number, path: string): void {
+    try {
+      this.onRequest(reqId, methodIdx, path);
+    } catch (err) {
+      // A synchronous throw out of dispatch must not stall the pipelined
+      // requests behind this one: answer 500 here (the async paths have
+      // their own error boundary inside handleRequest).
+      this.logger.error(
+        `Unhandled error dispatching ${path}: ${(err as Error)?.message ?? err}`,
+        'Request'
+      );
+      try {
+        this._respond(
+          reqId,
+          500,
+          ['content-type', 'application/json'],
+          '{"error":"Internal Server Error"}'
+        );
+      } catch {
+        // already answered or gone
+      }
+    }
   }
 
   // ---- WebSocket bridge (used by EngineWebSocketAdapter) ----
@@ -1954,9 +2210,7 @@ export class MoroEngineServer {
     try {
       if (await this.dispatchDirectRoute(httpReq, httpRes)) return;
       if (!httpRes.headersSent && !httpRes.writableEnded) {
-        httpRes.statusCode = 404;
-        httpRes.setHeader('Content-Type', 'application/json');
-        httpRes.end('{"success":false,"error":"Not found"}');
+        httpRes._sendConstantJson(404, '{"success":false,"error":"Not found"}');
       }
     } catch (error) {
       await this.handleDispatchError(error, httpReq, httpRes);
@@ -2040,9 +2294,7 @@ export class MoroEngineServer {
 
       // No route matched
       if (!httpRes.headersSent && !httpRes.writableEnded) {
-        httpRes.statusCode = 404;
-        httpRes.setHeader('Content-Type', 'application/json');
-        httpRes.end('{"success":false,"error":"Not found"}');
+        httpRes._sendConstantJson(404, '{"success":false,"error":"Not found"}');
       }
     } catch (error) {
       await this.handleDispatchError(error, httpReq, httpRes);
@@ -2059,17 +2311,13 @@ export class MoroEngineServer {
     {
       // Payload-too-large: respond 413 rather than a generic 500
       if ((error as any)?.statusCode === 413 && !httpRes.writableEnded && !httpRes.headersSent) {
-        httpRes.statusCode = 413;
-        httpRes.setHeader('Content-Type', 'application/json');
-        httpRes.end('{"success":false,"error":"Request entity too large"}');
+        httpRes._sendConstantJson(413, '{"success":false,"error":"Request entity too large"}');
         return;
       }
 
       // Malformed body (parseBody): a client error, not a server error
       if ((error as any)?.statusCode === 400 && !httpRes.writableEnded && !httpRes.headersSent) {
-        httpRes.statusCode = 400;
-        httpRes.setHeader('Content-Type', 'application/json');
-        httpRes.end('{"success":false,"error":"Invalid request body"}');
+        httpRes._sendConstantJson(400, '{"success":false,"error":"Invalid request body"}');
         return;
       }
 
@@ -2110,9 +2358,7 @@ export class MoroEngineServer {
       // Send error response if not already sent
       if (!httpRes.writableEnded && !httpRes.headersSent) {
         try {
-          httpRes.statusCode = 500;
-          httpRes.setHeader('Content-Type', 'application/json');
-          httpRes.end('{"success":false,"error":"Internal server error"}');
+          httpRes._sendConstantJson(500, '{"success":false,"error":"Internal server error"}');
         } catch {
           this.logger.error('Failed to send error response', 'ResponseError');
         }
@@ -2356,6 +2602,7 @@ export class MoroEngineServer {
       // http.Server supports close() -> listen() cycles.
       if (this.closed) {
         this.serverId = this.registerWithEngine();
+        this._resetTemplates();
         this.closed = false;
       }
       // Synchronous bind; throws on bind errors, returns the actual port
@@ -2409,6 +2656,7 @@ export class MoroEngineServer {
           return;
         }
         this.inflight.clear();
+        this._resetTemplates();
         this.logger.info('Moro engine HTTP server closed', 'Close');
         if (callback) {
           // Give the event loop time to process the engine's socket teardown

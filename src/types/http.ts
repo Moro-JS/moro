@@ -1,5 +1,5 @@
 // HTTP Server Types
-import { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
 
 export interface HttpRequest extends IncomingMessage {
   params: Record<string, string>;

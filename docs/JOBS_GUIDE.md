@@ -490,7 +490,7 @@ The job system is built with production-grade components:
 - **JobScheduler**: Main scheduler with priority queue and concurrency control
 - **JobExecutor**: Handles retries, timeouts, circuit breakers, memory monitoring
 - **JobStateManager**: Manages job state, history, and crash recovery
-- **LeaderElection**: Distributed leader election for clustered deployments
+- **LeaderElection**: Distributed leader election for clustered deployments. With built-in clustering (`performance.clustering`) the scheduler runs once, in the cluster primary; workers never schedule jobs (worker threads and worker processes alike)
 - **JobHealthChecker**: Monitors job health and provides status information
 
 All components emit events for full observability and can be independently configured.

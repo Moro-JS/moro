@@ -693,30 +693,69 @@ app
 ### Node.js Optimizations
 
 ```typescript
-// Cluster mode for multi-core usage
-import cluster from 'cluster';
-import os from 'os';
+// Multi-core: built-in clustering. No cluster.fork() in your code.
+const app = await createApp({
+  performance: {
+    clustering: {
+      enabled: true,
+      workers: 'auto', // or a number
+    },
+  },
+});
 
-if (cluster.isMaster) {
-  const numCPUs = os.cpus().length;
-
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork();
-  }
-
-  cluster.on('exit', worker => {
-    console.log(`Worker ${worker.process.pid} died`);
-    cluster.fork(); // Restart worker
-  });
-} else {
-  const app = await createApp({
-    cluster: true,
-    workerId: cluster.worker.id,
-  });
-
-  app.listen(3000);
-}
+app.listen(3000);
 ```
+
+How the workers run is chosen for you. With the native engine on macOS/Linux
+(`@morojs/engine` ≥ 1.2.0) the workers are **worker threads in one process**,
+each binding the port with `SO_REUSEPORT`: shared binary and code pages
+(lower RSS per worker), one pid to supervise, a crashed worker is restarted
+with backoff. On Windows, with `engine: 'node'` or `'uws'`, or with an older
+engine, the same config runs **worker processes** via `node:cluster` exactly
+as before. Either way the primary runs the job scheduler and the gRPC server
+once, and every worker loads auto-discovered modules and file-based routes,
+initialises GraphQL, and answers HTTP/WebSocket traffic.
+
+Two things to know about the thread transport: your entry script's module
+scope runs once per worker inside the same process (the same is true of a
+forked worker process), and `process.chdir()` is unavailable inside a worker
+thread. A native crash inside one thread ends the whole process, where
+processes would isolate it; the engine is fuzzed nightly and ASan/UBSan-clean.
+
+A worker thread loads your entry file with Node's own loader. Whether a
+TypeScript entry run through `tsx` (or `ts-node`) gets the loader's hooks
+inside worker threads depends on the Node line: on Node 24.11 it does not,
+so the threads fail to boot and Moro falls back to worker processes for that
+run, logging `Worker threads unavailable (...); falling back to worker
+processes`; on Node 24.21 the hooks reach the threads and the same entry
+runs on threads. Both are handled without configuration. Your compiled entry
+(`node dist/app.js`) runs on threads on every supported Node.
+
+### Memory: where a Moro process's RSS goes
+
+Measured on macOS arm64, Node 24.11, idle then under `wrk -c 100` load:
+
+| Process                          | idle  | under load |
+| -------------------------------- | ----- | ---------- |
+| bare `node` (V8 + runtime floor) | 40 MB | –          |
+| raw `@morojs/engine` server      | 47 MB | 53 MB      |
+| MoroJS + engine                  | 72 MB | 81 MB      |
+| raw Bun.serve, for scale         | 26 MB | 36 MB      |
+
+The framework's ~25 MB above the raw engine is its own compiled module graph
+(262 modules, loaded once by the package's static ESM exports), not live
+objects (the JS heap is ~10 MB) and not Node built-ins: `node:cluster`,
+`child_process`, `dgram`, `zlib` and `worker_threads` are loaded on first use
+(`src/core/utilities/builtin.ts`), so a non-clustered app never pays for them.
+A Node process cannot get under Node's own floor, so a Bun-sized footprint is
+not on the table for any Node-hosted framework; on Linux the same server
+measured 77 MB against Bun's 551 MB under load (see the Benchmark repo).
+Two knobs an operator can set: `NODE_OPTIONS=--max-semi-space-size=4` trims
+~5 MB of young-generation slack under load at no throughput cost (Moro's own
+cluster workers already run with the equivalent `resourceLimits`), and
+`performance.clustering` with worker threads shares one process among all
+workers (504 MB for 24 workers on the reference box, against 1,146 MB as
+processes).
 
 ### Vercel Edge Optimizations
 

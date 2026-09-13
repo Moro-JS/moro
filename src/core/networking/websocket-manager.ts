@@ -1,6 +1,9 @@
 // WebSocket Manager for Moro Framework
 // Manages WebSocket connections using pluggable adapters
-import * as zlib from 'zlib';
+import { requireBuiltin } from '../utilities/builtin.js';
+
+// zlib on first use (core/utilities/builtin.ts).
+const zlibMod = () => requireBuiltin<typeof import('zlib')>('zlib');
 import { Container } from '../utilities/index.js';
 import { CircuitBreaker } from '../utilities/index.js';
 import { ModuleConfig, WebSocketDefinition } from '../../types/module.js';
@@ -272,7 +275,7 @@ export class WebSocketManager {
     if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
       // This is gzipped data
       try {
-        return zlib.gunzipSync(buffer);
+        return zlibMod().gunzipSync(buffer);
       } catch {
         return buffer;
       }

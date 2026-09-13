@@ -861,11 +861,11 @@ Configure performance optimizations.
 
 #### Clustering
 
-| Property            | Type      | Default     | Description                                                           |
-| ------------------- | --------- | ----------- | --------------------------------------------------------------------- |
-| `enabled`           | `boolean` | `false`     | Enable clustering                                                     |
-| `workers`           | `number`  | `1`         | Number of worker processes                                            |
-| `memoryPerWorkerGB` | `number`  | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified) |
+| Property            | Type      | Default     | Description                                                                                                                                                         |
+| ------------------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`           | `boolean` | `false`     | Enable clustering                                                                                                                                                   |
+| `workers`           | `number`  | `1`         | Number of workers (or `'auto'`). Worker threads in one process with the native engine on macOS/Linux; worker processes on Windows and with `engine: 'node'`/`'uws'` |
+| `memoryPerWorkerGB` | `number`  | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified)                                                                                               |
 
 **Note:** When `memoryPerWorkerGB` is not specified, MoroJS automatically calculates the optimal memory allocation per worker based on available system memory and CPU count, leaving headroom for the main process.
 

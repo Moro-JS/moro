@@ -1,7 +1,6 @@
 // uWebSockets.js HTTP Server Implementation for Moro Framework
 // Provides high-performance HTTP and WebSocket server using uWebSockets.js
 
-import cluster from 'cluster';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse, Middleware } from '../../types/http.js';
@@ -1966,7 +1965,9 @@ export class UWebSocketsHttpServer {
         }
 
         // Check if we're in a cluster environment
-        const isClusterWorker = cluster.isWorker;
+        // node:cluster's own definition of a worker, without loading node:cluster
+        // (which drags child_process/dgram/net into every uWS app).
+        const isClusterWorker = process.env.NODE_UNIQUE_ID !== undefined;
 
         // uWebSockets.js automatically enables SO_REUSEPORT when in cluster mode
         // Do NOT pass listenOptions in cluster mode - let uWS handle it automatically

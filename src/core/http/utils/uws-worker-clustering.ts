@@ -8,7 +8,11 @@
 // To suppress these warnings, you can run Node.js with: --no-warnings or
 // NODE_NO_WARNINGS=1 environment variable.
 
-import { Worker, isMainThread, threadId, parentPort } from 'worker_threads';
+import type { Worker } from 'worker_threads';
+import { requireBuiltin } from '../../utilities/builtin.js';
+
+// worker_threads is loaded on first use (core/utilities/builtin.ts).
+const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
 import os from 'os';
 import { createFrameworkLogger } from '../../logger/index.js';
 import { loadNativeEngine } from '../../utilities/package-utils.js';
@@ -69,7 +73,7 @@ export class UWSWorkerClusterManager {
   }
 
   async startAcceptorAndWorkers(_appFactory: () => any): Promise<void> {
-    if (!isMainThread) {
+    if (!wt().isMainThread) {
       throw new Error('startAcceptorAndWorkers can only be called from main thread');
     }
 
@@ -102,9 +106,12 @@ export class UWSWorkerClusterManager {
       this.acceptorApp.listen(port, (token: any) => {
         if (token) {
           this.acceptorListenSocket = token;
-          logger.info(`Acceptor listening on port ${port} from thread ${threadId}`, 'Acceptor');
+          logger.info(
+            `Acceptor listening on port ${port} from thread ${wt().threadId}`,
+            'Acceptor'
+          );
         } else {
-          throw new Error(`Failed to listen on port ${port} from thread ${threadId}`);
+          throw new Error(`Failed to listen on port ${port} from thread ${wt().threadId}`);
         }
       });
 
@@ -132,7 +139,7 @@ export class UWSWorkerClusterManager {
         reject(new Error('Cannot spawn worker: process.argv[1] (entry script) is unavailable'));
         return;
       }
-      const worker = new Worker(scriptPath, {
+      const worker = new (wt().Worker)(scriptPath, {
         workerData: {
           isUWSWorker: true,
           workerIndex: index,
@@ -309,10 +316,11 @@ export class UWSWorkerClusterManager {
   }
 
   static isUWSWorker(): boolean {
-    return !isMainThread && process.env.UWS_WORKER_MODE === 'true';
+    return !wt().isMainThread && process.env.UWS_WORKER_MODE === 'true';
   }
 
   static async sendDescriptorToAcceptor(app: any): Promise<void> {
+    const { isMainThread, parentPort, threadId } = wt();
     if (isMainThread || !parentPort) {
       throw new Error('sendDescriptorToAcceptor can only be called from worker thread');
     }
@@ -343,6 +351,7 @@ export class UWSWorkerClusterManager {
   }
 
   static setupWorkerShutdownHandler(closeCallback: () => void | Promise<void>): void {
+    const { parentPort, threadId } = wt();
     if (!parentPort) {
       return;
     }
