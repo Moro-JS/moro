@@ -107,7 +107,7 @@ const SENDFILE_BUFFER_LIMIT = 1024 * 1024;
 // allocated. The engine only reads it; never mutate.
 const JSON_HEADER_PAIR = ['content-type', 'application/json'];
 
-// Prepared response templates (engine >= 1.2.0, capabilities.responseTemplates).
+// Prepared response templates (engine >= 1.1.6, capabilities.responseTemplates).
 // The header sets the framework ITSELF emits - the JSON/text/octet-stream
 // defaults and "no headers at all" - are materialised once per (kind, status)
 // inside the engine (prepareResponse) and replayed per response with
@@ -328,7 +328,7 @@ export class EngineRequest extends LazyEventEmitter {
   }
 
   // Minimal net.Socket-shaped shim. `encrypted` reflects whether the engine
-  // is terminating TLS for this server (engine >= 1.2.0); when it isn't and
+  // is terminating TLS for this server (engine >= 1.1.6); when it isn't and
   // TLS is proxy-terminated, middleware should read `x-forwarded-proto`. This
   // exists so code written against Node's IncomingMessage (req.socket.encrypted,
   // the CSRF middleware; req.connection.remoteAddress, rate-limiters) doesn't
@@ -707,7 +707,7 @@ export class EngineResponse extends LazyEventEmitter {
       const rh = this._responseHeaders;
       if (rh === undefined && !this._server._compression.enabled) {
         // Hot path: no user-set headers, no compression - one native call.
-        // With templates (engine >= 1.2.0) the content-type pair was
+        // With templates (engine >= 1.1.6) the content-type pair was
         // materialised once in the engine; otherwise the shared pair goes
         // with the call. Zero per-response header work either way.
         const tpl = this._server._template(TPL_JSON, this.statusCode);
@@ -957,7 +957,7 @@ export class EngineResponse extends LazyEventEmitter {
       const hasBody = data !== undefined && data !== null;
       if (!this.headersSent) {
         // Terminal single-shot: status + headers + body in one native call.
-        // No app headers: the "no headers" template (engine >= 1.2.0) or a
+        // No app headers: the "no headers" template (engine >= 1.1.6) or a
         // null header list - identical bytes.
         if (this._responseHeaders === undefined) {
           const tpl = this._server._template(TPL_NONE, this.statusCode);
@@ -1514,7 +1514,7 @@ export class MoroEngineServer {
   /** @internal */ _getBody!: (reqId: number) => ArrayBuffer | null;
   /** @internal */ _getRemoteAddress!: (reqId: number) => string | undefined;
   /** @internal */ _getMethod!: (reqId: number) => string | undefined;
-  // Prepared response templates (engine >= 1.2.0): assigned only when the
+  // Prepared response templates (engine >= 1.1.6): assigned only when the
   // engine advertises capabilities.responseTemplates AND the functions exist,
   // so a flag/binary mismatch can never put `undefined` into a hot call site.
   /** @internal */ _prepareResponse?: (
@@ -1526,7 +1526,7 @@ export class MoroEngineServer {
   /** @internal */ _respondPreparedEmpty?: (reqId: number, tplId: number) => void;
   /** @internal */ _endWith?: (reqId: number, chunk: any) => void;
   private _templatesOn = false;
-  // Batched pipelined dispatch (engine >= 1.2.0, capabilities.batchDispatch):
+  // Batched pipelined dispatch (engine >= 1.1.6, capabilities.batchDispatch):
   // the engine parses complete pipelined requests ahead and delivers them in
   // one onRequestBatch(count) call; the descriptors/control/paths buffers are
   // the engine's (getBatchBuffers), fetched once per native server.
@@ -1543,7 +1543,7 @@ export class MoroEngineServer {
   // (kind -> status -> template id), prepared on first use, per engine server
   private _tpl: Array<Map<number, number>> = Array.from({ length: TPL_KINDS }, () => new Map());
   /** @internal read by EngineRequest#protocol/socket.encrypted - true when the
-   *  engine is terminating TLS for this server (engine >= 1.2.0 + ssl passed) */
+   *  engine is terminating TLS for this server (engine >= 1.1.6 + ssl passed) */
   isSsl = false;
 
   private serverId: number;

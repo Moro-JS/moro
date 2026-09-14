@@ -33,7 +33,7 @@ const threadsExpected = process.platform !== 'win32' && caps?.workerThreads === 
 const reason = !engineLoadable
   ? '@morojs/engine not loadable'
   : !caps?.workerThreads
-    ? 'engine build has no workerThreads capability (< 1.2.0)'
+    ? 'engine build has no workerThreads capability (< 1.1.6)'
     : !distBuilt
       ? 'dist/ not built (the thread fixture loads the built framework: npm run build)'
       : null;

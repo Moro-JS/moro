@@ -707,7 +707,7 @@ app.listen(3000);
 ```
 
 How the workers run is chosen for you. With the native engine on macOS/Linux
-(`@morojs/engine` ≥ 1.2.0) the workers are **worker threads in one process**,
+(`@morojs/engine` ≥ 1.1.6) the workers are **worker threads in one process**,
 each binding the port with `SO_REUSEPORT`: shared binary and code pages
 (lower RSS per worker), one pid to supervise, a crashed worker is restarted
 with backoff. On Windows, with `engine: 'node'` or `'uws'`, or with an older

@@ -1030,7 +1030,7 @@ export class Moro extends EventEmitter {
 
     // Check if clustering is enabled for massive performance gains
     if (this.config.performance?.clustering?.enabled) {
-      // Worker threads (engine backend, POSIX, engine >= 1.2.0) or node:cluster
+      // Worker threads (engine backend, POSIX, engine >= 1.1.6) or node:cluster
       // processes - startWithClustering picks and logs the transport.
       this.startWithClustering(port, host as string, callback);
       return;

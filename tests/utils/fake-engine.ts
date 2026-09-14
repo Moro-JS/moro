@@ -1,10 +1,10 @@
 // @ts-nocheck
 // A FAKE @morojs/engine module implementing the native API contract (engine
 // repo docs/API.md) in memory, for unit-testing MoroEngineServer without a
-// native binary. Records serve/respond/writeHead/write/end (and the 1.2.0
+// native binary. Records serve/respond/writeHead/write/end (and the 1.1.6
 // template calls) per reqId and drives the onRequest/onAborted/onWritable
 // callbacks. `capabilities` selects what probe() advertises, so the same
-// scenario can run against a "1.1.x" engine (no templates) and a "1.2.0"
+// scenario can run against a "1.1.x" engine (no templates) and a "1.1.6"
 // engine (templates) and its recorded ops compared; `omitFunctions` removes
 // exports so the adapter's flag-AND-function guard is testable.
 
@@ -148,7 +148,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       return requests.get(reqId)?.aborted ?? false;
     },
 
-    // ---- 1.2.0: prepared response templates ----
+    // ---- 1.1.6: prepared response templates ----
     prepareResponse(serverId: number, status: number, headersFlat: string[] | null) {
       const store = templates.get(serverId);
       if (!store) throw new Error('invalid serverId');

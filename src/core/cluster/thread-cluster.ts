@@ -1,7 +1,7 @@
 // Worker-thread clustering for the native engine backend.
 //
 // `performance.clustering` keeps its keys; what changes is the transport
-// underneath: on POSIX, with @morojs/engine >= 1.2.0 (capabilities.workerThreads),
+// underneath: on POSIX, with @morojs/engine >= 1.1.6 (capabilities.workerThreads),
 // the workers are worker_threads inside ONE process, each binding the port
 // with SO_REUSEPORT exactly as the process workers did. Everything that
 // cannot be a thread stays on node:cluster automatically - Windows (no
@@ -142,7 +142,7 @@ export function resolveClusterTransport(input: TransportInput): ClusterTransport
   if (!input.workerThreadsCapable) {
     return {
       kind: 'processes',
-      reason: 'this @morojs/engine build predates worker-thread support (< 1.2.0)',
+      reason: 'this @morojs/engine build predates worker-thread support (< 1.1.6)',
     };
   }
   if (!input.isMainThread) return { kind: 'processes', reason: 'not on the main thread' };

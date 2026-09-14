@@ -95,15 +95,15 @@ export interface EngineCapabilities {
    *  decision, not an adapter one). */
   staticRoutes: boolean;
   /** prepareResponse()/respondPrepared()/respondPreparedEmpty()/endWith()
-   *  exist (engine >= 1.2.0): the adapter replays prepared header blocks for
+   *  exist (engine >= 1.1.6): the adapter replays prepared header blocks for
    *  the responses it emits itself. */
   responseTemplates: boolean;
   /** onAborted/onWritable are delivered on a later loop turn, never from
-   *  inside respond()/write()/end() (engine >= 1.2.0). */
+   *  inside respond()/write()/end() (engine >= 1.1.6). */
   asyncNotify: boolean;
   /** A server left open at environment teardown is closed by the engine's
    *  cleanup hook, so the engine may run inside worker threads that can be
-   *  terminate()d (engine >= 1.2.0). Gates thread-based clustering. */
+   *  terminate()d (engine >= 1.1.6). Gates thread-based clustering. */
   workerThreads: boolean;
   /** V8 fast API calls are installed on the hot entry points (informational). */
   fastCalls: boolean;

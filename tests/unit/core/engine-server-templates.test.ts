@@ -1,10 +1,9 @@
- 
 // @ts-nocheck
 // Unit Tests - MoroEngineServer prepared response templates.
 //
 // Every response shape the adapter can emit is run against a fake engine
 // WITHOUT templates (a 1.1.x engine: capabilities absent) and WITH them (a
-// 1.2.0 engine: capabilities.responseTemplates), and the ops that reached the
+// 1.1.6 engine: capabilities.responseTemplates), and the ops that reached the
 // "wire" must be identical - the template path may only change WHICH native
 // call ran, never the status, headers or body. Plus: templates are prepared
 // exactly once per (kind, status), never used when the app set headers or
