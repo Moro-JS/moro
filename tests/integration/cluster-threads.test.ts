@@ -28,7 +28,8 @@ const fixtureTs = join(__dirname, '..', 'fixtures', 'cluster', 'app.ts');
 const distBuilt = existsSync(join(__dirname, '..', '..', 'dist', 'index.js'));
 const tsxCli = require.resolve('tsx/cli');
 
-const caps = engineLoadable ? loadNativeEngine()?.capabilities : undefined;
+const loaded = engineLoadable ? loadNativeEngine() : null;
+const caps = loaded?.capabilities;
 const threadsExpected = process.platform !== 'win32' && caps?.workerThreads === true;
 const reason = !engineLoadable
   ? '@morojs/engine not loadable'
@@ -202,8 +203,9 @@ describeCluster(`clustering (${threadsExpected ? 'worker threads' : 'worker proc
     // and the primary falls back to processes with a warning; 24.21: yes -
     // the threads boot). Both are correct; what must hold is that the served
     // mode matches what the primary reported.
+    // An engine without workerThreads never tries threads in the first place.
     const fellBack = /falling back to worker processes/.test(stdout + stderr);
-    if (fellBack) {
+    if (!threadsExpected || fellBack) {
       expect(body.isMainThread).toBe(true); // a worker process's main thread
     } else {
       expect(body.isMainThread).toBe(false); // a worker thread

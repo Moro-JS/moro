@@ -2234,20 +2234,44 @@ export class Moro extends EventEmitter {
     process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
     process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size by disabling color codes
 
-    // Graceful shutdown handler
+    // Graceful shutdown: SIGTERM every worker (each stops accepting, drains
+    // its in-flight responses, then exits), wait for their exits up to a
+    // bounded deadline, and only then exit. Exiting right after the kill
+    // used to close the cluster IPC channel, and a node:cluster worker whose
+    // primary disappears exits immediately - cutting the very responses the
+    // worker was draining. A second signal while draining exits at once.
+    let shuttingDown = false;
     const gracefulShutdown = () => {
+      if (shuttingDown) process.exit(0);
+      shuttingDown = true;
       this.logger.info('Gracefully shutting down cluster...', 'Cluster');
 
-      // Clean up all workers
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      if (this.clusterWorkers.size === 0) {
+        nodeCluster().removeAllListeners();
+        process.exit(0);
+      }
+      const pending = new Set<number>(this.clusterWorkers.keys());
+      const timer = setTimeout(() => {
+        this.logger.warn(
+          `Shutdown deadline reached; terminating ${pending.size} worker process(es)`,
+          'Cluster'
+        );
+        for (const pid of pending) this.clusterWorkers.get(pid)?.kill('SIGKILL');
+        finish();
+      }, 3000);
+      const finish = () => {
+        clearTimeout(timer);
+        nodeCluster().removeAllListeners();
+        process.exit(0);
+      };
       for (const [pid, worker] of this.clusterWorkers) {
-        worker.removeAllListeners();
+        worker.removeAllListeners(); // no restart on these exits
+        worker.once('exit', () => {
+          pending.delete(pid);
+          if (pending.size === 0) finish();
+        });
         worker.kill('SIGTERM');
       }
-
-      // Clean up cluster listeners
-      nodeCluster().removeAllListeners();
-      process.exit(0);
     };
 
     // Handle process signals for graceful shutdown
