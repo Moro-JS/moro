@@ -1,3 +1,17 @@
+## [1.8.10] - 2026-09-14
+
+### Added
+
+- Add unit tests for MoroEngineServer and thread clustering functionality
+
+### Changed
+
+- Update engine version references from 1.2.0 to 1.1.6 in documentation and code comments
+
+### Other
+
+- Remove unnecessary blank line in MoroEngineServer batched dispatch test
+
 ## [1.8.9] - 2026-08-21
 
 ### Other
