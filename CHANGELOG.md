@@ -2,7 +2,12 @@
 
 ### Added
 
-- ### Added
+- `.handler()`, the two-argument `app.get(path, body)` form and `route({ handler })` accept a string or Buffer in place of a function: the route answers with that body, as `res.send()` would. On a route with nothing else configured (no auth, validation, rate limit, cache or middleware, literal path) Moro's native engine (`@morojs/engine` >= 1.1.6, `capabilities.staticRoutes`) answers it inside the engine without calling into JS; otherwise, and on every other server, an equivalent handler sends the same bytes.
+- `MoroEngineServer.setStaticRoute()` / `clearStaticRoutes()` / `staticRoutesEnabled`, re-applied to the fresh native server after `close()` + `listen()`; refused while compression is enabled, since the engine sends the stored bytes as they are.
+
+### Fixed
+
+- Native engine: a response completed through a bare microtask after the dispatch window - an `await` on an already-settled promise, a `.then` chain, and the framework's own 404 for an unmatched route - was not flushed until the next Node-managed callback, seconds later on a quiet server (the engine invokes `onRequest` outside a Node callback scope, so V8 never drained the queue). `MoroEngineServer` now arms one no-op `setImmediate` whenever a response is still in flight after dispatch; Node drains microtasks when it fires, in the same loop iteration. Measured: 404 and microtask-completed handlers from 5-29 s to ~1 ms, and 404s under load from 0 to ~170k req/s on two cores.
 
 ## [1.8.10] - 2026-09-14
 

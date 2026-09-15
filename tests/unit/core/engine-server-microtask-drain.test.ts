@@ -59,6 +59,14 @@ describe('MoroEngineServer microtask drain', () => {
     expect(server._drainArmed).toBe(false);
   });
 
+  it('does not arm when the engine advertises callbackScope (it drains on return itself)', () => {
+    const engine = createFakeEngine({ capabilities: { callbackScope: true } });
+    const server = createServer(engine);
+    server.setRouterHandler(() => false);
+    engine.simulate({ path: '/nope' });
+    expect(server._drainArmed).toBe(false);
+  });
+
   it('arms for a router miss (the 404 is sent after an await)', () => {
     const engine = createFakeEngine();
     const server = createServer(engine);

@@ -110,6 +110,10 @@ export interface EngineCapabilities {
   fastCalls: boolean;
   /** Batched pipelined dispatch (onRequestBatch / getBatchBuffers / getPath). */
   batchDispatch: boolean;
+  /** Every callback into JS runs inside a Node callback scope, so nextTicks
+   *  and microtasks queued during dispatch run when the callback returns;
+   *  the adapter then needs no drain of its own (engine > 1.1.6). */
+  callbackScope: boolean;
   /** I/O transport in use ('uv', 'uring'), when the engine reports it. */
   transport?: string;
 }
@@ -129,6 +133,7 @@ const CAP_KEYS = [
   'asyncNotify',
   'workerThreads',
   'fastCalls',
+  'callbackScope',
   'batchDispatch',
 ] as const;
 

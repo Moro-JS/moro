@@ -47,7 +47,8 @@ export interface MiddlewarePhases {
 export interface RouteSchema {
   method: HttpMethod;
   path: string;
-  handler: RouteHandler;
+  /** A function, or the response body itself (see StaticBody) */
+  handler: RouteHandler | StaticBody;
   validation?: ValidationConfig;
   auth?: AuthConfig;
   rateLimit?: RateLimitConfig;
@@ -72,6 +73,10 @@ export interface StaticResponse {
 
 /** What .handler() accepts in place of a function: the response body itself. */
 export type StaticBody = string | Buffer;
+
+// A RouteSchema after registerRoute(): a literal body has been compiled into
+// a function by compileStaticRoute, so dispatch can call the handler directly.
+type RegisteredRouteSchema = RouteSchema & { handler: RouteHandler };
 
 // The content-type res.send() implies for a body it was given no header for:
 // the same three cases MoroEngineServer's send() picks a template by, spelled
@@ -127,11 +132,11 @@ const UPPERCASE_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEA
 
 // Internal route representation
 interface InternalRoute {
-  schema: RouteSchema;
+  schema: RegisteredRouteSchema;
   compiledPath: CompiledPath;
   // Hoisted from schema at registration so the per-request dispatch is a
   // single monomorphic load instead of a two-level property chase
-  handler: RouteSchema['handler'];
+  handler: RouteHandler;
   isFastPath: boolean; // No middleware, auth, validation, rate limiting
   executionOrder: string[]; // Ordered list of execution phases
   // Route-specific configs (not middleware)
@@ -449,6 +454,8 @@ export class UnifiedRouter {
       }
       compileStaticRoute(schema, body);
     }
+    // From here on the handler is a function, whichever form was registered.
+    const registered = schema as RegisteredRouteSchema;
 
     // OPTIMIZATION: Skip PathMatcher.compile for better performance
     // Determine if static route (optimized check)
@@ -471,9 +478,9 @@ export class UnifiedRouter {
     // OPTIMIZATION: Lazy auth middleware creation (only create when needed, not during registration)
     // This speeds up route registration significantly
     const route: InternalRoute = {
-      schema,
+      schema: registered,
       compiledPath: null as any, // Will be set lazily if needed
-      handler: schema.handler,
+      handler: registered.handler,
       isFastPath,
       executionOrder,
       rateLimitConfig: schema.rateLimit,
@@ -625,7 +632,7 @@ export class UnifiedRouter {
   addRoute(
     method: HttpMethod,
     path: string,
-    handler: RouteHandler,
+    handler: RouteHandler | StaticBody,
     middleware: Middleware[] = []
   ): void {
     this.registerRoute({

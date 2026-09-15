@@ -475,6 +475,7 @@ app.get('/health').handler('ok');
 app.get('/').handler(''); // 200, empty body
 app.get('/version').handler('{"version":"1.8"}'); // application/json
 app.get('/ping', 'pong'); // the two-argument form takes a body too
+app.route({ method: 'GET', path: '/ready', handler: 'ready' }); // and the schema form
 ```
 
 When the route has nothing else configured - no `.auth()`, `.rateLimit()`,

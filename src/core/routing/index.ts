@@ -61,7 +61,8 @@ export interface MiddlewarePhases {
 export interface RouteSchema {
   method: HttpMethod;
   path: string;
-  handler: RouteHandler;
+  /** A function, or the response body itself (see StaticBody / .handler()) */
+  handler: RouteHandler | StaticBody;
   validation?: ValidationConfig;
   auth?: AuthConfig;
   rateLimit?: RateLimitConfig;

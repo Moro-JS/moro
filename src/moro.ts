@@ -11,7 +11,7 @@ import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger/
 import { Logger } from './types/logger.js';
 import { MiddlewareManager, MIDDLEWARE_FACTORY } from './core/middleware/index.js';
 import { IntelligentRoutingManager } from './core/routing/app-integration.js';
-import { RouteSchema } from './core/routing/index.js';
+import { RouteSchema, StaticBody } from './core/routing/index.js';
 import {
   UnifiedRouter,
   RouteBuilder as UnifiedRouteBuilder,
@@ -107,7 +107,11 @@ export class RouteGroup {
   }
 
   get(path: string): UnifiedRouteBuilder;
-  get(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  get(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   get(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('GET', this.prefixPath(path), args[0], args[1]);
@@ -117,7 +121,11 @@ export class RouteGroup {
   }
 
   post(path: string): UnifiedRouteBuilder;
-  post(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  post(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   post(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('POST', this.prefixPath(path), args[0], args[1]);
@@ -127,7 +135,11 @@ export class RouteGroup {
   }
 
   put(path: string): UnifiedRouteBuilder;
-  put(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  put(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   put(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('PUT', this.prefixPath(path), args[0], args[1]);
@@ -137,7 +149,11 @@ export class RouteGroup {
   }
 
   delete(path: string): UnifiedRouteBuilder;
-  delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  delete(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   delete(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('DELETE', this.prefixPath(path), args[0], args[1]);
@@ -147,7 +163,11 @@ export class RouteGroup {
   }
 
   patch(path: string): UnifiedRouteBuilder;
-  patch(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  patch(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   patch(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('PATCH', this.prefixPath(path), args[0], args[1]);
@@ -157,7 +177,11 @@ export class RouteGroup {
   }
 
   head(path: string): UnifiedRouteBuilder;
-  head(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  head(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   head(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('HEAD', this.prefixPath(path), args[0], args[1]);
@@ -167,7 +191,11 @@ export class RouteGroup {
   }
 
   options(path: string): UnifiedRouteBuilder;
-  options(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
+  options(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
   options(path: string, ...args: any[]): UnifiedRouteBuilder | this {
     if (args.length > 0) {
       (this.app as any).addRoute('OPTIONS', this.prefixPath(path), args[0], args[1]);
@@ -177,7 +205,11 @@ export class RouteGroup {
   }
 
   /** Register a handler for all HTTP methods on the given path (Express-compatible). */
-  all(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this {
+  all(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this {
     this.app.all(this.prefixPath(path), handler, options);
     return this;
   }
@@ -465,10 +497,14 @@ export class Moro extends EventEmitter {
   // Intelligent route methods - chainable with automatic middleware ordering
   // Overloads for better TypeScript inference
   get(path: string): UnifiedRouteBuilder;
-  get(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   get(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  get(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -480,10 +516,14 @@ export class Moro extends EventEmitter {
   }
 
   post(path: string): UnifiedRouteBuilder;
-  post(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   post(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  post(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -495,10 +535,14 @@ export class Moro extends EventEmitter {
   }
 
   put(path: string): UnifiedRouteBuilder;
-  put(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   put(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  put(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -510,10 +554,14 @@ export class Moro extends EventEmitter {
   }
 
   delete(path: string): UnifiedRouteBuilder;
-  delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   delete(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  delete(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -525,10 +573,14 @@ export class Moro extends EventEmitter {
   }
 
   patch(path: string): UnifiedRouteBuilder;
-  patch(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   patch(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  patch(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -540,10 +592,14 @@ export class Moro extends EventEmitter {
   }
 
   head(path: string): UnifiedRouteBuilder;
-  head(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   head(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  head(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -553,10 +609,14 @@ export class Moro extends EventEmitter {
   }
 
   options(path: string): UnifiedRouteBuilder;
-  options(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this;
   options(
     path: string,
-    handler?: (req: HttpRequest, res: HttpResponse) => any,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this;
+  options(
+    path: string,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -570,7 +630,11 @@ export class Moro extends EventEmitter {
    * Handler is required — unlike the single-method registrations, there's no builder
    * form since `all()` fans out across methods.
    */
-  all(path: string, handler: (req: HttpRequest, res: HttpResponse) => any, options?: any): this {
+  all(
+    path: string,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    options?: any
+  ): this {
     const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
     for (const method of methods) {
       this.addRoute(method, path, handler, options);

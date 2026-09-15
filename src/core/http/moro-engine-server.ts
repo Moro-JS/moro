@@ -2311,7 +2311,9 @@ export class MoroEngineServer {
   // closes, in this loop iteration's check phase. One per burst is enough,
   // so it is armed once and re-armed only after it has fired.
   private _armMicrotaskDrain(): void {
-    if (this._drainArmed) return;
+    // An engine that opens a Node callback scope around every callback
+    // (capabilities.callbackScope) drains the queue itself on return.
+    if (this._drainArmed || this._capabilities?.callbackScope === true) return;
     this._drainArmed = true;
     setImmediate(() => {
       this._drainArmed = false;
