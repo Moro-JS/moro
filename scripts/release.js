@@ -14,6 +14,7 @@
 
 import { execSync } from 'child_process';
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 
 // Colors for console output
 const colors = {
@@ -118,54 +119,156 @@ function updatePackageLockJson(newVersion) {
   fs.writeFileSync(packageLockPath, JSON.stringify(packageLock, null, 2) + '\n');
 }
 
-function getCommitsSinceLastRelease() {
-  try {
-    // Get the last release tag
-    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-    // Get commits since last tag
-    const commits = execSync(`git log ${lastTag}..HEAD --oneline --no-merges`, {
-      encoding: 'utf8',
-    });
-    return commits
-      .trim()
-      .split('\n')
-      .filter(line => line.trim());
-  } catch {
-    // If no tags exist, get all commits
-    const commits = execSync('git log --oneline --no-merges', { encoding: 'utf8' });
-    return commits
-      .trim()
-      .split('\n')
-      .filter(line => line.trim())
-      .slice(0, 10); // Limit to last 10 commits
-  }
+// ===== Commits -> changelog =====
+//
+// Every commit message since the last tag, whole. `git log --oneline` used to
+// feed this, so only a subject line ever reached CHANGELOG.md: a body written
+// as changelog sections was dropped, and a commit whose subject was itself
+// "### Added" became the release's only bullet.
+
+const COMMIT_SEPARATOR = '\x1e';
+const TRAILER_LINE = /^(Co-Authored-By|Signed-off-by|Reviewed-by|Acked-by):/i;
+// Keep a Changelog order; a section a commit names beyond these follows them.
+const SECTION_ORDER = ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security', 'Other'];
+const SECTION_HEADING = /^#{2,4}\s+(.+?)\s*$/;
+const BULLET_LINE = /^[-*]\s+(.*)$/;
+
+// { subject, body } from one raw message: trailers dropped, surrounding blank
+// lines trimmed, body = the lines after the subject with paragraphs intact.
+function parseCommitMessage(raw) {
+  const lines = raw
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter(line => !TRAILER_LINE.test(line));
+  while (lines.length && lines[0].trim() === '') lines.shift();
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  if (lines.length === 0) return null;
+  const body = lines.slice(1);
+  while (body.length && body[0].trim() === '') body.shift();
+  return { subject: lines[0].trim(), body };
 }
 
+function getCommitsSinceLastRelease() {
+  let raw;
+  let limit = Infinity;
+  try {
+    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    raw = execSync(`git log ${lastTag}..HEAD --no-merges --format=%B%x1e`, { encoding: 'utf8' });
+  } catch {
+    // No tags yet: every commit, capped as before
+    raw = execSync('git log --no-merges --format=%B%x1e', { encoding: 'utf8' });
+    limit = 10;
+  }
+  return raw.split(COMMIT_SEPARATOR).map(parseCommitMessage).filter(Boolean).slice(0, limit);
+}
+
+// The section a plain commit lands in, decided by its subject only - a body
+// mentions "add" or "fix" far too easily to be used for this.
+function sectionForSubject(subject) {
+  const message = subject.toLowerCase();
+  if (message.includes('feat:') || message.includes('add')) return 'Added';
+  if (message.includes('fix:') || message.includes('bug') || message.includes('error')) {
+    return 'Fixed';
+  }
+  if (
+    message.includes('chore:') ||
+    message.includes('refactor:') ||
+    message.includes('update') ||
+    message.includes('change')
+  ) {
+    return 'Changed';
+  }
+  return 'Other';
+}
+
+function canonicalSection(name) {
+  return SECTION_ORDER.find(known => known.toLowerCase() === name.toLowerCase()) ?? name;
+}
+
+// One bullet: its first line, then the rest indented so markdown keeps the
+// continuation lines (and paragraph breaks) inside the bullet.
+function formatItem(first, rest) {
+  const tail = [...rest];
+  while (tail.length && tail[tail.length - 1].trim() === '') tail.pop();
+  const out = [`- ${first}`];
+  for (const line of tail) out.push(line.trim() === '' ? '' : `  ${line.trim()}`);
+  return out.join('\n');
+}
+
+// Map of section name -> bullets. A message written as changelog sections
+// ("### Fixed" followed by "- ..." bullets, anywhere in subject or body) is
+// taken as written, each of its sections into the entry's matching section;
+// any summary line above its first heading is not repeated. Every other
+// message is one bullet: the subject, with the body lines under it.
 function categorizeCommits(commits) {
-  const added = [];
-  const changed = [];
-  const fixed = [];
-  const other = [];
+  const sections = new Map();
+  const add = (name, item) => {
+    const key = canonicalSection(name);
+    if (!sections.has(key)) sections.set(key, []);
+    sections.get(key).push(item);
+  };
 
-  commits.forEach(commit => {
-    const message = commit.toLowerCase();
-    if (message.includes('feat:') || message.includes('add')) {
-      added.push(commit);
-    } else if (message.includes('fix:') || message.includes('bug') || message.includes('error')) {
-      fixed.push(commit);
-    } else if (
-      message.includes('chore:') ||
-      message.includes('refactor:') ||
-      message.includes('update') ||
-      message.includes('change')
-    ) {
-      changed.push(commit);
-    } else {
-      other.push(commit);
+  for (const { subject, body } of commits) {
+    const lines = [subject, ...body];
+    if (!lines.some(line => SECTION_HEADING.test(line))) {
+      add(sectionForSubject(subject), formatItem(subject, body));
+      continue;
     }
-  });
+    let current = null;
+    let first = null;
+    let rest = [];
+    const flush = () => {
+      if (first !== null) add(current, formatItem(first, rest));
+      first = null;
+      rest = [];
+    };
+    for (const line of lines) {
+      const heading = line.match(SECTION_HEADING);
+      if (heading) {
+        flush();
+        current = heading[1];
+        continue;
+      }
+      if (current === null) continue;
+      const bullet = line.match(BULLET_LINE);
+      if (bullet) {
+        flush();
+        first = bullet[1];
+        continue;
+      }
+      if (first === null) {
+        if (line.trim() !== '') first = line.trim();
+        continue;
+      }
+      rest.push(line);
+    }
+    flush();
+  }
+  return sections;
+}
 
-  return { added, changed, fixed, other };
+function buildChangelogEntry(newVersion, today, sections) {
+  let entry = `## [${newVersion}] - ${today}\n\n`;
+  const names = [
+    ...SECTION_ORDER.filter(name => sections.has(name)),
+    ...[...sections.keys()].filter(name => !SECTION_ORDER.includes(name)),
+  ];
+  let wrote = false;
+  for (const name of names) {
+    const items = sections.get(name);
+    if (!items || items.length === 0) continue;
+    entry += `### ${name}\n\n${items.join('\n')}\n\n`;
+    wrote = true;
+  }
+  if (!wrote) {
+    entry += `### Maintenance\n\n- Version bump to ${newVersion}\n\n`;
+  }
+  return entry;
+}
+
+function isReleaseCommit(commit) {
+  return commit.subject.toLowerCase().includes('chore: release v');
 }
 
 function updateChangelog(newVersion, versionType) {
@@ -179,64 +282,16 @@ function updateChangelog(newVersion, versionType) {
     changelog = fs.readFileSync(changelogPath, 'utf8');
   }
 
-  // Get commits since last release
-  const allCommits = getCommitsSinceLastRelease();
+  const commits = getCommitsSinceLastRelease().filter(commit => !isReleaseCommit(commit));
+  const newEntry = buildChangelogEntry(newVersion, today, categorizeCommits(commits));
+  fs.writeFileSync(changelogPath, newEntry + changelog);
 
-  // Filter out release commits
-  const commits = allCommits.filter(commit => {
-    const lowerCommit = commit.toLowerCase();
-    return !lowerCommit.includes('chore: release v');
-  });
-
-  const { added, changed, fixed, other } = categorizeCommits(commits);
-
-  // Build changelog entry
-  let newEntry = `## [${newVersion}] - ${today}\n\n`;
-
-  if (added.length > 0) {
-    newEntry += '### Added\n';
-    added.forEach(commit => {
-      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-      newEntry += `- ${message}\n`;
-    });
-    newEntry += '\n';
+  // The entry is hand-shaped markdown; let prettier settle its spacing.
+  try {
+    execSync('npx prettier --write CHANGELOG.md', { stdio: 'ignore' });
+  } catch {
+    // formatting is a nicety, not a gate
   }
-
-  if (changed.length > 0) {
-    newEntry += '### Changed\n';
-    changed.forEach(commit => {
-      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-      newEntry += `- ${message}\n`;
-    });
-    newEntry += '\n';
-  }
-
-  if (fixed.length > 0) {
-    newEntry += '### Fixed\n';
-    fixed.forEach(commit => {
-      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-      newEntry += `- ${message}\n`;
-    });
-    newEntry += '\n';
-  }
-
-  if (other.length > 0) {
-    newEntry += '### Other\n';
-    other.forEach(commit => {
-      const message = commit.replace(/^[a-f0-9]+ /, ''); // Remove commit hash
-      newEntry += `- ${message}\n`;
-    });
-    newEntry += '\n';
-  }
-
-  // If no commits found, add a generic entry
-  if (commits.length === 0) {
-    newEntry += '### Maintenance\n';
-    newEntry += `- Version bump to ${newVersion}\n\n`;
-  }
-
-  const updatedChangelog = newEntry + changelog;
-  fs.writeFileSync(changelogPath, updatedChangelog);
 }
 
 function main() {
@@ -285,10 +340,7 @@ function main() {
   const commitsSinceRelease = getCommitsSinceLastRelease();
 
   // Filter out release commits (commits that are just version bumps)
-  const meaningfulCommits = commitsSinceRelease.filter(commit => {
-    const lowerCommit = commit.toLowerCase();
-    return !lowerCommit.includes('chore: release v');
-  });
+  const meaningfulCommits = commitsSinceRelease.filter(commit => !isReleaseCommit(commit));
 
   if (meaningfulCommits.length === 0) {
     log('❌ No commits since last release. Nothing to release.', 'red');
@@ -299,7 +351,7 @@ function main() {
 
   log(`✅ Found ${meaningfulCommits.length} commit(s) since last release`, 'green');
   meaningfulCommits.slice(0, 5).forEach(commit => {
-    log(`   - ${commit}`, 'cyan');
+    log(`   - ${commit.subject}`, 'cyan');
   });
   if (meaningfulCommits.length > 5) {
     log(`   ... and ${meaningfulCommits.length - 5} more`, 'cyan');
@@ -410,4 +462,16 @@ function main() {
   log('4. Announce the release on social media/community channels.', 'yellow');
 }
 
-main();
+// Run only when invoked as a script, so the changelog functions can be
+// imported and exercised without starting a release.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export {
+  parseCommitMessage,
+  getCommitsSinceLastRelease,
+  categorizeCommits,
+  buildChangelogEntry,
+  sectionForSubject,
+};

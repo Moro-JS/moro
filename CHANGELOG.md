@@ -2,7 +2,16 @@
 
 ### Changed
 
-- ### Changed
+- `MoroEngineServer` honours the engine's `callbackScope` capability (engine 1.1.7+): when every callback into JS already runs inside a Node callback scope, the adapter no longer arms its own `setImmediate` microtask drain, since the engine drains the queue on return.
+
+### Fixed
+
+- Typings for literal handlers. 1.8.11 typed the literal body only on the builder's `.handler(body)`; the other forms it documented failed to compile in TypeScript (TS2345/TS2322) even though they ran. Now typed: `app.get/post/put/delete/patch/head/options(path, body)` and `app.all(path, body)` on `Moro` and `RouteGroup`, `route({ handler: body })` through `RouteSchema.handler: RouteHandler | StaticBody`, and `UnifiedRouter`'s direct registration. Types only, no runtime change; the router narrows the stored schema to a function-typed handler once at registration.
+- The 1.8.11 changelog entry, which had recorded the release commit's subject line "### Added" as its only bullet, is restored from that commit's body.
+
+### Other
+
+- Docs: the literal-handlers section shows the schema form, `app.route({ method, path, handler: 'ok' })`.
 
 ## [1.8.11] - 2026-09-15
 
