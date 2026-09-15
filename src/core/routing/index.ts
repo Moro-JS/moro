@@ -6,7 +6,15 @@
 
 import { ValidationSchema } from '../validation/schema-interface.js';
 import { HttpRequest, HttpResponse } from '../http/index.js';
-import { UnifiedRouter } from './unified-router.js';
+import {
+  UnifiedRouter,
+  compileStaticRoute,
+  type RouteSchema as UnifiedRouteSchema,
+  type StaticBody,
+  type StaticResponse,
+} from './unified-router.js';
+
+export type { StaticBody, StaticResponse };
 
 // ===== TYPE EXPORTS (Keep all - used by app code) =====
 
@@ -61,6 +69,8 @@ export interface RouteSchema {
   middleware?: MiddlewarePhases;
   description?: string;
   tags?: string[];
+  /** Fixed reply of a literal handler; see StaticResponse */
+  static?: StaticResponse;
 }
 
 export const EXECUTION_PHASES = [
@@ -103,7 +113,10 @@ export interface RouteBuilder {
   use(...middleware: Middleware[]): RouteBuilder;
   describe(description: string): RouteBuilder;
   tag(...tags: string[]): RouteBuilder;
-  handler<T>(handler: RouteHandler<T>): void;
+  /** Terminal. A function handles the request; a string or Buffer IS the
+   *  response body (as res.send would send it), and on a route with nothing
+   *  else configured Moro's native engine answers it without calling JS. */
+  handler<T>(handler: RouteHandler<T> | StaticBody): void;
 }
 
 // ===== COMPILED ROUTE INTERFACE (Public API) =====
@@ -234,16 +247,22 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     return this;
   }
 
-  handler<T>(handler: RouteHandler<T>): void {
-    if (!handler) {
-      throw new Error('Handler is required');
+  handler<T>(handler: RouteHandler<T> | StaticBody): void {
+    if (typeof handler === 'function') {
+      // Avoid spread operator - add handler directly
+      this.schema.handler = handler;
+
+      // Delegate to UnifiedRouter
+      this.router.registerRoute(this.schema as RouteSchema);
+      return;
     }
-
-    // Avoid spread operator - add handler directly
-    this.schema.handler = handler;
-
-    // Delegate to UnifiedRouter
-    this.router.registerRoute(this.schema as RouteSchema);
+    if (typeof handler === 'string' || Buffer.isBuffer(handler)) {
+      this.router.registerRoute(
+        compileStaticRoute(this.schema as Partial<UnifiedRouteSchema>, handler)
+      );
+      return;
+    }
+    throw new Error('Handler is required: a function, or the response body as a string or Buffer');
   }
 }
 

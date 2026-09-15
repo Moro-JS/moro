@@ -236,6 +236,8 @@ export type {
   CacheConfig,
   MiddlewarePhases,
   ExecutionPhase,
+  StaticBody,
+  StaticResponse,
 } from './core/routing/index.js';
 
 // Documentation System

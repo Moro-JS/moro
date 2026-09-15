@@ -462,6 +462,30 @@ Route features execute in this fixed order, whatever order you chain them in:
 9. **AFTER** - `.after()` custom middleware (`.use()` is an alias)
 10. **HANDLER** - `.handler()`, terminal and always chained last
 
+#### Literal Handlers
+
+`.handler()` also takes the response body itself, a string or a Buffer, in
+place of a function. The route answers with exactly that body, as
+`res.send(body)` would: status 200 and the content-type `send()` implies
+(`text/plain`, `application/json` for a JSON-looking string,
+`application/octet-stream` for a Buffer).
+
+```typescript
+app.get('/health').handler('ok');
+app.get('/').handler(''); // 200, empty body
+app.get('/version').handler('{"version":"1.8"}'); // application/json
+app.get('/ping', 'pong'); // the two-argument form takes a body too
+```
+
+When the route has nothing else configured - no `.auth()`, `.rateLimit()`,
+`.cache()`, validation or custom middleware, and a literal path - Moro's
+native engine (`@morojs/engine` >= 1.1.6) answers it itself: no call into JS,
+no routing and no header building per request. With any of those configured,
+or on the Node, uWebSockets and HTTP/2 servers, an equivalent handler sends
+the same bytes after that configuration has run. HEAD against a literal GET
+still reaches the handler, so method policy stays in JS. Routes registered
+after `listen()` keep working through the handler until the next `listen()`.
+
 #### Validation Methods
 
 ```typescript

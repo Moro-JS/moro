@@ -42,6 +42,21 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
   >();
   const prepareCalls: Array<{ serverId: number; status: number; headersFlat: string[] | null }> =
     [];
+  // Engine-answered static routes per serverId (setStaticRoute), plus every
+  // registration in order - the adapter's re-registration after close() +
+  // listen() is asserted on this list.
+  const staticRoutes = new Map<
+    number,
+    Array<{ method: number; path: string; status: number; headersFlat: string[] | null; body: any }>
+  >();
+  const staticCalls: Array<{
+    serverId: number;
+    method: number;
+    path: string;
+    status: number;
+    headersFlat: string[] | null;
+    body: any;
+  }> = [];
   let currentServerId = 0;
   // Batched dispatch buffers (getBatchBuffers): one set per fake, like the
   // engine's per-server buffers. A request dispatched as a batch slot carries
@@ -82,6 +97,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     close(serverId: number) {
       closed = true;
       templates.delete(serverId); // ids die with the native server
+      staticRoutes.delete(serverId); // and so do its static routes
     },
     stopListening(_serverId: number) {
       // graceful-drain phase; the fake has nothing to drain
@@ -211,6 +227,26 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       advance(r);
     },
 
+    setStaticRoute(
+      serverId: number,
+      method: number,
+      path: string,
+      status = 200,
+      headersFlat: string[] | null = null,
+      body: any = null
+    ) {
+      const list = staticRoutes.get(serverId) ?? [];
+      const entry = { method, path, status, headersFlat, body };
+      const at = list.findIndex(r => r.method === method && r.path === path);
+      if (at === -1) list.push(entry);
+      else list[at] = entry;
+      staticRoutes.set(serverId, list);
+      staticCalls.push({ serverId, ...entry });
+    },
+    clearStaticRoutes(serverId: number) {
+      staticRoutes.delete(serverId);
+    },
+
     probe() {
       return {
         ok: true,
@@ -224,6 +260,8 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     // ---- test drivers ----
     requests,
     prepareCalls,
+    staticCalls,
+    staticRoutes,
     batchCalls,
     batch,
     templates,
@@ -267,6 +305,22 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
         backpressure: !!options.backpressure,
         ops: [],
       });
+      // A registered (method, path) is answered by the engine itself: the
+      // reply is recorded as one 'static' op and onRequest never fires.
+      const fixed = staticRoutes
+        .get(currentServerId)
+        ?.find(r => r.method === methodIdx && r.path === (options.path || '/'));
+      if (fixed) {
+        const r = requests.get(reqId);
+        r.ops.push({
+          type: 'static',
+          status: fixed.status,
+          headersFlat: fixed.headersFlat,
+          body: fixed.body,
+        });
+        r.terminal = true;
+        return reqId;
+      }
       callbacks.onRequest(reqId, methodIdx, options.path || '/');
       return reqId;
     },

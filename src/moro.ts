@@ -471,7 +471,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       // Direct route registration
       return this.addRoute('GET', path, handler, options);
     }
@@ -486,7 +486,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       // Direct route registration
       return this.addRoute('POST', path, handler, options);
     }
@@ -501,7 +501,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       // Direct route registration
       return this.addRoute('PUT', path, handler, options);
     }
@@ -516,7 +516,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       // Direct route registration
       return this.addRoute('DELETE', path, handler, options);
     }
@@ -531,7 +531,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       // Direct route registration
       return this.addRoute('PATCH', path, handler, options);
     }
@@ -546,7 +546,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       return this.addRoute('HEAD', path, handler, options);
     }
     return this.unifiedRouter.head(path);
@@ -559,7 +559,7 @@ export class Moro extends EventEmitter {
     handler?: (req: HttpRequest, res: HttpResponse) => any,
     options?: any
   ): UnifiedRouteBuilder | this {
-    if (handler) {
+    if (handler !== undefined) {
       return this.addRoute('OPTIONS', path, handler, options);
     }
     return this.unifiedRouter.options(path);
@@ -1552,9 +1552,27 @@ export class Moro extends EventEmitter {
   private addRoute(
     method: string,
     path: string,
-    handler: (req: any, res: any) => any | Promise<any>,
+    handler: ((req: any, res: any) => any | Promise<any>) | string | Buffer,
     options: any = {}
   ) {
+    // A literal body - app.get('/', '') - is the same route the builder's
+    // .handler('') registers: the unified router turns it into a handler and,
+    // with nothing else configured, a reply the native engine answers itself.
+    // It never enters the legacy direct-route table, whose wrapper would
+    // call it as a function.
+    if (typeof handler !== 'function') {
+      this.unifiedRouter.registerRoute({
+        method: method as any,
+        path,
+        handler: handler as any,
+        validation: options.validation,
+        rateLimit: options.rateLimit,
+        cache: options.cache,
+        middleware: options.middleware,
+      });
+      return this;
+    }
+
     // Register with unified router (primary routing system)
     this.unifiedRouter.addRoute(method as any, path, handler as any, options.middleware || []);
 
@@ -1610,6 +1628,26 @@ export class Moro extends EventEmitter {
       httpServer.setRouterHandler((req: HttpRequest, res: HttpResponse) =>
         router.handleRequest(req, res)
       );
+
+      // A server that answers fixed replies itself (MoroEngineServer on an
+      // engine with capabilities.staticRoutes) gets every route whose handler
+      // is a literal body, so those requests never enter JS. The route's
+      // handler stays registered: it answers HEAD, and everything on servers
+      // without the capability.
+      if (typeof httpServer.setStaticRoute === 'function') {
+        for (const schema of router.getAllRoutes()) {
+          const fixed = schema.static;
+          if (fixed) {
+            httpServer.setStaticRoute(
+              schema.method,
+              schema.path,
+              fixed.status,
+              fixed.headers,
+              fixed.body
+            );
+          }
+        }
+      }
 
       // Servers with a native router (uWS) additionally get fast-path routes
       // registered directly on it - evaluated at listen so late-loaded routes

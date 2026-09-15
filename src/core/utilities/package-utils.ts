@@ -90,9 +90,10 @@ export interface EngineCapabilities {
   responseLimits: boolean;
   /** ssl.ciphers / ssl.ciphersuites / ssl.ecdhCurve are parsed. */
   tlsPolicy: boolean;
-  /** setStaticRoute()/clearStaticRoutes() exist (not used by the framework:
-   *  a static route bypasses middleware and hooks, so exposing it is an API
-   *  decision, not an adapter one). */
+  /** setStaticRoute()/clearStaticRoutes() exist. Used for a literal body
+   *  given to the route builder's .handler() when the route has nothing
+   *  else configured, because a static route bypasses middleware, hooks,
+   *  auth and validation by design. */
   staticRoutes: boolean;
   /** prepareResponse()/respondPrepared()/respondPreparedEmpty()/endWith()
    *  exist (engine >= 1.1.6): the adapter replays prepared header blocks for

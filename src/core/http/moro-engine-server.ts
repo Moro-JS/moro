@@ -15,6 +15,7 @@
 // engine concerns - this adapter never sees them. No dependency on the uWS
 // adapter: shared helpers live in ./utils.
 
+import { setImmediate } from 'node:timers';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse, HttpHandler, Middleware } from '../../types/http.js';
@@ -131,6 +132,30 @@ const TPL_HEADERS: ReadonlyArray<string[] | null> = [
 ];
 const TPL_CONTENT_TYPE: ReadonlyArray<string | undefined> = TPL_HEADERS.map(h => h?.[1]);
 const TPL_KINDS = TPL_HEADERS.length;
+
+// Engine-answered static routes take the engine's method index; only the
+// named methods (GET..OPTIONS) can short-circuit - 'OTHER' never does.
+const STATIC_ROUTE_METHODS = 7;
+
+// [k1, v1, k2, v2, ...] for the engine, from any header shape a caller holds.
+// null when there is nothing to send, so the wire bytes equal respond(null).
+function flattenHeaders(
+  headers?: Record<string, string | number | string[]> | string[] | null
+): string[] | null {
+  if (headers === undefined || headers === null) return null;
+  if (Array.isArray(headers)) return headers.length === 0 ? null : headers.map(String);
+  let flat: string[] | null = null;
+  for (const key in headers) {
+    const value = headers[key];
+    if (flat === null) flat = [];
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) flat.push(key, String(value[i]));
+    } else {
+      flat.push(key, String(value));
+    }
+  }
+  return flat;
+}
 
 // Content-Type sniff for send(): does the body start with '{' or '[' after
 // optional leading whitespace? Regex `\s` matches exactly the set trimStart()
@@ -1526,6 +1551,27 @@ export class MoroEngineServer {
   /** @internal */ _respondPreparedEmpty?: (reqId: number, tplId: number) => void;
   /** @internal */ _endWith?: (reqId: number, chunk: any) => void;
   private _templatesOn = false;
+  // Engine-answered static routes (engine >= 1.1.6, capabilities.staticRoutes):
+  // a fixed reply for one (method, path) that the engine sends without calling
+  // into JS. Assigned only when the flag AND the function are present (the
+  // same guard as templates). The list is kept because listen() after close()
+  // registers a fresh native server that knows nothing of the old one's routes.
+  /** @internal */ _setStaticRoute?: (
+    serverId: number,
+    method: number,
+    path: string,
+    status: number,
+    headersFlat: string[] | null,
+    body: any
+  ) => void;
+  private _staticOn = false;
+  private staticRoutes: Array<{
+    methodIdx: number;
+    path: string;
+    status: number;
+    headersFlat: string[] | null;
+    body: any;
+  }> = [];
   // Batched pipelined dispatch (engine >= 1.1.6, capabilities.batchDispatch):
   // the engine parses complete pipelined requests ahead and delivers them in
   // one onRequestBatch(count) call; the descriptors/control/paths buffers are
@@ -1598,6 +1644,9 @@ export class MoroEngineServer {
   // Set by close(); listen() then registers a fresh native server, because the
   // old serverId's uv handles are torn down and must never be reused.
   private closed = false;
+
+  // See _armMicrotaskDrain.
+  private _drainArmed = false;
 
   // Direct router dispatch (set from Moro.listen via setRouterHandler)
   private routerHandler?: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>;
@@ -1690,6 +1739,10 @@ export class MoroEngineServer {
       this._endWith = surface.endWith;
       this._templatesOn = true;
     }
+    if (this._capabilities?.staticRoutes === true && typeof surface.setStaticRoute === 'function') {
+      this._setStaticRoute = surface.setStaticRoute;
+      this._staticOn = true;
+    }
     if (
       this._capabilities?.batchDispatch === true &&
       typeof surface.getBatchBuffers === 'function' &&
@@ -1774,6 +1827,62 @@ export class MoroEngineServer {
   // server is replaced (close() then listen() registers a fresh one).
   private _resetTemplates(): void {
     for (const m of this._tpl) m.clear();
+  }
+
+  /** Whether this engine build answers static routes itself. */
+  get staticRoutesEnabled(): boolean {
+    return this._staticOn;
+  }
+
+  /**
+   * Register a fixed reply for one (method, path) that the engine serves
+   * without calling into JS: no routing, no middleware, no hooks and no
+   * header building per request. The bytes on the wire are those of
+   * respond(status, headers, body). Returns false when this engine cannot
+   * take it (no capability, or a method the engine does not index), so the
+   * caller keeps its JS handler as the answer. Registering the same
+   * (method, path) again replaces the earlier reply.
+   */
+  setStaticRoute(
+    method: string,
+    path: string,
+    status = 200,
+    headers?: Record<string, string | number | string[]> | string[] | null,
+    body?: string | Buffer | Uint8Array | ArrayBuffer | null
+  ): boolean {
+    const fn = this._setStaticRoute;
+    if (!this._staticOn || fn === undefined) return false;
+    // The engine sends the stored bytes as they are; with compression on, the
+    // JS handler would negotiate an encoding, so the two replies would differ.
+    if (this._compression.enabled) return false;
+    const methodIdx = (METHODS as readonly string[]).indexOf(method.toUpperCase());
+    if (methodIdx < 0 || methodIdx >= STATIC_ROUTE_METHODS) return false;
+    const headersFlat = flattenHeaders(headers);
+    const fixedBody = body === undefined ? null : body;
+    const entry = { methodIdx, path, status, headersFlat, body: fixedBody };
+    const at = this.staticRoutes.findIndex(r => r.methodIdx === methodIdx && r.path === path);
+    if (at === -1) this.staticRoutes.push(entry);
+    else this.staticRoutes[at] = entry;
+    fn(this.serverId, methodIdx, path, status, headersFlat, fixedBody);
+    return true;
+  }
+
+  /** Drop every engine-answered static route; the JS routes are untouched. */
+  clearStaticRoutes(): void {
+    this.staticRoutes.length = 0;
+    if (this._staticOn && typeof this._engine.clearStaticRoutes === 'function') {
+      this._engine.clearStaticRoutes(this.serverId);
+    }
+  }
+
+  // listen() after close() registers a fresh native server; give it every
+  // static route the old one had.
+  private _reapplyStaticRoutes(): void {
+    const fn = this._setStaticRoute;
+    if (fn === undefined) return;
+    for (const r of this.staticRoutes) {
+      fn(this.serverId, r.methodIdx, r.path, r.status, r.headersFlat, r.body);
+    }
   }
 
   // Register callbacks + limits with the native engine, returning the new
@@ -2188,7 +2297,25 @@ export class MoroEngineServer {
     if (!httpRes.writableEnded) {
       httpRes._registered = true;
       this.inflight.set(reqId, httpRes);
+      this._armMicrotaskDrain();
     }
+  }
+
+  // The engine invokes onRequest with a plain V8 call from its own uv
+  // callback, outside a Node callback scope, so microtasks queued during
+  // dispatch - an await on an already-settled promise, a .then chain, the
+  // router's own async 404 continuation - do not run when the callback
+  // returns. They run at the next Node-managed callback, which on a quiet
+  // server is whatever timer fires next: seconds away. A no-op immediate is
+  // that callback: Node drains nextTicks and microtasks when its scope
+  // closes, in this loop iteration's check phase. One per burst is enough,
+  // so it is armed once and re-armed only after it has fired.
+  private _armMicrotaskDrain(): void {
+    if (this._drainArmed) return;
+    this._drainArmed = true;
+    setImmediate(() => {
+      this._drainArmed = false;
+    });
   }
 
   private onAborted(reqId: number): void {
@@ -2603,6 +2730,7 @@ export class MoroEngineServer {
       if (this.closed) {
         this.serverId = this.registerWithEngine();
         this._resetTemplates();
+        this._reapplyStaticRoutes();
         this.closed = false;
       }
       // Synchronous bind; throws on bind errors, returns the actual port

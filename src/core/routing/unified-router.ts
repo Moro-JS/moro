@@ -55,6 +55,70 @@ export interface RouteSchema {
   middleware?: MiddlewarePhases | Middleware[];
   description?: string;
   tags?: string[];
+  /** Fixed reply of a literal handler. A server that can answer it
+   *  natively (MoroEngineServer on @morojs/engine >= 1.1.6) does so without
+   *  calling into JS; every other server runs `handler`, which sends the
+   *  same bytes. */
+  static?: StaticResponse;
+}
+
+/** The reply a literal handler sends, in the engine's shape. */
+export interface StaticResponse {
+  status: number;
+  /** [name, value, name, value, ...], or null for no headers at all */
+  headers: string[] | null;
+  body: string | Buffer | null;
+}
+
+/** What .handler() accepts in place of a function: the response body itself. */
+export type StaticBody = string | Buffer;
+
+// The content-type res.send() implies for a body it was given no header for:
+// the same three cases MoroEngineServer's send() picks a template by, spelled
+// out here so an engine-answered reply carries the bytes send() would have.
+const STATIC_JSON_START = /^\s*[{[]/;
+function impliedContentType(body: StaticBody): string {
+  if (typeof body !== 'string') return 'application/octet-stream';
+  return STATIC_JSON_START.test(body)
+    ? 'application/json; charset=utf-8'
+    : 'text/plain; charset=utf-8';
+}
+
+/**
+ * A literal body in place of a handler: the route answers with exactly that
+ * body, as res.send(body) would (status 200, the implied content-type). When
+ * nothing else is configured on the route - no auth, validation, rate limit,
+ * cache or middleware, and a literal path - the schema also carries `static`,
+ * so a server that can answer it natively does so without calling into JS.
+ * Anything configured keeps the route on the normal pipeline, where the
+ * handler sends the same bytes after that configuration has run.
+ */
+export function compileStaticRoute(schema: Partial<RouteSchema>, body: StaticBody): RouteSchema {
+  schema.handler = (_req: HttpRequest, res: HttpResponse) => {
+    res.send(body);
+  };
+
+  const path = schema.path ?? '';
+  const mw = schema.middleware;
+  const hasMiddleware = Array.isArray(mw)
+    ? mw.length > 0
+    : mw !== undefined &&
+      Object.keys(mw).some(phase => {
+        const list = (mw as Record<string, unknown>)[phase];
+        return Array.isArray(list) && list.length > 0;
+      });
+  const bare =
+    !path.includes(':') &&
+    !path.includes('*') &&
+    !schema.auth &&
+    !schema.validation &&
+    !schema.rateLimit &&
+    !schema.cache &&
+    !hasMiddleware;
+  if (bare) {
+    schema.static = { status: 200, headers: ['content-type', impliedContentType(body)], body };
+  }
+  return schema as RouteSchema;
 }
 
 // Canonical uppercase methods - lets dispatch skip toUpperCase for the
@@ -205,15 +269,20 @@ export class RouteBuilder {
     return this;
   }
 
-  // Terminal method
-  handler<T>(handler: RouteHandler<T>): void {
-    if (!handler) {
-      throw new Error('Handler is required');
+  // Terminal method: a function, or the response body itself (see
+  // compileStaticRoute for what a literal body means).
+  handler<T>(handler: RouteHandler<T> | StaticBody): void {
+    if (typeof handler === 'function') {
+      // Avoid spread operator - add handler directly
+      this.schema.handler = handler;
+      this.router.registerRoute(this.schema as RouteSchema);
+      return;
     }
-
-    // Avoid spread operator - add handler directly
-    this.schema.handler = handler;
-    this.router.registerRoute(this.schema as RouteSchema);
+    if (typeof handler === 'string' || Buffer.isBuffer(handler)) {
+      this.router.registerRoute(compileStaticRoute(this.schema, handler));
+      return;
+    }
+    throw new Error('Handler is required: a function, or the response body as a string or Buffer');
   }
 }
 
@@ -366,6 +435,21 @@ export class UnifiedRouter {
    * Register a route (internal method) - OPTIMIZED
    */
   registerRoute(schema: RouteSchema): void {
+    // A literal body in place of a handler (see compileStaticRoute). Every
+    // entry point lands here - the builder, app.get(path, body), route(schema)
+    // - so this is where the body becomes a handler and, on a bare route, a
+    // reply the native engine can answer itself.
+    if (typeof schema.handler !== 'function') {
+      const body: unknown = schema.handler;
+      if (typeof body !== 'string' && !Buffer.isBuffer(body)) {
+        throw new Error(
+          `Handler for ${schema.method} ${schema.path} must be a function, ` +
+            'or the response body as a string or Buffer'
+        );
+      }
+      compileStaticRoute(schema, body);
+    }
+
     // OPTIMIZATION: Skip PathMatcher.compile for better performance
     // Determine if static route (optimized check)
     const pathLen = schema.path.length;

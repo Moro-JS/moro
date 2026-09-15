@@ -68,6 +68,10 @@ import { createApp, z } from '@morojs/moro';
       return { success: true, data: req.body };
     });
 
+  // A literal body is the whole handler: on Moro's native engine it is
+  // answered without entering JS at all
+  app.get('/health').handler('ok');
+
   app.listen(3000);
 })();
 ```
