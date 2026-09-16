@@ -22,7 +22,7 @@ Build high-performance APIs with intelligent routing: declare what a route needs
 
 **Key Features:**
 
-- **Native C++ Engine** - ~102k req/s real-world through the full framework, 572k pipelined, on a single thread
+- **Native C++ Engine** - ~111k req/s real-world through the full framework, 913k pipelined, on a single thread
 - **Intelligent Routing** - Declare auth, validation, rate limits and caching in any order; they always execute in the optimal, security-first one
 - **Enterprise Auth** - Built-in Better Auth with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
