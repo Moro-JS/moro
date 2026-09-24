@@ -2,13 +2,28 @@
 // Unit - configuration is one-per-process. A later createApp()/initializeConfig
 // call that carries its own options must say loudly that they were ignored,
 // instead of silently handing back the first app's config.
-import { describe, it, expect, afterEach, jest } from '@jest/globals';
-import {
-  initializeConfig,
-  initializeConfigAsync,
-  resetConfig,
-} from '../../../src/core/config/index.js';
-import { MoroLogger } from '../../../src/core/logger/index.js';
+import { describe, it, expect, beforeAll, afterAll, afterEach, jest } from '@jest/globals';
+import { MoroLogger, logger as globalLogger } from '../../../src/core/logger/index.js';
+
+// The config module's own logger is a child of the global logger, created
+// when the module is first imported, and a child compiles a level that is
+// switched off into a no-op method. The shared test setup pins the global
+// level to 'fatal', so the module is imported here, after lowering it,
+// rather than statically - otherwise whether error() does anything depends
+// on hook ordering (it did, in the full coverage run).
+let initializeConfig: any;
+let initializeConfigAsync: any;
+let resetConfig: any;
+
+beforeAll(async () => {
+  globalLogger.setLevel('error');
+  ({ initializeConfig, initializeConfigAsync, resetConfig } =
+    await import('../../../src/core/config/index.js'));
+});
+
+afterAll(() => {
+  globalLogger.setLevel('fatal');
+});
 
 // error() is an instance property (a noop when the level disables it), so the
 // tests spy on the shared private log(level, message, ...) sink instead.

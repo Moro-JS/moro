@@ -1580,6 +1580,26 @@ export class MoroEngineServer {
     headersFlat: string[] | null;
     body: any;
   }> = [];
+  // Engine-answered parameter routes (engine >= 1.1.9, capabilities.paramRoutes):
+  // one variable path segment between prefix and suffix, echoed as the body,
+  // sent without calling into JS. Same guard and same re-apply story as the
+  // static routes above.
+  /** @internal */ _setParamRoute?: (
+    serverId: number,
+    method: number,
+    prefix: string,
+    suffix: string,
+    status: number,
+    headersFlat: string[] | null
+  ) => void;
+  private _paramOn = false;
+  private paramRoutes: Array<{
+    methodIdx: number;
+    prefix: string;
+    suffix: string;
+    status: number;
+    headersFlat: string[] | null;
+  }> = [];
   // Batched pipelined dispatch (engine >= 1.1.6, capabilities.batchDispatch):
   // the engine parses complete pipelined requests ahead and delivers them in
   // one onRequestBatch(count) call; the descriptors/control/paths buffers are
@@ -1751,6 +1771,10 @@ export class MoroEngineServer {
       this._setStaticRoute = surface.setStaticRoute;
       this._staticOn = true;
     }
+    if (this._capabilities?.paramRoutes === true && typeof surface.setParamRoute === 'function') {
+      this._setParamRoute = surface.setParamRoute;
+      this._paramOn = true;
+    }
     if (
       this._capabilities?.batchDispatch === true &&
       typeof surface.getBatchBuffers === 'function' &&
@@ -1888,12 +1912,64 @@ export class MoroEngineServer {
   }
 
   // listen() after close() registers a fresh native server; give it every
-  // static route the old one had.
+  // static and parameter route the old one had.
   private _reapplyStaticRoutes(): void {
     const fn = this._setStaticRoute;
-    if (fn === undefined) return;
-    for (const r of this.staticRoutes) {
-      fn(this.serverId, r.methodIdx, r.path, r.status, r.headersFlat, r.body);
+    if (fn !== undefined) {
+      for (const r of this.staticRoutes) {
+        fn(this.serverId, r.methodIdx, r.path, r.status, r.headersFlat, r.body);
+      }
+    }
+    const pfn = this._setParamRoute;
+    if (pfn !== undefined) {
+      for (const r of this.paramRoutes) {
+        pfn(this.serverId, r.methodIdx, r.prefix, r.suffix, r.status, r.headersFlat);
+      }
+    }
+  }
+
+  /** Whether this engine build answers parameter routes itself. */
+  get paramRoutesEnabled(): boolean {
+    return this._paramOn;
+  }
+
+  /**
+   * Register a route with one variable path segment, between `prefix` and
+   * `suffix`, that the engine answers itself with that segment as the body:
+   * "/user/" + "" for `/user/:id`. The segment goes out undecoded, as it is
+   * on the wire. Returns false when this engine cannot take it (no
+   * capability, compression on, or an unindexed method), so the caller keeps
+   * its JS handler. Registering the same (method, prefix, suffix) again
+   * replaces the earlier reply.
+   */
+  setParamRoute(
+    method: string,
+    prefix: string,
+    suffix: string,
+    status = 200,
+    headers?: Record<string, string | number | string[]> | string[] | null
+  ): boolean {
+    const fn = this._setParamRoute;
+    if (!this._paramOn || fn === undefined) return false;
+    if (this._compression.enabled) return false;
+    const methodIdx = (METHODS as readonly string[]).indexOf(method.toUpperCase());
+    if (methodIdx < 0 || methodIdx >= STATIC_ROUTE_METHODS) return false;
+    const headersFlat = flattenHeaders(headers);
+    const entry = { methodIdx, prefix, suffix, status, headersFlat };
+    const at = this.paramRoutes.findIndex(
+      r => r.methodIdx === methodIdx && r.prefix === prefix && r.suffix === suffix
+    );
+    if (at === -1) this.paramRoutes.push(entry);
+    else this.paramRoutes[at] = entry;
+    fn(this.serverId, methodIdx, prefix, suffix, status, headersFlat);
+    return true;
+  }
+
+  /** Drop every engine-answered parameter route; the JS routes are untouched. */
+  clearParamRoutes(): void {
+    this.paramRoutes.length = 0;
+    if (this._paramOn && typeof this._engine.clearParamRoutes === 'function') {
+      this._engine.clearParamRoutes(this.serverId);
     }
   }
 

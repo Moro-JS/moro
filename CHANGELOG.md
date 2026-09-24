@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Added
+
+- `param(name)`, a handler marker for the route builder and the two-argument forms: `.handler(param('id'))` on `/user/:id` answers with that path parameter as the body, as `res.end(req.params.id)` would. On a route with exactly that one parameter and nothing else configured, Moro's native engine (`@morojs/engine` >= 1.1.9, `capabilities.paramRoutes`) echoes the segment inside the engine without calling into JS; every other server runs the equivalent handler. Together with literal bodies, a route table like this benchmark's (an empty reply, a parameter echo, an empty reply) never enters JS on the engine.
+- `MoroEngineServer.setParamRoute()` / `clearParamRoutes()` / `paramRoutesEnabled`, re-applied after `close()` + `listen()`, refused while compression is enabled.
+
 ### Changed
 
 - An empty literal handler body (`.handler('')`, `app.get(path, '')`) now goes out as `res.end()` would - status and `Content-Length: 0`, no header block - instead of as `res.send('')` with `content-type: text/plain; charset=utf-8`. An empty body has nothing a content-type could describe; the change saves 38 bytes per response and makes the engine-answered reply byte-identical to the engine's own static reply with no headers. Non-empty literal bodies are unchanged (`send()` semantics, implied content-type).

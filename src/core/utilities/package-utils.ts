@@ -117,6 +117,10 @@ export interface EngineCapabilities {
    *  and microtasks queued during dispatch run when the callback returns;
    *  the adapter then needs no drain of its own (engine > 1.1.6). */
   callbackScope: boolean;
+  /** setParamRoute()/clearParamRoutes() exist (engine >= 1.1.9): a route
+   *  with one variable path segment, echoed as the body, answered inside the
+   *  engine. Used for param(name) handlers on bare routes. */
+  paramRoutes: boolean;
   /** I/O transport in use ('uv', 'uring'), when the engine reports it. */
   transport?: string;
 }
@@ -139,6 +143,7 @@ const CAP_KEYS = [
   'fastCalls',
   'callbackScope',
   'batchDispatch',
+  'paramRoutes',
 ] as const;
 
 export interface NativeEngineLoadResult {

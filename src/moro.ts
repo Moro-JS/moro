@@ -1771,6 +1771,22 @@ export class Moro extends EventEmitter {
           }
         }
       }
+      // Same for param(name) handlers on bare single-parameter routes: the
+      // engine echoes the segment itself (engine >= 1.1.9).
+      if (typeof httpServer.setParamRoute === 'function') {
+        for (const schema of router.getAllRoutes()) {
+          const echo = schema.paramEcho;
+          if (echo) {
+            httpServer.setParamRoute(
+              schema.method,
+              echo.prefix,
+              echo.suffix,
+              echo.status,
+              echo.headers
+            );
+          }
+        }
+      }
 
       // Servers with a native router (uWS) additionally get fast-path routes
       // registered directly on it - evaluated at listen so late-loaded routes

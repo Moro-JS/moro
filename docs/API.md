@@ -517,6 +517,26 @@ place of a function. The route answers with exactly that body, as
 `res.end()` would - `Content-Length: 0` and no content-type, since there is
 nothing for one to describe.
 
+It also takes `param(name)`: the route answers with that path parameter as
+the body, as `res.end(req.params.id)` would.
+
+```typescript
+import { createApp, param } from '@morojs/moro';
+
+app.get('/user/:id').handler(param('id')); // GET /user/42 -> "42"
+app.get('/users/:id/name', param('id')); // GET /users/42/name -> "42"
+```
+
+The parameter must be a whole segment of the path, as the router names
+parameters after their segment (`/files/:name.json` is a parameter called
+`name.json`, and `param('name')` on it throws at registration).
+
+On Moro's native engine (`@morojs/engine` >= 1.1.9) a bare route with exactly
+that one parameter is answered inside the engine, no JS per request, with the
+segment as it is on the wire (undecoded). A parameter that needs decoding, a
+route with two parameters, or any configured middleware keeps the handler in
+JS, where `req.params` is what the router produced.
+
 ```typescript
 app.get('/health').handler('ok');
 app.get('/').handler(''); // 200, empty body

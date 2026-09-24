@@ -9,12 +9,18 @@ import { HttpRequest, HttpResponse } from '../http/index.js';
 import {
   UnifiedRouter,
   compileStaticRoute,
+  compileParamRoute,
+  isParamEcho,
+  param,
   type RouteSchema as UnifiedRouteSchema,
   type StaticBody,
   type StaticResponse,
+  type ParamEcho,
+  type ParamRouteReply,
 } from './unified-router.js';
 
-export type { StaticBody, StaticResponse };
+export type { StaticBody, StaticResponse, ParamEcho, ParamRouteReply };
+export { param };
 
 // ===== TYPE EXPORTS (Keep all - used by app code) =====
 
@@ -61,8 +67,8 @@ export interface MiddlewarePhases {
 export interface RouteSchema {
   method: HttpMethod;
   path: string;
-  /** A function, or the response body itself (see StaticBody / .handler()) */
-  handler: RouteHandler | StaticBody;
+  /** A function, the response body itself (StaticBody), or param(name) */
+  handler: RouteHandler | StaticBody | ParamEcho;
   validation?: ValidationConfig;
   auth?: AuthConfig;
   rateLimit?: RateLimitConfig;
@@ -72,6 +78,8 @@ export interface RouteSchema {
   tags?: string[];
   /** Fixed reply of a literal handler; see StaticResponse */
   static?: StaticResponse;
+  /** Engine shape of a param(name) handler; see ParamRouteReply */
+  paramEcho?: ParamRouteReply;
 }
 
 export const EXECUTION_PHASES = [
@@ -115,9 +123,10 @@ export interface RouteBuilder {
   describe(description: string): RouteBuilder;
   tag(...tags: string[]): RouteBuilder;
   /** Terminal. A function handles the request; a string or Buffer IS the
-   *  response body (as res.send would send it), and on a route with nothing
-   *  else configured Moro's native engine answers it without calling JS. */
-  handler<T>(handler: RouteHandler<T> | StaticBody): void;
+   *  response body (as res.send would send it); param(name) echoes that path
+   *  parameter as the body. On a route with nothing else configured Moro's
+   *  native engine answers the last two without calling JS. */
+  handler<T>(handler: RouteHandler<T> | StaticBody | ParamEcho): void;
 }
 
 // ===== COMPILED ROUTE INTERFACE (Public API) =====
@@ -248,7 +257,7 @@ export class IntelligentRouteBuilder implements RouteBuilder {
     return this;
   }
 
-  handler<T>(handler: RouteHandler<T> | StaticBody): void {
+  handler<T>(handler: RouteHandler<T> | StaticBody | ParamEcho): void {
     if (typeof handler === 'function') {
       // Avoid spread operator - add handler directly
       this.schema.handler = handler;
@@ -263,7 +272,15 @@ export class IntelligentRouteBuilder implements RouteBuilder {
       );
       return;
     }
-    throw new Error('Handler is required: a function, or the response body as a string or Buffer');
+    if (isParamEcho(handler)) {
+      this.router.registerRoute(
+        compileParamRoute(this.schema as Partial<UnifiedRouteSchema>, handler)
+      );
+      return;
+    }
+    throw new Error(
+      'Handler is required: a function, the response body as a string or Buffer, or param(name)'
+    );
   }
 }
 

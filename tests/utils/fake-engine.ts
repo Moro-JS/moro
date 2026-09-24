@@ -57,6 +57,26 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     headersFlat: string[] | null;
     body: any;
   }> = [];
+  // Engine-answered parameter routes per serverId (setParamRoute): the
+  // segment between prefix and suffix is the body.
+  const paramRoutes = new Map<
+    number,
+    Array<{
+      method: number;
+      prefix: string;
+      suffix: string;
+      status: number;
+      headersFlat: string[] | null;
+    }>
+  >();
+  const paramCalls: Array<{
+    serverId: number;
+    method: number;
+    prefix: string;
+    suffix: string;
+    status: number;
+    headersFlat: string[] | null;
+  }> = [];
   let currentServerId = 0;
   // Batched dispatch buffers (getBatchBuffers): one set per fake, like the
   // engine's per-server buffers. A request dispatched as a batch slot carries
@@ -246,6 +266,27 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     clearStaticRoutes(serverId: number) {
       staticRoutes.delete(serverId);
     },
+    setParamRoute(
+      serverId: number,
+      method: number,
+      prefix: string,
+      suffix: string,
+      status = 200,
+      headersFlat: string[] | null = null
+    ) {
+      const list = paramRoutes.get(serverId) ?? [];
+      const entry = { method, prefix, suffix, status, headersFlat };
+      const at = list.findIndex(
+        r => r.method === method && r.prefix === prefix && r.suffix === suffix
+      );
+      if (at === -1) list.push(entry);
+      else list[at] = entry;
+      paramRoutes.set(serverId, list);
+      paramCalls.push({ serverId, ...entry });
+    },
+    clearParamRoutes(serverId: number) {
+      paramRoutes.delete(serverId);
+    },
 
     probe() {
       return {
@@ -262,6 +303,8 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     prepareCalls,
     staticCalls,
     staticRoutes,
+    paramCalls,
+    paramRoutes,
     batchCalls,
     batch,
     templates,
@@ -317,6 +360,26 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
           status: fixed.status,
           headersFlat: fixed.headersFlat,
           body: fixed.body,
+        });
+        r.terminal = true;
+        return reqId;
+      }
+      // A parameter route: prefix + one non-empty segment without '/' + suffix.
+      const reqPath: string = options.path || '/';
+      const echo = paramRoutes.get(currentServerId)?.find(r => {
+        if (r.method !== methodIdx) return false;
+        if (reqPath.length <= r.prefix.length + r.suffix.length) return false;
+        if (!reqPath.startsWith(r.prefix) || !reqPath.endsWith(r.suffix)) return false;
+        const seg = reqPath.slice(r.prefix.length, reqPath.length - r.suffix.length);
+        return seg.length > 0 && !seg.includes('/');
+      });
+      if (echo) {
+        const r = requests.get(reqId);
+        r.ops.push({
+          type: 'param',
+          status: echo.status,
+          headersFlat: echo.headersFlat,
+          body: reqPath.slice(echo.prefix.length, reqPath.length - echo.suffix.length),
         });
         r.terminal = true;
         return reqId;

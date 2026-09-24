@@ -48,7 +48,7 @@ export interface RouteSchema {
   method: HttpMethod;
   path: string;
   /** A function, or the response body itself (see StaticBody) */
-  handler: RouteHandler | StaticBody;
+  handler: RouteHandler | StaticBody | ParamEcho;
   validation?: ValidationConfig;
   auth?: AuthConfig;
   rateLimit?: RateLimitConfig;
@@ -61,6 +61,19 @@ export interface RouteSchema {
    *  calling into JS; every other server runs `handler`, which sends the
    *  same bytes. */
   static?: StaticResponse;
+  /** The engine shape of a param(name) handler on a bare route with exactly
+   *  that one parameter: the path segment between prefix and suffix is the
+   *  body. MoroEngineServer on @morojs/engine >= 1.1.9 (paramRoutes) answers
+   *  it without calling into JS; every other server runs `handler`. */
+  paramEcho?: ParamRouteReply;
+}
+
+export interface ParamRouteReply {
+  name: string;
+  prefix: string;
+  suffix: string;
+  status: number;
+  headers: string[] | null;
 }
 
 /** The reply a literal handler sends, in the engine's shape. */
@@ -73,6 +86,96 @@ export interface StaticResponse {
 
 /** What .handler() accepts in place of a function: the response body itself. */
 export type StaticBody = string | Buffer;
+
+export const PARAM_ECHO: unique symbol = Symbol.for('moro.paramEcho');
+
+/** The marker param(name) produces: "answer with this path parameter as the
+ *  body". `.handler(param('id'))` on `/user/:id` answers `GET /user/42` with
+ *  `42`, as `res.end(req.params.id)` would - and on Moro's native engine, on
+ *  a route with nothing else configured, without entering JS at all. */
+export interface ParamEcho {
+  readonly [PARAM_ECHO]: true;
+  readonly name: string;
+}
+
+export function param(name: string): ParamEcho {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('param(name) needs the parameter name, e.g. param("id") for "/user/:id"');
+  }
+  return Object.freeze({ [PARAM_ECHO]: true as const, name });
+}
+
+export function isParamEcho(value: unknown): value is ParamEcho {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { [PARAM_ECHO]?: unknown })[PARAM_ECHO] === true
+  );
+}
+
+// Nothing configured that a reply answered inside the engine would skip:
+// no auth, validation, rate limit, cache or middleware. (Static replies also
+// need a literal path; parameter echoes need exactly one parameter.)
+function isBareRoute(schema: Partial<RouteSchema>): boolean {
+  const mw = schema.middleware;
+  const hasMiddleware = Array.isArray(mw)
+    ? mw.length > 0
+    : mw !== undefined &&
+      Object.keys(mw).some(phase => {
+        const list = (mw as Record<string, unknown>)[phase];
+        return Array.isArray(list) && list.length > 0;
+      });
+  return !schema.auth && !schema.validation && !schema.rateLimit && !schema.cache && !hasMiddleware;
+}
+
+/**
+ * param(name) in place of a handler: the route answers with that path
+ * parameter as the body, as res.end(req.params[name]) would. When `:name` is
+ * a whole segment of the path, the only parameter in it, and nothing else is
+ * configured, the schema also carries `paramEcho` - prefix and suffix around
+ * the segment - so a server that can answer it natively does so without
+ * calling into JS. The engine echoes the segment as it is on the wire,
+ * undecoded (as uWS does); a parameter that needs decoding stays a function
+ * handler.
+ */
+export function compileParamRoute(schema: Partial<RouteSchema>, echo: ParamEcho): RouteSchema {
+  const name = echo.name;
+  schema.handler = (req: HttpRequest, res: HttpResponse) => {
+    const value = (req as { params?: Record<string, unknown> }).params?.[name];
+    res.end(value === undefined ? undefined : String(value));
+  };
+
+  const path = schema.path ?? '';
+  const segments = path.split('/');
+  const marker = `:${name}`;
+  const at = segments.indexOf(marker);
+  if (at === -1) {
+    // The router names a parameter after its whole segment, so ":name.json"
+    // is a parameter called "name.json" and param('name') would never see it.
+    // (":names" is a different parameter, not a misuse; it gets no echo.)
+    const partial = segments.some(
+      seg => seg.startsWith(marker) && /^[^A-Za-z0-9_$]/.test(seg.slice(marker.length))
+    );
+    if (partial) {
+      throw new Error(
+        `param('${name}') needs '${marker}' as a whole segment of the route path; ` +
+          `'${path}' has it inside a segment`
+      );
+    }
+    return schema as RouteSchema;
+  }
+  const rest = segments.slice(at + 1);
+  const plainShape =
+    !segments.some((seg, i) => i !== at && seg.startsWith(':')) &&
+    !path.includes('*') &&
+    !rest.includes(''); // no trailing or doubled slash after the parameter
+  if (plainShape && isBareRoute(schema)) {
+    const prefix = segments.slice(0, at).join('/') + '/';
+    const suffix = rest.length > 0 ? '/' + rest.join('/') : '';
+    schema.paramEcho = { name, prefix, suffix, status: 200, headers: null };
+  }
+  return schema as RouteSchema;
+}
 
 // A RouteSchema after registerRoute(): a literal body has been compiled into
 // a function by compileStaticRoute, so dispatch can call the handler directly.
@@ -113,22 +216,7 @@ export function compileStaticRoute(schema: Partial<RouteSchema>, body: StaticBod
       };
 
   const path = schema.path ?? '';
-  const mw = schema.middleware;
-  const hasMiddleware = Array.isArray(mw)
-    ? mw.length > 0
-    : mw !== undefined &&
-      Object.keys(mw).some(phase => {
-        const list = (mw as Record<string, unknown>)[phase];
-        return Array.isArray(list) && list.length > 0;
-      });
-  const bare =
-    !path.includes(':') &&
-    !path.includes('*') &&
-    !schema.auth &&
-    !schema.validation &&
-    !schema.rateLimit &&
-    !schema.cache &&
-    !hasMiddleware;
+  const bare = !path.includes(':') && !path.includes('*') && isBareRoute(schema);
   if (bare) {
     schema.static = {
       status: 200,
@@ -287,9 +375,9 @@ export class RouteBuilder {
     return this;
   }
 
-  // Terminal method: a function, or the response body itself (see
-  // compileStaticRoute for what a literal body means).
-  handler<T>(handler: RouteHandler<T> | StaticBody): void {
+  // Terminal method: a function, the response body itself (see
+  // compileStaticRoute), or param(name) (see compileParamRoute).
+  handler<T>(handler: RouteHandler<T> | StaticBody | ParamEcho): void {
     if (typeof handler === 'function') {
       // Avoid spread operator - add handler directly
       this.schema.handler = handler;
@@ -300,7 +388,13 @@ export class RouteBuilder {
       this.router.registerRoute(compileStaticRoute(this.schema, handler));
       return;
     }
-    throw new Error('Handler is required: a function, or the response body as a string or Buffer');
+    if (isParamEcho(handler)) {
+      this.router.registerRoute(compileParamRoute(this.schema, handler));
+      return;
+    }
+    throw new Error(
+      'Handler is required: a function, the response body as a string or Buffer, or param(name)'
+    );
   }
 }
 
@@ -458,14 +552,17 @@ export class UnifiedRouter {
     // - so this is where the body becomes a handler and, on a bare route, a
     // reply the native engine can answer itself.
     if (typeof schema.handler !== 'function') {
-      const body: unknown = schema.handler;
-      if (typeof body !== 'string' && !Buffer.isBuffer(body)) {
+      const given: unknown = schema.handler;
+      if (isParamEcho(given)) {
+        compileParamRoute(schema, given);
+      } else if (typeof given === 'string' || Buffer.isBuffer(given)) {
+        compileStaticRoute(schema, given);
+      } else {
         throw new Error(
           `Handler for ${schema.method} ${schema.path} must be a function, ` +
-            'or the response body as a string or Buffer'
+            'the response body as a string or Buffer, or param(name)'
         );
       }
-      compileStaticRoute(schema, body);
     }
     // From here on the handler is a function, whichever form was registered.
     const registered = schema as RegisteredRouteSchema;

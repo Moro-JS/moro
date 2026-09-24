@@ -69,8 +69,10 @@ import { createApp, z } from '@morojs/moro';
     });
 
   // A literal body is the whole handler: on Moro's native engine it is
-  // answered without entering JS at all
+  // answered without entering JS at all - and so is param('id'), which
+  // echoes that path parameter as the body
   app.get('/health').handler('ok');
+  app.get('/user/:id').handler(param('id'));
 
   app.listen(3000);
 })();

@@ -239,7 +239,10 @@ export type {
   ExecutionPhase,
   StaticBody,
   StaticResponse,
+  ParamEcho,
+  ParamRouteReply,
 } from './core/routing/index.js';
+export { param } from './core/routing/index.js';
 
 // Documentation System
 export {
