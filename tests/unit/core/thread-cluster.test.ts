@@ -9,6 +9,8 @@ import { EventEmitter } from 'events';
 import {
   ThreadClusterPrimary,
   computeWorkerCount,
+  usableCpuCount,
+  usableMemoryBytes,
   isUserTunedYoungGen,
   resolveClusterTransport,
   threadWorkerInfo,
@@ -119,6 +121,111 @@ describe('thread-cluster', () => {
           .count
       ).toBe(1);
       expect(computeWorkerCount(undefined, { cpus: 1, totalMemGB: 1 }).count).toBe(1);
+    });
+  });
+
+  describe('usableCpuCount (container-aware)', () => {
+    const files = (map: Record<string, string>) => (p: string) => {
+      if (p in map) return map[p];
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    };
+    const host = { availableParallelism: () => 96, cpuCount: () => 96 };
+
+    it('prefers the affinity-aware count over os.cpus() (--cpuset-cpus)', () => {
+      expect(
+        usableCpuCount({ readFile: files({}), availableParallelism: () => 64, cpuCount: () => 96 })
+      ).toBe(64);
+    });
+
+    it('falls back to os.cpus() when availableParallelism is unavailable', () => {
+      expect(
+        usableCpuCount({ readFile: files({}), availableParallelism: () => 0, cpuCount: () => 8 })
+      ).toBe(8);
+      expect(
+        usableCpuCount({
+          readFile: files({}),
+          availableParallelism: () => {
+            throw new Error('nope');
+          },
+          cpuCount: () => 8,
+        })
+      ).toBe(8);
+    });
+
+    it('caps at the cgroup v2 quota (--cpus / k8s limits.cpu)', () => {
+      expect(
+        usableCpuCount({
+          ...host,
+          readFile: files({ '/sys/fs/cgroup/cpu.max': '200000 100000\n' }),
+        })
+      ).toBe(2);
+      // fractional quota still means one runnable worker
+      expect(
+        usableCpuCount({ ...host, readFile: files({ '/sys/fs/cgroup/cpu.max': '50000 100000' }) })
+      ).toBe(1);
+      // "max" = unlimited
+      expect(
+        usableCpuCount({ ...host, readFile: files({ '/sys/fs/cgroup/cpu.max': 'max 100000' }) })
+      ).toBe(96);
+    });
+
+    it('caps at the cgroup v1 cfs quota', () => {
+      const v1 = files({
+        '/sys/fs/cgroup/cpu/cpu.cfs_quota_us': '400000',
+        '/sys/fs/cgroup/cpu/cpu.cfs_period_us': '100000',
+      });
+      expect(usableCpuCount({ ...host, readFile: v1 })).toBe(4);
+      const unlimited = files({
+        '/sys/fs/cgroup/cpu/cpu.cfs_quota_us': '-1',
+        '/sys/fs/cgroup/cpu/cpu.cfs_period_us': '100000',
+      });
+      expect(usableCpuCount({ ...host, readFile: unlimited })).toBe(96);
+    });
+
+    it('takes the smaller of quota and affinity, never below 1', () => {
+      expect(
+        usableCpuCount({
+          readFile: files({ '/sys/fs/cgroup/cpu.max': '800000 100000' }),
+          availableParallelism: () => 4,
+          cpuCount: () => 96,
+        })
+      ).toBe(4);
+      expect(
+        usableCpuCount({ readFile: files({}), availableParallelism: () => 0, cpuCount: () => 0 })
+      ).toBe(1);
+    });
+  });
+
+  describe('usableMemoryBytes (container-aware)', () => {
+    const GB = 1024 ** 3;
+    const files = (map: Record<string, string>) => (p: string) => {
+      if (p in map) return map[p];
+      throw new Error('ENOENT');
+    };
+
+    it('uses the cgroup v2 limit when it is below host RAM', () => {
+      expect(
+        usableMemoryBytes({
+          readFile: files({ '/sys/fs/cgroup/memory.max': `${2 * GB}` }),
+          totalmem: () => 64 * GB,
+        })
+      ).toBe(2 * GB);
+    });
+
+    it('ignores "max" and v1 sentinel values and reports host RAM', () => {
+      expect(
+        usableMemoryBytes({
+          readFile: files({ '/sys/fs/cgroup/memory.max': 'max' }),
+          totalmem: () => 64 * GB,
+        })
+      ).toBe(64 * GB);
+      expect(
+        usableMemoryBytes({
+          readFile: files({ '/sys/fs/cgroup/memory/memory.limit_in_bytes': '9223372036854771712' }),
+          totalmem: () => 64 * GB,
+        })
+      ).toBe(64 * GB);
+      expect(usableMemoryBytes({ readFile: files({}), totalmem: () => 16 * GB })).toBe(16 * GB);
     });
   });
 

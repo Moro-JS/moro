@@ -13,6 +13,7 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   WebSocketNamespace,
+  WebSocketNamespaceOptions,
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
@@ -185,18 +186,27 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
     // Notify default namespace of new connection
     const defaultNamespace = this.namespaces.get('/');
     if (defaultNamespace) {
+      connection.raw = defaultNamespace.raw;
       defaultNamespace.handleConnection(connection);
     }
 
     this.logger.debug(`WebSocket connection opened: ${id} from ${ip}`, 'Connection');
   }
 
-  private handleMessage(ws: any, message: ArrayBuffer, _isBinary: boolean): void {
+  private handleMessage(ws: any, message: ArrayBuffer, isBinary: boolean): void {
     const connectionId = ws.connectionId;
     const connection = this.connections.get(connectionId);
 
     if (!connection) {
       this.logger.warn(`Message received for unknown connection: ${connectionId}`, 'Message');
+      return;
+    }
+
+    if (connection.raw) {
+      // Raw namespace: the uWS ArrayBuffer is only valid inside this callback,
+      // so the bytes are copied out before any handler can hold on to them.
+      if (isBinary) connection.handleBinary(Buffer.from(new Uint8Array(message)));
+      else connection.handleRawText(textDecoder.decode(message));
       return;
     }
 
@@ -243,14 +253,16 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
     return `uws_${++this.connectionCounter}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   }
 
-  createNamespace(namespace: string): WebSocketNamespace {
+  createNamespace(namespace: string, options?: WebSocketNamespaceOptions): WebSocketNamespace {
     if (!this.namespaces.has(namespace)) {
       const ns = new UWSNamespaceWrapper(namespace, this.connections);
       this.namespaces.set(namespace, ns);
       this.logger.debug(`Created namespace: ${namespace}`, 'Namespace');
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.namespaces.get(namespace)!;
+    const ns = this.namespaces.get(namespace)!;
+    if (options?.raw) ns.raw = true;
+    return ns;
   }
 
   getDefaultNamespace(): WebSocketNamespace {
@@ -307,6 +319,8 @@ export class UWebSocketsAdapter implements WebSocketAdapter {
  * Namespace wrapper for uWebSockets
  */
 class UWSNamespaceWrapper implements WebSocketNamespace {
+  /** Raw framing for connections routed here (see WebSocketNamespaceOptions) */
+  raw = false;
   private connectionHandlers: ((socket: WebSocketConnection) => void)[] = [];
   private middlewares: WebSocketMiddleware[] = [];
 
@@ -406,6 +420,8 @@ class UWSNamespaceWrapper implements WebSocketNamespace {
 class UWSConnectionWrapper implements WebSocketConnection {
   public data: Record<string, any> = {};
   public connected = true;
+  /** Raw framing (set from the namespace at connection) */
+  public raw = false;
   private rooms = new Set<string>();
   private eventHandlers = new Map<
     string,
@@ -468,6 +484,36 @@ class UWSConnectionWrapper implements WebSocketConnection {
     // uWebSockets.js handles compression automatically based on app configuration
     // So this is the same as regular emit
     this.emit(event, data);
+  }
+
+  send(data: string | Buffer | ArrayBuffer | Uint8Array, isBinary?: boolean): void {
+    if (!this.connected) return;
+    try {
+      const sent = this.ws.send(data, isBinary ?? typeof data !== 'string');
+      if (!sent)
+        this.logger.warn(`Backpressure detected for connection ${this.id}`, 'Backpressure');
+    } catch (error) {
+      this.logger.error(
+        `Failed to send frame: ${error instanceof Error ? error.message : String(error)}`,
+        'Send'
+      );
+    }
+  }
+
+  /** Raw namespace: a text frame reaches the 'message' handlers verbatim */
+  handleRawText(text: string): void {
+    if (!this.connected) return;
+    for (const handler of this.anyHandlers) handler('message', text);
+    const handlers = this.eventHandlers.get('message');
+    if (handlers) for (const handler of handlers) handler(text);
+  }
+
+  /** A binary frame reaches the 'binary' handlers as a Buffer */
+  handleBinary(data: Buffer): void {
+    if (!this.connected) return;
+    for (const handler of this.anyHandlers) handler('binary', data);
+    const handlers = this.eventHandlers.get('binary');
+    if (handlers) for (const handler of handlers) handler(data);
   }
 
   handleMessage(data: any): void {

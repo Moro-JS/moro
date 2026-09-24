@@ -37,6 +37,18 @@ export interface WebSocketAdapterOptions {
   [key: string]: any; // Allow adapter-specific options
 }
 
+/** Per-namespace options for createNamespace() / app.websocket(). */
+export interface WebSocketNamespaceOptions {
+  /**
+   * Raw framing: frames on this namespace are NOT `{ event, data }` JSON
+   * envelopes. Every text frame reaches the `message` handler as a string and
+   * every binary frame reaches `binary` as a Buffer; replies go out through
+   * `socket.send()`. Supported by the engine, uWS and ws adapters (Socket.IO
+   * speaks its own protocol and ignores it).
+   */
+  raw?: boolean;
+}
+
 /**
  * Abstract WebSocket adapter interface
  * Allows the framework to work with different WebSocket implementations
@@ -50,7 +62,7 @@ export interface WebSocketAdapter {
   /**
    * Create a namespace for organizing WebSocket connections
    */
-  createNamespace(namespace: string): WebSocketNamespace;
+  createNamespace(namespace: string, options?: WebSocketNamespaceOptions): WebSocketNamespace;
 
   /**
    * Get the default namespace (usually '/')
@@ -160,6 +172,14 @@ export interface WebSocketConnection {
    * Emit with compression
    */
   compressedEmit?(event: string, data: any): void;
+
+  /**
+   * Send one frame as-is, with no `{ event, data }` envelope: a string goes
+   * out as a text frame, a Buffer/ArrayBuffer/Uint8Array as a binary frame
+   * (`isBinary` overrides the guess). The reply side of a raw namespace; every
+   * built-in adapter implements it.
+   */
+  send?(data: string | Buffer | ArrayBuffer | Uint8Array, isBinary?: boolean): void;
 
   /**
    * Join a room

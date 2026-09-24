@@ -2,6 +2,8 @@
 // Built for developers who demand performance, elegance, and zero compromises
 // Event-driven • Modular • Enterprise-ready • Developer-first
 import { Moro as MoroCore } from './core/framework.js';
+import type { WebSocketNamespaceOptions } from './core/networking/websocket-adapter.js';
+import type { SSLConfigInput } from './core/http/utils/ssl-config.js';
 import { HttpRequest, HttpResponse } from './core/http/index.js';
 import { ModuleConfig, InternalRouteDefinition } from './types/module.js';
 import { MoroOptions } from './types/core.js';
@@ -258,6 +260,7 @@ export class Moro extends EventEmitter {
   private queuedWebSocketRegistrations: Array<{
     namespace: string;
     handlers: Record<string, CallableFunction>;
+    options?: WebSocketNamespaceOptions;
     processed: boolean;
   }> = [];
   // Job scheduling system
@@ -953,17 +956,28 @@ export class Moro extends EventEmitter {
     return this;
   }
 
-  // WebSocket helper with events
-  websocket(namespace: string, handlers: Record<string, CallableFunction>) {
+  // WebSocket helper with events.
+  //
+  // Default framing: every frame is a JSON `{ event, data }` envelope and each
+  // handler key is an event name. With `{ raw: true }` frames are delivered
+  // as-is: `message` gets each text frame as a string, `binary` each binary
+  // frame as a Buffer, and a string/Buffer returned from the handler (or
+  // `socket.send()`) is the reply frame - what a plain-WebSocket client
+  // (browsers, load testers, non-Moro peers) speaks.
+  websocket(
+    namespace: string,
+    handlers: Record<string, CallableFunction>,
+    options: WebSocketNamespaceOptions = {}
+  ) {
     // Queue the registration to be processed after adapter initialization
-    const registration = { namespace, handlers, processed: false };
+    const registration = { namespace, handlers, options, processed: false };
     this.queuedWebSocketRegistrations.push(registration);
 
     // Try to process immediately if adapter is already ready
     const adapter = this.coreFramework.getWebSocketAdapter();
     if (adapter && !registration.processed) {
       // Adapter is ready, process immediately
-      this.processWebSocketRegistration(namespace, handlers, adapter);
+      this.processWebSocketRegistration(namespace, handlers, adapter, options);
       registration.processed = true;
     }
     // Otherwise, it will be processed when the server starts
@@ -974,15 +988,31 @@ export class Moro extends EventEmitter {
   private processWebSocketRegistration(
     namespace: string,
     handlers: Record<string, CallableFunction>,
-    adapter: any
+    adapter: any,
+    options: WebSocketNamespaceOptions = {}
   ) {
     this.emit('websocket:registering', { namespace, handlers });
 
-    const ns = adapter.createNamespace(namespace);
+    const ns = adapter.createNamespace(namespace, options);
+    const raw = options.raw === true;
+    const isFrame = (v: unknown): v is string | Buffer | ArrayBuffer | Uint8Array =>
+      typeof v === 'string' ||
+      Buffer.isBuffer(v) ||
+      v instanceof ArrayBuffer ||
+      ArrayBuffer.isView(v);
 
     Object.entries(handlers).forEach(([event, handler]) => {
       ns.on('connection', (socket: any) => {
         this.emit('websocket:connection', { namespace, event, socket });
+
+        if (event === 'connection') {
+          // The documented `connection: socket => ...` hook runs once per
+          // socket at open (it is not a client-sendable event name).
+          Promise.resolve()
+            .then(() => handler(socket))
+            .catch((error: any) => this.emit('websocket:error', { namespace, event, error }));
+          return;
+        }
 
         socket.on(event, (data: any, callback: any) => {
           this.emit('websocket:event', { namespace, event, data });
@@ -990,11 +1020,22 @@ export class Moro extends EventEmitter {
           Promise.resolve(handler(socket, data))
             .then((result: any) => {
               this.emit('websocket:response', { namespace, event, result });
+              if (raw) {
+                // Raw framing: the return value IS the reply frame
+                if (isFrame(result)) socket.send?.(result);
+                else if (result !== undefined && result !== null) {
+                  socket.send?.(JSON.stringify(result));
+                }
+                return;
+              }
               if (callback) callback(result);
               else if (result) socket.emit(`${event}:response`, result);
             })
             .catch((error: any) => {
               this.emit('websocket:error', { namespace, event, error });
+              // A raw peer has no envelope to carry an error object; the
+              // failure is surfaced through the websocket:error event only.
+              if (raw) return;
               const errorResponse = { success: false, error: error.message };
               if (callback) callback(errorResponse);
               else socket.emit('error', errorResponse);
@@ -1033,7 +1074,12 @@ export class Moro extends EventEmitter {
       // Process all unprocessed registrations
       for (const registration of this.queuedWebSocketRegistrations) {
         if (!registration.processed) {
-          this.processWebSocketRegistration(registration.namespace, registration.handlers, adapter);
+          this.processWebSocketRegistration(
+            registration.namespace,
+            registration.handlers,
+            adapter,
+            registration.options
+          );
           registration.processed = true;
         }
       }
@@ -1593,6 +1639,19 @@ export class Moro extends EventEmitter {
   // but the Node server booted instead. Stable surface for logs/tests/benchmarks.
   get engine(): ReturnType<MoroCore['getServerKind']> {
     return this.coreFramework.getServerKind();
+  }
+
+  /**
+   * Rotate the TLS certificate/key on the running listener without a restart.
+   * With no argument the key/cert files from `server.ssl` are re-read; with
+   * one, the given material (either ssl shape) replaces them. The new pair is
+   * validated first, so a bad file leaves the current certificate serving and
+   * rejects. Connections already established are untouched. `server.ssl.watch`
+   * calls this automatically when the files change.
+   */
+  async reloadTLS(ssl?: SSLConfigInput): Promise<void> {
+    await this.coreFramework.reloadTLS(ssl);
+    this.emit('tls:reloaded', { source: ssl ? 'argument' : 'files' });
   }
 
   getServerKind(): ReturnType<MoroCore['getServerKind']> {
@@ -2801,6 +2860,7 @@ export class Moro extends EventEmitter {
           // timer firing. (closeIdle/closeAllConnections exist on the Node http
           // server; the uWS/engine backends ignore the optional calls.)
           server?.closeIdleConnections?.();
+          this.coreFramework.stopTlsWatch();
           await Promise.race([
             new Promise<void>(resolve => {
               httpServer.close(() => {

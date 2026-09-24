@@ -262,6 +262,40 @@ app.get(
 
 Same pattern as `get()` but for different HTTP methods.
 
+#### Request bodies
+
+`req.body` is parsed before the handler runs, by Content-Type, identically on the Node, uWS and native-engine servers:
+
+| Content-Type                                                                               | `req.body`                                  |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| `application/json`                                                                         | parsed value (`null` for an empty body)     |
+| `application/x-www-form-urlencoded`                                                        | `{ field: value }`                          |
+| `multipart/form-data`                                                                      | `{ fields, files }` (file data as `Buffer`) |
+| `text/*`, JSON/XML/JavaScript/YAML families, anything with a `charset`, or no Content-Type | `string` (UTF-8)                            |
+| anything else (`application/octet-stream`, `image/*`, `application/pdf`, protobuf, ...)    | `Buffer` with the exact bytes               |
+
+Bodies above `server.bodySizeLimit` (10 MB by default; `server.maxUploadSize` for multipart) are rejected with 413 before parsing.
+
+```typescript
+app.post('/upload/raw').handler((req, res) => {
+  const bytes: Buffer = req.body; // Content-Type: application/octet-stream
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.send(bytes);
+});
+```
+
+`req.rawBody` is the body exactly as it arrived, before any parsing, or `null` when there was none. It is what webhook signature checks need (an HMAC over the wire bytes of a JSON payload) and is available on every backend, bounded by the same size limits:
+
+```typescript
+app.post('/webhooks/stripe').handler(req => {
+  const expected = crypto.createHmac('sha256', secret).update(req.rawBody!).digest('hex');
+  if (expected !== req.headers['x-signature']) throw new Error('bad signature');
+  return handle(req.body); // still parsed JSON
+});
+```
+
+For code written in the Express idiom, `json()`, `urlencoded()`, `raw({ type })` and `text({ type })` are exported and behave as pass-throughs that convert `req.body` to the shape that parser would have produced for the matching content types.
+
 ### Schema-First Routes
 
 #### app.route(schema)
@@ -404,6 +438,17 @@ app.listen(3000, '0.0.0.0', () => {
 });
 ```
 
+#### app.reloadTLS(ssl?)
+
+Rotate the TLS certificate and key on the running listener without a restart. With no argument the `server.ssl` key/cert files are re-read; with one, the given material (either `ssl` shape) replaces them. The new pair is validated first (file readable, PEM parses, key matches certificate), so a bad or half-written file rejects and the current certificate keeps serving. Connections that already handshaked are untouched. Works on the native engine (`@morojs/engine` 1.1.8+), the Node https server and HTTP/2; not on uWebSockets.js.
+
+```typescript
+await app.reloadTLS(); // re-read server.ssl.keyFile / certFile
+await app.reloadTLS({ keyFile: '/etc/tls/new.key', certFile: '/etc/tls/new.crt' });
+```
+
+`server.ssl.watch: true` does this automatically when the files change on disk (the directory is watched, so an ACME client's rename or a Kubernetes secret's symlink swap is caught; changes are debounced and unchanged bytes ignored). With clustering, each worker watches and reloads its own listener.
+
 ### Documentation
 
 #### app.enableDocs(config)
@@ -468,7 +513,9 @@ Route features execute in this fixed order, whatever order you chain them in:
 place of a function. The route answers with exactly that body, as
 `res.send(body)` would: status 200 and the content-type `send()` implies
 (`text/plain`, `application/json` for a JSON-looking string,
-`application/octet-stream` for a Buffer).
+`application/octet-stream` for a Buffer). An empty body goes out as
+`res.end()` would - `Content-Length: 0` and no content-type, since there is
+nothing for one to describe.
 
 ```typescript
 app.get('/health').handler('ok');
@@ -2142,6 +2189,27 @@ app.websocket('/chat', {
   },
 });
 ```
+
+### Raw WebSocket frames
+
+By default every frame is a JSON `{ event, data }` envelope and each handler key is an event name. A plain WebSocket peer (a browser using `WebSocket.send('hello')`, a load tester, a non-Moro service) speaks raw frames instead. Register the namespace with `{ raw: true }`: every text frame reaches `message` as a string, every binary frame reaches `binary` as a `Buffer`, and replies go out through `socket.send()` or by returning a string/Buffer from the handler.
+
+```typescript
+app.websocket(
+  '/ws',
+  {
+    connection: socket => console.log('open', socket.id),
+    message: (socket, text) => socket.send(text), // text in, text out
+    binary: (socket, bytes) => socket.send(bytes, true), // binary in, binary out
+    disconnect: socket => console.log('closed', socket.id),
+  },
+  { raw: true }
+);
+```
+
+`socket.send(data, isBinary?)` exists on every built-in adapter: a string is sent as a text frame, a Buffer/ArrayBuffer/Uint8Array as a binary frame unless `isBinary` says otherwise. Raw namespaces are supported by the native engine, the `ws` adapter and the uWebSockets adapter; the Socket.IO adapter speaks its own protocol and ignores `raw`. Ping/pong, the close handshake and message size limits are unchanged.
+
+Namespaces are routed by the upgrade URL. On the native engine that is the path itself (`ws://host/ws`); the `ws` adapter mounts under its base path (`websocket.options.path`, default `/ws`), so the same namespace is `ws://host/ws/ws` there and the base path alone reaches the `/` namespace.
 
 ### WebSocket with Validation
 

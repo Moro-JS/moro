@@ -359,10 +359,10 @@ app.use(
   })
 );
 
-// Per-route compression
+// Per-route compression: the same factory, attached as route middleware
 app
   .get('/api/large-data')
-  .compression({ level: 9 })
+  .before(middleware.compression({ level: 9 }))
   .handler((req, res) => {
     return largeDataset;
   });
@@ -572,11 +572,14 @@ app.use(
     etag: true, // default true; enables conditional 304s
     lastModified: true, // default true; answers If-Modified-Since
     acceptRanges: true, // default true; serves Range requests as 206
+    precompressed: true, // serve app.js.br / app.js.gz next to app.js when the client accepts it
     index: ['index.html', 'index.htm'],
     dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
   })
 );
 ```
+
+With `precompressed: true`, a `.br` or `.gz` file beside an asset is served with the original's `Content-Type`, the matching `Content-Encoding` and `Vary: Accept-Encoding` (brotli preferred). A sidecar older than its source is ignored, so replacing an asset never serves a stale compressed body, and a sidecar must resolve inside `root`. Without sidecars, text assets still go through the server's response compression when `performance.compression` (or the compression middleware) is on.
 
 Responses carry `ETag` and `Last-Modified`, and a conditional request on either
 gets a 304 (`If-None-Match` wins when both are sent). `Range` requests are
@@ -944,7 +947,7 @@ app.use(
     secret: process.env.SESSION_SECRET,
     store: 'redis',
     storeOptions: {
-      host: 'localhost',
+      host: 'localhost', // or url: process.env.REDIS_URL (node-redis 4+)
       port: 6379,
       password: process.env.REDIS_PASSWORD,
     },

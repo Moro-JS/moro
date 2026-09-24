@@ -29,6 +29,12 @@ export interface SSLConfigInput {
   minVersion?: 'TLSv1.2' | 'TLSv1.3';
   requestCert?: boolean;
   rejectUnauthorized?: boolean;
+  /**
+   * Watch the key/cert (and CA) files and reload the certificate when they
+   * change (`app.reloadTLS()` under the hood), the way an ACME client rotates
+   * them. File-path shape only. `true` = 1000 ms debounce.
+   */
+  watch?: boolean | { debounceMs?: number };
 }
 
 /** Canonical internal SSL config after normalization. */
@@ -145,6 +151,9 @@ export function sslForUws(ssl: NormalizedSSLConfig): {
  * Project for the native @morojs/engine serve() options.ssl, which accepts
  * BOTH shapes (file paths and inline PEM) and prefers inline. Pass everything
  * through; the engine decides.
+ *
+ * The engine takes ONE CA per slot (`ca_file_name` / `ca`), so only the first
+ * CA of a list reaches it; the Node projection keeps the full list.
  */
 export function sslForEngine(ssl: NormalizedSSLConfig): Record<string, unknown> {
   const out: Record<string, unknown> = {};

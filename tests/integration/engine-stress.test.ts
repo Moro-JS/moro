@@ -72,16 +72,26 @@ describeEngine('Native engine stress / load / edge', () => {
     const port = testPort();
     await listen(app, port);
 
+    // 200 requests, 64 in flight at any moment. The cap is deliberate: macOS
+    // limits the listen backlog to kern.ipc.somaxconn (128) and answers an
+    // overflow with RST, so 200 simultaneous connects issued from the same
+    // event loop that must also accept them reset about a third of the
+    // sockets on ANY server - the Node backend fails identically. 64 keeps
+    // the SYN burst under every platform's backlog while the engine still
+    // sees a steady 64-deep concurrent dispatch across all 200 requests.
     const N = 200;
-    const responses = await Promise.all(
-      Array.from({ length: N }, (_, i) =>
-        fetch(`http://localhost:${port}/echo/${i}`).then(async r => ({
-          i,
-          status: r.status,
-          body: await r.json(),
-        }))
-      )
-    );
+    const IN_FLIGHT = 64;
+    const responses: Array<{ i: number; status: number; body: any }> = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < N) {
+        const i = next++;
+        const r = await fetch(`http://localhost:${port}/echo/${i}`);
+        responses.push({ i, status: r.status, body: await r.json() });
+      }
+    };
+    await Promise.all(Array.from({ length: IN_FLIGHT }, worker));
+    responses.sort((a, b) => a.i - b.i);
 
     expect(responses).toHaveLength(N);
     for (const { i, status, body } of responses) {

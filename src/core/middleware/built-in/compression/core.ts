@@ -86,6 +86,11 @@ export class CompressionCore {
       // the "no route matched" fallback can't 404 the response mid-compress.
       // The compressed length isn't known yet, so the body streams (chunked).
       if (!res.headersSent) {
+        // A Content-Length set for the uncompressed body would truncate (or
+        // hang) the compressed one; the compressed body streams chunked.
+        if (typeof (res as any).removeHeader === 'function') {
+          (res as any).removeHeader('Content-Length');
+        }
         res.setHeader('Content-Encoding', encoding);
         const vary = res.getHeader ? (res.getHeader('vary') as string | undefined) : undefined;
         res.setHeader('Vary', vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding');

@@ -97,6 +97,29 @@ describe('staticFiles', () => {
     await fs.writeFile(path.join(root, 'app.css'), 'body{color:red}');
     await fs.writeFile(path.join(root, 'index.html'), '<h1>root</h1>');
     await fs.writeFile(path.join(root, 'nested', 'deep.txt'), 'deep');
+    await fs.writeFile(path.join(root, 'hero.webp'), Buffer.from([0x52, 0x49, 0x46, 0x46]));
+    await fs.writeFile(path.join(root, 'app.mjs'), 'export const x = 1;');
+    await fs.writeFile(path.join(root, 'site.webmanifest'), '{"name":"moro"}');
+    await fs.writeFile(path.join(root, 'lib.wasm'), Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+    await fs.writeFile(path.join(root, 'font.otf'), Buffer.from([0x4f, 0x54, 0x54, 0x4f]));
+    // Precompressed sidecars (contents are placeholders: the middleware never
+    // inflates them, it only picks the right file and labels it)
+    await fs.mkdir(path.join(root, 'pre'), { recursive: true });
+    await fs.writeFile(path.join(root, 'pre', 'app.js'), 'console.log("source")');
+    await fs.writeFile(path.join(root, 'pre', 'app.js.br'), 'BR-BYTES');
+    await fs.writeFile(path.join(root, 'pre', 'app.js.gz'), 'GZIP-BYTES!');
+    await fs.writeFile(path.join(root, 'pre', 'only-gz.js'), 'source-only-gz');
+    await fs.writeFile(path.join(root, 'pre', 'only-gz.js.gz'), 'GZ');
+    // a sidecar OLDER than its source must be ignored
+    await fs.writeFile(path.join(root, 'pre', 'stale.js.gz'), 'OLD');
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(path.join(root, 'pre', 'stale.js.gz'), past, past);
+    await fs.writeFile(path.join(root, 'pre', 'stale.js'), 'fresh source');
+    // a sidecar symlinked to a file OUTSIDE the root must be ignored
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'moro-static-outside-'));
+    await fs.writeFile(path.join(outside, 'secret.gz'), 'OUTSIDE');
+    await fs.writeFile(path.join(root, 'pre', 'linked.js'), 'linked source');
+    await fs.symlink(path.join(outside, 'secret.gz'), path.join(root, 'pre', 'linked.js.gz'));
   });
 
   afterAll(async () => {
@@ -112,11 +135,131 @@ describe('staticFiles', () => {
       expect(res.body.toString()).toBe('body{color:red}');
     });
 
+    it.each([
+      ['/hero.webp', 'image/webp'],
+      ['/app.mjs', 'application/javascript; charset=utf-8'],
+      ['/site.webmanifest', 'application/manifest+json; charset=utf-8'],
+      ['/lib.wasm', 'application/wasm'],
+      ['/font.otf', 'font/otf'],
+    ])('serves %s with Content-Type %s (not octet-stream)', async (file, type) => {
+      const { res, nextCalled } = await run(staticFiles({ root }), file);
+      expect(nextCalled).toBe(false);
+      expect(res.headers['content-type']).toBe(type);
+    });
+
     it('falls through for a file that does not exist', async () => {
       const { res, nextCalled } = await run(staticFiles({ root }), '/missing.css');
 
       expect(nextCalled).toBe(true);
       expect(res.ended).toBe(false);
+    });
+  });
+
+  describe('precompressed sidecars', () => {
+    const mw = () => staticFiles({ root, precompressed: true });
+
+    it('serves app.js.br for a brotli-accepting client with the original Content-Type', async () => {
+      const { res } = await run(mw(), '/pre/app.js', 'GET', { 'accept-encoding': 'gzip, br' });
+      expect(res.headers['content-type']).toBe('application/javascript; charset=utf-8');
+      expect(res.headers['content-encoding']).toBe('br');
+      expect(res.headers['vary']).toBe('Accept-Encoding');
+      expect(res.headers['content-length']).toBe('BR-BYTES'.length);
+      expect(res.body.toString()).toBe('BR-BYTES');
+    });
+
+    it('falls back to .gz when the client accepts only gzip, and to the source otherwise', async () => {
+      const gz = await run(mw(), '/pre/app.js', 'GET', { 'accept-encoding': 'gzip' });
+      expect(gz.res.headers['content-encoding']).toBe('gzip');
+      expect(gz.res.body.toString()).toBe('GZIP-BYTES!');
+
+      const identity = await run(mw(), '/pre/app.js', 'GET', { 'accept-encoding': 'identity' });
+      expect(identity.res.headers['content-encoding']).toBeUndefined();
+      expect(identity.res.headers['vary']).toBe('Accept-Encoding');
+      expect(identity.res.body.toString()).toBe('console.log("source")');
+
+      const none = await run(mw(), '/pre/app.js');
+      expect(none.res.headers['content-encoding']).toBeUndefined();
+      expect(none.res.body.toString()).toBe('console.log("source")');
+    });
+
+    it('gives the encoded representation its own ETag', async () => {
+      const br = await run(mw(), '/pre/app.js', 'GET', { 'accept-encoding': 'br' });
+      const plain = await run(mw(), '/pre/app.js', 'GET', { 'accept-encoding': 'identity' });
+      expect(br.res.headers['etag']).toMatch(/-br"$/);
+      expect(br.res.headers['etag']).not.toBe(plain.res.headers['etag']);
+      const cached = await run(mw(), '/pre/app.js', 'GET', {
+        'accept-encoding': 'br',
+        'if-none-match': br.res.headers['etag'],
+      });
+      expect(cached.res.statusCode).toBe(304);
+    });
+
+    it('ignores a sidecar older than its source (a replaced asset is never served stale)', async () => {
+      const { res } = await run(mw(), '/pre/stale.js', 'GET', { 'accept-encoding': 'gzip' });
+      expect(res.headers['content-encoding']).toBeUndefined();
+      expect(res.body.toString()).toBe('fresh source');
+    });
+
+    it('ignores a sidecar that resolves outside the root', async () => {
+      const { res } = await run(mw(), '/pre/linked.js', 'GET', { 'accept-encoding': 'gzip' });
+      expect(res.headers['content-encoding']).toBeUndefined();
+      expect(res.body.toString()).toBe('linked source');
+    });
+
+    it('serves the identity file for Range requests', async () => {
+      const { res } = await run(mw(), '/pre/app.js', 'GET', {
+        'accept-encoding': 'br',
+        range: 'bytes=0-6',
+      });
+      expect(res.statusCode).toBe(206);
+      expect(res.headers['content-encoding']).toBeUndefined();
+      expect(res.body.toString()).toBe('console');
+    });
+
+    it('is off by default', async () => {
+      const { res } = await run(staticFiles({ root }), '/pre/app.js', 'GET', {
+        'accept-encoding': 'br',
+      });
+      expect(res.headers['content-encoding']).toBeUndefined();
+      expect(res.headers['vary']).toBeUndefined();
+      expect(res.body.toString()).toBe('console.log("source")');
+    });
+
+    it('HEAD carries the sidecar headers without a body', async () => {
+      const { res } = await run(mw(), '/pre/only-gz.js', 'HEAD', { 'accept-encoding': 'gzip' });
+      expect(res.headers['content-encoding']).toBe('gzip');
+      expect(res.headers['content-length']).toBe(2);
+      expect(res.body).toBeUndefined();
+    });
+  });
+
+  describe('response compression participation', () => {
+    it('hands compressible bodies to res.send() so server compression applies, binary to end()', async () => {
+      const calls: string[] = [];
+      const withSend = (): MockResponse => {
+        const res = createResponse();
+        (res as any).send = (data: any) => {
+          calls.push('send');
+          res.end(data);
+        };
+        return res;
+      };
+      const drive = async (file: string) => {
+        const req = createRequest(file);
+        const res = withSend();
+        await staticFiles({ root })(req, res as any, () => {});
+        if (!res.ended) await res.finished;
+        return res;
+      };
+      const css = await drive('/app.css');
+      expect(calls).toEqual(['send']);
+      expect(css.body.toString()).toBe('body{color:red}');
+      expect(css.headers['content-length']).toBeUndefined(); // send() sets it
+
+      calls.length = 0;
+      const webp = await drive('/hero.webp');
+      expect(calls).toEqual([]);
+      expect(webp.headers['content-length']).toBe(4);
     });
   });
 

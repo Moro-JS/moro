@@ -211,6 +211,7 @@ export type {
   WebSocketAdapterOptions,
   WebSocketNamespace,
   WebSocketConnection,
+  WebSocketNamespaceOptions,
   WebSocketEmitter,
   WebSocketMiddleware,
   WebSocketEventHandler,
@@ -346,7 +347,7 @@ export { MiddlewareManager } from './core/middleware/index.js';
 export type { MiddlewareInterface, MoroMiddleware } from './core/middleware/index.js';
 
 // Body parsers
-export { json, urlencoded } from './core/middleware/built-in/body-parsers/index.js';
+export { json, urlencoded, raw, text } from './core/middleware/built-in/body-parsers/index.js';
 
 // Standalone router — `createRouter()` is the canonical factory; `Router` is an
 // alias kept callable without `new` so Express-style named imports

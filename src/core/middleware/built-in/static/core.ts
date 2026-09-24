@@ -4,6 +4,7 @@ import * as fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { isCompressible, negotiateEncoding } from '../../../http/utils/compression.js';
 
 export interface StaticOptions {
   root: string;
@@ -29,7 +30,22 @@ export interface StaticOptions {
    * multiple ranges is answered with the whole entity. Default true.
    */
   acceptRanges?: boolean;
+  /**
+   * Serve precompressed sidecars: when `app.js.br` or `app.js.gz` sits next
+   * to `app.js` and the client accepts that encoding, the sidecar is sent
+   * with the original's Content-Type, the matching Content-Encoding and
+   * `Vary: Accept-Encoding` (brotli preferred, then gzip). A sidecar older
+   * than its source is ignored, so a replaced file is never served stale.
+   * Range requests always get the identity file. Default false.
+   */
+  precompressed?: boolean;
 }
+
+/** Sidecar suffix per encoding, in preference order. */
+const SIDECARS: Array<{ encoding: 'br' | 'gzip'; suffix: string }> = [
+  { encoding: 'br', suffix: '.br' },
+  { encoding: 'gzip', suffix: '.gz' },
+];
 
 export class StaticCore {
   private root: string;
@@ -40,28 +56,70 @@ export class StaticCore {
   private etag: boolean;
   private lastModified: boolean;
   private acceptRanges: boolean;
+  private precompressed: boolean;
 
   /** Files at or below this size are read in one go instead of streamed. */
   private static readonly STREAM_THRESHOLD = 512 * 1024;
 
   private mimeTypes: Record<string, string> = {
+    // Documents / text
     '.html': 'text/html',
+    '.htm': 'text/html',
+    '.xhtml': 'application/xhtml+xml',
     '.css': 'text/css',
     '.js': 'application/javascript',
+    '.mjs': 'application/javascript',
+    '.cjs': 'application/javascript',
+    '.map': 'application/json',
     '.json': 'application/json',
+    '.jsonld': 'application/ld+json',
+    '.webmanifest': 'application/manifest+json',
+    '.xml': 'application/xml',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.csv': 'text/csv',
+    '.yaml': 'application/yaml',
+    '.yml': 'application/yaml',
+    '.pdf': 'application/pdf',
+    '.wasm': 'application/wasm',
+    // Images
     '.png': 'image/png',
+    '.apng': 'image/apng',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.xml': 'application/xml',
+    '.bmp': 'image/bmp',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    // Fonts
     '.woff': 'font/woff',
     '.woff2': 'font/woff2',
     '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
     '.eot': 'application/vnd.ms-fontobject',
+    // Audio / video
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.oga': 'audio/ogg',
+    '.opus': 'audio/ogg',
+    '.weba': 'audio/webm',
+    '.mp4': 'video/mp4',
+    '.m4v': 'video/mp4',
+    '.webm': 'video/webm',
+    '.ogg': 'video/ogg',
+    '.ogv': 'video/ogg',
+    '.mov': 'video/quicktime',
+    // Archives
+    '.zip': 'application/zip',
+    '.gz': 'application/gzip',
+    '.tar': 'application/x-tar',
   };
 
   constructor(options: StaticOptions) {
@@ -73,6 +131,7 @@ export class StaticCore {
     this.etag = options.etag !== false;
     this.lastModified = options.lastModified !== false;
     this.acceptRanges = options.acceptRanges !== false;
+    this.precompressed = options.precompressed === true;
   }
 
   async handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> {
@@ -160,6 +219,19 @@ export class StaticCore {
 
       res.setHeader('Content-Type', contentType);
 
+      // Precompressed sidecar (app.js.br / app.js.gz next to app.js). Chosen
+      // before the validators so the ETag names the encoded representation;
+      // Range requests keep the identity file (byte offsets refer to it).
+      let sidecar: { path: string; encoding: string; stats: { size: number } } | null = null;
+      if (this.precompressed) {
+        // The response now varies on Accept-Encoding whether or not a sidecar
+        // exists for this particular file - caches must key on it either way.
+        res.setHeader('Vary', 'Accept-Encoding');
+        if (!req.headers.range) {
+          sidecar = await this.findSidecar(filePath, stats.mtime, req.headers['accept-encoding']);
+        }
+      }
+
       // Cache headers
       if (this.maxAge > 0) {
         res.setHeader('Cache-Control', `public, max-age=${this.maxAge}`);
@@ -175,10 +247,12 @@ export class StaticCore {
 
       let etag: string | undefined;
       if (this.etag) {
+        // A strong ETag must differ between representations, so the encoded
+        // sidecar gets its own (RFC 9110 8.8.1)
         etag = `"${crypto
           .createHash('md5')
           .update(`${stats.mtime.getTime()}-${stats.size}`)
-          .digest('hex')}"`;
+          .digest('hex')}${sidecar ? `-${sidecar.encoding}` : ''}"`;
         res.setHeader('ETag', etag);
       }
 
@@ -217,10 +291,24 @@ export class StaticCore {
         return true;
       }
 
-      res.setHeader('Content-Length', stats.size);
+      if (sidecar) {
+        res.setHeader('Content-Encoding', sidecar.encoding);
+        res.setHeader('Content-Length', sidecar.stats.size);
+        if (req.method === 'HEAD') {
+          res.end();
+          return true;
+        }
+        if (sidecar.stats.size <= StaticCore.STREAM_THRESHOLD || !StaticCore.canStream(res)) {
+          res.end(await fs.readFile(sidecar.path));
+        } else {
+          await this.streamFile(sidecar.path, res);
+        }
+        return true;
+      }
 
       // Handle HEAD requests
       if (req.method === 'HEAD') {
+        res.setHeader('Content-Length', stats.size);
         res.end();
         return true;
       }
@@ -230,8 +318,17 @@ export class StaticCore {
       // doesn't cost its full size in resident memory per request.
       if (stats.size <= StaticCore.STREAM_THRESHOLD || !StaticCore.canStream(res)) {
         const data = await fs.readFile(filePath);
-        res.end(data);
+        if (isCompressible(baseMimeType) && typeof (res as any).send === 'function') {
+          // Through send() the body joins the server's response compression
+          // (performance.compression / the compression middleware) exactly
+          // like a handler's body would; send() sets Content-Length itself.
+          (res as any).send(data);
+        } else {
+          res.setHeader('Content-Length', stats.size);
+          res.end(data);
+        }
       } else {
+        res.setHeader('Content-Length', stats.size);
         await this.streamFile(filePath, res);
       }
       return true;
@@ -239,6 +336,36 @@ export class StaticCore {
       res.status(500).json({ success: false, error: 'Internal server error' });
       return true;
     }
+  }
+
+  /**
+   * The best precompressed sidecar for `filePath` that the client accepts, or
+   * null. A sidecar must be a regular file INSIDE the root (its real path is
+   * checked like the source's, so a symlinked `.br` cannot reach outside) and
+   * at least as new as the source, so a replaced asset never ships a stale
+   * compressed body.
+   */
+  private async findSidecar(
+    filePath: string,
+    sourceMtime: Date,
+    acceptEncoding: string | undefined
+  ): Promise<{ path: string; encoding: string; stats: { size: number } } | null> {
+    if (!acceptEncoding) return null;
+    const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
+    for (const { encoding, suffix } of SIDECARS) {
+      if (negotiateEncoding(acceptEncoding, [encoding]) !== encoding) continue;
+      const candidate = filePath + suffix;
+      try {
+        const real = await fs.realpath(candidate);
+        if (!real.startsWith(rootWithSep)) continue;
+        const st = await fs.stat(real);
+        if (!st.isFile() || st.mtime.getTime() < sourceMtime.getTime()) continue;
+        return { path: real, encoding, stats: { size: st.size } };
+      } catch {
+        // no sidecar for this encoding
+      }
+    }
+    return null;
   }
 
   /**
@@ -409,9 +536,13 @@ export class StaticCore {
       'application/json',
       'application/javascript',
       'application/xml',
+      'application/yaml',
       'image/svg+xml',
     ];
-    const needsCharset = textTypes.some(type => mimeType.startsWith(type));
+    const needsCharset =
+      textTypes.some(type => mimeType.startsWith(type)) ||
+      mimeType.endsWith('+json') ||
+      mimeType.endsWith('+xml');
     return needsCharset ? `${mimeType}; charset=utf-8` : mimeType;
   }
 

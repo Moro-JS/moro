@@ -1,4 +1,3 @@
-/* eslint-disable */
 // @ts-nocheck
 // Unit Tests - MoroEngineServer against a FAKE @morojs/engine module that
 // implements the native API contract (engine repo docs/API.md) in memory.
@@ -542,6 +541,83 @@ describe('MoroEngineServer (fake engine)', () => {
       expect(Buffer.compare(body.files.file.data, binary)).toBe(0);
     });
 
+    it('keeps a binary body (application/octet-stream) as a byte-exact Buffer', async () => {
+      const { engine, server } = createServer();
+      let body: any = null;
+      server.setRouterHandler((req, res) => {
+        body = req.body;
+        res.json({ success: true, data: null });
+        return true;
+      });
+
+      // Bytes that are NOT valid UTF-8: decoding to a string would replace
+      // them with U+FFFD and there would be no way back to the original.
+      const payload = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0x89, 0x50, 0x4e, 0x47]);
+      engine.simulate({
+        method: 'POST',
+        path: '/echo',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: payload,
+      });
+      await tick();
+
+      expect(Buffer.isBuffer(body)).toBe(true);
+      expect(Buffer.compare(body, payload)).toBe(0);
+    });
+
+    it('exposes req.rawBody: the undecoded bytes, even for a parsed JSON body', async () => {
+      const { engine, server } = createServer();
+      let seen: any = null;
+      server.setRouterHandler((req, res) => {
+        seen = { body: req.body, raw: req.rawBody };
+        res.json({ success: true, data: null });
+        return true;
+      });
+      const wire = Buffer.from('{"a":1,  "b":"two"}');
+      engine.simulate({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: wire,
+      });
+      await tick();
+      expect(seen.body).toEqual({ a: 1, b: 'two' });
+      expect(Buffer.isBuffer(seen.raw)).toBe(true);
+      expect(Buffer.compare(seen.raw, wire)).toBe(0);
+    });
+
+    it('req.rawBody is null when no body was sent', async () => {
+      const { engine, server } = createServer();
+      let raw: any = 'unset';
+      server.setRouterHandler((req, res) => {
+        raw = req.rawBody;
+        res.json({ success: true, data: null });
+        return true;
+      });
+      engine.simulate({ method: 'GET', path: '/nothing' });
+      await tick();
+      expect(raw).toBeNull();
+    });
+
+    it('still decodes text bodies to strings (text/*, xml, missing Content-Type)', async () => {
+      for (const contentType of ['text/plain', 'application/xml', undefined]) {
+        const { engine, server } = createServer();
+        let body: any = null;
+        server.setRouterHandler((req, res) => {
+          body = req.body;
+          res.json({ success: true, data: null });
+          return true;
+        });
+        engine.simulate({
+          method: 'POST',
+          path: '/echo',
+          headers: contentType ? { 'Content-Type': contentType } : {},
+          body: 'héllo <x/>',
+        });
+        await tick();
+        expect(body).toBe('héllo <x/>');
+      }
+    });
+
     it('malformed JSON is rejected with 400 without dispatching (Node-path parity)', async () => {
       const { engine, server } = createServer();
       let dispatched = false;
@@ -628,10 +704,11 @@ describe('MoroEngineServer (fake engine)', () => {
       });
 
       expect(listened).toBe(true);
-      expect(engine.listens).toEqual([{ serverId: 42, host: '0.0.0.0', port: 8085 }]);
+      // No host = dual-stack any ('::'), like Node's server.listen(port)
+      expect(engine.listens).toEqual([{ serverId: 42, host: '::', port: 8085 }]);
       const handle = server.getServer();
       expect(handle.listening).toBe(true);
-      expect(handle.address()).toEqual({ address: '0.0.0.0', family: 'IPv4', port: 8085 });
+      expect(handle.address()).toEqual({ address: '::', family: 'IPv6', port: 8085 });
       expect(server.getApp()).toBe(handle);
 
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -658,7 +735,7 @@ describe('MoroEngineServer (fake engine)', () => {
       server.listen(8091, () => {});
       expect(engine.listens[engine.listens.length - 1]).toEqual({
         serverId: 42,
-        host: '0.0.0.0',
+        host: '::',
         port: 8091,
       });
       await new Promise<void>(resolve => server.close(() => resolve()));

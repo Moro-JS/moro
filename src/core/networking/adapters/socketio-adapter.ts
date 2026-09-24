@@ -6,6 +6,7 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   WebSocketNamespace,
+  WebSocketNamespaceOptions,
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
@@ -63,9 +64,17 @@ export class SocketIOAdapter implements WebSocketAdapter {
     }
   }
 
-  createNamespace(namespace: string): WebSocketNamespace {
+  createNamespace(namespace: string, options?: WebSocketNamespaceOptions): WebSocketNamespace {
     if (!this.io) {
       throw new Error('Socket.IO adapter not initialized');
+    }
+    if (options?.raw) {
+      // Socket.IO clients speak the Socket.IO protocol, so there is no raw
+      // frame to expose; the namespace behaves as an event namespace.
+      createFrameworkLogger('SocketIOAdapter').warn(
+        `WebSocket namespace ${namespace}: { raw: true } is not supported by the Socket.IO adapter (use the engine, ws or uWS adapter for raw frames)`,
+        'Namespace'
+      );
     }
 
     const ns = this.io.of(namespace);
@@ -200,6 +209,11 @@ class SocketIOConnectionWrapper implements WebSocketConnection {
 
   emit(event: string, data: any): void {
     this.socket.emit(event, data);
+  }
+
+  /** Socket.IO's own send(): delivers a 'message' event to the client */
+  send(data: string | Buffer | ArrayBuffer | Uint8Array, _isBinary?: boolean): void {
+    this.socket.send(data);
   }
 
   compressedEmit(event: string, data: any): void {

@@ -49,6 +49,28 @@ describe('compression middleware', () => {
     expect(res.body.items[0]).toEqual({ id: 0 });
   });
 
+  it('attaches to a single route through .before() (the documented per-route form)', async () => {
+    const big = () => ({ items: Array.from({ length: 300 }, (_, i) => ({ id: i })) });
+    app
+      .get('/per-route')
+      .before(compression({ threshold: 100 }))
+      .handler(big);
+    app.get('/plain').handler(big);
+    await listen();
+    await delay(100);
+
+    const zipped = await request(baseUrl)
+      .get('/per-route')
+      .set('Accept-Encoding', 'gzip')
+      .expect(200);
+    expect(zipped.headers['content-encoding']).toBe('gzip');
+    expect(zipped.body.items).toHaveLength(300);
+
+    const plain = await request(baseUrl).get('/plain').set('Accept-Encoding', 'gzip').expect(200);
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    expect(plain.body.items).toHaveLength(300);
+  });
+
   it('leaves responses below the threshold uncompressed', async () => {
     await app.use(compression({ threshold: 1024 }));
     app.get('/small', () => ({ ok: true }));

@@ -16,7 +16,8 @@ export interface SessionOptions {
   // Session store configuration
   store?: 'memory' | 'redis' | 'file' | CacheAdapter;
   storeOptions?: {
-    // Redis options
+    // Redis options (node-redis 4+; url wins over host/port)
+    url?: string;
     host?: string;
     port?: number;
     password?: string;

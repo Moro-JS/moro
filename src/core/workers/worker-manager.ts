@@ -5,7 +5,7 @@ import { requireBuiltin } from '../utilities/builtin.js';
 // worker_threads on first use (core/utilities/builtin.ts).
 const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
 import { createFrameworkLogger } from '../logger/index.js';
-import { cpus } from 'os';
+import { usableCpuCount } from '../cluster/thread-cluster.js';
 import { isPackageAvailable } from '../utilities/package-utils.js';
 // WORKER_ENTRY resolves to worker.js, this file's compiled sibling in dist/**,
 // via import.meta in ./worker-entry.js. That ESM-only syntax is isolated in its
@@ -103,7 +103,7 @@ export class WorkerManager {
       restartBackoffMs?: number;
     } = {}
   ) {
-    this.workerCount = options.workerCount || Math.max(1, cpus().length - 1); // Leave 1 core for main thread
+    this.workerCount = options.workerCount || Math.max(1, usableCpuCount() - 1); // Leave 1 core for main thread
     this.maxQueueSize = options.maxQueueSize || 1000;
     this.maxRestartAttempts = options.maxRestartAttempts ?? 10;
     this.restartBackoffMs = options.restartBackoffMs ?? 100;

@@ -91,17 +91,26 @@ function impliedContentType(body: StaticBody): string {
 
 /**
  * A literal body in place of a handler: the route answers with exactly that
- * body, as res.send(body) would (status 200, the implied content-type). When
- * nothing else is configured on the route - no auth, validation, rate limit,
- * cache or middleware, and a literal path - the schema also carries `static`,
- * so a server that can answer it natively does so without calling into JS.
- * Anything configured keeps the route on the normal pipeline, where the
- * handler sends the same bytes after that configuration has run.
+ * body. A non-empty body goes out as res.send(body) would (status 200, the
+ * implied content-type). An empty body has nothing a content-type could
+ * describe, so it goes out as res.end() would: status and Content-Length: 0,
+ * no header block - 38 bytes less per response, and byte-identical to the
+ * engine's own static reply with no headers. When nothing else is configured
+ * on the route - no auth, validation, rate limit, cache or middleware, and a
+ * literal path - the schema also carries `static`, so a server that can
+ * answer it natively does so without calling into JS. Anything configured
+ * keeps the route on the normal pipeline, where the handler sends the same
+ * bytes after that configuration has run.
  */
 export function compileStaticRoute(schema: Partial<RouteSchema>, body: StaticBody): RouteSchema {
-  schema.handler = (_req: HttpRequest, res: HttpResponse) => {
-    res.send(body);
-  };
+  const empty = body.length === 0;
+  schema.handler = empty
+    ? (_req: HttpRequest, res: HttpResponse) => {
+        res.end();
+      }
+    : (_req: HttpRequest, res: HttpResponse) => {
+        res.send(body);
+      };
 
   const path = schema.path ?? '';
   const mw = schema.middleware;
@@ -121,7 +130,11 @@ export function compileStaticRoute(schema: Partial<RouteSchema>, body: StaticBod
     !schema.cache &&
     !hasMiddleware;
   if (bare) {
-    schema.static = { status: 200, headers: ['content-type', impliedContentType(body)], body };
+    schema.static = {
+      status: 200,
+      headers: empty ? null : ['content-type', impliedContentType(body)],
+      body,
+    };
   }
   return schema as RouteSchema;
 }

@@ -149,11 +149,13 @@ describe('MoroEngineServer static routes', () => {
     // two agree by sending each body through the adapter on a plain engine
     // (no templates, so the respond op carries the header pair verbatim).
     const { compileStaticRoute } = await import('../../../src/core/routing/unified-router.js');
-    for (const body of ['', 'hello', '{"a":1}', ' [1]', Buffer.from([1, 2, 3])]) {
+    for (const body of ['', 'hello', '{"a":1}', ' [1]', Buffer.from([1, 2, 3]), Buffer.alloc(0)]) {
       const engine = createFakeEngine();
       const server = createServer(engine);
       server.setRouterHandler((_req, res) => {
-        res.send(body);
+        // The literal handler itself: end() for an empty body, send() otherwise.
+        if (body.length === 0) res.end();
+        else res.send(body);
         return true;
       });
       const reqId = engine.simulate({ path: '/' });

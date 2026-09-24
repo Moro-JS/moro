@@ -37,6 +37,7 @@ import {
   negotiateEncoding,
   type CompressionSettings,
 } from './utils/compression.js';
+import { bodyIsText } from './utils/body-type.js';
 import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
 import { parseRawQueryString as parseUwsQueryString } from './utils/query-parser.js';
 import { PathMatcher } from '../routing/path-matcher.js';
@@ -176,6 +177,13 @@ export class EngineRequest extends LazyEventEmitter {
   method: string;
   path: string;
   body: any = null;
+  /** Undecoded request body bytes (parseBody keeps the same Buffer it parsed) */
+  _rawBody: Buffer | undefined = undefined;
+
+  /** The request body exactly as received, before any parsing; null when empty. */
+  get rawBody(): Buffer | null {
+    return this._rawBody ?? null;
+  }
 
   _server: MoroEngineServer;
   _reqId: number;
@@ -1778,7 +1786,11 @@ export class MoroEngineServer {
         engine: '@morojs/engine',
         address: () =>
           this.isListening
-            ? { address: this.host || '0.0.0.0', family: 'IPv4', port: this.port || 0 }
+            ? {
+                address: this.host || '::',
+                family: (this.host || '::').includes(':') ? 'IPv6' : 'IPv4',
+                port: this.port || 0,
+              }
             : null,
         close: (cb?: (err?: Error) => void) => {
           this.close(cb);
@@ -2517,6 +2529,9 @@ export class MoroEngineServer {
     }
 
     const buffer = Buffer.from(raw);
+    // getBody() handed us a stable copy, so the raw bytes cost nothing to keep
+    // (webhook signature checks need them even for JSON bodies)
+    httpReq._rawBody = buffer;
 
     try {
       if (contentType.includes('application/json')) {
@@ -2533,7 +2548,9 @@ export class MoroEngineServer {
         // multipart would corrupt binary uploads and lose fields/files
         httpReq.body = parseMultipartBuffer(buffer, contentType, this.multipartLimits);
       } else {
-        httpReq.body = buffer.toString('utf-8');
+        // Text decodes to a string; binary (octet-stream, images, protobuf,
+        // ...) stays a Buffer - decoding it would corrupt it irreversibly.
+        httpReq.body = bodyIsText(contentType) ? buffer.toString('utf-8') : buffer;
       }
     } catch (parseError) {
       // A limit error (multipart maxParts/maxFiles/maxFileSize) carries its own
@@ -2722,7 +2739,10 @@ export class MoroEngineServer {
       return;
     }
 
-    const host = typeof hostOrCallback === 'string' ? hostOrCallback : '0.0.0.0';
+    // No host = every interface, dual-stack, exactly like Node's
+    // server.listen(port): a client that resolves `localhost` to ::1 first
+    // must not be refused. Hosts without IPv6 fall back to IPv4-any below.
+    const host = typeof hostOrCallback === 'string' ? hostOrCallback : '::';
     const cb = typeof hostOrCallback === 'function' ? hostOrCallback : callback;
 
     try {
@@ -2737,11 +2757,21 @@ export class MoroEngineServer {
       }
       // Synchronous bind; throws on bind errors, returns the actual port
       // (meaningful when port 0 asks for an ephemeral one)
-      const actualPort = this._engine.listen(this.serverId, host, port);
+      let boundHost = host;
+      let actualPort: number;
+      try {
+        actualPort = this._engine.listen(this.serverId, host, port);
+      } catch (error) {
+        const code = (error as any)?.code;
+        if (host !== '::' || (code !== 'EAFNOSUPPORT' && code !== 'EADDRNOTAVAIL')) throw error;
+        // IPv6 not configured on this host - IPv4-any is what Node does too
+        boundHost = '0.0.0.0';
+        actualPort = this._engine.listen(this.serverId, boundHost, port);
+      }
       this.port = typeof actualPort === 'number' ? actualPort : port;
-      this.host = host;
+      this.host = boundHost;
       this.isListening = true;
-      this.logger.info(`Moro engine HTTP server listening on ${host}:${this.port}`, 'Listen');
+      this.logger.info(`Moro engine HTTP server listening on ${boundHost}:${this.port}`, 'Listen');
       if (cb) cb();
     } catch (error) {
       this.logger.error(
@@ -2816,6 +2846,26 @@ export class MoroEngineServer {
       });
       if (callback) callback(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  /**
+   * Replace the TLS certificate/key for every handshake from now on
+   * (engine capabilities.tlsReload). Established connections keep the context
+   * they handshaked with. Validated by the engine before the swap: a bad
+   * config throws and the current certificate keeps serving.
+   */
+  updateSsl(ssl: Record<string, any>): void {
+    if (!this._ssl || !this.isSsl) {
+      throw new Error('updateSsl: this server was not started with TLS (server.ssl)');
+    }
+    if (!this._capabilities?.tlsReload || typeof this._engine.updateSsl !== 'function') {
+      throw new Error(
+        'TLS reload needs @morojs/engine with capabilities.tlsReload (engine >= 1.1.8)'
+      );
+    }
+    this._engine.updateSsl(this.serverId, ssl);
+    // A later close() -> listen() cycle re-registers with the new material
+    this._ssl = ssl;
   }
 
   getServer(): any {

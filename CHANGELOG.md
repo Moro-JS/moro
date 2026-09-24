@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Changed
+
+- An empty literal handler body (`.handler('')`, `app.get(path, '')`) now goes out as `res.end()` would - status and `Content-Length: 0`, no header block - instead of as `res.send('')` with `content-type: text/plain; charset=utf-8`. An empty body has nothing a content-type could describe; the change saves 38 bytes per response and makes the engine-answered reply byte-identical to the engine's own static reply with no headers. Non-empty literal bodies are unchanged (`send()` semantics, implied content-type).
+
 ## [1.8.12] - 2026-09-15
 
 ### Changed

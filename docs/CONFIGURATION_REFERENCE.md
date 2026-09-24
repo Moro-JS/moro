@@ -105,6 +105,8 @@ ssl: {
   (keyFile, certFile, caFile, passphrase);
 }
 // also: minVersion 'TLSv1.2'|'TLSv1.3', requestCert, rejectUnauthorized
+// watch: true | { debounceMs } - reload the certificate when the files change
+//   (file-path shape; same as calling app.reloadTLS() after a rotation)
 ```
 
 The Moro engine terminates TLS in-process; Node uses
@@ -1009,7 +1011,7 @@ import { session } from '@morojs/session';
 session({
   store: 'redis', // 'memory', 'redis', 'file'
   storeOptions: {
-    host: 'localhost',
+    host: 'localhost', // or url: process.env.REDIS_URL (node-redis 4+)
     port: 6379,
     keyPrefix: 'sess:',
   },

@@ -21,6 +21,11 @@ const fileSSL = () => ({
   keyFile: fixturePath('localhost.key'),
   certFile: fixturePath('localhost.pem'),
 });
+// The uWS-era spelling of the file-path shape, still accepted by server.ssl
+const uwsFileSSL = () => ({
+  key_file_name: fixturePath('localhost.key'),
+  cert_file_name: fixturePath('localhost.pem'),
+});
 
 function registerRoutes(app: any) {
   app.get('/who', (req: any) => ({ secure: req.secure, protocol: req.protocol }));
@@ -40,12 +45,20 @@ describeEngine('Unified SSL config on the native engine', () => {
   for (const [label, ssl] of [
     ['inline PEM', inlineSSL],
     ['file paths', fileSSL],
+    ['key_file_name/cert_file_name paths', uwsFileSSL],
   ] as const) {
-    it(`serves HTTPS with ${label} ssl config`, async () => {
+    it(`serves HTTPS with ${label} ssl config ON THE ENGINE (no silent Node fallback)`, async () => {
       const port = testPort();
       app = await createApp({ logger: { level: 'fatal' }, server: { engine: 'moro', ssl: ssl() } });
       registerRoutes(app);
       await listen(app, port);
+
+      // A TLS misconfiguration makes the engine's serve() throw, and the
+      // framework then boots Node https - which still answers HTTPS, so the
+      // request below alone cannot tell the two apart. Pin the server kind.
+      const kind = app.getServerKind();
+      expect(kind.fallbackReason).toBeUndefined();
+      expect(kind.server).toBe('engine');
 
       const res = await httpsRequest(port, '/who');
       expect(res.status).toBe(200);

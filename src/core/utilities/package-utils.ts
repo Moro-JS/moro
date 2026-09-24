@@ -90,6 +90,9 @@ export interface EngineCapabilities {
   responseLimits: boolean;
   /** ssl.ciphers / ssl.ciphersuites / ssl.ecdhCurve are parsed. */
   tlsPolicy: boolean;
+  /** updateSsl(serverId, ssl) exists: certificate rotation without a restart
+   *  (engine >= 1.1.8). Gates app.reloadTLS() on the engine. */
+  tlsReload: boolean;
   /** setStaticRoute()/clearStaticRoutes() exist. Used for a literal body
    *  given to the route builder's .handler() when the route has nothing
    *  else configured, because a static route bypasses middleware, hooks,
@@ -128,6 +131,7 @@ const CAP_KEYS = [
   'wsDeflate',
   'responseLimits',
   'tlsPolicy',
+  'tlsReload',
   'staticRoutes',
   'responseTemplates',
   'asyncNotify',

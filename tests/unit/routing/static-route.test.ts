@@ -14,6 +14,9 @@ function fakeRes() {
     send(body: any) {
       calls.push(['send', body]);
     },
+    end(body?: any) {
+      calls.push(['end', body]);
+    },
   };
 }
 
@@ -24,19 +27,37 @@ function findRoute(method: string, path: string) {
 }
 
 describe('RouteBuilder.handler() with a literal body', () => {
-  it('registers a static reply and a handler that sends the same body', () => {
+  it('an empty body goes out as res.end() would: no header block on either path', () => {
     createRoute('GET', '/literal-empty').handler('');
     const schema = findRoute('GET', '/literal-empty');
     expect(schema).toBeDefined();
+    expect(schema.static).toEqual({ status: 200, headers: null, body: '' });
+
+    const res = fakeRes();
+    schema.handler({}, res);
+    expect(res.calls).toEqual([['end', undefined]]);
+
+    const bytes = Buffer.alloc(0);
+    createRoute('GET', '/literal-empty-buffer').handler(bytes);
+    expect(findRoute('GET', '/literal-empty-buffer').static).toEqual({
+      status: 200,
+      headers: null,
+      body: bytes,
+    });
+  });
+
+  it('a non-empty body goes out as res.send() would, with the implied content-type', () => {
+    createRoute('GET', '/literal-text').handler('ok');
+    const schema = findRoute('GET', '/literal-text');
     expect(schema.static).toEqual({
       status: 200,
       headers: ['content-type', 'text/plain; charset=utf-8'],
-      body: '',
+      body: 'ok',
     });
 
     const res = fakeRes();
     schema.handler({}, res);
-    expect(res.calls).toEqual([['send', '']]);
+    expect(res.calls).toEqual([['send', 'ok']]);
   });
 
   it('implies the content-type send() would: JSON-looking text and Buffers', () => {
@@ -79,7 +100,7 @@ describe('RouteBuilder.handler() with a literal body', () => {
       expect(schema.static).toBeUndefined();
       const res = fakeRes();
       schema.handler({}, res);
-      expect(res.calls).toEqual([['send', '']]);
+      expect(res.calls).toEqual([['end', undefined]]);
     }
 
     const arr = compileStaticRoute(
@@ -107,7 +128,7 @@ describe('RouteBuilder.handler() with a literal body', () => {
     expect(withMiddleware.static).toBeUndefined();
     const res = fakeRes();
     withMiddleware.handler({}, res);
-    expect(res.calls).toEqual([['send', '']]);
+    expect(res.calls).toEqual([['end', undefined]]);
     expect(findRoute('GET', '/route-literal').static).toMatchObject({ body: 'routed' });
 
     expect(() =>

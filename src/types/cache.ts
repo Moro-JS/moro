@@ -6,6 +6,8 @@ export interface CacheAdapter {
   clear(): Promise<void>;
   exists(key: string): Promise<boolean>;
   ttl(key: string): Promise<number>;
+  /** Release any connection the adapter owns (optional; Redis implements it). */
+  close?(): Promise<void>;
 }
 
 export interface CacheStrategy {

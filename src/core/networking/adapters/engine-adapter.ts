@@ -9,6 +9,7 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   WebSocketNamespace,
+  WebSocketNamespaceOptions,
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
@@ -84,12 +85,22 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
     const ns =
       (this.namespaces.get(nsPath) as EngineNamespaceWrapper | undefined) ??
       this.getDefaultNamespaceImpl();
+    connection.raw = ns.raw;
     ns.handleConnection(connection);
   }
 
   private handleMessage(wsId: number, data: any, isBinary: boolean): void {
     const connection = this.byWsId.get(wsId);
     if (!connection) return;
+    if (connection.raw) {
+      // Raw namespace: no envelope, no parse - the frame is the message
+      if (isBinary) connection.handleBinary(Buffer.isBuffer(data) ? data : Buffer.from(data));
+      else
+        connection.handleRawText(
+          typeof data === 'string' ? data : Buffer.from(data).toString('utf-8')
+        );
+      return;
+    }
     if (isBinary) {
       connection.handleBinary(data);
       return;
@@ -125,12 +136,13 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
     return this.createNamespace('/') as EngineNamespaceWrapper;
   }
 
-  createNamespace(namespace: string): WebSocketNamespace {
+  createNamespace(namespace: string, options?: WebSocketNamespaceOptions): WebSocketNamespace {
     let ns = this.namespaces.get(namespace);
     if (!ns) {
       ns = new EngineNamespaceWrapper(namespace, this.connections);
       this.namespaces.set(namespace, ns);
     }
+    if (options?.raw) ns.raw = true;
     return ns;
   }
 
@@ -168,6 +180,8 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
 }
 
 class EngineNamespaceWrapper implements WebSocketNamespace {
+  /** Raw framing for connections routed here (see WebSocketNamespaceOptions) */
+  raw = false;
   private connectionHandlers: ((socket: WebSocketConnection) => void)[] = [];
   private middlewares: WebSocketMiddleware[] = [];
   private logger = createFrameworkLogger('ENGINE_WS_NS');
@@ -253,6 +267,8 @@ class EngineNamespaceWrapper implements WebSocketNamespace {
 class EngineConnectionWrapper implements WebSocketConnection {
   public data: Record<string, any> = {};
   public connected = true;
+  /** Raw framing (set from the namespace at open) */
+  public raw = false;
   public readonly headers: Record<string, string>;
   public readonly query: Record<string, string>;
   private rooms = new Set<string>();
@@ -327,6 +343,28 @@ class EngineConnectionWrapper implements WebSocketConnection {
 
   compressedEmit(event: string, data: any): void {
     this.emit(event, data);
+  }
+
+  send(data: string | Buffer | ArrayBuffer | Uint8Array, isBinary?: boolean): void {
+    if (!this.connected) return;
+    try {
+      const binary = isBinary ?? typeof data !== 'string';
+      const sent = this.server.wsSend(this.wsId, data, binary);
+      if (!sent) this.logger.warn(`Backpressure for connection ${this.id}`, 'Backpressure');
+    } catch (error) {
+      this.logger.error(
+        `Failed to send frame: ${error instanceof Error ? error.message : String(error)}`,
+        'Send'
+      );
+    }
+  }
+
+  /** Raw namespace: a text frame reaches the 'message' handlers verbatim */
+  handleRawText(text: string): void {
+    if (!this.connected) return;
+    for (const handler of this.anyHandlers) this.runHandler(handler, 'message', text);
+    const handlers = this.eventHandlers.get('message');
+    if (handlers) for (const handler of handlers) this.runHandler(handler, text);
   }
 
   // A user handler throwing must not kill the connection, skip sibling

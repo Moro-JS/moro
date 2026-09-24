@@ -37,6 +37,12 @@ export interface SSLConfig {
   minVersion?: 'TLSv1.2' | 'TLSv1.3';
   requestCert?: boolean;
   rejectUnauthorized?: boolean;
+  /**
+   * Reload the certificate when the key/cert files change on disk (file-path
+   * shape only; `true` = 1000 ms debounce). Equivalent to calling
+   * `app.reloadTLS()` after each change.
+   */
+  watch?: boolean | { debounceMs?: number };
 }
 
 /** Per-phase receive timeouts. 0 = use the per-server default / disabled. */
@@ -243,6 +249,7 @@ export interface ModuleDefaultsConfig {
     enabled: boolean;
     store: 'memory' | 'redis' | 'file';
     storeOptions?: {
+      url?: string;
       host?: string;
       port?: number;
       password?: string;

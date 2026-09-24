@@ -1,6 +1,9 @@
 import type { Server } from 'http';
 import crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { EventEmitter } from 'events';
+import { requireBuiltin } from './utilities/builtin.js';
 import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
 import { UWebSocketsHttpServer } from './http/uws-http-server.js';
 import { MoroEngineServer } from './http/moro-engine-server.js';
@@ -19,9 +22,12 @@ import {
 import { parseSizeToBytes, type HttpRuntimeLimits } from './http/utils/size.js';
 import {
   normalizeSSLConfig,
+  sslForEngine,
   sslForNode,
   sslForUws,
   sslIsComplete,
+  type NormalizedSSLConfig,
+  type SSLConfigInput,
 } from './http/utils/ssl-config.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
@@ -118,6 +124,12 @@ export class Moro extends EventEmitter {
   private usingHttp2 = false;
   // Which server actually booted (engine = native uWS-style engine)
   private engineInfo: ServerKind = { server: 'node' };
+  /** The normalized server.ssl in effect (updated by reloadTLS) */
+  private sslConfig: NormalizedSSLConfig | null = null;
+  private tlsWatchers: fs.FSWatcher[] = [];
+  private tlsWatchTimer: NodeJS.Timeout | undefined;
+  /** Hash of the last key/cert/CA bytes loaded from disk (skips no-op reloads) */
+  private tlsMaterialHash: string | undefined;
   // WebSocket initialization promise to handle async adapter detection
   private websocketSetupPromise: Promise<void> | null = null;
 
@@ -157,6 +169,7 @@ export class Moro extends EventEmitter {
     // projected per-runtime, so a single server.ssl / server.limits flows
     // everywhere regardless of which server boots.
     const ssl = normalizeSSLConfig(this.config.server?.ssl, options.https as any, this.logger);
+    this.sslConfig = ssl;
     const rt = this.buildRuntimeLimits();
 
     if (engineChoice.kind === 'engine') {
@@ -171,7 +184,10 @@ export class Moro extends EventEmitter {
           typeof engineSurface?.respond === 'function'
         ) {
           this.httpServer = new MoroEngineServer({
-            ssl,
+            // Project to the engine's own option names (key_file_name / key,
+            // ...). The normalized shape's keyFile/certFile mean nothing to
+            // serve(), which would throw and silently fall back to Node https.
+            ...(ssl ? { ssl: sslForEngine(ssl) } : {}),
             limits: rt,
             maxBodySize: rt.maxBodySize,
             maxUploadSize: rt.maxUploadSize,
@@ -212,7 +228,10 @@ export class Moro extends EventEmitter {
         // Construction failed after a successful module load - unexpected, but
         // never boot nothing: fall back to the Node.js http server.
         const reason = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
+        // With TLS configured this is almost always a certificate/key problem,
+        // and a deployment tuned for the engine would otherwise run on a
+        // different server behind a warning buried among INFO lines.
+        this.logger[ssl ? 'error' : 'warn'](
           `Native engine (${engineChoice.requested}) failed to initialize, falling back to Node.js http.Server. Error: ${reason}`,
           'ServerInit'
         );
@@ -1266,6 +1285,177 @@ export class Moro extends EventEmitter {
   }
 
   /**
+   * Rotate the TLS certificate/key on the running listener. The new material
+   * is validated (files readable, PEM parses, key matches cert) BEFORE the
+   * listener is touched, so a half-written file or a wrong pair rejects and
+   * the current certificate keeps serving; connections that already
+   * handshaked are never affected. Policy fields (minVersion, mTLS flags,
+   * passphrase) and the CA carry over unless the update sets them.
+   */
+  async reloadTLS(ssl?: SSLConfigInput): Promise<void> {
+    const current = this.sslConfig;
+    if (!current) {
+      throw new Error('reloadTLS: this app was not started with TLS (server.ssl)');
+    }
+    if (this.usingUWebSockets) {
+      throw new Error('reloadTLS is not supported on the uWebSockets.js engine');
+    }
+
+    let next: NormalizedSSLConfig;
+    if (ssl) {
+      const update = normalizeSSLConfig(ssl, undefined, this.logger);
+      if (!update || !sslIsComplete(update)) {
+        throw new Error('reloadTLS: ssl must carry both a key and a certificate');
+      }
+      const hasCa = Boolean(update.ca || update.caFile);
+      next = {
+        // operator policy carries over...
+        passphrase: current.passphrase,
+        minVersion: current.minVersion,
+        requestCert: current.requestCert,
+        rejectUnauthorized: current.rejectUnauthorized,
+        // ...as does the CA when the update names none
+        ...(hasCa ? {} : { ca: current.ca, caFile: current.caFile }),
+        // and the update's own fields win (undefined entries dropped so they
+        // do not shadow the carried-over values)
+        ...Object.fromEntries(Object.entries(update).filter(([, v]) => v !== undefined)),
+      };
+    } else {
+      if (!current.keyFile || !current.certFile) {
+        throw new Error(
+          'reloadTLS() with no argument re-reads the server.ssl key/cert files, but this app was configured with inline PEM - pass the new material'
+        );
+      }
+      next = { ...current };
+    }
+
+    // One consistent snapshot of the material, validated on every backend the
+    // same way (node's own parser: bad PEM / key-cert mismatch throw here).
+    const nodeSsl = sslForNode(next);
+    const tls = requireBuiltin<typeof import('tls')>('tls');
+    tls.createSecureContext(nodeSsl as import('tls').SecureContextOptions);
+
+    if (this.usingEngine) {
+      // Hand the engine the validated bytes rather than the paths, so it
+      // cannot read a different (newer, half-written) file than we checked.
+      const engineSsl = sslForEngine({
+        ...next,
+        key: nodeSsl.key,
+        cert: nodeSsl.cert,
+        ca: nodeSsl.ca,
+        keyFile: undefined,
+        certFile: undefined,
+        caFile: undefined,
+      });
+      (this.httpServer as MoroEngineServer).updateSsl(engineSsl);
+    } else if (this.usingHttp2) {
+      (this.httpServer as MoroHttp2Server).updateSsl(nodeSsl);
+    } else {
+      (this.httpServer as MoroHttpServer).updateSsl(nodeSsl);
+    }
+
+    this.sslConfig = next;
+    this.tlsMaterialHash = MoroCoreTls.hashMaterial(nodeSsl);
+    this.logger.info('TLS certificate reloaded', 'TLS');
+  }
+
+  /**
+   * `server.ssl.watch`: reload the certificate when its files change on disk.
+   * The DIRECTORIES holding the files are watched (an ACME client or a
+   * Kubernetes secret mount replaces files by rename/symlink swap, which a
+   * per-file watcher misses), changes are debounced, unchanged bytes are
+   * ignored, and a failed reload is logged while the current certificate
+   * keeps serving. Watchers are non-persistent and closed by stopTlsWatch().
+   */
+  startTlsWatch(): void {
+    const ssl = this.sslConfig;
+    const watch = this.config.server?.ssl?.watch;
+    if (!ssl || !watch || this.tlsWatchers.length > 0) return;
+    if (!ssl.keyFile || !ssl.certFile) {
+      this.logger.warn(
+        'server.ssl.watch needs keyFile/certFile paths - inline PEM cannot be watched',
+        'TLS'
+      );
+      return;
+    }
+    if (this.usingUWebSockets) {
+      this.logger.warn('server.ssl.watch is not supported on the uWebSockets.js engine', 'TLS');
+      return;
+    }
+    const debounceMs =
+      typeof watch === 'object' && typeof watch.debounceMs === 'number' && watch.debounceMs > 0
+        ? watch.debounceMs
+        : 1000;
+
+    try {
+      this.tlsMaterialHash = MoroCoreTls.hashMaterial(sslForNode(ssl));
+    } catch {
+      // unreadable now; the first change event will report properly
+    }
+
+    const files = [ssl.keyFile, ssl.certFile, ...(ssl.caFile ?? [])].map(f => path.resolve(f));
+    const schedule = () => {
+      if (this.tlsWatchTimer) clearTimeout(this.tlsWatchTimer);
+      this.tlsWatchTimer = setTimeout(() => {
+        this.tlsWatchTimer = undefined;
+        let hash: string;
+        try {
+          hash = MoroCoreTls.hashMaterial(sslForNode(this.sslConfig ?? ssl));
+        } catch (err) {
+          // Mid-rotation (one file replaced, the other not yet): wait for the
+          // next event rather than logging a scary error per half-write.
+          this.logger.debug(
+            `TLS files not readable yet: ${err instanceof Error ? err.message : String(err)}`,
+            'TLS'
+          );
+          return;
+        }
+        if (hash === this.tlsMaterialHash) return; // touched, not changed
+        this.reloadTLS().catch(err => {
+          this.logger.error(
+            `TLS reload failed; the current certificate keeps serving: ${err instanceof Error ? err.message : String(err)}`,
+            'TLS'
+          );
+        });
+      }, debounceMs);
+      this.tlsWatchTimer.unref?.();
+    };
+
+    for (const dir of new Set(files.map(f => path.dirname(f)))) {
+      try {
+        const watcher = fs.watch(dir, { persistent: false }, () => schedule());
+        watcher.on('error', err => {
+          this.logger.warn(`TLS file watcher error on ${dir}: ${err.message}`, 'TLS');
+        });
+        this.tlsWatchers.push(watcher);
+      } catch (err) {
+        this.logger.warn(
+          `Cannot watch ${dir} for certificate changes: ${err instanceof Error ? err.message : String(err)}`,
+          'TLS'
+        );
+      }
+    }
+    if (this.tlsWatchers.length > 0) {
+      this.logger.info(`Watching TLS certificate files for changes (${files.length} files)`, 'TLS');
+    }
+  }
+
+  stopTlsWatch(): void {
+    if (this.tlsWatchTimer) {
+      clearTimeout(this.tlsWatchTimer);
+      this.tlsWatchTimer = undefined;
+    }
+    for (const watcher of this.tlsWatchers) {
+      try {
+        watcher.close();
+      } catch {
+        // already closed
+      }
+    }
+    this.tlsWatchers = [];
+  }
+
+  /**
    * Which HTTP server backs this app, which package provides it, and the
    * fallback reason when the native engine was requested but unavailable.
    */
@@ -1530,12 +1720,18 @@ export class Moro extends EventEmitter {
   listen(port: number, callback?: () => void): void;
   listen(port: number, host: string, callback?: () => void): void;
   listen(port: number, host?: string | (() => void), callback?: () => void): void {
+    // Certificate watching (server.ssl.watch) starts once the listener is up
+    const userCb = typeof host === 'function' ? host : callback;
+    const onListening = () => {
+      this.startTlsWatch();
+      userCb?.();
+    };
     if (typeof host === 'function') {
-      this.httpServer.listen(port, host);
+      this.httpServer.listen(port, onListening);
     } else if (host) {
-      this.httpServer.listen(port, host, callback);
+      this.httpServer.listen(port, host, onListening);
     } else {
-      this.httpServer.listen(port, callback);
+      this.httpServer.listen(port, onListening);
     }
   }
 
@@ -1557,3 +1753,14 @@ export class Moro extends EventEmitter {
     return undefined;
   }
 }
+
+/** TLS helpers kept out of the class body (no per-instance state). */
+const MoroCoreTls = {
+  hashMaterial(ssl: { key: string | Buffer; cert: string | Buffer; ca?: Array<string | Buffer> }) {
+    const h = crypto.createHash('sha256');
+    h.update(ssl.key);
+    h.update(ssl.cert);
+    for (const ca of ssl.ca ?? []) h.update(ca);
+    return h.digest('hex');
+  },
+};

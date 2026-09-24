@@ -196,6 +196,28 @@ function validateSSLConfig(config: any, path: string) {
   if (config.requestCert !== undefined) {
     result.requestCert = validateBoolean(config.requestCert, `${path}.requestCert`);
   }
+  // Certificate rotation on file change: true, or { debounceMs }
+  if (config.watch !== undefined) {
+    if (typeof config.watch === 'boolean') {
+      result.watch = config.watch;
+    } else if (config.watch && typeof config.watch === 'object') {
+      result.watch = {};
+      if (config.watch.debounceMs !== undefined) {
+        result.watch.debounceMs = validateNumber(
+          config.watch.debounceMs,
+          `${path}.watch.debounceMs`,
+          { min: 1 }
+        );
+      }
+    } else {
+      throw new ConfigValidationError(
+        `${path}.watch`,
+        config.watch,
+        'boolean | { debounceMs }',
+        'ssl.watch must be a boolean or an object'
+      );
+    }
+  }
   if (config.rejectUnauthorized !== undefined) {
     result.rejectUnauthorized = validateBoolean(
       config.rejectUnauthorized,

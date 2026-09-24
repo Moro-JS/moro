@@ -1216,6 +1216,26 @@ export class MoroHttp2Server {
     }
   }
 
+  /**
+   * Replace the TLS certificate/key for new handshakes (Http2SecureServer is
+   * a tls.Server; setSecureContext applies to every later handshake).
+   */
+  updateSsl(ssl: {
+    key: string | Buffer;
+    cert: string | Buffer;
+    ca?: Array<string | Buffer>;
+    passphrase?: string;
+    minVersion?: string;
+    requestCert?: boolean;
+    rejectUnauthorized?: boolean;
+  }): void {
+    const server = this.server as any;
+    if (typeof server.setSecureContext !== 'function') {
+      throw new Error('updateSsl: this server was not started with TLS (server.ssl)');
+    }
+    server.setSecureContext(ssl);
+  }
+
   getServer(): Http2Server | Http2SecureServer {
     return this.server;
   }

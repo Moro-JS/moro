@@ -39,3 +39,45 @@ export function urlencoded(_options?: { extended?: boolean; limit?: number | str
     next();
   };
 }
+
+function typeMatches(contentType: string, wanted: string | string[]): boolean {
+  const ct = contentType.toLowerCase().split(';')[0]?.trim() ?? '';
+  for (const t of Array.isArray(wanted) ? wanted : [wanted]) {
+    const w = t.toLowerCase();
+    if (w === '*/*' || w === ct) return true;
+    if (w.endsWith('/*') && ct.startsWith(w.slice(0, -1))) return true;
+  }
+  return false;
+}
+
+/**
+ * Raw body-parser middleware (Express `raw()` idiom). MoroJS already keeps
+ * binary bodies as Buffers, so this only converts a body that was decoded to
+ * a string back to its exact bytes for the matching content types (default
+ * `application/octet-stream`). `req.rawBody` is always available regardless.
+ */
+export function raw(options?: { type?: string | string[]; limit?: number | string }): Middleware {
+  const wanted = options?.type ?? 'application/octet-stream';
+  return function moroRawBodyParser(req, _res, next) {
+    const ct = (req.headers['content-type'] || '') as string;
+    if (typeof req.body === 'string' && typeMatches(ct, wanted)) {
+      req.body = req.rawBody ?? Buffer.from(req.body, 'utf8');
+    }
+    next();
+  };
+}
+
+/**
+ * Text body-parser middleware (Express `text()` idiom): decodes a Buffer body
+ * to a UTF-8 string for the matching content types (default `text/plain`).
+ */
+export function text(options?: { type?: string | string[]; limit?: number | string }): Middleware {
+  const wanted = options?.type ?? 'text/plain';
+  return function moroTextBodyParser(req, _res, next) {
+    const ct = (req.headers['content-type'] || '') as string;
+    if (Buffer.isBuffer(req.body) && typeMatches(ct, wanted)) {
+      req.body = req.body.toString('utf8');
+    }
+    next();
+  };
+}

@@ -6,6 +6,7 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   WebSocketNamespace,
+  WebSocketNamespaceOptions,
   WebSocketConnection,
   WebSocketEmitter,
   WebSocketMiddleware,
@@ -24,6 +25,10 @@ export class WSAdapter implements WebSocketAdapter {
   private customIdGenerator?: () => string;
   private connectionCounter = 0;
   private heartbeatTimer?: ReturnType<typeof setInterval> | undefined;
+  /** Upgrade path prefix (options.path, default '/ws'): namespaces live below it */
+  private basePath = '/ws';
+  private httpServer: any;
+  private upgradeHandler: ((req: any, socket: any, head: Buffer) => void) | undefined;
 
   async initialize(httpServer: any, options: WebSocketAdapterOptions = {}): Promise<void> {
     try {
@@ -31,9 +36,15 @@ export class WSAdapter implements WebSocketAdapter {
       const wsPath = resolveUserPackage('ws');
       const { WebSocketServer } = await import(wsPath);
 
+      // `ws` matches its `path` option EXACTLY, which would confine every
+      // namespace to the one base path. Namespaces are routed by URL
+      // (`/ws/chat` -> '/chat'), so the adapter owns the upgrade step itself
+      // and accepts the base path and anything below it. handleUpgrade()
+      // still applies verifyClient and maxPayload exactly as server mode did.
+      const base = (options.path || '/ws').replace(/\/+$/, '') || '/';
+      this.basePath = base.startsWith('/') ? base : `/${base}`;
       this.wss = new WebSocketServer({
-        server: httpServer,
-        path: options.path || '/ws',
+        noServer: true,
         // Matches the ws library's own default (100 MiB) so behavior is
         // unchanged; apps concerned about per-message buffering can lower it
         // via maxPayloadLength.
@@ -45,6 +56,30 @@ export class WSAdapter implements WebSocketAdapter {
         // Note: ws doesn't have built-in compression like socket.io
         // but browsers handle compression at the transport level
       });
+
+      this.httpServer = httpServer;
+      this.upgradeHandler = (req: any, socket: any, head: Buffer) => {
+        const pathname = String(req.url || '/').split('?')[0] ?? '/';
+        const ours =
+          this.basePath === '/' ||
+          pathname === this.basePath ||
+          pathname.startsWith(`${this.basePath}/`);
+        if (!ours) {
+          // Not this adapter's path. Another 'upgrade' listener may claim the
+          // socket; with none, Node would leave it hanging, so answer and close.
+          if (httpServer.listenerCount('upgrade') <= 1) {
+            socket.write(
+              'HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
+            );
+            socket.destroy();
+          }
+          return;
+        }
+        this.wss.handleUpgrade(req, socket, head, (ws: any) => {
+          this.wss.emit('connection', ws, req);
+        });
+      };
+      httpServer.on('upgrade', this.upgradeHandler);
 
       // Setup connection handling
       this.wss.on('connection', (ws: any, request: any) => {
@@ -162,12 +197,20 @@ export class WSAdapter implements WebSocketAdapter {
 
     this.connections.set(id, connection);
 
-    // Parse namespace from URL path or default to '/'
-    const url = new URL(request.url || '/', `http://${request.headers.host}`);
-    const namespacePath = url.pathname === '/ws' ? '/' : url.pathname.replace('/ws', '') || '/';
+    // Namespace = the URL path below the base path ('/ws/chat' -> '/chat');
+    // the base path itself, and any path without a registered namespace,
+    // land on the default namespace (engine-adapter parity).
+    const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    let namespacePath = '/';
+    if (this.basePath === '/') {
+      namespacePath = url.pathname || '/';
+    } else if (url.pathname.startsWith(`${this.basePath}/`)) {
+      namespacePath = url.pathname.slice(this.basePath.length) || '/';
+    }
 
-    const namespace = this.namespaces.get(namespacePath);
+    const namespace = this.namespaces.get(namespacePath) ?? this.namespaces.get('/');
     if (namespace) {
+      connection.raw = namespace.raw;
       namespace.handleConnection(connection);
     }
 
@@ -177,13 +220,15 @@ export class WSAdapter implements WebSocketAdapter {
     });
   }
 
-  createNamespace(namespace: string): WebSocketNamespace {
+  createNamespace(namespace: string, options?: WebSocketNamespaceOptions): WebSocketNamespace {
     if (!this.namespaces.has(namespace)) {
       const ns = new WSNamespaceWrapper(namespace, this);
       this.namespaces.set(namespace, ns);
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.namespaces.get(namespace)!;
+    const ns = this.namespaces.get(namespace)!;
+    if (options?.raw) ns.raw = true;
+    return ns;
   }
 
   getDefaultNamespace(): WebSocketNamespace {
@@ -194,6 +239,10 @@ export class WSAdapter implements WebSocketAdapter {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
+    }
+    if (this.httpServer && this.upgradeHandler) {
+      this.httpServer.off?.('upgrade', this.upgradeHandler);
+      this.upgradeHandler = undefined;
     }
     if (this.wss) {
       // Terminate live clients first: wss.close() only stops accepting new
@@ -260,6 +309,8 @@ export class WSAdapter implements WebSocketAdapter {
  * WebSocket namespace wrapper
  */
 class WSNamespaceWrapper implements WebSocketNamespace {
+  /** Raw framing for connections routed here (see WebSocketNamespaceOptions) */
+  raw = false;
   private connectionHandlers: ((socket: WebSocketConnection) => void)[] = [];
   private middlewares: WebSocketMiddleware[] = [];
   private connections = new Map<string, WSConnectionWrapper>();
@@ -343,6 +394,8 @@ class WSNamespaceWrapper implements WebSocketNamespace {
  */
 class WSConnectionWrapper implements WebSocketConnection {
   public data: Record<string, any> = {};
+  /** Raw framing (set from the namespace at connection) */
+  public raw = false;
   private eventHandlers = new Map<string, CallableFunction[]>();
   private anyHandlers: CallableFunction[] = [];
   private rooms = new Set<string>();
@@ -354,13 +407,21 @@ class WSConnectionWrapper implements WebSocketConnection {
     private request: any
   ) {
     // Setup message handling
-    this.ws.on('message', (data: Buffer) => {
-      this.handleMessage(data);
+    this.ws.on('message', (data: Buffer, isBinary?: boolean) => {
+      this.handleMessage(data, isBinary === true);
     });
 
-    this.ws.on('close', () => {
+    this.ws.on('close', (code?: number, reason?: Buffer) => {
       this._connected = false;
       this.emit('close');
+      // The documented `disconnect` hook (app.websocket({ disconnect })) - a
+      // client-facing frame makes no sense on a closed socket, so it is
+      // dispatched locally with the close code, like the engine adapter.
+      const handlers = this.eventHandlers.get('disconnect');
+      if (handlers) {
+        const detail = { code, reason: reason ? reason.toString() : '' };
+        for (let i = 0; i < handlers.length; i++) handlers[i]?.(detail);
+      }
     });
 
     this.ws.on('error', (error: Error) => {
@@ -473,7 +534,30 @@ class WSConnectionWrapper implements WebSocketConnection {
     this._connected = false;
   }
 
-  private handleMessage(data: Buffer): void {
+  send(data: string | Buffer | ArrayBuffer | Uint8Array, isBinary?: boolean): void {
+    if (!this._connected || this.ws.readyState !== 1) return;
+    this.ws.send(data, { binary: isBinary ?? typeof data !== 'string' });
+  }
+
+  private handleMessage(data: Buffer, isBinary = false): void {
+    if (this.raw) {
+      // Raw namespace: no envelope. Text -> 'message' (string), binary ->
+      // 'binary' (Buffer; ws may hand over a Buffer[] for fragmented frames).
+      const event = isBinary ? 'binary' : 'message';
+      const payload = isBinary
+        ? Array.isArray(data)
+          ? Buffer.concat(data)
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data as any)
+        : Array.isArray(data)
+          ? Buffer.concat(data).toString('utf8')
+          : data.toString();
+      for (const any of this.anyHandlers) any(event, payload);
+      const handlers = this.eventHandlers.get(event);
+      if (handlers) for (const handler of handlers) handler(payload);
+      return;
+    }
     try {
       const text = data.toString();
       const parsed = JSON.parse(text);

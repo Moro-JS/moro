@@ -42,6 +42,27 @@ import { createFrameworkLogger } from '../logger/index.js';
 const logger = createFrameworkLogger('ConfigSystem');
 
 /**
+ * Configuration is one-per-process: the first createApp() locks it and every
+ * later createApp() in the same process (or worker thread) receives that
+ * same config. A second app that passes its OWN options (another port, TLS,
+ * ...) would otherwise silently boot with the first app's settings, so name
+ * the ignored keys at ERROR rather than a debug line nobody sees.
+ */
+function warnIgnoredOptions(options?: MoroOptions): void {
+  const ignored = options ? Object.keys(options).filter(k => k !== 'logger') : [];
+  if (ignored.length === 0) {
+    logger.debug('Configuration already locked, returning existing config');
+    return;
+  }
+  logger.error(
+    `createApp() called again after the configuration was locked; ignoring options [${ignored.join(', ')}]. ` +
+      'MoroJS keeps one configuration per process: the first createApp() wins and later apps share it. ' +
+      'Run a second differently-configured app in its own process.',
+    'ConfigLock'
+  );
+}
+
+/**
  * Initialize configuration system with createApp options
  * This is the main entry point called by createApp()
  *
@@ -50,7 +71,7 @@ const logger = createFrameworkLogger('ConfigSystem');
  */
 export function initializeConfig(options?: MoroOptions): Readonly<AppConfig> {
   if (isConfigLocked()) {
-    logger.debug('Configuration already locked, returning existing config');
+    warnIgnoredOptions(options);
     return getConfig();
   }
 
@@ -79,7 +100,7 @@ export function initializeConfig(options?: MoroOptions): Readonly<AppConfig> {
  */
 export async function initializeConfigAsync(options?: MoroOptions): Promise<Readonly<AppConfig>> {
   if (isConfigLocked()) {
-    logger.debug('Configuration already locked, returning existing config');
+    warnIgnoredOptions(options);
     return getConfig();
   }
 

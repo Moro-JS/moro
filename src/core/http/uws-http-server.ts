@@ -19,6 +19,7 @@ import {
   negotiateEncoding,
   type CompressionSettings,
 } from './utils/compression.js';
+import { bodyIsText } from './utils/body-type.js';
 
 // Back-compat alias (this parser is now the transport-neutral one in utils/)
 const parseUwsQueryString = parseRawQueryString;
@@ -39,6 +40,12 @@ export class UwsRequest extends LazyEventEmitter {
   params: Record<string, string> = {};
   body: any = null;
   ip = '';
+  _rawBody: Buffer | undefined = undefined;
+
+  /** The request body exactly as received, before any parsing; null when empty. */
+  get rawBody(): Buffer | null {
+    return this._rawBody ?? null;
+  }
 
   _server: UWebSocketsHttpServer;
   _uwsReq: any; // valid ONLY synchronously inside the uWS route callback
@@ -1729,8 +1736,22 @@ export class UWebSocketsHttpServer {
             // it first. Concatenated multi-chunk buffers are already stable.
             const stable = buffer === view ? Buffer.from(buffer) : buffer;
             httpReq.body = parseMultipartBuffer(stable, contentType, this.multipartLimits);
-          } else {
+          } else if (bodyIsText(contentType)) {
             httpReq.body = buffer.toString('utf-8');
+          } else {
+            // Binary stays a Buffer. The single-chunk fast path aliases
+            // uWS-owned memory that is recycled after this callback, so a
+            // Buffer that outlives it must be a copy.
+            httpReq.body = buffer === view ? Buffer.from(buffer) : buffer;
+          }
+          // Raw bytes for signature checks: reuse the stable binary copy when
+          // one was made, otherwise copy out of uWS-owned memory now.
+          if (totalLength > 0) {
+            httpReq._rawBody = Buffer.isBuffer(httpReq.body)
+              ? httpReq.body
+              : buffer === view
+                ? Buffer.from(buffer)
+                : buffer;
           }
 
           finish(resolve);

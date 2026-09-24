@@ -5,6 +5,12 @@ export interface HttpRequest extends IncomingMessage {
   params: Record<string, string>;
   query: Record<string, string>;
   body: any;
+  /**
+   * The request body exactly as received, before any parsing (JSON included),
+   * or null when the request carried none. What webhook signature checks
+   * (HMAC over the wire bytes) need; bounded by the same body size limits.
+   */
+  readonly rawBody: Buffer | null;
   path: string;
   headers: Record<string, string>;
   ip: string;

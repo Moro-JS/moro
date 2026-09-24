@@ -1,5 +1,6 @@
 // src/core/http-server.ts
 import type { IncomingMessage, ServerResponse, Server } from 'http';
+import { bodyIsText } from './utils/body-type.js';
 import type { Server as HttpsServer } from 'https';
 import { createRequire } from 'module';
 import { promisify } from 'util';
@@ -140,6 +141,13 @@ export class MoroIncomingMessage extends http.IncomingMessage {
   body: any = null;
   path = '';
   _queryString: string | null = null;
+  /** Set by parseBody only when a body arrived (no per-request init on GETs) */
+  declare _rawBody: Buffer | undefined;
+
+  /** The request body exactly as received, before any parsing; null when empty. */
+  get rawBody(): Buffer | null {
+    return this._rawBody ?? null;
+  }
 
   // Single slot for every lazily-computed/assigned helper value (query,
   // cookies, requestId, hostname, ...). Allocated on first access - a plain
@@ -1755,6 +1763,7 @@ export class MoroHttpServer {
             chunks.length === 1 && firstChunk !== undefined
               ? firstChunk
               : Buffer.concat(chunks, totalLength);
+          if (totalLength > 0) (req as MoroIncomingMessage)._rawBody = body;
 
           if (contentType.includes('application/json')) {
             // Empty JSON body -> null (parity with the engine/uWS servers, and
@@ -1765,7 +1774,9 @@ export class MoroHttpServer {
           } else if (contentType.includes('multipart/form-data')) {
             resolve(this.parseMultipart(body, contentType));
           } else {
-            resolve(body.toString());
+            // Text decodes to a string; binary (octet-stream, images, protobuf,
+            // ...) stays a Buffer - decoding it would corrupt it irreversibly.
+            resolve(bodyIsText(contentType) ? body.toString() : body);
           }
         } catch (error) {
           // A malformed body is a client error (400), not a server error (500).
@@ -2018,6 +2029,26 @@ export class MoroHttpServer {
   // Public method to force cleanup
   forceCleanup(): void {
     this.forceCleanupPools();
+  }
+
+  /**
+   * Replace the TLS certificate/key for new handshakes (node's
+   * tls.Server#setSecureContext). Throws when the server is plain HTTP.
+   */
+  updateSsl(ssl: {
+    key: string | Buffer;
+    cert: string | Buffer;
+    ca?: Array<string | Buffer>;
+    passphrase?: string;
+    minVersion?: string;
+    requestCert?: boolean;
+    rejectUnauthorized?: boolean;
+  }): void {
+    const server = this.server as any;
+    if (typeof server.setSecureContext !== 'function') {
+      throw new Error('updateSsl: this server was not started with TLS (server.ssl)');
+    }
+    server.setSecureContext(ssl);
   }
 
   getServer(): Server {

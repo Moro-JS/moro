@@ -13,7 +13,7 @@ import { requireBuiltin } from '../../utilities/builtin.js';
 
 // worker_threads is loaded on first use (core/utilities/builtin.ts).
 const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
-import os from 'os';
+import { usableCpuCount, usableMemoryBytes } from '../../cluster/thread-cluster.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 import { loadNativeEngine } from '../../utilities/package-utils.js';
 
@@ -46,11 +46,12 @@ export class UWSWorkerClusterManager {
   }
 
   private calculateWorkerCount(): number {
-    let workerCount = this.config.workers || os.cpus().length;
+    // Container-aware counts (cgroup quota / affinity mask), not the host's
+    let workerCount = this.config.workers || usableCpuCount();
 
     if (workerCount === 'auto') {
-      const cpuCount = os.cpus().length;
-      const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
+      const cpuCount = usableCpuCount();
+      const totalMemoryGB = usableMemoryBytes() / (1024 * 1024 * 1024);
 
       let memoryPerWorkerGB = this.config.memoryPerWorkerGB;
 

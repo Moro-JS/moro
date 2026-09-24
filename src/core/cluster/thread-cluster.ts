@@ -19,7 +19,7 @@
 // is dependency-injectable so the sequencing (spawn, restart backoff, health
 // pings, bounded shutdown) is unit-tested with a fake Worker and fake timers.
 import { requireBuiltin } from '../utilities/builtin.js';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve as resolvePath } from 'path';
 import type { WorkerOptions } from 'node:worker_threads';
 
@@ -65,8 +65,106 @@ export interface SystemInfo {
   totalMemGB: number;
 }
 
-function systemInfo(): SystemInfo {
-  return { cpus: os().cpus().length, totalMemGB: os().totalmem() / (1024 * 1024 * 1024) };
+/** Injection points for the container-limit probes (unit tests). */
+export interface SystemProbe {
+  /** Read a pseudo-file (throws when it does not exist) */
+  readFile?: (path: string) => string;
+  availableParallelism?: () => number;
+  cpuCount?: () => number;
+  totalmem?: () => number;
+}
+
+const readText = (path: string): string => readFileSync(path, 'utf8');
+
+/**
+ * CPU quota from the cgroup this process runs in (`docker run --cpus=2`,
+ * Kubernetes `resources.limits.cpu`), or null when unlimited/unavailable.
+ * v2 exposes `cpu.max` as "<quota> <period>" ("max ..." = unlimited); v1
+ * splits it over cpu.cfs_quota_us (-1 = unlimited) and cpu.cfs_period_us.
+ * A fractional quota (0.5 CPU) still means one runnable worker.
+ */
+function cgroupCpuQuota(read: (path: string) => string): number | null {
+  try {
+    const [quota, period] = read('/sys/fs/cgroup/cpu.max').trim().split(/\s+/);
+    if (quota !== 'max') {
+      const q = Number(quota);
+      const p = Number(period) || 100000;
+      if (q > 0) return Math.max(1, Math.floor(q / p));
+    }
+  } catch {
+    // no cgroup v2 - fall through
+  }
+  try {
+    const q = Number(read('/sys/fs/cgroup/cpu/cpu.cfs_quota_us').trim());
+    const p = Number(read('/sys/fs/cgroup/cpu/cpu.cfs_period_us').trim());
+    if (q > 0 && p > 0) return Math.max(1, Math.floor(q / p));
+  } catch {
+    // no cgroup v1 either
+  }
+  return null;
+}
+
+/**
+ * CPUs this process may actually run on. `os.cpus().length` is the HOST's
+ * core count, which inside a container is wrong twice over: `--cpuset-cpus`
+ * narrows the affinity mask (honoured by os.availableParallelism(), Node
+ * 18.14+) and `--cpus` / a Kubernetes CPU limit sets a cgroup quota that no
+ * os call reports. 'auto' worker counts take the smaller of the two so a
+ * 96-thread host pinned to 32 cores starts 32 workers, not 96.
+ */
+export function usableCpuCount(probe: SystemProbe = {}): number {
+  const read = probe.readFile ?? readText;
+  const parallelism =
+    probe.availableParallelism ?? (() => (os() as any).availableParallelism?.() ?? 0);
+  const cpuCount = probe.cpuCount ?? (() => os().cpus().length);
+
+  let n = 0;
+  try {
+    n = parallelism();
+  } catch {
+    n = 0;
+  }
+  if (!(n >= 1)) {
+    try {
+      n = cpuCount();
+    } catch {
+      n = 0;
+    }
+  }
+  if (!(n >= 1)) n = 1;
+
+  const quota = cgroupCpuQuota(read);
+  return quota === null ? n : Math.max(1, Math.min(n, quota));
+}
+
+/**
+ * Memory available to this process: the cgroup limit when one is set below
+ * the host total (`docker run --memory`, Kubernetes memory limit), else
+ * os.totalmem(). Sizing workers by host RAM inside a 2 GB container would
+ * plan for memory the OOM killer will not let them use.
+ */
+export function usableMemoryBytes(probe: SystemProbe = {}): number {
+  const read = probe.readFile ?? readText;
+  const total = (probe.totalmem ?? (() => os().totalmem()))();
+  for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+    try {
+      const raw = read(file).trim();
+      if (raw === 'max') continue;
+      const limit = Number(raw);
+      // v1 reports a huge sentinel when unlimited; anything >= host RAM is "no limit"
+      if (Number.isFinite(limit) && limit > 0 && limit < total) return limit;
+    } catch {
+      // file absent - try the next layout
+    }
+  }
+  return total;
+}
+
+export function systemInfo(probe: SystemProbe = {}): SystemInfo {
+  return {
+    cpus: usableCpuCount(probe),
+    totalMemGB: usableMemoryBytes(probe) / (1024 * 1024 * 1024),
+  };
 }
 
 /**
