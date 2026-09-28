@@ -121,7 +121,7 @@ export interface EngineCapabilities {
    *  with one variable path segment, echoed as the body, answered inside the
    *  engine. Used for param(name) handlers on bare routes. */
   paramRoutes: boolean;
-  /** I/O transport in use ('uv', 'uring'), when the engine reports it. */
+  /** I/O transport in use ('epoll', 'uv', 'uring'), when the engine reports it. */
   transport?: string;
 }
 
