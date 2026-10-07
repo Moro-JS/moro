@@ -1,3 +1,15 @@
+## [1.8.14] - 2026-10-07
+
+### Added
+
+- `maxInlineBytes` on `performance.compression` and on `middleware.compression()` (default 16384): a body at or below it is compressed on the calling thread and sent with a `Content-Length`; a larger one is compressed on the threadpool and streamed chunked, as before. `0` sends every body through the pool. `compressBufferSync()` and `shouldInline()` join the shared compression utility; the native engine, Node, HTTP/2 and uWebSockets.js responses and the middleware all take the inline path for the same bodies.
+
+### Changed
+
+- Small compressed responses no longer pay a threadpool round trip. A compressed JSON reply of a few kilobytes used to cost two thread handoffs, a promise and a wake-up, and went out chunked because its length was not known when the headers were committed; measured on a 64-worker cluster this capped `/json` with compression at roughly four thousand replies per second per pool thread, whatever the core count. Up to `maxInlineBytes` it is now one `gzipSync`/`brotliCompressSync` call on the handler's thread and a single write with a `Content-Length`.
+- Brotli is sized to the body. Every call used the default 2^22-byte window, so the encoder allocated and cleared several megabytes for a response of a few kilobytes; the window is now the smallest power of two that covers the input (never above the default), which compresses it identically and removes most of the per-call cost. Applies to the async path too.
+- docs: update transport types in EngineCapabilities interface
+
 ## [1.8.14]
 
 ### Added
