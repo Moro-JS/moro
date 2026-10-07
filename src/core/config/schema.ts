@@ -216,6 +216,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       enabled: false, // Opt-in to avoid overhead
       level: 6,
       threshold: 1024,
+      maxInlineBytes: 16384, // compressed on the calling thread up to here, on the pool above
     },
     circuitBreaker: {
       enabled: false, // Opt-in to avoid overhead

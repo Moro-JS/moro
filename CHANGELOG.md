@@ -1,3 +1,14 @@
+## [1.8.14]
+
+### Added
+
+- `maxInlineBytes` on `performance.compression` and on `middleware.compression()` (default 16384): a body at or below it is compressed on the calling thread and sent with a `Content-Length`; a larger one is compressed on the threadpool and streamed chunked, as before. `0` sends every body through the pool. `compressBufferSync()` and `shouldInline()` join the shared compression utility; the native engine, Node, HTTP/2 and uWebSockets.js responses and the middleware all take the inline path for the same bodies.
+
+### Changed
+
+- Small compressed responses no longer pay a threadpool round trip. A compressed JSON reply of a few kilobytes used to cost two thread handoffs, a promise and a wake-up, and went out chunked because its length was not known when the headers were committed; measured on a 64-worker cluster this capped `/json` with compression at roughly four thousand replies per second per pool thread, whatever the core count. Up to `maxInlineBytes` it is now one `gzipSync`/`brotliCompressSync` call on the handler's thread and a single write with a `Content-Length`.
+- Brotli is sized to the body. Every call used the default 2^22-byte window, so the encoder allocated and cleared several megabytes for a response of a few kilobytes; the window is now the smallest power of two that covers the input (never above the default), which compresses it identically and removes most of the per-call cost. Applies to the async path too.
+
 ## [1.8.13] - 2026-09-24
 
 ### Added
@@ -8,12 +19,8 @@
 - `server.ssl.watch: true | { debounceMs }`: reload the certificate when its files change on disk. The directories are watched, so an ACME client's rename or a Kubernetes secret's symlink swap is caught; changes are debounced, unchanged bytes are ignored, and a failed reload is logged while the current certificate keeps serving. With clustering each worker watches and reloads its own listener.
 - `staticFiles({ precompressed: true })`: when `app.js.br` or `app.js.gz` sits beside `app.js` and the client accepts that encoding, the sidecar is served with the original's `Content-Type`, the matching `Content-Encoding`, `Vary: Accept-Encoding` and its own ETag (brotli preferred). A sidecar older than its source is ignored, so a replaced asset never ships a stale compressed body; a sidecar must resolve inside `root` (a symlink pointing outside is skipped); Range requests get the identity file.
 - `RedisCacheAdapter` accepts `url` (`REDIS_URL`) and `client` (an existing node-redis client), and gains `close()`, which quits a client the adapter created. `CacheAdapter.close?()` is an optional interface method; session `storeOptions.url` is typed.
-- `req.rawBody`: the request body exactly as received, before any parsing (JSON included), or `null` when there was none - what a webhook signature check needs. On every backend, bounded by the same body size limits; on the engine and Node it is the buffer the parser already had, on uWS one copy. `raw({ type })` and `text({ type })` join `json()` and `urlencoded()` as Express-idiom pass-throughs.
-- Raw WebSocket framing: `app.websocket(path, handlers, { raw: true })` delivers every text frame to `message` as a string and every binary frame to `binary` as a Buffer, with no `{ event, data }` envelope; `socket.send(data, isBinary?)` (new on every built-in adapter) or a string/Buffer returned from the handler is the reply frame. What a plain WebSocket client speaks - browsers calling `WebSocket.send('hello')`, load testers, non-Moro peers. Engine, `ws` and uWS adapters; Socket.IO speaks its own protocol and ignores `raw`. `WebSocketNamespaceOptions` is exported.
-- `app.reloadTLS(ssl?)`: rotate the certificate and key on the running listener without a restart. With no argument the `server.ssl` files are re-read; with one, the given material (either shape) replaces them. The new pair is validated first (file readable, PEM parses, key matches certificate), so a bad or half-written file rejects and the current certificate keeps serving; connections already established are untouched. Native engine (`@morojs/engine` 1.1.8+, `capabilities.tlsReload`), Node https and HTTP/2; not uWebSockets.js.
-- `server.ssl.watch: true | { debounceMs }`: reload the certificate when its files change on disk. The directories are watched, so an ACME client's rename or a Kubernetes secret's symlink swap is caught; changes are debounced, unchanged bytes are ignored, and a failed reload is logged while the current certificate keeps serving. With clustering each worker watches and reloads its own listener.
-- `staticFiles({ precompressed: true })`: when `app.js.br` or `app.js.gz` sits beside `app.js` and the client accepts that encoding, the sidecar is served with the original's `Content-Type`, the matching `Content-Encoding`, `Vary: Accept-Encoding` and its own ETag (brotli preferred). A sidecar older than its source is ignored, so a replaced asset never ships a stale compressed body; a sidecar must resolve inside `root` (a symlink pointing outside is skipped); Range requests get the identity file.
-- `RedisCacheAdapter` accepts `url` (`REDIS_URL`) and `client` (an existing node-redis client), and gains `close()`, which quits a client the adapter created. `CacheAdapter.close?()` is an optional interface method; session `storeOptions.url` is typed.
+- `param(name)`, a handler marker for the route builder and the two-argument forms: `.handler(param('id'))` on `/user/:id` answers with that path parameter as the body, as `res.end(req.params.id)` would. On a route with exactly that one parameter and nothing else configured, Moro's native engine (`@morojs/engine` >= 1.1.9, `capabilities.paramRoutes`) echoes the segment inside the engine without calling into JS; every other server runs the equivalent handler. Together with literal bodies, a route table like this benchmark's (an empty reply, a parameter echo, an empty reply) never enters JS on the engine.
+- `MoroEngineServer.setParamRoute()` / `clearParamRoutes()` / `paramRoutesEnabled`, re-applied after `close()` + `listen()`, refused while compression is enabled.
 
 ### Changed
 
@@ -24,23 +31,12 @@
 - `RedisCacheAdapter` targets node-redis 4+ (it was written against the v3 API: `createClient({ host, port })`, `setex`, no `connect()`, so on any current `redis` package every command failed with a closed client). The client is connected before the first command, every method awaits initialisation instead of racing the import, TTLs use `SET ... PX` so sub-second values work, `clear()` scans and deletes only this adapter's prefixed keys instead of `FLUSHDB`, and the `keyPrefix` (default `moro:cache:`) is actually applied - it was passed as an option node-redis never read. node-redis 3 is no longer supported.
 - A second `createApp()` in the same process that passes its own options now logs at ERROR naming the ignored keys. Configuration stays one-per-process: the first `createApp()` locks it and later apps share it, which previously happened silently (an app asking for port 8081 with TLS booted on the first app's port, plain).
 - When `server.ssl` is configured and the native engine fails to initialise, the fallback to Node https is logged at ERROR rather than WARN, so a deployment tuned for the engine cannot quietly run on a different server.
-- Binary request bodies are no longer decoded to strings. `application/octet-stream`, `image/*`, `audio/*`, `video/*`, `font/*`, `application/pdf`, `application/zip`, protobuf, msgpack and every other non-text type reach the handler as a `Buffer` with the exact bytes (decoding them replaced every invalid sequence with U+FFFD and there was no way back). `text/*`, the JSON/XML/JavaScript/YAML families (including `+json`-style suffixes), anything declaring a `charset`, and a missing Content-Type still yield strings; JSON, urlencoded and multipart parse as before. Same rule on the Node, uWS and engine servers; documented under "Request bodies" in the API reference.
-- `app.listen(port)` on the native engine binds `::` (dual-stack, every interface), exactly like Node's `server.listen(port)`, with an IPv4-any fallback on hosts without IPv6. Previously it bound `0.0.0.0` only, so a client resolving `localhost` to `::1` first was refused. An explicit host is honoured as before; the server handle's `address()` reports the family.
-- `performance.clustering.workers: 'auto'` counts the CPUs and memory the process may actually use: a cgroup v2 or v1 CPU quota (`docker run --cpus`, a Kubernetes CPU limit), then `os.availableParallelism()` (which honours `--cpuset-cpus`), then `os.cpus()`; memory likewise from `memory.max` / `memory.limit_in_bytes` when below the host total. A 96-thread host pinned to 32 cores now starts 32 workers, not 96. The same probe drives uWS clustering and the worker-thread pool.
-- Static files: the mime table covers `.webp`, `.avif`, `.mjs`/`.cjs`, `.wasm`, `.map`, `.webmanifest`, `.otf`, `.md`, `.csv`, `.yaml`, `.jsonld`, `.xhtml`, common audio/video and archive types (`.webp` was `application/octet-stream`). Compressible bodies at or below the streaming threshold go out through `res.send()`, so `performance.compression` and the compression middleware now apply to text assets as they do to handler responses; binary, ranged and streamed bodies are unchanged.
-- `RedisCacheAdapter` targets node-redis 4+ (it was written against the v3 API: `createClient({ host, port })`, `setex`, no `connect()`, so on any current `redis` package every command failed with a closed client). The client is connected before the first command, every method awaits initialisation instead of racing the import, TTLs use `SET ... PX` so sub-second values work, `clear()` scans and deletes only this adapter's prefixed keys instead of `FLUSHDB`, and the `keyPrefix` (default `moro:cache:`) is actually applied - it was passed as an option node-redis never read. node-redis 3 is no longer supported.
-- A second `createApp()` in the same process that passes its own options now logs at ERROR naming the ignored keys. Configuration stays one-per-process: the first `createApp()` locks it and later apps share it, which previously happened silently (an app asking for port 8081 with TLS booted on the first app's port, plain).
-- When `server.ssl` is configured and the native engine fails to initialise, the fallback to Node https is logged at ERROR rather than WARN, so a deployment tuned for the engine cannot quietly run on a different server.
 - docs: update performance metrics for Native C++ Engine in README
 - refactor: enhance changelog generation and commit categorization logic
+- An empty literal handler body (`.handler('')`, `app.get(path, '')`) now goes out as `res.end()` would - status and `Content-Length: 0`, no header block - instead of as `res.send('')` with `content-type: text/plain; charset=utf-8`. An empty body has nothing a content-type could describe; the change saves 38 bytes per response and makes the engine-answered reply byte-identical to the engine's own static reply with no headers. Non-empty literal bodies are unchanged (`send()` semantics, implied content-type).
 
 ### Fixed
 
-- TLS configured with file paths (`server.ssl.keyFile`/`certFile`, or `key_file_name`/`cert_file_name`) never reached the native engine. The normalised config was handed to `serve()` with the framework's own field names, the engine threw `ssl requires both a key ... and a certificate`, and the app fell back to Node's https server while still answering HTTPS - only inline PEM ran on the engine. `sslForEngine()` (present, never called) is now applied. The TLS integration test asserts `getServerKind().server === 'engine'` for both shapes, which it did not before.
-- The documented `connection: socket => ...` key of `app.websocket()` never ran: it was registered as a client-sendable event name. It now runs once per socket at open.
-- `ws` adapter: `app.websocket('/name', ...)` namespaces were unreachable, because the adapter created its server with an exact `path: '/ws'` that the ws library matches literally; `/ws/name` was rejected. The adapter now owns the upgrade step and routes any path below its base path (`websocket.options.path`, default `/ws`) to the matching namespace, or the default one; origin allowlist and `maxPayload` still apply through `handleUpgrade`, and an upgrade outside the base path is answered 404 instead of left hanging when no other listener claims it. Its `disconnect:` hook now fires with the close code.
-- Compression middleware: a `Content-Length` set for the uncompressed body is removed before a compressed body is committed (it would have truncated or hung the response).
-- Docs: the per-route `.compression({ level })` route method shown in the middleware guide and on morojs.com never existed on `RouteBuilder`; the samples now use `.before(middleware.compression({ ... }))`, which is tested.
 - TLS configured with file paths (`server.ssl.keyFile`/`certFile`, or `key_file_name`/`cert_file_name`) never reached the native engine. The normalised config was handed to `serve()` with the framework's own field names, the engine threw `ssl requires both a key ... and a certificate`, and the app fell back to Node's https server while still answering HTTPS - only inline PEM ran on the engine. `sslForEngine()` (present, never called) is now applied. The TLS integration test asserts `getServerKind().server === 'engine'` for both shapes, which it did not before.
 - The documented `connection: socket => ...` key of `app.websocket()` never ran: it was registered as a client-sendable event name. It now runs once per socket at open.
 - `ws` adapter: `app.websocket('/name', ...)` namespaces were unreachable, because the adapter created its server with an exact `path: '/ws'` that the ws library matches literally; `/ws/name` was rejected. The adapter now owns the upgrade step and routes any path below its base path (`websocket.options.path`, default `/ws`) to the matching namespace, or the default one; origin allowlist and `maxPayload` still apply through `handleUpgrade`, and an upgrade outside the base path is answered 404 instead of left hanging when no other listener claims it. Its `disconnect:` hook now fires with the close code.
@@ -52,20 +48,6 @@
 - Engine stress test: 200 simultaneous connects from the test's own event loop overflow macOS's 128-entry listen backlog, which answers with RST on any server (the Node backend failed identically); the test keeps 64 requests in flight across the 200.
 - New suites: binary bodies and `rawBody` on Node and engine, raw WebSocket framing on engine and `ws`, TLS reload and `ssl.watch` on Node and engine, dual-stack listen, precompressed sidecars, container CPU/memory probes, the Redis adapter against a fake node-redis 4 client, and the configuration lock warning.
 - Docs: request-body rules and `req.rawBody`, raw WebSocket frames, `app.reloadTLS()` / `ssl.watch`, `precompressed`, container-aware `workers: 'auto'`, Redis `url`; the morojs.com compression, static-files and websockets pages updated with the search index regenerated.
-- Engine stress test: 200 simultaneous connects from the test's own event loop overflow macOS's 128-entry listen backlog, which answers with RST on any server (the Node backend failed identically); the test keeps 64 requests in flight across the 200.
-- New suites: binary bodies and `rawBody` on Node and engine, raw WebSocket framing on engine and `ws`, TLS reload and `ssl.watch` on Node and engine, dual-stack listen, precompressed sidecars, container CPU/memory probes, the Redis adapter against a fake node-redis 4 client, and the configuration lock warning.
-- Docs: request-body rules and `req.rawBody`, raw WebSocket frames, `app.reloadTLS()` / `ssl.watch`, `precompressed`, container-aware `workers: 'auto'`, Redis `url`; the morojs.com compression, static-files and websockets pages updated with the search index regenerated.
-
-## [Unreleased]
-
-### Added
-
-- `param(name)`, a handler marker for the route builder and the two-argument forms: `.handler(param('id'))` on `/user/:id` answers with that path parameter as the body, as `res.end(req.params.id)` would. On a route with exactly that one parameter and nothing else configured, Moro's native engine (`@morojs/engine` >= 1.1.9, `capabilities.paramRoutes`) echoes the segment inside the engine without calling into JS; every other server runs the equivalent handler. Together with literal bodies, a route table like this benchmark's (an empty reply, a parameter echo, an empty reply) never enters JS on the engine.
-- `MoroEngineServer.setParamRoute()` / `clearParamRoutes()` / `paramRoutesEnabled`, re-applied after `close()` + `listen()`, refused while compression is enabled.
-
-### Changed
-
-- An empty literal handler body (`.handler('')`, `app.get(path, '')`) now goes out as `res.end()` would - status and `Content-Length: 0`, no header block - instead of as `res.send('')` with `content-type: text/plain; charset=utf-8`. An empty body has nothing a content-type could describe; the change saves 38 bytes per response and makes the engine-answered reply byte-identical to the engine's own static reply with no headers. Non-empty literal bodies are unchanged (`send()` semantics, implied content-type).
 
 ## [1.8.12] - 2026-09-15
 
@@ -162,17 +144,6 @@
 ### Added
 
 - feat: enhance WebSocket support by adding query string handling and routing by URL path
-
-## [1.8.1] - 2026-07-13
-
-### Changed
-
-- docs: update performance metrics in README and performance guides to reflect improved benchmarks
-- docs: update performance metrics for MoroJS and uWebSockets.js comparison
-
-### Other
-
-- ### Security
 
 ## [1.8.1] - 2026-07-13
 
@@ -463,12 +434,6 @@ Existing MoroJS code is unaffected. Express users migrating to MoroJS now have a
 ### Added
 
 - Bug Fixed: Chainable .handler() method was broken for routes with parameters. Root Cause: The radix tree implementation in /src/core/routing/radix-tree.ts had a critical bug in how it parsed paths: It wasn't skipping the leading / in paths like /users/:id The insert() method would try to parse from index 0, hitting the / immediately The searchNode() method would also fail to properly extract segments because it started at the wrong position Changes Made: Fixed radix-tree.ts - insert() method: Added logic to skip the leading slash before parsing segments Added logic to skip additional slashes during traversal Fixed segment extraction to stop at both / and : characters Fixed radix-tree.ts - searchNode() method: Added logic to skip slashes at each recursion level Fixed segment extraction to properly handle path boundaries Added comprehensive test coverage in tests/integration/simple.test.ts: Test name: "should support chainable handler syntax with route parameters" Tests GET, POST, PUT, DELETE with chainable handlers Tests single parameter routes (e.g., /products/:id) Tests multiple parameter routes (e.g., /categories/:category/items/:itemId)
-
-## [1.7.2] - 2025-11-12
-
-### Added
-
-- feat: migrate auth from Auth.js to Better Auth with enhanced features
 
 ## [1.7.2] - 2025-11-12
 
@@ -815,12 +780,6 @@ const app = createApp({
   - **Issue**: Custom middleware using raw jwt.verify() caused server crashes on expired tokens
   - **Solution**: Provided utilities and documentation for proper JWT error handling
   - **Migration Guide**: Clear examples showing before/after patterns for safe JWT verification
-
-## [1.5.11] - 2025-09-28
-
-### Fixed
-
-- fix: Replace mock JWT implementation with proper dependency checking
 
 ## [1.5.11] - 2025-09-28
 

@@ -411,6 +411,13 @@ export interface PerformanceConfig {
     threshold: number;
     /** Encoding preference order (default ['br','gzip','deflate']). */
     encodings?: Array<'br' | 'gzip' | 'deflate'>;
+    /**
+     * Bodies at or below this size are compressed on the calling thread and
+     * sent with a Content-Length; larger ones are compressed on the
+     * threadpool and streamed. 0 sends every body through the pool.
+     * Default 16384.
+     */
+    maxInlineBytes?: number;
   };
   circuitBreaker: {
     enabled: boolean;

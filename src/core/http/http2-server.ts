@@ -44,13 +44,22 @@ function http2(): typeof import('http2') {
 
 let gzip: ((buf: Buffer) => Promise<Buffer>) | undefined;
 let deflate: ((buf: Buffer) => Promise<Buffer>) | undefined;
+let gzipSync: ((buf: Buffer) => Buffer) | undefined;
+let deflateSync: ((buf: Buffer) => Buffer) | undefined;
 function compressors() {
   if (!gzip) {
     const zlib = requireBuiltin('zlib') as typeof import('zlib');
     gzip = promisify(zlib.gzip) as (buf: Buffer) => Promise<Buffer>;
     deflate = promisify(zlib.deflate) as (buf: Buffer) => Promise<Buffer>;
+    gzipSync = (buf: Buffer) => zlib.gzipSync(buf);
+    deflateSync = (buf: Buffer) => zlib.deflateSync(buf);
   }
-  return { gzip: gzip, deflate: deflate as (buf: Buffer) => Promise<Buffer> };
+  return {
+    gzip: gzip,
+    deflate: deflate as (buf: Buffer) => Promise<Buffer>,
+    gzipSync: gzipSync as (buf: Buffer) => Buffer,
+    deflateSync: deflateSync as (buf: Buffer) => Buffer,
+  };
 }
 
 export interface Http2ServerOptions {
@@ -81,6 +90,8 @@ export class MoroHttp2Server {
   private globalMiddleware: Middleware[] = [];
   private compressionEnabled = true;
   private compressionThreshold = 1024;
+  // Bodies at or below this size compress on the calling thread; 0 = never
+  private compressionMaxInlineBytes = 16384;
   private requestTrackingEnabled = true;
   private multipartLimits?: MultipartLimits;
   private _limits?: HttpRuntimeLimits;
@@ -214,12 +225,18 @@ export class MoroHttp2Server {
 
   // Configure server for maximum performance
   configurePerformance(
-    config: { compression?: { enabled: boolean; threshold?: number }; minimal?: boolean } = {}
+    config: {
+      compression?: { enabled: boolean; threshold?: number; maxInlineBytes?: number };
+      minimal?: boolean;
+    } = {}
   ) {
     if (config.compression !== undefined) {
       this.compressionEnabled = config.compression.enabled;
       if (config.compression.threshold !== undefined) {
         this.compressionThreshold = config.compression.threshold;
+      }
+      if (config.compression.maxInlineBytes !== undefined) {
+        this.compressionMaxInlineBytes = config.compression.maxInlineBytes;
       }
     }
 
@@ -560,6 +577,7 @@ export class MoroHttp2Server {
       _poolManager: this.poolManager,
       _compressionEnabled: this.compressionEnabled,
       _compressionThreshold: this.compressionThreshold,
+      _compressionMaxInlineBytes: this.compressionMaxInlineBytes,
     };
 
     // Status method
@@ -609,7 +627,12 @@ export class MoroHttp2Server {
         const acceptEncoding = req.headers['accept-encoding'];
 
         if (acceptEncoding && acceptEncoding.includes('gzip')) {
-          const compressed = await compressors().gzip(finalBuffer);
+          // A small body is compressed on this thread (see compressionMaxInlineBytes)
+          const compressed =
+            httpRes._compressionMaxInlineBytes > 0 &&
+            finalBuffer.length <= httpRes._compressionMaxInlineBytes
+              ? compressors().gzipSync(finalBuffer)
+              : await compressors().gzip(finalBuffer);
           httpRes._headers['content-encoding'] = 'gzip';
           httpRes._headers['content-length'] = compressed.length;
 
@@ -621,7 +644,11 @@ export class MoroHttp2Server {
           httpRes.headersSent = true;
           return;
         } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
-          const compressed = await compressors().deflate(finalBuffer);
+          const compressed =
+            httpRes._compressionMaxInlineBytes > 0 &&
+            finalBuffer.length <= httpRes._compressionMaxInlineBytes
+              ? compressors().deflateSync(finalBuffer)
+              : await compressors().deflate(finalBuffer);
           httpRes._headers['content-encoding'] = 'deflate';
           httpRes._headers['content-length'] = compressed.length;
 

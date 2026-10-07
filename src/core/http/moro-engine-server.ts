@@ -33,6 +33,9 @@ import type { Http2ServerOptions } from './http2-server.js';
 import {
   resolveCompressionSettings,
   compressBuffer,
+  compressBufferSync,
+  shouldInline,
+  DEFAULT_MAX_INLINE_BYTES,
   isCompressible,
   negotiateEncoding,
   type CompressionSettings,
@@ -798,6 +801,27 @@ export class EngineResponse extends LazyEventEmitter {
     const encoding = negotiateEncoding(accept, s.encodings);
     if (!encoding) {
       this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
+      this.headersSent = true;
+      this._emitDone();
+      return;
+    }
+
+    // A small body is compressed on this thread: cheaper than the threadpool
+    // round trip, and the reply goes out in the same native call an
+    // uncompressed one would. A failure sends the body as it is.
+    if (shouldInline(bytes, s)) {
+      let compressed: Buffer | undefined;
+      try {
+        compressed = compressBufferSync(body, encoding, s.level);
+      } catch {
+        compressed = undefined;
+      }
+      if (compressed !== undefined) {
+        this.responseHeaders['content-encoding'] = encoding;
+        const vary = this.responseHeaders['vary'];
+        this.responseHeaders['vary'] = vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding';
+      }
+      this._server._respond(this._reqId, this.statusCode, this._headersFlat(), compressed ?? body);
       this.headersSent = true;
       this._emitDone();
       return;
@@ -1667,6 +1691,7 @@ export class MoroEngineServer {
     enabled: false,
     threshold: 1024,
     level: 6,
+    maxInlineBytes: DEFAULT_MAX_INLINE_BYTES,
     encodings: ['br', 'gzip', 'deflate'],
   };
   // Set by close(); listen() then registers a fresh native server, because the

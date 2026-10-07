@@ -42,15 +42,21 @@ const createServer = http.createServer;
 
 let gzipFn: ((buf: Buffer) => Promise<Buffer>) | undefined;
 let deflateFn: ((buf: Buffer) => Promise<Buffer>) | undefined;
+let gzipSyncFn: ((buf: Buffer) => Buffer) | undefined;
+let deflateSyncFn: ((buf: Buffer) => Buffer) | undefined;
 function compressors() {
   if (!gzipFn) {
     const zlib = requireBuiltin('zlib') as typeof import('zlib');
     gzipFn = promisify(zlib.gzip) as (buf: Buffer) => Promise<Buffer>;
     deflateFn = promisify(zlib.deflate) as (buf: Buffer) => Promise<Buffer>;
+    gzipSyncFn = (buf: Buffer) => zlib.gzipSync(buf);
+    deflateSyncFn = (buf: Buffer) => zlib.deflateSync(buf);
   }
   return {
     gzip: gzipFn,
     deflate: deflateFn as (buf: Buffer) => Promise<Buffer>,
+    gzipSync: gzipSyncFn as (buf: Buffer) => Buffer,
+    deflateSync: deflateSyncFn as (buf: Buffer) => Buffer,
   };
 }
 
@@ -429,6 +435,29 @@ export class MoroServerResponse extends http.ServerResponse {
 
       if (acceptEncoding && acceptEncoding.includes('gzip')) {
         const buffer = Buffer.from(jsonString, 'utf8');
+        // A small body is compressed here and now rather than on the threadpool
+        // (see compressionMaxInlineBytes); a failure takes the async path below.
+        if (
+          server.compressionMaxInlineBytes > 0 &&
+          buffer.length <= server.compressionMaxInlineBytes
+        ) {
+          let compressed: Buffer | undefined;
+          try {
+            compressed = compressors().gzipSync(buffer);
+          } catch {
+            compressed = undefined;
+          }
+          if (compressed !== undefined) {
+            this.writeHead(this.statusCode || 200, {
+              'Content-Type': JSON_CONTENT_TYPE,
+              'Content-Encoding': 'gzip',
+              Vary: 'Accept-Encoding',
+              'Content-Length': compressed.length,
+            });
+            this.end(compressed);
+            return;
+          }
+        }
         compressors()
           .gzip(buffer)
           .then(compressed => {
@@ -458,6 +487,27 @@ export class MoroServerResponse extends http.ServerResponse {
         return;
       } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
         const buffer = Buffer.from(jsonString, 'utf8');
+        if (
+          server.compressionMaxInlineBytes > 0 &&
+          buffer.length <= server.compressionMaxInlineBytes
+        ) {
+          let compressed: Buffer | undefined;
+          try {
+            compressed = compressors().deflateSync(buffer);
+          } catch {
+            compressed = undefined;
+          }
+          if (compressed !== undefined) {
+            this.writeHead(this.statusCode || 200, {
+              'Content-Type': JSON_CONTENT_TYPE,
+              'Content-Encoding': 'deflate',
+              Vary: 'Accept-Encoding',
+              'Content-Length': compressed.length,
+            });
+            this.end(compressed);
+            return;
+          }
+        }
         compressors()
           .deflate(buffer)
           .then(compressed => {
@@ -974,6 +1024,9 @@ export class MoroHttpServer {
   compressionEnabled = true;
   /** @internal read by MoroServerResponse prototype methods */
   compressionThreshold = 1024;
+  // Bodies at or below this size compress on the calling thread (Content-Length
+  // response); larger ones on the threadpool. 0 sends everything to the pool.
+  compressionMaxInlineBytes = 16384;
   /** @internal read by MoroIncomingMessage prototype methods */
   requestTrackingEnabled = true; // Generate request IDs
   /** @internal read by MoroServerResponse prototype methods */
@@ -1102,7 +1155,7 @@ export class MoroHttpServer {
   // Configure server for maximum performance (can disable all overhead)
   configurePerformance(
     config: {
-      compression?: { enabled: boolean; threshold?: number };
+      compression?: { enabled: boolean; threshold?: number; maxInlineBytes?: number };
       minimal?: boolean;
     } = {}
   ) {
@@ -1110,6 +1163,9 @@ export class MoroHttpServer {
       this.compressionEnabled = config.compression.enabled;
       if (config.compression.threshold !== undefined) {
         this.compressionThreshold = config.compression.threshold;
+      }
+      if (config.compression.maxInlineBytes !== undefined) {
+        this.compressionMaxInlineBytes = config.compression.maxInlineBytes;
       }
     }
 

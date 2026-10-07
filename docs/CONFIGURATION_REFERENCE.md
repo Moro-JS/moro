@@ -846,11 +846,13 @@ Configure performance optimizations.
 
 #### Compression
 
-| Property    | Type      | Default | Description                 |
-| ----------- | --------- | ------- | --------------------------- |
-| `enabled`   | `boolean` | `true`  | Enable response compression |
-| `level`     | `number`  | `6`     | Compression level (1-9)     |
-| `threshold` | `number`  | `1024`  | Minimum bytes to compress   |
+| Property         | Type       | Default                     | Description                                                                                                                                 |
+| ---------------- | ---------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`        | `boolean`  | `false`                     | Enable response compression (opt-in)                                                                                                        |
+| `level`          | `number`   | `6`                         | Compression level (1-9); mapped onto brotli quality                                                                                         |
+| `threshold`      | `number`   | `1024`                      | Minimum bytes to compress                                                                                                                   |
+| `encodings`      | `string[]` | `['br', 'gzip', 'deflate']` | Server preference order among the encodings the client accepts                                                                              |
+| `maxInlineBytes` | `number`   | `16384`                     | Bodies up to this size compress on the calling thread with a Content-Length; larger ones on the threadpool, streamed. `0` = always the pool |
 
 #### Circuit Breaker
 

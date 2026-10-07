@@ -1355,6 +1355,11 @@ function validateCompressionConfig(config: any, path: string) {
     level: validateNumber(config.level, `${path}.level`, { min: 1, max: 9 }),
     threshold: validateNumber(config.threshold, `${path}.threshold`, { min: 0 }),
   };
+  if (config.maxInlineBytes !== undefined) {
+    result.maxInlineBytes = validateNumber(config.maxInlineBytes, `${path}.maxInlineBytes`, {
+      min: 0,
+    });
+  }
   if (config.encodings !== undefined) {
     if (!Array.isArray(config.encodings)) {
       throw new ConfigValidationError(

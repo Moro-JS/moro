@@ -15,6 +15,8 @@ import type { HttpRuntimeLimits } from './utils/size.js';
 import {
   resolveCompressionSettings,
   compressBuffer,
+  compressBufferSync,
+  shouldInline,
   isCompressible,
   negotiateEncoding,
   type CompressionSettings,
@@ -992,6 +994,30 @@ export class UWebSocketsHttpServer {
       if (!isCompressible(ct)) return false;
       const encoding = negotiateEncoding(this._acceptEncoding, s.encodings);
       if (!encoding) return false;
+
+      // A small body is compressed on this thread and written in the same
+      // cork an uncompressed reply uses; a failure hands back to the caller,
+      // which sends the body as it is.
+      if (shouldInline(bytes, s)) {
+        let compressed: Buffer;
+        try {
+          compressed = compressBufferSync(body, encoding, s.level);
+        } catch {
+          return false;
+        }
+        this.responseHeaders['content-encoding'] = encoding;
+        const vary = this.responseHeaders['vary'];
+        this.responseHeaders['vary'] = vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding';
+        this._res.cork(() => {
+          this._res.writeStatus(UWebSocketsHttpServer.getStatusString(this.statusCode));
+          UWebSocketsHttpServer.writeHeaders(this._res, this.responseHeaders);
+          this._res.end(compressed);
+        });
+        this.headersSent = true;
+        this._ended = true;
+        this._emitDone();
+        return true;
+      }
 
       void compressBuffer(body, encoding, s.level)
         .then(compressed => {

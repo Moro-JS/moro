@@ -332,17 +332,19 @@ app.get('/page', (req, res) => {
 
 ### Compression
 
-Compress responses with gzip, deflate, or brotli.
+Compress responses with brotli, gzip or deflate, negotiated per request from `Accept-Encoding`.
 
 ```typescript
 // Basic compression
 app.use(middleware.compression());
 
-// Advanced configuration
+// Every option
 app.use(
   middleware.compression({
-    level: 6, // Compression level (0-9)
-    threshold: 1024, // Minimum size to compress (bytes)
+    level: 6, // 1-9; gzip/deflate level, mapped onto brotli quality 1-11
+    threshold: 1024, // bodies smaller than this are never compressed
+    encodings: ['gzip', 'br'], // server preference order when the client accepts several
+    maxInlineBytes: 16384, // compressed on the calling thread up to here, on the pool above
     filter: (req, res) => {
       // Custom filter
       if (req.headers['x-no-compression']) {
@@ -350,23 +352,30 @@ app.use(
       }
       return /json|text|javascript|css/.test(res.getHeader('Content-Type') || '');
     },
-    brotli: true, // Enable brotli for modern browsers
-    brotliOptions: {
-      params: {
-        [require('zlib').constants.BROTLI_PARAM_QUALITY]: 4,
-      },
-    },
   })
 );
+```
+
+Where the work happens depends on the body size. A body at or below `maxInlineBytes` is
+compressed on the calling thread and sent with a `Content-Length`: for a few kilobytes of
+JSON that is well under a millisecond, less than the two thread handoffs a trip through the
+libuv threadpool costs, and it keeps the response a single write. A larger body is compressed
+on the threadpool and streamed chunked, so a big export never holds the event loop. Set
+`maxInlineBytes: 0` to send every body through the pool.
+
+The default `encodings` order prefers brotli. For API-sized JSON, gzip compresses in about half
+the CPU for a body roughly a tenth larger, so a service measured on throughput may prefer
+`['gzip', 'br']`; brotli stays available to a client that accepts nothing else.
 
 // Per-route compression: the same factory, attached as route middleware
 app
-  .get('/api/large-data')
-  .before(middleware.compression({ level: 9 }))
-  .handler((req, res) => {
-    return largeDataset;
-  });
-```
+.get('/api/large-data')
+.before(middleware.compression({ level: 9 }))
+.handler((req, res) => {
+return largeDataset;
+});
+
+````
 
 ### Cache
 
@@ -418,7 +427,7 @@ app.post('/api/users').handler(async (req, res) => {
 
   return user;
 });
-```
+````
 
 ### Rate Limiting
 
