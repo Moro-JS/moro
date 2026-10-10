@@ -2,6 +2,14 @@
 
 ### Fixed
 
+- - HTTP/2 server: every request to `server.http2` (TLS h2 and cleartext h2c alike) died with a connection-level PROTOCOL_ERROR before the client could read the response. The server advertised `SETTINGS_ENABLE_PUSH=1`, which RFC 9113 §6.5.2 forbids a server to send, and nghttp2-based clients - curl, Node's own `http2.connect`, browsers - close the session on it. The setting is no longer sent; `settings.enablePush` is still accepted and is a no-op, since push availability is the client's setting and is read per stream. First end-to-end HTTP/2 tests (h2c prior knowledge and h2 over ALPN) guard it.
+  - HTTP/2 responses had no `on`/`once`/`off`: the response is a plain object, and the built-in request logger (on by default), Prometheus, CloudWatch and performance-monitor middleware all call `res.on('finish', ...)`, so with default settings every HTTP/2 request was answered 500 ("res.on is not a function"). The response now forwards those to the underlying stream, whose `finish` and `close` are the events Node's `ServerResponse` fires.
+  - HTTP/2 `res.send(string)` without a `Content-Type` ran `JSON.parse` on the whole body to decide the type and called a bare number or `true` JSON. It now uses the same first-character sniff as the engine and Node servers (`{` or `[` is JSON, anything else `text/plain`).
+
+## [1.8.15] - 2026-10-10
+
+### Fixed
+
 - HTTP/2 server: every request to `server.http2` (TLS h2 and cleartext h2c alike) died with a connection-level PROTOCOL_ERROR before the client could read the response. The server advertised `SETTINGS_ENABLE_PUSH=1`, which RFC 9113 §6.5.2 forbids a server to send, and nghttp2-based clients - curl, Node's own `http2.connect`, browsers - close the session on it. The setting is no longer sent; `settings.enablePush` is still accepted and is a no-op, since push availability is the client's setting and is read per stream. First end-to-end HTTP/2 tests (h2c prior knowledge and h2 over ALPN) guard it.
 - HTTP/2 responses had no `on`/`once`/`off`: the response is a plain object, and the built-in request logger (on by default), Prometheus, CloudWatch and performance-monitor middleware all call `res.on('finish', ...)`, so with default settings every HTTP/2 request was answered 500 ("res.on is not a function"). The response now forwards those to the underlying stream, whose `finish` and `close` are the events Node's `ServerResponse` fires.
 - HTTP/2 `res.send(string)` without a `Content-Type` ran `JSON.parse` on the whole body to decide the type and called a bare number or `true` JSON. It now uses the same first-character sniff as the engine and Node servers (`{` or `[` is JSON, anything else `text/plain`).
