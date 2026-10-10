@@ -32,6 +32,7 @@ export interface MoroOptions {
         maxSessionMemory?: number;
         settings?: {
           headerTableSize?: number;
+          /** Accepted for compatibility but never sent: RFC 9113 forbids a server from advertising ENABLE_PUSH=1 (clients drop the connection), and whether push is possible is the client's setting, read per stream. */
           enablePush?: boolean;
           initialWindowSize?: number;
           maxFrameSize?: number;

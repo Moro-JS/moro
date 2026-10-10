@@ -74,6 +74,7 @@ export interface Http2ServerOptions {
   limits?: HttpRuntimeLimits;
   settings?: {
     headerTableSize?: number;
+    /** Accepted for compatibility but never sent: RFC 9113 forbids a server from advertising ENABLE_PUSH=1 (clients drop the connection), and whether push is possible is the client's setting, read per stream. */
     enablePush?: boolean;
     initialWindowSize?: number;
     maxFrameSize?: number;
@@ -160,11 +161,15 @@ export class MoroHttp2Server {
       }
     }
 
-    // Add HTTP/2 settings
+    // Add HTTP/2 settings. SETTINGS_ENABLE_PUSH is never sent: RFC 9113
+    // §6.5.2 forbids a server from advertising it as 1, and nghttp2 (curl,
+    // Node's own client, browsers) treats that frame as a connection-level
+    // PROTOCOL_ERROR - every stream died before its response could be read.
+    // Whether push is possible is the CLIENT's setting, read per stream from
+    // stream.pushAllowed, so settings.enablePush changes nothing on the wire.
     if (options.settings) {
       serverOptions.settings = {
         headerTableSize: options.settings.headerTableSize,
-        enablePush: options.settings.enablePush !== false,
         initialWindowSize: options.settings.initialWindowSize || 65535,
         maxFrameSize: options.settings.maxFrameSize || 16384,
         maxConcurrentStreams: options.settings.maxConcurrentStreams || 100,
@@ -174,7 +179,6 @@ export class MoroHttp2Server {
       };
     } else {
       serverOptions.settings = {
-        enablePush: true,
         initialWindowSize: 65535,
         maxFrameSize: 16384,
         maxConcurrentStreams: 100,
@@ -613,6 +617,26 @@ export class MoroHttp2Server {
       return { ...httpRes._headers };
     };
 
+    // Event surface for middleware written against Node's ServerResponse -
+    // the built-in request logger, Prometheus, CloudWatch and performance
+    // monitors all call res.on('finish', ...). This response is a plain
+    // object, so its events are the stream's: a Duplex emits 'finish' once
+    // the body has been flushed and 'close' when the stream is gone, the two
+    // events ServerResponse fires. Without these, enabling request logging
+    // (the default) turned every HTTP/2 request into a 500.
+    httpRes.on = (event: string, listener: (...args: any[]) => void) => {
+      stream.on(event, listener);
+      return httpRes;
+    };
+    httpRes.once = (event: string, listener: (...args: any[]) => void) => {
+      stream.once(event, listener);
+      return httpRes;
+    };
+    httpRes.off = httpRes.removeListener = (event: string, listener: (...args: any[]) => void) => {
+      stream.off(event, listener);
+      return httpRes;
+    };
+
     // JSON response
     httpRes.json = async (data: any) => {
       if (httpRes.headersSent || stream.destroyed) return;
@@ -677,13 +701,14 @@ export class MoroHttp2Server {
       if (httpRes.headersSent || stream.destroyed) return;
 
       if (!httpRes._headers['content-type']) {
+        // The same sniff the engine and Node servers use: a body that starts
+        // with '{' or '[' is JSON, anything else text. Parsing the whole body
+        // to decide cost a JSON.parse per response and labelled a bare number
+        // or `true` as JSON.
         if (typeof data === 'string') {
-          try {
-            JSON.parse(data);
-            httpRes._headers['content-type'] = 'application/json; charset=utf-8';
-          } catch {
-            httpRes._headers['content-type'] = 'text/plain; charset=utf-8';
-          }
+          httpRes._headers['content-type'] = /^\s*[{[]/.test(data)
+            ? 'application/json; charset=utf-8'
+            : 'text/plain; charset=utf-8';
         } else {
           httpRes._headers['content-type'] = 'application/octet-stream';
         }

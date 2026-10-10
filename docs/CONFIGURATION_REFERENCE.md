@@ -126,8 +126,10 @@ passed through to the engine: `maxHeaderSize`, `maxHeaders` (100),
 
 **HTTP/2** (`server.http2`): `true`, or `{ allowHTTP1, maxSessionMemory,
 settings: { maxConcurrentStreams, initialWindowSize, maxFrameSize,
-maxHeaderListSize, ... } }`. When `engine: 'moro'` and the engine build supports
-h2, it is served natively; otherwise Moro's dedicated HTTP/2 server is used.
+maxHeaderListSize, ... } }`. `settings.enablePush` is accepted but never sent
+(RFC 9113 forbids a server from advertising it; push is the client's setting).
+When `engine: 'moro'` and the engine build supports h2, it is served natively;
+otherwise Moro's dedicated HTTP/2 server is used.
 
 > **Migration:** `maxConnections` (1000→0) and `timeout` (30000→0) were
 > previously validated but **never applied to any server**, so the observed

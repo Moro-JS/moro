@@ -45,7 +45,6 @@ const app = new Moro({
   http2: {
     allowHTTP1: true, // Support HTTP/1.1 fallback
     settings: {
-      enablePush: true,
       maxConcurrentStreams: 100,
       initialWindowSize: 65535,
       maxFrameSize: 16384,
@@ -387,14 +386,13 @@ app.listen(3000);
    }
    ```
 
-3. Check if push is enabled:
-   ```typescript
-   http2: {
-     settings: {
-       enablePush: true, // Must be true
-     },
-   }
-   ```
+3. Check whether the client allows push. Server push is enabled by the
+   _client's_ `SETTINGS_ENABLE_PUSH`, not the server's: RFC 9113 forbids a
+   server from advertising it (nghttp2-based clients drop the connection if
+   one does), so `settings.enablePush` is accepted but never sent. Moro reads
+   the client's choice per stream (`stream.pushAllowed`) and `res.push()`
+   returns `null` when it is off. Chrome and Firefox have disabled push,
+   so expect `null` from browsers and rely on `<link rel="preload">` there.
 
 ### Connection Issues
 

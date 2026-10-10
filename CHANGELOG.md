@@ -1,3 +1,11 @@
+## [1.8.15] - 2026-10-10
+
+### Fixed
+
+- HTTP/2 server: every request to `server.http2` (TLS h2 and cleartext h2c alike) died with a connection-level PROTOCOL_ERROR before the client could read the response. The server advertised `SETTINGS_ENABLE_PUSH=1`, which RFC 9113 §6.5.2 forbids a server to send, and nghttp2-based clients - curl, Node's own `http2.connect`, browsers - close the session on it. The setting is no longer sent; `settings.enablePush` is still accepted and is a no-op, since push availability is the client's setting and is read per stream. First end-to-end HTTP/2 tests (h2c prior knowledge and h2 over ALPN) guard it.
+- HTTP/2 responses had no `on`/`once`/`off`: the response is a plain object, and the built-in request logger (on by default), Prometheus, CloudWatch and performance-monitor middleware all call `res.on('finish', ...)`, so with default settings every HTTP/2 request was answered 500 ("res.on is not a function"). The response now forwards those to the underlying stream, whose `finish` and `close` are the events Node's `ServerResponse` fires.
+- HTTP/2 `res.send(string)` without a `Content-Type` ran `JSON.parse` on the whole body to decide the type and called a bare number or `true` JSON. It now uses the same first-character sniff as the engine and Node servers (`{` or `[` is JSON, anything else `text/plain`).
+
 ## [1.8.14] - 2026-10-07
 
 ### Added
@@ -9,17 +17,6 @@
 - Small compressed responses no longer pay a threadpool round trip. A compressed JSON reply of a few kilobytes used to cost two thread handoffs, a promise and a wake-up, and went out chunked because its length was not known when the headers were committed; measured on a 64-worker cluster this capped `/json` with compression at roughly four thousand replies per second per pool thread, whatever the core count. Up to `maxInlineBytes` it is now one `gzipSync`/`brotliCompressSync` call on the handler's thread and a single write with a `Content-Length`.
 - Brotli is sized to the body. Every call used the default 2^22-byte window, so the encoder allocated and cleared several megabytes for a response of a few kilobytes; the window is now the smallest power of two that covers the input (never above the default), which compresses it identically and removes most of the per-call cost. Applies to the async path too.
 - docs: update transport types in EngineCapabilities interface
-
-## [1.8.14]
-
-### Added
-
-- `maxInlineBytes` on `performance.compression` and on `middleware.compression()` (default 16384): a body at or below it is compressed on the calling thread and sent with a `Content-Length`; a larger one is compressed on the threadpool and streamed chunked, as before. `0` sends every body through the pool. `compressBufferSync()` and `shouldInline()` join the shared compression utility; the native engine, Node, HTTP/2 and uWebSockets.js responses and the middleware all take the inline path for the same bodies.
-
-### Changed
-
-- Small compressed responses no longer pay a threadpool round trip. A compressed JSON reply of a few kilobytes used to cost two thread handoffs, a promise and a wake-up, and went out chunked because its length was not known when the headers were committed; measured on a 64-worker cluster this capped `/json` with compression at roughly four thousand replies per second per pool thread, whatever the core count. Up to `maxInlineBytes` it is now one `gzipSync`/`brotliCompressSync` call on the handler's thread and a single write with a `Content-Length`.
-- Brotli is sized to the body. Every call used the default 2^22-byte window, so the encoder allocated and cleared several megabytes for a response of a few kilobytes; the window is now the smallest power of two that covers the input (never above the default), which compresses it identically and removes most of the per-call cost. Applies to the async path too.
 
 ## [1.8.13] - 2026-09-24
 
