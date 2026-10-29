@@ -1,3 +1,26 @@
+## [1.8.16] - 2026-10-29
+
+### Added
+
+- `staticFiles({ cache })`: keep static files in memory. `true` takes the defaults, an object tunes them (`maxFileBytes` 1 MiB, `maxBytes` 64 MiB, `revalidateMs` 1000, `watch` true). A file at or below `maxFileBytes` is read once together with its `.br` and `.gz` sidecars and served from memory with its `ETag` and `Last-Modified`; the sidecar is still negotiated per request from `Accept-Encoding`, conditional and `HEAD` requests are answered from the entry, and `Range` requests and larger files keep the uncached path. The disk is consulted again at most once per `revalidateMs`, with a stat of the file and of each sidecar position (mtime, size and inode, so a same-length replacement, a touched sidecar or one that appeared or vanished are all noticed and reloaded), and sooner when the root directory reports a change through a non-persistent `fs.watch` (best effort; a platform without change events falls back to the timer). `maxBytes` bounds the whole cache, oldest entries leaving first; `StaticCore.close()` releases the watcher and the cache. Without the cache every request resolved, stat'ed and read the file and its sidecars: five to eight threadpool round trips per response, which is what bounded a busy static route, and on the native engine's worker threads one pool is shared by every worker of the process. Measured with the HttpArena static profile on a 4-worker local run: 11.5K to 49.5K requests per second over plaintext, 9.7K to 33.9K over TLS.
+- `gzip`, `brotli` and `reuseEncoders` on `middleware.compression()` and `performance.compression`. `gzip` takes zlib options (`level`, `windowBits`, `memLevel`, `strategy`) for gzip and deflate, `brotli` the brotli options object with its `params`; what is pinned there wins over the shared `level`, which keeps mapping onto both encoders for an app that does not care. The brotli window is still fitted to the body unless `BROTLI_PARAM_LGWIN` is given.
+
+### Changed
+
+- The gzip encoder is reused. Node's one-call API builds a fresh encoder for every body and tears it down after, and for a body of a few kilobytes the deflate state, a 32 KB window plus hash tables allocated and cleared, is a fair share of the work. One encoder per gzip setting is now kept and reset between bodies, driving the same native handle the one-call API uses. The handle is proven once with two round trips whose output must decode to the input and match the one-call size (so a reset that forgot its level could never serve), and any later throw retires it in favour of `gzipSync`; `reuseEncoders: false` turns the reuse off. Applies to every inline compression path - the native engine, Node, uWebSockets.js and HTTP/2 responses and the compression middleware - measured at about 18% less time per body at level 3.
+- Engine server: the synchronous fast path now covers requests with a body and apps with global middleware. The engine buffers the body before `onRequest` fires, so parsing it is synchronous, and a global middleware chain whose members call `next()` synchronously costs no promise either; only request/response hooks, or a middleware that genuinely goes async, take the promise path, which then resumes the router once the chain settles. Error shaping is unchanged (413, 400, the app's error handler, 500). A POST baseline measured 12% more requests per second on a 4-worker local run.
+- Engine server: parsing a request body reads `Content-Type` through one native call instead of materialising the whole header object.
+- Engine WebSocket adapter: `wsSend`, `wsClose` and `upgradeToWebSocket` are hoisted off the engine loader's module Proxy, which ran its `get` trap on every frame sent. The handshake headers stay the engine's flat list and `socket.headers` (and `socket.query`) are built on first read, so an upgrade whose handlers never look pays for no object; one logger serves every connection and namespace instead of a child logger per upgrade; the random suffix of a connection id is drawn from a 4 KiB pool refilled in one `randomFillSync` rather than a `randomBytes(4)` per upgrade. Ids keep their shape. Pairs with `@morojs/engine` 1.1.14, which answers a pipelined batch of frames with one write.
+
+### Fixed
+
+- A compressed `res.json()` reply carried `Content-Type: application/json; charset=utf-8` while the same reply without the middleware carried `application/json`. JSON is UTF-8 by definition (RFC 8259 §8.1); the middleware now sends `application/json` too, which also saves the fifteen bytes on every compressed JSON response.
+
+### Other
+
+- New suites: the static cache (hits, same-length replacement past the revalidation window, `revalidateMs: 0`, cached sidecars and their negotiation, conditional and `HEAD` from the entry, `maxFileBytes` and `Range` bypass, `close()`), and the compression utility (reused encoder round trip and size, pinned gzip level and brotli quality, `reuseEncoders: false`, the async path, settings resolution).
+- Docs: `cache` in the static files guide and API reference; `gzip`, `brotli` and `reuseEncoders` in the compression guide, with the encoder-reuse and content-type notes.
+
 ## [1.8.15] - 2026-10-10
 
 ### Fixed
