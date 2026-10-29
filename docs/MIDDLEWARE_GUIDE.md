@@ -345,6 +345,9 @@ app.use(
     threshold: 1024, // bodies smaller than this are never compressed
     encodings: ['gzip', 'br'], // server preference order when the client accepts several
     maxInlineBytes: 16384, // compressed on the calling thread up to here, on the pool above
+    gzip: { level: 3 }, // zlib options for gzip/deflate; a level here wins over `level`
+    brotli: { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 3 } }, // brotli options; a quality here wins
+    reuseEncoders: true, // default; keep one gzip encoder per setting and reset it between bodies
     filter: (req, res) => {
       // Custom filter
       if (req.headers['x-no-compression']) {
@@ -366,6 +369,19 @@ on the threadpool and streamed chunked, so a big export never holds the event lo
 The default `encodings` order prefers brotli. For API-sized JSON, gzip compresses in about half
 the CPU for a body roughly a tenth larger, so a service measured on throughput may prefer
 `['gzip', 'br']`; brotli stays available to a client that accepts nothing else.
+
+`level` is one knob for both encoders: the gzip level as given, and a brotli quality it is
+mapped onto (level 6 is quality 7). To pin either encoder exactly, pass its own options -
+`gzip` takes zlib options (`level`, `windowBits`, `memLevel`, `strategy`), `brotli` the brotli
+options object with its `params` - and what you pin wins over `level`. The brotli window is
+fitted to the body unless you set `BROTLI_PARAM_LGWIN` yourself.
+
+The gzip encoder is reused: one per setting is kept and reset between bodies instead of being
+built and torn down per response, since the encoder's hash tables and window are a fair share
+of what compressing a few kilobytes costs. The handle is proven with a round trip once and the
+one-call zlib API stands in whenever it cannot be driven that way; `reuseEncoders: false` turns
+the reuse off. A compressed `res.json()` reply carries `Content-Type: application/json`, the
+same type it carries without the middleware.
 
 // Per-route compression: the same factory, attached as route middleware
 app
@@ -582,11 +598,25 @@ app.use(
     lastModified: true, // default true; answers If-Modified-Since
     acceptRanges: true, // default true; serves Range requests as 206
     precompressed: true, // serve app.js.br / app.js.gz next to app.js when the client accepts it
+    cache: true, // keep files in memory; see below (or { maxFileBytes, maxBytes, revalidateMs, watch })
     index: ['index.html', 'index.htm'],
     dotfiles: 'ignore', // 'allow' | 'deny' | 'ignore'
   })
 );
 ```
+
+Without `cache`, every request resolves, stats and reads the file (and its sidecars) from disk:
+five to eight filesystem round trips through the libuv threadpool per response, which is what
+bounds a busy static route - and on the native engine's worker threads, one pool is shared by
+every worker in the process. With `cache: true` a file at or below `maxFileBytes` (default 1 MiB)
+is read once, together with its `.br` and `.gz` sidecars, and served from memory with its
+`ETag` and `Last-Modified`; the sidecar is still negotiated per request from `Accept-Encoding`,
+conditional and `HEAD` requests are answered from the entry, and `Range` requests and larger
+files keep the uncached path. The disk is looked at again at most once per `revalidateMs`
+(default 1000) - a stat of the file and of each sidecar position, so a same-length
+replacement, a touched sidecar or one that appeared or vanished are all noticed and reloaded -
+and sooner when the root directory reports a change (`watch`, default true where the platform
+supports it). `maxBytes` (default 64 MiB) bounds the whole cache; the oldest entries leave first.
 
 With `precompressed: true`, a `.br` or `.gz` file beside an asset is served with the original's `Content-Type`, the matching `Content-Encoding` and `Vary: Accept-Encoding` (brotli preferred). A sidecar older than its source is ignored, so replacing an asset never serves a stale compressed body, and a sidecar must resolve inside `root`. Without sidecars, text assets still go through the server's response compression when `performance.compression` (or the compression middleware) is on.
 

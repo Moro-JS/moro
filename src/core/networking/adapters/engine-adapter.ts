@@ -16,6 +16,42 @@ import {
 } from '../websocket-adapter.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 
+// One logger per role for the whole process, not one per namespace or per
+// connection: a child logger was being built on every upgrade.
+const nsLogger = createFrameworkLogger('ENGINE_WS_NS');
+const connLogger = createFrameworkLogger('ENGINE_WS_CONN');
+
+// Random bytes for connection ids, drawn from a pool refilled in one call:
+// crypto.randomBytes(4) per upgrade was a CSPRNG call and a Buffer each.
+const ID_POOL = Buffer.allocUnsafe(4096);
+let idPoolOffset = ID_POOL.length;
+function randomIdSuffix(): string {
+  if (idPoolOffset + 4 > ID_POOL.length) {
+    crypto.randomFillSync(ID_POOL);
+    idPoolOffset = 0;
+  }
+  const hex = ID_POOL.toString('hex', idPoolOffset, idPoolOffset + 4);
+  idPoolOffset += 4;
+  return hex;
+}
+
+// The handshake headers as the EngineRequest.headers getter builds them:
+// keys already lowercased, duplicate lines joined ('; ' for cookie, ', '
+// otherwise) - last-wins would let a client send two X-Forwarded-For lines
+// and hide the earlier one from IP-based WS auth / rate-limiting.
+function headersFromFlat(flat: string[] | undefined): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!flat) return headers;
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    const key = flat[i];
+    const val = flat[i + 1];
+    if (key === undefined || val === undefined) continue;
+    const existing = headers[key];
+    headers[key] = existing === undefined ? val : existing + (key === 'cookie' ? '; ' : ', ') + val;
+  }
+  return headers;
+}
+
 // Parse a raw upgrade query string (`orgId=1&x=y`, with or without a leading
 // `?`) into a flat object for `socket.handshake.query`. Last value wins on
 // duplicate keys, matching URLSearchParams / Socket.IO.
@@ -49,7 +85,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
       onOpen: (
         wsId: number,
         path: string,
-        info?: { ip: string; headers: Record<string, string>; query?: string }
+        info?: { ip: string; flat?: string[] | undefined; query?: string }
       ) => this.handleOpen(wsId, path, info),
       onMessage: (wsId: number, data: any, isBinary: boolean) =>
         this.handleMessage(wsId, data, isBinary),
@@ -63,7 +99,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
   private handleOpen(
     wsId: number,
     path: string,
-    info?: { ip: string; headers: Record<string, string>; query?: string }
+    info?: { ip: string; flat?: string[] | undefined; query?: string }
   ): void {
     const id = this.customIdGenerator ? this.customIdGenerator() : this.generateId();
     const connection = new EngineConnectionWrapper(
@@ -127,9 +163,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
   }
 
   private generateId(): string {
-    return `${Date.now().toString(36)}-${(++this.connectionCounter).toString(36)}-${crypto
-      .randomBytes(4)
-      .toString('hex')}`;
+    return `${Date.now().toString(36)}-${(++this.connectionCounter).toString(36)}-${randomIdSuffix()}`;
   }
 
   private getDefaultNamespaceImpl(): EngineNamespaceWrapper {
@@ -184,7 +218,7 @@ class EngineNamespaceWrapper implements WebSocketNamespace {
   raw = false;
   private connectionHandlers: ((socket: WebSocketConnection) => void)[] = [];
   private middlewares: WebSocketMiddleware[] = [];
-  private logger = createFrameworkLogger('ENGINE_WS_NS');
+  private logger = nsLogger;
 
   constructor(
     private namespace: string,
@@ -269,8 +303,10 @@ class EngineConnectionWrapper implements WebSocketConnection {
   public connected = true;
   /** Raw framing (set from the namespace at open) */
   public raw = false;
-  public readonly headers: Record<string, string>;
-  public readonly query: Record<string, string>;
+  private _flat: string[] | undefined;
+  private _headers: Record<string, string> | undefined = undefined;
+  private _query: Record<string, string> | undefined = undefined;
+  private readonly _queryString: string;
   private rooms = new Set<string>();
   private eventHandlers = new Map<
     string,
@@ -278,7 +314,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   >();
   private anyHandlers: Array<(event: string, ...args: any[]) => void> = [];
   private disconnectHandlers: Array<(reason?: any) => void> = [];
-  private logger = createFrameworkLogger('ENGINE_WS_CONN');
+  private logger = connLogger;
   private readonly _ip: string;
 
   constructor(
@@ -287,17 +323,39 @@ class EngineConnectionWrapper implements WebSocketConnection {
     public readonly id: string,
     public readonly path: string,
     private namespaces: Map<string, EngineNamespaceWrapper>,
-    handshake?: { ip: string; headers: Record<string, string>; query?: string }
+    handshake?: { ip: string; flat?: string[] | undefined; query?: string }
   ) {
     // Handshake snapshot (captured before the upgrade invalidated the reqId):
-    // real values for IP-based rate limiting and header/token connection auth.
+    // real values for IP-based rate limiting and header/token connection
+    // auth. The header object and the parsed query are built on first read.
     this._ip = handshake?.ip ?? '';
-    this.headers = handshake?.headers ?? {};
-    this.query = parseQueryString(handshake?.query ?? '');
+    this._flat = handshake?.flat;
+    this._queryString = handshake?.query ?? '';
   }
 
   get ip(): string {
     return this._ip;
+  }
+
+  /** The handshake request's headers, keys lowercased, duplicates joined. */
+  get headers(): Record<string, string> {
+    let h = this._headers;
+    if (h === undefined) {
+      h = headersFromFlat(this._flat);
+      this._flat = undefined;
+      this._headers = h;
+    }
+    return h;
+  }
+
+  /** The handshake request's query parameters. */
+  get query(): Record<string, string> {
+    let q = this._query;
+    if (q === undefined) {
+      q = parseQueryString(this._queryString);
+      this._query = q;
+    }
+    return q;
   }
 
   // Socket.IO-parity handshake view so `socket.handshake.query`/`.headers`

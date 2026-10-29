@@ -1422,9 +1422,11 @@ app.use(
 ```typescript
 app.use(
   middleware.compression({
-    level: 6,
+    level: 6, // 1-9: the gzip level, and the brotli quality it maps to
     threshold: 1024,
-    brotli: true,
+    encodings: ['br', 'gzip', 'deflate'], // server preference order
+    gzip: { level: 3 }, // pin the gzip encoder; wins over `level`
+    brotli: { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 3 } }, // pin brotli; wins over `level`
   })
 );
 ```
@@ -1489,6 +1491,8 @@ app.use(
     etag: true,
     lastModified: true, // If-Modified-Since -> 304
     acceptRanges: true, // Range -> 206 with Content-Range
+    precompressed: true, // serve app.js.br / app.js.gz beside app.js when accepted
+    cache: true, // files in memory, revalidated once a second and on directory changes
   })
 );
 ```

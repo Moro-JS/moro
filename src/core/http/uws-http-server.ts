@@ -1001,7 +1001,7 @@ export class UWebSocketsHttpServer {
       if (shouldInline(bytes, s)) {
         let compressed: Buffer;
         try {
-          compressed = compressBufferSync(body, encoding, s.level);
+          compressed = compressBufferSync(body, encoding, s.level, s);
         } catch {
           return false;
         }
@@ -1019,7 +1019,7 @@ export class UWebSocketsHttpServer {
         return true;
       }
 
-      void compressBuffer(body, encoding, s.level)
+      void compressBuffer(body, encoding, s.level, s)
         .then(compressed => {
           if (this._ended || this._res.aborted) return;
           this.responseHeaders['content-encoding'] = encoding;

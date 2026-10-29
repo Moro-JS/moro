@@ -812,7 +812,7 @@ export class EngineResponse extends LazyEventEmitter {
     if (shouldInline(bytes, s)) {
       let compressed: Buffer | undefined;
       try {
-        compressed = compressBufferSync(body, encoding, s.level);
+        compressed = compressBufferSync(body, encoding, s.level, s);
       } catch {
         compressed = undefined;
       }
@@ -829,7 +829,7 @@ export class EngineResponse extends LazyEventEmitter {
 
     // Async path: compress, then respond (guarding against an abort that
     // raced the await - the reqId would be invalid).
-    void compressBuffer(body, encoding, s.level)
+    void compressBuffer(body, encoding, s.level, s)
       .then(compressed => {
         if (this._ended || this._server._isAborted(this._reqId)) return;
         this.responseHeaders['content-encoding'] = encoding;
@@ -1571,6 +1571,11 @@ export class MoroEngineServer {
   /** @internal */ _getBody!: (reqId: number) => ArrayBuffer | null;
   /** @internal */ _getRemoteAddress!: (reqId: number) => string | undefined;
   /** @internal */ _getMethod!: (reqId: number) => string | undefined;
+  // The WebSocket natives, hoisted for the same reason: wsSend runs once per
+  // frame, and through the loader's Proxy every call paid the `get` trap.
+  /** @internal */ _wsSend!: (wsId: number, data: any, isBinary: boolean) => boolean;
+  /** @internal */ _wsClose!: (wsId: number, code?: number, reason?: string) => void;
+  /** @internal */ _upgradeToWebSocket!: (reqId: number) => number;
   // Prepared response templates (engine >= 1.1.6): assigned only when the
   // engine advertises capabilities.responseTemplates AND the functions exist,
   // so a flag/binary mismatch can never put `undefined` into a hot call site.
@@ -1667,15 +1672,14 @@ export class MoroEngineServer {
     onOpen(
       wsId: number,
       path: string,
-      info?: { ip: string; headers: Record<string, string>; query?: string }
+      info?: { ip: string; flat?: string[] | undefined; query?: string }
     ): void;
     onMessage(wsId: number, data: any, isBinary: boolean): void;
     onClose(wsId: number, code: number): void;
   };
   // Handshake info for the upgrade currently in flight: set just before
   // upgradeToWebSocket() (which fires onWsOpen synchronously), consumed there.
-  private _pendingWsInfo?:
-    { ip: string; headers: Record<string, string>; query: string } | undefined;
+  private _pendingWsInfo?: { ip: string; flat: string[] | undefined; query: string } | undefined;
 
   // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
   private maxBodySize: number = 10 * 1024 * 1024;
@@ -1779,6 +1783,9 @@ export class MoroEngineServer {
     this._getBody = surface.getBody;
     this._getRemoteAddress = surface.getRemoteAddress;
     this._getMethod = surface.getMethod;
+    this._wsSend = surface.wsSend;
+    this._wsClose = surface.wsClose;
+    this._upgradeToWebSocket = surface.upgradeToWebSocket;
     if (
       this._capabilities?.responseTemplates === true &&
       typeof surface.prepareResponse === 'function' &&
@@ -2136,12 +2143,12 @@ export class MoroEngineServer {
 
   /** Send a frame on a WebSocket. Returns false on backpressure. */
   wsSend(wsId: number, data: string | ArrayBuffer | Buffer, isBinary: boolean): boolean {
-    return this._engine.wsSend(wsId, data, isBinary) !== false;
+    return this._wsSend(wsId, data, isBinary) !== false;
   }
 
   /** Close a WebSocket (RFC 6455 close frame). */
   wsClose(wsId: number, code?: number, reason?: string): void {
-    this._engine.wsClose(wsId, code, reason);
+    this._wsClose(wsId, code, reason);
   }
 
   // Direct router dispatch - called after global middleware without the
@@ -2306,28 +2313,18 @@ export class MoroEngineServer {
       const upgrade = this._getHeader(reqId, 'upgrade');
       if (upgrade && upgrade.toLowerCase() === 'websocket') {
         // Snapshot handshake data now - the upgrade invalidates the reqId,
-        // after which these fetchers return empty values.
+        // after which these fetchers return empty values. The headers stay
+        // the engine's flat [name, value, ...] list: the adapter builds the
+        // object (joining duplicates like EngineRequest.headers) the first
+        // time a handler reads socket.headers, so an upgrade whose handlers
+        // never look pays for no object at all.
         const ip: string = this._getRemoteAddress(reqId) || '';
-        const headers: Record<string, string> = {};
         const flat: string[] | undefined = this._getHeaders(reqId);
-        if (flat) {
-          // Join duplicates exactly like the EngineRequest.headers getter -
-          // last-wins would let a client send two X-Forwarded-For lines and
-          // hide the earlier one from IP-based WS auth / rate-limiting.
-          for (let i = 0; i + 1 < flat.length; i += 2) {
-            const key = flat[i];
-            const val = flat[i + 1];
-            if (key === undefined || val === undefined) continue;
-            const existing = headers[key];
-            headers[key] =
-              existing === undefined ? val : existing + (key === 'cookie' ? '; ' : ', ') + val;
-          }
-        }
         // Capture the query string too (invalidated by the upgrade like the
         // rest), so handlers can read handshake query params (e.g. orgId).
         const query: string = this._getQuery(reqId) || '';
-        this._pendingWsInfo = { ip, headers, query };
-        const wsId = this._engine.upgradeToWebSocket(reqId);
+        this._pendingWsInfo = { ip, flat, query };
+        const wsId = this._upgradeToWebSocket(reqId);
         this._pendingWsInfo = undefined;
         if (wsId !== -1) return; // WS took over this connection
         // else: not a valid upgrade - fall through to normal HTTP handling
@@ -2359,43 +2356,64 @@ export class MoroEngineServer {
     this.requestCounter++;
 
     // SYNC FAST PATH (parity with MoroHttpServer's handleRequest split): with
-    // no body to parse, no request/response hooks and no global middleware,
-    // the router dispatch runs synchronously in this frame - the async
-    // handleRequest below would allocate a promise + async context per
-    // request only to reach zero awaits. Only the framework's own frame is
-    // de-asynced: an async route handler still returns its promise through
-    // the router and is driven to completion here.
+    // no request/response hooks, the body parse, the global middleware chain
+    // and the router dispatch all run synchronously in this frame whenever
+    // they can - the async handleRequest below would allocate a promise and
+    // an async context per request only to reach zero awaits. The engine
+    // buffered the body before onRequest fired, so parsing it is synchronous;
+    // a middleware chain whose members call next() synchronously costs no
+    // promise either (executeMiddleware returns undefined then), and only a
+    // chain that genuinely goes async hands the rest of the request to a
+    // continuation. Only the framework's own frame is de-asynced: an async
+    // route handler still returns its promise through the router and is
+    // driven to completion here.
     const hookManager = this.hookManager;
     const hooksActive =
       hookManager &&
       (hookManager.hasHooks === undefined ||
         hookManager.hasHooks('request') ||
         hookManager.hasHooks('response'));
-    const needsBody =
-      method.charCodeAt(0) === 80 && // 'P' char code
-      (method === 'POST' || method === 'PUT' || method === 'PATCH');
 
-    if (!needsBody && !hooksActive && this.globalMiddleware.length === 0 && this.routerHandler) {
-      let handled: boolean | Promise<boolean> = true;
-      try {
-        handled = this.routerHandler(httpReq as any as HttpRequest, httpRes as any as HttpResponse);
-      } catch (error) {
-        // Error path owns the response from here (handled stays true)
-        void this.handleDispatchError(error, httpReq, httpRes);
+    if (!hooksActive && this.routerHandler) {
+      let proceed = true;
+      if (
+        method.charCodeAt(0) === 80 && // 'P' char code
+        (method === 'POST' || method === 'PUT' || method === 'PATCH')
+      ) {
+        try {
+          this.parseBody(httpReq);
+        } catch (error) {
+          proceed = false;
+          void this.handleDispatchError(error, httpReq, httpRes);
+        }
       }
-      if (handled !== true) {
-        if (handled && typeof (handled as any).then === 'function') {
-          (handled as Promise<boolean>).then(
-            ok => {
-              if (!ok) void this.finishUnrouted(httpReq, httpRes);
+      if (proceed && this.globalMiddleware.length > 0) {
+        let chain: void | Promise<void>;
+        try {
+          chain = this.executeMiddleware(
+            this.globalMiddleware,
+            httpReq as any as HttpRequest,
+            httpRes as any as HttpResponse
+          );
+        } catch (error) {
+          proceed = false;
+          chain = undefined;
+          void this.handleDispatchError(error, httpReq, httpRes);
+        }
+        if (chain) {
+          // The chain went async: route once it settles, unless it answered.
+          proceed = false;
+          chain.then(
+            () => {
+              if (!httpRes.headersSent) this.dispatchRouter(httpReq, httpRes);
             },
             error => void this.handleDispatchError(error, httpReq, httpRes)
           );
-        } else {
-          // Sync miss from the router - direct-route fallback, then 404
-          void this.finishUnrouted(httpReq, httpRes);
+        } else if (httpRes.headersSent) {
+          proceed = false; // a middleware answered the request itself
         }
       }
+      if (proceed) this.dispatchRouter(httpReq, httpRes);
     } else {
       void this.handleRequest(httpReq, httpRes);
     }
@@ -2411,6 +2429,37 @@ export class MoroEngineServer {
       httpRes._registered = true;
       this.inflight.set(reqId, httpRes);
       this._armMicrotaskDrain();
+    }
+  }
+
+  // The router dispatch of the sync fast path, and of a global middleware
+  // chain's async continuation: the unified router, then the direct route
+  // table and the 404 behind it, with the same error shaping as handleRequest.
+  private dispatchRouter(httpReq: EngineRequest, httpRes: EngineResponse): void {
+    const routerHandler = this.routerHandler;
+    if (!routerHandler) {
+      void this.finishUnrouted(httpReq, httpRes);
+      return;
+    }
+    let handled: boolean | Promise<boolean> = true;
+    try {
+      handled = routerHandler(httpReq as any as HttpRequest, httpRes as any as HttpResponse);
+    } catch (error) {
+      // Error path owns the response from here (handled stays true)
+      void this.handleDispatchError(error, httpReq, httpRes);
+    }
+    if (handled !== true) {
+      if (handled && typeof (handled as any).then === 'function') {
+        (handled as Promise<boolean>).then(
+          ok => {
+            if (!ok) void this.finishUnrouted(httpReq, httpRes);
+          },
+          error => void this.handleDispatchError(error, httpReq, httpRes)
+        );
+      } else {
+        // Sync miss from the router - direct-route fallback, then 404
+        void this.finishUnrouted(httpReq, httpRes);
+      }
     }
   }
 
@@ -2615,7 +2664,12 @@ export class MoroEngineServer {
     const raw: ArrayBuffer | null = this._getBody(httpReq._reqId);
     if (!raw || raw.byteLength === 0) return;
 
-    const contentType = httpReq.headers['content-type'] || '';
+    // One header through one crossing: materialising the header object here
+    // would cost every request with a body a string per header line.
+    const contentType =
+      (httpReq._headers !== undefined
+        ? httpReq._headers['content-type']
+        : this._getHeader(httpReq._reqId, 'content-type')) || '';
     const isMultipart = contentType.includes('multipart/form-data');
     const maxSize = isMultipart ? this.maxUploadSize : this.maxBodySize;
 

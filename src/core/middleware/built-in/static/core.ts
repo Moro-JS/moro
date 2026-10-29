@@ -1,10 +1,38 @@
 // Static File Serving Core Logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import * as fs from 'fs/promises';
-import { createReadStream } from 'fs';
+import { createReadStream, watch as watchDir, type FSWatcher, type Stats } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { isCompressible, negotiateEncoding } from '../../../http/utils/compression.js';
+
+export interface StaticCacheOptions {
+  /**
+   * Largest file kept in memory, in bytes. Bigger files take the uncached
+   * path (read or streamed from disk per request). Default 1 MiB.
+   */
+  maxFileBytes?: number;
+  /**
+   * Budget for everything cached, in bytes, originals and precompressed
+   * sidecars together; the oldest entries leave when it is exceeded.
+   * Default 64 MiB.
+   */
+  maxBytes?: number;
+  /**
+   * How long a cached file is served without looking at the disk again, in
+   * milliseconds. Past it, the next request stats the file (and the
+   * sidecars it may have) and reloads what changed, so a replaced file is
+   * served within this window at the latest. Default 1000. `0` stats on
+   * every request.
+   */
+  revalidateMs?: number;
+  /**
+   * Watch the root directory and revalidate everything the moment a change
+   * is reported, ahead of `revalidateMs`. Default true where the platform
+   * supports it; a watcher that cannot be started is simply not used.
+   */
+  watch?: boolean;
+}
 
 export interface StaticOptions {
   root: string;
@@ -39,6 +67,17 @@ export interface StaticOptions {
    * Range requests always get the identity file. Default false.
    */
   precompressed?: boolean;
+  /**
+   * Keep the files in memory. Without it every request resolves, stats and
+   * reads the file (and its sidecars) from disk - five to eight filesystem
+   * round trips through the threadpool per response, which is what bounds a
+   * busy static route. With it, a file is read once and served from memory
+   * with its validators and sidecars; the disk is consulted again at most
+   * once per `revalidateMs` (default every second) or as soon as the root
+   * directory reports a change, so a replaced file is still served promptly.
+   * `true` takes the defaults; an object tunes them. Default false.
+   */
+  cache?: boolean | StaticCacheOptions;
 }
 
 /** Sidecar suffix per encoding, in preference order. */
@@ -46,6 +85,48 @@ const SIDECARS: Array<{ encoding: 'br' | 'gzip'; suffix: string }> = [
   { encoding: 'br', suffix: '.br' },
   { encoding: 'gzip', suffix: '.gz' },
 ];
+
+/** What identifies one file on disk: a replacement of the same length still differs here. */
+interface FileStamp {
+  mtimeMs: number;
+  size: number;
+  ino: number;
+}
+
+/** One representation of a cached file: the original, or a precompressed sidecar. */
+interface CachedVariant {
+  /** '' for the identity representation */
+  encoding: '' | 'br' | 'gzip';
+  path: string;
+  stamp: FileStamp;
+  body: Buffer;
+  etag: string;
+}
+
+interface CacheEntry {
+  /** The resolved (real) path of the original, the key's target on disk */
+  filePath: string;
+  baseMimeType: string;
+  contentType: string;
+  mtime: Date;
+  lastModified: string;
+  identity: CachedVariant;
+  /** The sidecars that existed (and were current) when the entry was built, in SIDECARS order */
+  sidecars: CachedVariant[];
+  /** Sidecar paths probed when the entry was built, present or not: absent ones must be re-probed too */
+  sidecarStamps: Array<FileStamp | null>;
+  bytes: number;
+  checkedAt: number;
+}
+
+const stampOf = (st: { mtimeMs: number; size: number; ino: number }): FileStamp => ({
+  mtimeMs: st.mtimeMs,
+  size: st.size,
+  ino: st.ino,
+});
+const sameStamp = (a: FileStamp | null, b: FileStamp | null): boolean =>
+  a === b ||
+  (a !== null && b !== null && a.mtimeMs === b.mtimeMs && a.size === b.size && a.ino === b.ino);
 
 export class StaticCore {
   private root: string;
@@ -60,6 +141,16 @@ export class StaticCore {
 
   /** Files at or below this size are read in one go instead of streamed. */
   private static readonly STREAM_THRESHOLD = 512 * 1024;
+
+  // The in-memory cache (see StaticOptions.cache), keyed by the request path
+  // under the prefix. Null when caching is off.
+  private cache: Map<string, CacheEntry> | null = null;
+  private cacheMaxFileBytes = 1024 * 1024;
+  private cacheMaxBytes = 64 * 1024 * 1024;
+  private cacheRevalidateMs = 1000;
+  private cacheBytes = 0;
+  private watcher: FSWatcher | null = null;
+  private watchWanted = true;
 
   private mimeTypes: Record<string, string> = {
     // Documents / text
@@ -132,6 +223,14 @@ export class StaticCore {
     this.lastModified = options.lastModified !== false;
     this.acceptRanges = options.acceptRanges !== false;
     this.precompressed = options.precompressed === true;
+    if (options.cache) {
+      const c = typeof options.cache === 'object' ? options.cache : {};
+      this.cache = new Map();
+      if (c.maxFileBytes !== undefined) this.cacheMaxFileBytes = Math.max(0, c.maxFileBytes);
+      if (c.maxBytes !== undefined) this.cacheMaxBytes = Math.max(0, c.maxBytes);
+      if (c.revalidateMs !== undefined) this.cacheRevalidateMs = Math.max(0, c.revalidateMs);
+      this.watchWanted = c.watch !== false;
+    }
   }
 
   async handleRequest(req: HttpRequest, res: HttpResponse): Promise<boolean> {
@@ -144,6 +243,27 @@ export class StaticCore {
     const urlPath = this.stripPrefix(req.path);
     if (urlPath === null) {
       return false;
+    }
+
+    // Cached: the common case is a hit that needs no filesystem call at all.
+    // A Range request keeps the uncached path (byte offsets refer to the
+    // identity file on disk).
+    const cache = this.cache;
+    if (cache !== null) {
+      const entry = cache.get(urlPath);
+      if (entry !== undefined && req.headers.range === undefined) {
+        if (Date.now() - entry.checkedAt < this.cacheRevalidateMs) {
+          return this.serveCached(req, res, entry);
+        }
+        // Past the revalidation window: one look at the disk. Unchanged, the
+        // entry serves on; changed or gone, it is dropped and the request
+        // takes the resolving path below, which rebuilds it.
+        if (await this.stillCurrent(entry)) {
+          entry.checkedAt = Date.now();
+          return this.serveCached(req, res, entry);
+        }
+        this.evict(urlPath, entry);
+      }
     }
 
     try {
@@ -217,6 +337,21 @@ export class StaticCore {
       const baseMimeType = this.mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
       const contentType = this.addCharsetIfNeeded(baseMimeType);
 
+      // A file that fits the cache is read once, with its sidecars, and the
+      // response comes from the entry - this request's and every later one's.
+      if (
+        cache !== null &&
+        stats.isFile() &&
+        stats.size <= this.cacheMaxFileBytes &&
+        req.headers.range === undefined
+      ) {
+        const entry = await this.buildEntry(filePath, stats, baseMimeType, contentType);
+        if (entry !== null) {
+          this.insert(urlPath, entry);
+          return this.serveCached(req, res, entry);
+        }
+      }
+
       res.setHeader('Content-Type', contentType);
 
       // Precompressed sidecar (app.js.br / app.js.gz next to app.js). Chosen
@@ -249,10 +384,7 @@ export class StaticCore {
       if (this.etag) {
         // A strong ETag must differ between representations, so the encoded
         // sidecar gets its own (RFC 9110 8.8.1)
-        etag = `"${crypto
-          .createHash('md5')
-          .update(`${stats.mtime.getTime()}-${stats.size}`)
-          .digest('hex')}${sidecar ? `-${sidecar.encoding}` : ''}"`;
+        etag = StaticCore.etagFor(stats, sidecar ? sidecar.encoding : '');
         res.setHeader('ETag', etag);
       }
 
@@ -318,15 +450,7 @@ export class StaticCore {
       // doesn't cost its full size in resident memory per request.
       if (stats.size <= StaticCore.STREAM_THRESHOLD || !StaticCore.canStream(res)) {
         const data = await fs.readFile(filePath);
-        if (isCompressible(baseMimeType) && typeof (res as any).send === 'function') {
-          // Through send() the body joins the server's response compression
-          // (performance.compression / the compression middleware) exactly
-          // like a handler's body would; send() sets Content-Length itself.
-          (res as any).send(data);
-        } else {
-          res.setHeader('Content-Length', stats.size);
-          res.end(data);
-        }
+        this.sendBody(res, data, baseMimeType);
       } else {
         res.setHeader('Content-Length', stats.size);
         await this.streamFile(filePath, res);
@@ -336,6 +460,262 @@ export class StaticCore {
       res.status(500).json({ success: false, error: 'Internal server error' });
       return true;
     }
+  }
+
+  // ---- the in-memory cache ----
+
+  /**
+   * Read the file and whichever current sidecars exist beside it into one
+   * entry. Null when the file could not be read (gone between stat and
+   * read), in which case the request takes the uncached path's answer.
+   */
+  private async buildEntry(
+    filePath: string,
+    stats: { mtimeMs: number; size: number; ino: number; mtime: Date },
+    baseMimeType: string,
+    contentType: string
+  ): Promise<CacheEntry | null> {
+    let body: Buffer;
+    try {
+      body = await fs.readFile(filePath);
+    } catch {
+      return null;
+    }
+    const stamp = stampOf(stats);
+    const identity: CachedVariant = {
+      encoding: '',
+      path: filePath,
+      stamp,
+      body,
+      etag: StaticCore.etagFor(stats, ''),
+    };
+    const sidecars: CachedVariant[] = [];
+    const sidecarStamps: Array<FileStamp | null> = [];
+    let bytes = body.length;
+    if (this.precompressed) {
+      const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
+      for (const { encoding, suffix } of SIDECARS) {
+        const found = await this.statSidecar(filePath + suffix, rootWithSep);
+        sidecarStamps.push(found ? stampOf(found.stats) : null);
+        // A sidecar older than its source is a stale body for a replaced
+        // asset: not served, and its stamp is still remembered so a later
+        // touch of it is noticed.
+        if (!found || found.stats.mtimeMs < stats.mtimeMs) continue;
+        let sideBody: Buffer;
+        try {
+          sideBody = await fs.readFile(found.real);
+        } catch {
+          continue;
+        }
+        sidecars.push({
+          encoding,
+          path: found.real,
+          stamp: stampOf(found.stats),
+          body: sideBody,
+          etag: StaticCore.etagFor(stats, encoding),
+        });
+        bytes += sideBody.length;
+      }
+    }
+    return {
+      filePath,
+      baseMimeType,
+      contentType,
+      mtime: stats.mtime,
+      lastModified: stats.mtime.toUTCString(),
+      identity,
+      sidecars,
+      sidecarStamps,
+      bytes,
+      checkedAt: Date.now(),
+    };
+  }
+
+  /** The sidecar at `candidate` when it is a regular file inside the root. */
+  private async statSidecar(
+    candidate: string,
+    rootWithSep: string
+  ): Promise<{ real: string; stats: Stats } | null> {
+    try {
+      const real = await fs.realpath(candidate);
+      if (!real.startsWith(rootWithSep)) return null;
+      const stats = await fs.stat(real);
+      if (!stats.isFile()) return null;
+      return { real, stats };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Whether the disk still matches the entry: the original and every sidecar
+   * position (present or absent when the entry was built) are stat'ed and
+   * compared on mtime, size and inode, so a same-length replacement counts
+   * as a change and a sidecar that appeared or vanished does too.
+   */
+  private async stillCurrent(entry: CacheEntry): Promise<boolean> {
+    let stats;
+    try {
+      stats = await fs.stat(entry.filePath);
+    } catch {
+      return false;
+    }
+    if (!stats.isFile() || !sameStamp(stampOf(stats), entry.identity.stamp)) return false;
+    if (this.precompressed) {
+      for (let i = 0; i < SIDECARS.length; i++) {
+        let now: FileStamp | null = null;
+        try {
+          const st = await fs.stat(entry.filePath + (SIDECARS[i] as { suffix: string }).suffix);
+          if (st.isFile()) now = stampOf(st);
+        } catch {
+          // absent
+        }
+        if (!sameStamp(now, entry.sidecarStamps[i] ?? null)) return false;
+      }
+    }
+    return true;
+  }
+
+  private insert(key: string, entry: CacheEntry): void {
+    const cache = this.cache;
+    if (cache === null) return;
+    const old = cache.get(key);
+    if (old !== undefined) this.evict(key, old);
+    cache.set(key, entry);
+    this.cacheBytes += entry.bytes;
+    // Over budget: the oldest entries go first (insertion order).
+    for (const [k, e] of cache) {
+      if (this.cacheBytes <= this.cacheMaxBytes || k === key) break;
+      this.evict(k, e);
+    }
+    this.ensureWatcher();
+  }
+
+  private evict(key: string, entry: CacheEntry): void {
+    if (this.cache !== null && this.cache.delete(key)) this.cacheBytes -= entry.bytes;
+  }
+
+  /**
+   * One watcher on the root directory: any change reported there marks every
+   * entry for revalidation on its next request, ahead of `revalidateMs`.
+   * Non-persistent, so it never keeps the process alive, and best effort: a
+   * platform or filesystem without change events simply falls back to the
+   * timed revalidation.
+   */
+  private ensureWatcher(): void {
+    if (!this.watchWanted || this.watcher !== null) return;
+    try {
+      const watcher = watchDir(this.root, { persistent: false }, () => {
+        if (this.cache === null) return;
+        for (const entry of this.cache.values()) entry.checkedAt = 0;
+      });
+      watcher.on('error', () => {
+        this.watcher = null;
+        this.watchWanted = false; // a dead watcher is not retried
+      });
+      this.watcher = watcher;
+    } catch {
+      this.watchWanted = false;
+    }
+  }
+
+  /** Stop the directory watcher and drop every cached file. */
+  close(): void {
+    if (this.watcher !== null) {
+      try {
+        this.watcher.close();
+      } catch {
+        // already closed
+      }
+      this.watcher = null;
+    }
+    if (this.cache !== null) {
+      this.cache.clear();
+      this.cacheBytes = 0;
+    }
+  }
+
+  /** Answer a request from a cache entry: the same headers and bytes the uncached path sends. */
+  private serveCached(req: HttpRequest, res: HttpResponse, entry: CacheEntry): boolean {
+    res.setHeader('Content-Type', entry.contentType);
+    let variant = entry.identity;
+    if (this.precompressed) {
+      res.setHeader('Vary', 'Accept-Encoding');
+      const sidecars = entry.sidecars;
+      if (sidecars.length > 0) {
+        const acceptEncoding = req.headers['accept-encoding'];
+        if (acceptEncoding) {
+          for (let i = 0; i < sidecars.length; i++) {
+            const candidate = sidecars[i] as CachedVariant;
+            if (negotiateEncoding(acceptEncoding, [candidate.encoding as 'br' | 'gzip']) !== null) {
+              variant = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (this.maxAge > 0) {
+      res.setHeader('Cache-Control', `public, max-age=${this.maxAge}`);
+    }
+    if (this.lastModified) {
+      res.setHeader('Last-Modified', entry.lastModified);
+    }
+    if (this.acceptRanges) {
+      res.setHeader('Accept-Ranges', 'bytes');
+    }
+    const etag = this.etag ? variant.etag : undefined;
+    if (etag !== undefined) res.setHeader('ETag', etag);
+    if (this.isNotModified(req, entry.mtime, etag)) {
+      res.statusCode = 304;
+      res.end();
+      return true;
+    }
+    if (variant.encoding !== '') {
+      res.setHeader('Content-Encoding', variant.encoding);
+      res.setHeader('Content-Length', variant.body.length);
+      if (req.method === 'HEAD') {
+        res.end();
+        return true;
+      }
+      res.end(variant.body);
+      return true;
+    }
+    if (req.method === 'HEAD') {
+      res.setHeader('Content-Length', variant.body.length);
+      res.end();
+      return true;
+    }
+    this.sendBody(res, variant.body, entry.baseMimeType);
+    return true;
+  }
+
+  /**
+   * The identity body of a small file. A compressible one goes through
+   * send() so it joins the server's response compression (the compression
+   * middleware or performance.compression) exactly like a handler's body
+   * would; send() sets Content-Length itself. Binary bodies are ended as they
+   * are, with their length.
+   */
+  private sendBody(res: HttpResponse, data: Buffer, baseMimeType: string): void {
+    if (isCompressible(baseMimeType) && typeof (res as any).send === 'function') {
+      (res as any).send(data);
+    } else {
+      res.setHeader('Content-Length', data.length);
+      res.end(data);
+    }
+  }
+
+  /**
+   * The strong ETag of one representation: the file's mtime and size, plus
+   * the encoding for a sidecar, since a strong ETag must differ between
+   * representations (RFC 9110 8.8.1).
+   */
+  private static etagFor(stats: { mtimeMs: number; size: number }, encoding: string): string {
+    return `"${crypto
+      .createHash('md5')
+      .update(`${Math.trunc(stats.mtimeMs)}-${stats.size}`)
+      .digest('hex')}${encoding ? `-${encoding}` : ''}"`;
   }
 
   /**

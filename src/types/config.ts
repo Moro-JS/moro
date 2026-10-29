@@ -419,6 +419,12 @@ export interface PerformanceConfig {
      * Default 16384.
      */
     maxInlineBytes?: number;
+    /** zlib options for gzip/deflate; a `level` here wins over the shared level. */
+    gzip?: import('zlib').ZlibOptions;
+    /** brotli options; a quality under `params` wins over the one the shared level maps to. */
+    brotli?: import('zlib').BrotliOptions;
+    /** Keep one gzip encoder per setting and reset it between bodies (default true). */
+    reuseEncoders?: boolean;
   };
   circuitBreaker: {
     enabled: boolean;

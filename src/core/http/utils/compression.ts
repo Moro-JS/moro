@@ -9,6 +9,7 @@
  * documented non-goal.
  */
 import { promisify } from 'util';
+import type { BrotliOptions, ZlibOptions } from 'zlib';
 import { requireBuiltin } from '../../utilities/builtin.js';
 
 // zlib is loaded on the first compressed response, not at startup
@@ -27,7 +28,34 @@ const brotliAsync: Compressor = (buf, opts) =>
 
 export type Encoding = 'br' | 'gzip' | 'deflate';
 
-export interface CompressionSettings {
+/**
+ * Per-encoding encoder settings. The shared `level` (1-9) picks a gzip level
+ * and a brotli quality for an app that does not care; an app that does pins
+ * the encoder it wants here, and what it pins wins over the level.
+ */
+export interface EncoderOptions {
+  /**
+   * zlib options for gzip and deflate. A `level` here replaces the shared
+   * level; `windowBits`, `memLevel` and `strategy` pass through.
+   */
+  gzip?: ZlibOptions;
+  /**
+   * brotli options. A quality under `params` replaces the one the shared
+   * level maps to; the window is still fitted to the body unless
+   * `BROTLI_PARAM_LGWIN` is given.
+   */
+  brotli?: BrotliOptions;
+  /**
+   * Keep one gzip encoder per setting and reset it between bodies instead
+   * of building a new one for every response: the encoder's hash tables and
+   * window are a fair share of what compressing a few kilobytes costs. The
+   * handle is proven with a round trip once and the one-call API stands in
+   * whenever it cannot be driven that way. Default true.
+   */
+  reuseEncoders?: boolean;
+}
+
+export interface CompressionSettings extends EncoderOptions {
   enabled: boolean;
   threshold: number;
   level: number; // 1-9 (mapped to brotli quality)
@@ -58,6 +86,9 @@ export function resolveCompressionSettings(config?: {
     level?: number;
     encodings?: Encoding[];
     maxInlineBytes?: number;
+    gzip?: ZlibOptions;
+    brotli?: BrotliOptions;
+    reuseEncoders?: boolean;
   };
   minimal?: boolean;
 }): CompressionSettings {
@@ -70,6 +101,9 @@ export function resolveCompressionSettings(config?: {
     level: c?.level ?? 6,
     encodings: c?.encodings ?? DEFAULT_ENCODINGS,
     maxInlineBytes: c?.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES,
+    ...(c?.gzip !== undefined ? { gzip: c.gzip } : {}),
+    ...(c?.brotli !== undefined ? { brotli: c.brotli } : {}),
+    ...(c?.reuseEncoders !== undefined ? { reuseEncoders: c.reuseEncoders } : {}),
   };
 }
 
@@ -84,26 +118,147 @@ export function shouldInline(bytes: number, settings: { maxInlineBytes: number }
 }
 
 /**
- * Brotli options for one body: quality mapped from the 1-9 level, the size
- * hint, and a window no larger than the input needs. The default window
- * (2^22 bytes) has the encoder allocate and clear several megabytes per call,
- * which for a response of a few kilobytes is most of its cost; a window that
- * covers the whole input compresses it identically, since no match can
- * reach back further than the input is long.
+ * Brotli options for one body: quality mapped from the 1-9 level (unless the
+ * app pinned one), the size hint, and a window no larger than the input
+ * needs. The default window (2^22 bytes) has the encoder allocate and clear
+ * several megabytes per call, which for a response of a few kilobytes is
+ * most of its cost; a window that covers the whole input finds the same
+ * matches, since none can reach back further than the input is long (only
+ * the window field of the stream header differs).
  */
-function brotliOptions(length: number, level: number) {
+function brotliOptions(length: number, level: number, custom?: BrotliOptions): BrotliOptions {
   const c = z().constants;
-  const lgwin = Math.max(
-    c.BROTLI_MIN_WINDOW_BITS,
-    Math.min(c.BROTLI_DEFAULT_WINDOW, Math.ceil(Math.log2(Math.max(length, 1))) + 1)
-  );
-  return {
-    params: {
-      [c.BROTLI_PARAM_QUALITY]: Math.max(0, Math.min(11, Math.round((level * 11) / 9))),
-      [c.BROTLI_PARAM_SIZE_HINT]: length,
-      [c.BROTLI_PARAM_LGWIN]: lgwin,
-    },
-  };
+  const params: { [key: number]: number | boolean } = { ...(custom?.params ?? {}) };
+  if (params[c.BROTLI_PARAM_QUALITY] === undefined) {
+    params[c.BROTLI_PARAM_QUALITY] = Math.max(0, Math.min(11, Math.round((level * 11) / 9)));
+  }
+  if (params[c.BROTLI_PARAM_SIZE_HINT] === undefined) params[c.BROTLI_PARAM_SIZE_HINT] = length;
+  if (params[c.BROTLI_PARAM_LGWIN] === undefined) {
+    params[c.BROTLI_PARAM_LGWIN] = Math.max(
+      c.BROTLI_MIN_WINDOW_BITS,
+      Math.min(c.BROTLI_DEFAULT_WINDOW, Math.ceil(Math.log2(Math.max(length, 1))) + 1)
+    );
+  }
+  return { ...custom, params };
+}
+
+/** zlib options for one gzip/deflate body: the app's, with the level filled in. */
+function zlibOptions(level: number, custom?: ZlibOptions): ZlibOptions {
+  if (custom === undefined) return { level };
+  return custom.level === undefined ? { ...custom, level } : custom;
+}
+
+// ---------------------------------------------------------------------------
+// Reused gzip encoders
+//
+// Node's one-call API (gzipSync) builds a fresh encoder for every body and
+// tears it down after: for a body of a few kilobytes the deflate state - a
+// 32 KB window plus hash tables, allocated and cleared - is a fair share of
+// the work. The sync API drives the same native handle a zlib stream owns,
+// so one stream per gzip setting is kept and reset between bodies, the way
+// the encoder would be reused in C. The handle is reached through two
+// stream internals (`_handle`, `_writeState`); they have been stable since
+// Node 10, but a Node that changes them must never produce a wrong body, so
+// the handle is proven once with a round trip against the one-call output,
+// and anything it does not match - or any later throw - retires it in
+// favour of gzipSync. `reuseEncoders: false` turns the whole thing off.
+// ---------------------------------------------------------------------------
+type SyncEncoder = (input: Buffer) => Buffer;
+const retainedGzip = new Map<string, SyncEncoder | null>();
+
+function makeRetainedGzip(options: ZlibOptions): SyncEncoder | null {
+  const zlib = z();
+  let stream: any;
+  try {
+    stream = zlib.createGzip(options);
+    const handle = stream._handle;
+    const state = stream._writeState;
+    if (
+      !handle ||
+      typeof handle.writeSync !== 'function' ||
+      typeof handle.reset !== 'function' ||
+      !(state instanceof Uint32Array) ||
+      state.length < 2
+    ) {
+      stream.close();
+      return null;
+    }
+    // An error the handle raises reaches the stream; it must never take the
+    // process down, and the throw below retires the encoder.
+    stream.on('error', () => {});
+    const FINISH = zlib.constants.Z_FINISH;
+    const compress: SyncEncoder = input => {
+      let chunks: Buffer[] | null = null;
+      let first: Buffer | null = null;
+      let inOff = 0;
+      let inLen = input.length;
+      let outSize = inLen < 512 ? 256 : inLen >> 1;
+      for (;;) {
+        const out = Buffer.allocUnsafe(outSize);
+        handle.writeSync(FINISH, input, inOff, inLen, out, 0, outSize);
+        const availOut = state[0] as number;
+        const availIn = state[1] as number;
+        const produced = outSize - availOut;
+        if (produced > 0) {
+          const piece = produced === outSize ? out : out.subarray(0, produced);
+          if (first === null) first = piece;
+          else (chunks ??= [first]).push(piece);
+        }
+        inOff += inLen - availIn;
+        inLen = availIn;
+        if (availOut !== 0) break;
+        outSize *= 2;
+      }
+      handle.reset();
+      return chunks === null ? (first ?? Buffer.alloc(0)) : Buffer.concat(chunks);
+    };
+    // Proof: two bodies in a row (the second exercises the reset) decode to
+    // the input and are the size the one-call API makes of them, so a handle
+    // whose reset forgot its level can never serve.
+    const sample = Buffer.from('moro compression sample '.repeat(300) + Math.random());
+    const reference = zlib.gzipSync(sample, options).length;
+    for (let i = 0; i < 2; i++) {
+      const got = compress(sample);
+      if (!zlib.gunzipSync(got).equals(sample) || Math.abs(got.length - reference) > 16) {
+        stream.close();
+        return null;
+      }
+    }
+    let broken = false;
+    return input => {
+      if (broken) return zlib.gzipSync(input, options);
+      try {
+        return compress(input);
+      } catch {
+        // The handle's state is unknown now: this body and every later one
+        // go the one-call way.
+        broken = true;
+        try {
+          stream.close();
+        } catch {
+          // already closed
+        }
+        return zlib.gzipSync(input, options);
+      }
+    };
+  } catch {
+    try {
+      stream?.close();
+    } catch {
+      // nothing to close
+    }
+    return null;
+  }
+}
+
+function retainedGzipFor(options: ZlibOptions): SyncEncoder | null {
+  const key = JSON.stringify(options);
+  let enc = retainedGzip.get(key);
+  if (enc === undefined) {
+    enc = makeRetainedGzip(options);
+    retainedGzip.set(key, enc);
+  }
+  return enc;
 }
 
 /**
@@ -163,34 +318,46 @@ export function negotiateEncoding(
   return null;
 }
 
-/** Compress a buffer/string with the chosen encoding. */
+/** Compress a buffer/string with the chosen encoding, on the threadpool. */
 export async function compressBuffer(
   data: Buffer | string,
   encoding: Encoding,
-  level = 6
+  level = 6,
+  encoders?: EncoderOptions
 ): Promise<Buffer> {
   const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
   switch (encoding) {
     case 'br':
-      return brotliAsync(buf, brotliOptions(buf.length, level));
+      return brotliAsync(buf, brotliOptions(buf.length, level, encoders?.brotli));
     case 'gzip':
-      return gzipAsync(buf, { level });
+      return gzipAsync(buf, zlibOptions(level, encoders?.gzip));
     case 'deflate':
-      return deflateAsync(buf, { level });
+      return deflateAsync(buf, zlibOptions(level, encoders?.gzip));
   }
 }
 
 /** Compress a buffer/string on the calling thread (see shouldInline). */
-export function compressBufferSync(data: Buffer | string, encoding: Encoding, level = 6): Buffer {
+export function compressBufferSync(
+  data: Buffer | string,
+  encoding: Encoding,
+  level = 6,
+  encoders?: EncoderOptions
+): Buffer {
   const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
   const zlib = z();
   switch (encoding) {
     case 'br':
-      return zlib.brotliCompressSync(buf, brotliOptions(buf.length, level));
-    case 'gzip':
-      return zlib.gzipSync(buf, { level });
+      return zlib.brotliCompressSync(buf, brotliOptions(buf.length, level, encoders?.brotli));
+    case 'gzip': {
+      const options = zlibOptions(level, encoders?.gzip);
+      if (encoders?.reuseEncoders !== false) {
+        const retained = retainedGzipFor(options);
+        if (retained !== null) return retained(buf);
+      }
+      return zlib.gzipSync(buf, options);
+    }
     case 'deflate':
-      return zlib.deflateSync(buf, { level });
+      return zlib.deflateSync(buf, zlibOptions(level, encoders?.gzip));
   }
 }
 
@@ -222,8 +389,8 @@ export async function maybeCompress(
 
   try {
     const compressed = shouldInline(byteLen, settings)
-      ? compressBufferSync(body, encoding, settings.level)
-      : await compressBuffer(body, encoding, settings.level);
+      ? compressBufferSync(body, encoding, settings.level, settings)
+      : await compressBuffer(body, encoding, settings.level, settings);
     return { body: compressed, encoding };
   } catch {
     return { body, encoding: null };

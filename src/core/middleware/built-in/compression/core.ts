@@ -15,10 +15,12 @@ import {
   DEFAULT_ENCODINGS,
   DEFAULT_MAX_INLINE_BYTES,
   type Encoding,
+  type EncoderOptions,
 } from '../../../http/utils/compression.js';
 
-export interface CompressionOptions {
+export interface CompressionOptions extends EncoderOptions {
   threshold?: number;
+  /** 1-9: the gzip level, and the brotli quality it maps to (see `gzip` / `brotli` to pin either). */
   level?: number;
   encodings?: Encoding[];
   /**
@@ -35,6 +37,7 @@ export class CompressionCore {
   private level: number;
   private encodings: Encoding[];
   private maxInlineBytes: number;
+  private encoders: EncoderOptions;
   private filter?: ((req: HttpRequest, res: HttpResponse) => boolean) | undefined;
 
   constructor(options: CompressionOptions = {}) {
@@ -42,6 +45,11 @@ export class CompressionCore {
     this.level = options.level || 6; // Default compression level
     this.encodings = options.encodings || DEFAULT_ENCODINGS;
     this.maxInlineBytes = options.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES;
+    this.encoders = {
+      ...(options.gzip !== undefined ? { gzip: options.gzip } : {}),
+      ...(options.brotli !== undefined ? { brotli: options.brotli } : {}),
+      ...(options.reuseEncoders !== undefined ? { reuseEncoders: options.reuseEncoders } : {}),
+    };
     this.filter = options.filter;
   }
 
@@ -63,6 +71,7 @@ export class CompressionCore {
     const threshold = this.threshold;
     const encodings = this.encodings;
     const maxInline = this.maxInlineBytes;
+    const encoders = this.encoders;
     const filterOk = this.filter ? this.filter(req, res) : true;
 
     const compressResponse = (data: any, isJson: boolean, contentType?: string) => {
@@ -98,7 +107,7 @@ export class CompressionCore {
       if (maxInline > 0 && byteLength <= maxInline && !res.headersSent) {
         let compressed: Buffer;
         try {
-          compressed = compressBufferSync(buffer, encoding, level);
+          compressed = compressBufferSync(buffer, encoding, level, encoders);
         } catch {
           if (isJson) {
             res.setHeader('Content-Length', byteLength);
@@ -131,7 +140,7 @@ export class CompressionCore {
         (res as any).writeHead((res as any).statusCode || 200);
       }
 
-      compressBuffer(buffer, encoding, level)
+      compressBuffer(buffer, encoding, level, encoders)
         .then(compressed => res.end(compressed))
         .catch(() => res.end()); // headers already committed - can't fall back to raw
 
@@ -139,8 +148,11 @@ export class CompressionCore {
     };
 
     res.json = function (data: any) {
+      // The same type res.json sends without the middleware: JSON is UTF-8 by
+      // definition (RFC 8259 §8.1), so a charset parameter only adds bytes to
+      // every reply.
       if (!this.getHeader('Content-Type')) {
-        this.setHeader('Content-Type', 'application/json; charset=utf-8');
+        this.setHeader('Content-Type', 'application/json');
       }
       compressResponse(data, true, 'application/json');
       return this;

@@ -523,4 +523,122 @@ describe('staticFiles', () => {
       expect(Buffer.concat(res.chunks).length).toBe(100);
     });
   });
+
+  describe('in-memory cache', () => {
+    const sameLength = (s: string) =>
+      s.replace(/[a-z]/g, c => (c === 'z' ? 'a' : String.fromCharCode(c.charCodeAt(0) + 1)));
+
+    it('serves repeated requests from memory with the same headers and bytes', async () => {
+      const mw = staticFiles({ root, cache: true });
+      const first = await run(mw, '/app.css');
+      const second = await run(mw, '/app.css');
+      expect(first.nextCalled).toBe(false);
+      expect(second.nextCalled).toBe(false);
+      for (const r of [first, second]) {
+        expect(r.res.headers['content-type']).toBe('text/css; charset=utf-8');
+        expect(r.res.headers['etag']).toMatch(/^"/);
+        expect(r.res.headers['last-modified']).toBeDefined();
+        expect(r.res.headers['accept-ranges']).toBe('bytes');
+        expect(r.res.body.toString()).toBe('body{color:red}');
+      }
+      expect(second.res.headers['etag']).toBe(first.res.headers['etag']);
+    });
+
+    it('notices a replaced file of the same length once the revalidation window has passed', async () => {
+      const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'moro-static-cache-')));
+      try {
+        const original = 'const version = "one";';
+        await fs.writeFile(path.join(dir, 'v.js'), original);
+        const mw = staticFiles({ root: dir, cache: { revalidateMs: 30, watch: false } });
+        expect((await run(mw, '/v.js')).res.body.toString()).toBe(original);
+
+        const replaced = sameLength(original);
+        expect(replaced.length).toBe(original.length);
+        // a later mtime, as a real replacement has
+        await new Promise(r => setTimeout(r, 20));
+        await fs.writeFile(path.join(dir, 'v.js'), replaced);
+        const future = new Date(Date.now() + 5_000);
+        await fs.utimes(path.join(dir, 'v.js'), future, future);
+
+        await new Promise(r => setTimeout(r, 40));
+        const after = await run(mw, '/v.js');
+        expect(after.res.body.toString()).toBe(replaced);
+        // and it stays current from then on
+        expect((await run(mw, '/v.js')).res.body.toString()).toBe(replaced);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('revalidates on every request with revalidateMs: 0', async () => {
+      const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'moro-static-cache-')));
+      try {
+        await fs.writeFile(path.join(dir, 'a.txt'), 'first');
+        const mw = staticFiles({ root: dir, cache: { revalidateMs: 0, watch: false } });
+        expect((await run(mw, '/a.txt')).res.body.toString()).toBe('first');
+        await fs.writeFile(path.join(dir, 'a.txt'), 'second!');
+        expect((await run(mw, '/a.txt')).res.body.toString()).toBe('second!');
+        await fs.rm(path.join(dir, 'a.txt'));
+        expect((await run(mw, '/a.txt')).nextCalled).toBe(true);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps the precompressed sidecars with the entry and negotiates them per request', async () => {
+      const mw = staticFiles({ root, precompressed: true, cache: true });
+      await run(mw, '/pre/app.js'); // fills the entry
+      const br = await run(mw, '/pre/app.js', 'GET', { 'accept-encoding': 'gzip, br' });
+      expect(br.res.headers['content-encoding']).toBe('br');
+      expect(br.res.headers['content-length']).toBe('BR-BYTES'.length);
+      expect(br.res.headers['vary']).toBe('Accept-Encoding');
+      expect(br.res.headers['etag']).toMatch(/-br"$/);
+      expect(br.res.body.toString()).toBe('BR-BYTES');
+      const gz = await run(mw, '/pre/app.js', 'GET', { 'accept-encoding': 'gzip' });
+      expect(gz.res.headers['content-encoding']).toBe('gzip');
+      expect(gz.res.body.toString()).toBe('GZIP-BYTES!');
+      const identity = await run(mw, '/pre/app.js', 'GET', { 'accept-encoding': 'identity' });
+      expect(identity.res.headers['content-encoding']).toBeUndefined();
+      expect(identity.res.body.toString()).toBe('console.log("source")');
+      // a sidecar older than its source stays ignored from the cache too
+      const stale = await run(mw, '/pre/stale.js', 'GET', { 'accept-encoding': 'gzip' });
+      await run(mw, '/pre/stale.js', 'GET', { 'accept-encoding': 'gzip' });
+      expect(stale.res.headers['content-encoding']).toBeUndefined();
+      expect(stale.res.body.toString()).toBe('fresh source');
+    });
+
+    it('answers conditional and HEAD requests from the entry', async () => {
+      const mw = staticFiles({ root, precompressed: true, cache: true });
+      const full = await run(mw, '/pre/app.js', 'GET', { 'accept-encoding': 'br' });
+      const cond = await run(mw, '/pre/app.js', 'GET', {
+        'accept-encoding': 'br',
+        'if-none-match': full.res.headers['etag'],
+      });
+      expect(cond.res.statusCode).toBe(304);
+      expect(cond.res.body).toBeUndefined();
+      const head = await run(mw, '/pre/app.js', 'HEAD', { 'accept-encoding': 'br' });
+      expect(head.res.headers['content-encoding']).toBe('br');
+      expect(head.res.headers['content-length']).toBe('BR-BYTES'.length);
+      expect(head.res.body).toBeUndefined();
+    });
+
+    it('leaves files above maxFileBytes and Range requests to the uncached path', async () => {
+      const mw = staticFiles({ root, cache: { maxFileBytes: 4 } });
+      const { res, nextCalled } = await run(mw, '/app.css');
+      expect(nextCalled).toBe(false);
+      expect(res.body.toString()).toBe('body{color:red}');
+      const ranged = await run(staticFiles({ root, cache: true }), '/app.css', 'GET', {
+        range: 'bytes=0-3',
+      });
+      expect(ranged.res.statusCode).toBe(206);
+      expect(ranged.res.body.toString()).toBe('body');
+    });
+
+    it('close() releases the watcher and the cached files', async () => {
+      const core = new StaticCore({ root, cache: true });
+      await core.handleRequest(createRequest('/app.css'), createResponse() as any);
+      expect(() => core.close()).not.toThrow();
+      expect(() => core.close()).not.toThrow();
+    });
+  });
 });
