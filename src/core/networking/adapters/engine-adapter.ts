@@ -306,7 +306,12 @@ class EngineConnectionWrapper implements WebSocketConnection {
   private _flat: string[] | undefined;
   private _headers: Record<string, string> | undefined = undefined;
   private _query: Record<string, string> | undefined = undefined;
-  private readonly _queryString: string;
+  private _queryString: string;
+  // The engine upgraded this socket itself (wsAutoUpgrade): the handshake is
+  // fetched from the engine the first time ip, headers or query is read. It
+  // stays readable through the disconnect handler; a read after that gets
+  // the empty values.
+  private _lazy: boolean;
   private rooms = new Set<string>();
   private eventHandlers = new Map<
     string,
@@ -315,7 +320,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   private anyHandlers: Array<(event: string, ...args: any[]) => void> = [];
   private disconnectHandlers: Array<(reason?: any) => void> = [];
   private logger = connLogger;
-  private readonly _ip: string;
+  private _ip: string;
 
   constructor(
     private server: any,
@@ -328,12 +333,29 @@ class EngineConnectionWrapper implements WebSocketConnection {
     // Handshake snapshot (captured before the upgrade invalidated the reqId):
     // real values for IP-based rate limiting and header/token connection
     // auth. The header object and the parsed query are built on first read.
+    // Without a snapshot the engine performed the upgrade and holds the
+    // handshake: it is fetched on first read (see _lazy).
+    this._lazy = handshake === undefined;
     this._ip = handshake?.ip ?? '';
     this._flat = handshake?.flat;
     this._queryString = handshake?.query ?? '';
   }
 
+  private materialize(): void {
+    this._lazy = false;
+    const hs =
+      typeof this.server.wsHandshake === 'function'
+        ? this.server.wsHandshake(this.wsId)
+        : undefined;
+    if (hs) {
+      this._ip = hs.ip;
+      this._flat = hs.flat;
+      this._queryString = hs.query;
+    }
+  }
+
   get ip(): string {
+    if (this._lazy) this.materialize();
     return this._ip;
   }
 
@@ -341,6 +363,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   get headers(): Record<string, string> {
     let h = this._headers;
     if (h === undefined) {
+      if (this._lazy) this.materialize();
       h = headersFromFlat(this._flat);
       this._flat = undefined;
       this._headers = h;
@@ -352,6 +375,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   get query(): Record<string, string> {
     let q = this._query;
     if (q === undefined) {
+      if (this._lazy) this.materialize();
       q = parseQueryString(this._queryString);
       this._query = q;
     }
@@ -366,7 +390,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
     headers: Record<string, string>;
     address: string;
   } {
-    return { query: this.query, headers: this.headers, address: this._ip };
+    return { query: this.query, headers: this.headers, address: this.ip };
   }
 
   on(event: string, handler: (data: any, callback?: (response?: any) => void) => void): void {

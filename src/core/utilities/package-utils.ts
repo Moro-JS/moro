@@ -121,6 +121,11 @@ export interface EngineCapabilities {
    *  with one variable path segment, echoed as the body, answered inside the
    *  engine. Used for param(name) handlers on bare routes. */
   paramRoutes: boolean;
+  /** setWsAutoUpgrade()/wsGetHeaders()/wsGetQuery()/wsGetRemoteAddress()
+   *  exist (engine >= 1.1.15): the engine answers a valid WebSocket
+   *  handshake itself and fires onWsOpen, so an upgrade never round-trips
+   *  through onRequest; the handshake stays readable on the socket. */
+  wsAutoUpgrade: boolean;
   /** I/O transport in use ('epoll', 'uv', 'uring'), when the engine reports it. */
   transport?: string;
 }
@@ -144,6 +149,7 @@ const CAP_KEYS = [
   'callbackScope',
   'batchDispatch',
   'paramRoutes',
+  'wsAutoUpgrade',
 ] as const;
 
 export interface NativeEngineLoadResult {

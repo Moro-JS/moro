@@ -1576,6 +1576,17 @@ export class MoroEngineServer {
   /** @internal */ _wsSend!: (wsId: number, data: any, isBinary: boolean) => boolean;
   /** @internal */ _wsClose!: (wsId: number, code?: number, reason?: string) => void;
   /** @internal */ _upgradeToWebSocket!: (reqId: number) => number;
+  // Engine-side upgrades (engine >= 1.1.15, capabilities.wsAutoUpgrade): a
+  // valid handshake is answered inside the engine and onWsOpen fires without
+  // the request ever reaching onRequest - no header materialisation, no
+  // native round trips, no request/response objects per upgrade. The
+  // handshake is read from the socket on first access (wsHandshake). Assigned
+  // only when the flag AND every function are present, like the templates.
+  private _setWsAutoUpgrade?: (serverId: number, on: boolean) => void;
+  private _wsGetHeaders?: (wsId: number) => string[] | undefined;
+  private _wsGetQuery?: (wsId: number) => string | undefined;
+  private _wsGetRemoteAddress?: (wsId: number) => string | undefined;
+  private _wsAutoOn = false;
   // Prepared response templates (engine >= 1.1.6): assigned only when the
   // engine advertises capabilities.responseTemplates AND the functions exist,
   // so a flag/binary mismatch can never put `undefined` into a hot call site.
@@ -1806,6 +1817,18 @@ export class MoroEngineServer {
     if (this._capabilities?.paramRoutes === true && typeof surface.setParamRoute === 'function') {
       this._setParamRoute = surface.setParamRoute;
       this._paramOn = true;
+    }
+    if (
+      this._capabilities?.wsAutoUpgrade === true &&
+      typeof surface.setWsAutoUpgrade === 'function' &&
+      typeof surface.wsGetHeaders === 'function' &&
+      typeof surface.wsGetQuery === 'function' &&
+      typeof surface.wsGetRemoteAddress === 'function'
+    ) {
+      this._setWsAutoUpgrade = surface.setWsAutoUpgrade;
+      this._wsGetHeaders = surface.wsGetHeaders;
+      this._wsGetQuery = surface.wsGetQuery;
+      this._wsGetRemoteAddress = surface.wsGetRemoteAddress;
     }
     if (
       this._capabilities?.batchDispatch === true &&
@@ -2139,6 +2162,26 @@ export class MoroEngineServer {
     onClose(wsId: number, code: number): void;
   }): void {
     this._wsBridge = bridge;
+    // With the capability the engine answers valid handshakes itself; the
+    // onRequest branch below stays for an invalid one (surfaced as a plain
+    // request, answered 400 by the router) and for older engines.
+    if (this._setWsAutoUpgrade) {
+      this._setWsAutoUpgrade(this.serverId, true);
+      this._wsAutoOn = true;
+    }
+  }
+
+  /**
+   * The handshake of a WebSocket the engine upgraded itself: the peer's
+   * address, the request headers as the engine's flat list and the raw query
+   * string. undefined without the capability, or once the socket is gone
+   * (the engine keeps it for the socket's lifetime, through onWsClose).
+   */
+  wsHandshake(wsId: number): { ip: string; flat: string[] | undefined; query: string } | undefined {
+    if (!this._wsGetHeaders || !this._wsGetQuery || !this._wsGetRemoteAddress) return undefined;
+    const flat = this._wsGetHeaders(wsId);
+    if (flat === undefined) return undefined;
+    return { ip: this._wsGetRemoteAddress(wsId) || '', flat, query: this._wsGetQuery(wsId) || '' };
   }
 
   /** Send a frame on a WebSocket. Returns false on backpressure. */
@@ -2908,6 +2951,7 @@ export class MoroEngineServer {
         this.serverId = this.registerWithEngine();
         this._resetTemplates();
         this._reapplyStaticRoutes();
+        if (this._wsAutoOn && this._setWsAutoUpgrade) this._setWsAutoUpgrade(this.serverId, true);
         this.closed = false;
       }
       // Synchronous bind; throws on bind errors, returns the actual port
