@@ -1,4 +1,3 @@
- 
 // OpenTelemetry middleware through the real servers: span naming by route
 // template, the span being current inside handlers (the dispatcher runs the
 // chain iteratively, so this is the property worth proving end to end), error
