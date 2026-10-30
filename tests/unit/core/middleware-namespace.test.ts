@@ -30,6 +30,11 @@ describe('Middleware namespace exports', () => {
     const errorTracker = (middleware as any).errorTracker();
     expect(typeof errorTracker).toBe('function');
     expect(errorTracker.length).toBe(4);
+
+    // openTelemetry needs only @opentelemetry/api (a dev dependency here)
+    const openTelemetry = (middleware as any).openTelemetry();
+    expect(typeof openTelemetry).toBe('function');
+    expect(openTelemetry.length).toBe(3);
   });
 
   it('standardMiddleware and simpleMiddleware no longer exist', () => {

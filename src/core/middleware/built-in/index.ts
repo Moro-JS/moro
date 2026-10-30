@@ -6,6 +6,7 @@ export { validation } from './validation/index.js';
 export { requestLogger, createRequestLoggerMiddleware } from './request-logger/index.js';
 export { prometheus, createPrometheusMiddleware } from './prometheus/index.js';
 export { cloudWatch, createCloudWatchMiddleware } from './cloudwatch/index.js';
+export { openTelemetry, createOpenTelemetryMiddleware } from './opentelemetry/index.js';
 export {
   performanceMonitor,
   createPerformanceMonitorMiddleware,
@@ -76,6 +77,7 @@ import { performanceMonitor } from './performance-monitor/index.js';
 import { errorTracker } from './error-tracker/index.js';
 import { prometheus } from './prometheus/index.js';
 import { cloudWatch } from './cloudwatch/index.js';
+import { openTelemetry } from './opentelemetry/index.js';
 import { cookie } from './cookie/index.js';
 import { csrf } from './csrf/index.js';
 import { csp } from './csp/index.js';
@@ -108,6 +110,7 @@ export const builtInMiddleware = {
   errorTracker,
   prometheus,
   cloudWatch,
+  openTelemetry,
   // Advanced middleware
   cookie,
   csrf,

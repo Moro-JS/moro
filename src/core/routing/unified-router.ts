@@ -878,6 +878,21 @@ export class UnifiedRouter {
     return false;
   }
 
+  /**
+   * The registered route template a request would dispatch to ('/users/:id'),
+   * or undefined when nothing matches. A read-only probe of the same static
+   * map and radix tree handleRequest uses: nothing executes and params are not
+   * written to the request. Observability middleware needs it for the
+   * bounded-cardinality http.route attribute, where the raw path is unbounded.
+   */
+  matchRoute(method: string, path: string): string | undefined {
+    const upper = UPPERCASE_METHODS.has(method) ? method : method.toUpperCase();
+    const staticRoute = this.staticRoutesByMethod.get(upper)?.get(path);
+    if (staticRoute !== undefined) return staticRoute.schema.path;
+    const dynamic = this.radixRouter.findRoute(upper, path);
+    return dynamic ? (dynamic.handler as InternalRoute).schema.path : undefined;
+  }
+
   // ===== Route Execution =====
 
   private async executeRoute(

@@ -125,6 +125,7 @@
     "@aws-sdk/client-sqs": ">=3.927.0",
     "@grpc/grpc-js": ">=1.14.1",
     "@grpc/proto-loader": ">=0.8.0",
+    "@opentelemetry/api": ">=1.9.0",
     "@pothos/core": ">=4.10.0",
     "@sendgrid/mail": ">=8.1.6",
     "amqplib": ">=0.10.9",
@@ -164,6 +165,9 @@
       "optional": true
     },
     "@grpc/proto-loader": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
       "optional": true
     },
     "@pothos/core": {
@@ -251,6 +255,11 @@
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@jest/globals": "^30.1.2",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.12.0",
+    "@opentelemetry/core": "^2.12.0",
+    "@opentelemetry/sdk-metrics": "^2.12.0",
+    "@opentelemetry/sdk-trace-base": "^2.12.0",
     "@pothos/core": "^4.13.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.3.1",
