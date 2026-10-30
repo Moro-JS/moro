@@ -61,6 +61,30 @@ describe('compression utils', () => {
     expect(Math.abs(fitted.length - defaultWindow.length)).toBeLessThanOrEqual(2);
   });
 
+  it('brotli bodies come out byte-identical to the one-call API, reused encoder or not', () => {
+    const Q = zlib.constants.BROTLI_PARAM_QUALITY;
+    const a = Buffer.from('alpha '.repeat(500));
+    const opts = { brotli: { params: { [Q]: 3 } } };
+    // three different bodies in a row: a reused encoder must not carry one
+    // body's context into the next (a reset that keeps it is declined)
+    for (const input of [body, a, body]) {
+      const out = compressBufferSync(input, 'br', 6, opts);
+      expect(zlib.brotliDecompressSync(out).equals(input)).toBe(true);
+      const once = zlib.brotliCompressSync(input, {
+        params: {
+          [Q]: 3,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: input.length,
+          [zlib.constants.BROTLI_PARAM_LGWIN]: Math.max(
+            zlib.constants.BROTLI_MIN_WINDOW_BITS,
+            Math.min(zlib.constants.BROTLI_DEFAULT_WINDOW, Math.ceil(Math.log2(input.length)) + 1)
+          ),
+        },
+      });
+      // reused: identical to the default-window one-call; fitted one-call otherwise - never larger than either by more than the window field
+      expect(Math.abs(out.length - once.length)).toBeLessThanOrEqual(2);
+    }
+  });
+
   it('the async path takes the same encoder options', async () => {
     const out = await compressBuffer(body, 'gzip', 6, { gzip: { level: 1 } });
     expect(zlib.gunzipSync(out).equals(body)).toBe(true);

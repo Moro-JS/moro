@@ -376,11 +376,15 @@ mapped onto (level 6 is quality 7). To pin either encoder exactly, pass its own 
 options object with its `params` - and what you pin wins over `level`. The brotli window is
 fitted to the body unless you set `BROTLI_PARAM_LGWIN` yourself.
 
-The gzip encoder is reused: one per setting is kept and reset between bodies instead of being
-built and torn down per response, since the encoder's hash tables and window are a fair share
-of what compressing a few kilobytes costs. The handle is proven with a round trip once and the
-one-call zlib API stands in whenever it cannot be driven that way; `reuseEncoders: false` turns
-the reuse off. A compressed `res.json()` reply carries `Content-Type: application/json`, the
+The encoders are reused: one per setting is kept and reset between bodies instead of being
+built and torn down per response, since the encoder's state (deflate's window and hash tables,
+brotli's half-megabyte hasher at quality 3) is a fair share of what compressing a few kilobytes
+costs. A handle is proven once - two different bodies in a row must come out byte-identical to
+the one-call API - and the one-call zlib API stands in whenever it cannot be driven that way.
+Brotli's reset keeps its parameters from Node 26.11, and the kept brotli encoder runs with a
+256 KiB window unless you pin `BROTLI_PARAM_LGWIN`; on an older Node the second body comes out
+different and brotli falls back to the one-call API by itself. `reuseEncoders: false` turns the
+reuse off. A compressed `res.json()` reply carries `Content-Type: application/json`, the
 same type it carries without the middleware.
 
 // Per-route compression: the same factory, attached as route middleware
