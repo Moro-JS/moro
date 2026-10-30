@@ -1,3 +1,9 @@
+## [1.8.17] - 2026-10-30
+
+### Added
+
+- Engine-side WebSocket upgrades. With `@morojs/engine` 1.1.15 (`capabilities.wsAutoUpgrade`) the engine answers a valid handshake itself and fires the open callback: the request never enters JavaScript, so an upgrade allocates no request and response objects and makes no native calls for the headers, query and peer address. Those are read from the socket on first access of `socket.ip`, `socket.headers` or `socket.query` (still valid inside the disconnect handler). An invalid handshake is surfaced as a plain request, as before; older engines keep the previous path.
+
 ## [1.8.16] - 2026-10-29
 
 ### Added
