@@ -1,3 +1,9 @@
+## [1.8.19] - 2026-10-30
+
+### Changed
+
+- Compression reuses the brotli encoder as it reuses gzip's: one per quality and window is kept and reset between bodies, proven once by two different bodies coming out byte-identical to the one-call API. On Node 26.11 and later a reset keeps the quality, so a brotli reply costs the compression alone (30 µs against 45 or more per body on a few kilobytes of JSON); on older Node the second body comes out different and brotli falls back to the one-call API by itself. The kept encoder runs with a 256 KiB window unless `BROTLI_PARAM_LGWIN` is pinned.
+
 ## [1.8.18] - 2026-10-30
 
 ### Added
