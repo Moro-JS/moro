@@ -1431,6 +1431,12 @@ app.use(
 );
 ```
 
+The same options go under `performance.compression` in the app config, where they apply to
+every response (`gzip`, `brotli` and `reuseEncoders` included). On the native engine the
+middleware hands its settings to the response instead of wrapping `res.json`/`res.send`, so a
+route-level `compression()` costs one property write per request; a `filter` keeps the
+wrapping path.
+
 **Cache** - Response caching
 
 ```typescript

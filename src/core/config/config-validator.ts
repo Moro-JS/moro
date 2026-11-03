@@ -1373,6 +1373,25 @@ function validateCompressionConfig(config: any, path: string) {
       validateEnum(e, ['br', 'gzip', 'deflate'], `${path}.encodings[]`)
     );
   }
+  // The encoder options (EncoderOptions in utils/compression): zlib and
+  // brotli option objects pass through as they are, the compressor reads
+  // them; reuseEncoders is the switch for the kept encoders.
+  for (const key of ['gzip', 'brotli'] as const) {
+    const value = config[key];
+    if (value === undefined) continue;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ConfigValidationError(
+        `${path}.${key}`,
+        value,
+        'object',
+        `${key} options must be an object`
+      );
+    }
+    result[key] = value;
+  }
+  if (config.reuseEncoders !== undefined) {
+    result.reuseEncoders = validateBoolean(config.reuseEncoders, `${path}.reuseEncoders`);
+  }
   return result;
 }
 

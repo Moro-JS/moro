@@ -133,7 +133,7 @@ function brotliOptions(length: number, level: number, custom?: BrotliOptions): B
   const c = z().constants;
   const params: { [key: number]: number | boolean } = { ...(custom?.params ?? {}) };
   if (params[c.BROTLI_PARAM_QUALITY] === undefined) {
-    params[c.BROTLI_PARAM_QUALITY] = Math.max(0, Math.min(11, Math.round((level * 11) / 9)));
+    params[c.BROTLI_PARAM_QUALITY] = brotliQuality(level);
   }
   if (params[c.BROTLI_PARAM_SIZE_HINT] === undefined) params[c.BROTLI_PARAM_SIZE_HINT] = length;
   if (params[c.BROTLI_PARAM_LGWIN] === undefined) {
@@ -143,6 +143,11 @@ function brotliOptions(length: number, level: number, custom?: BrotliOptions): B
     );
   }
   return { ...custom, params };
+}
+
+/** The brotli quality (0-11) the shared 1-9 level maps to. */
+function brotliQuality(level: number): number {
+  return Math.max(0, Math.min(11, Math.round((level * 11) / 9)));
 }
 
 /** zlib options for one gzip/deflate body: the app's, with the level filled in. */
@@ -318,6 +323,8 @@ function retainedBrotliFor(custom: BrotliOptions | undefined): SyncEncoder | nul
  */
 export function isCompressible(contentType: string | undefined): boolean {
   if (!contentType) return false;
+  // The types a JSON API and a template page send, before any parsing.
+  if (contentType === 'application/json' || contentType === 'text/html') return true;
   const ct = (contentType.split(';')[0] ?? '').trim().toLowerCase();
   if (ct.startsWith('text/')) return true;
   if (ct.endsWith('+json') || ct.endsWith('+xml')) return true;
@@ -341,7 +348,26 @@ export function negotiateEncoding(
   allowed: Encoding[] = DEFAULT_ENCODINGS
 ): Encoding | null {
   if (!acceptEncoding) return null;
+  // The Accept-Encoding strings a server sees are few (one per client
+  // family or proxy), so each is parsed once per preference list. The key
+  // is client-supplied: the memo is bounded and starts over when full.
+  let memo = negotiateMemo.get(allowed);
+  if (memo === undefined) {
+    memo = new Map();
+    negotiateMemo.set(allowed, memo);
+  }
+  const hit = memo.get(acceptEncoding);
+  if (hit !== undefined) return hit;
+  const picked = parseNegotiation(acceptEncoding, allowed);
+  if (memo.size >= NEGOTIATE_MEMO_MAX) memo.clear();
+  memo.set(acceptEncoding, picked);
+  return picked;
+}
 
+const NEGOTIATE_MEMO_MAX = 256;
+const negotiateMemo = new WeakMap<Encoding[], Map<string, Encoding | null>>();
+
+function parseNegotiation(acceptEncoding: string, allowed: Encoding[]): Encoding | null {
   // Parse "gzip;q=0.8, br, deflate;q=0" into a q-value map.
   const q = new Map<string, number>();
   for (const part of acceptEncoding.split(',')) {
@@ -387,6 +413,43 @@ export async function compressBuffer(
   }
 }
 
+// Which kept encoder a settings object uses is settled once per level: the
+// key (quality, a pinned window, the zlib options) does not depend on the
+// body, and serialising it for every reply cost more than the lookup it
+// keyed. `null` records that the encoder declined (see makeRetained), so the
+// one-call API is taken without asking again.
+interface RetainedPick {
+  level: number;
+  br?: ((input: Buffer) => Buffer) | null;
+  gzip?: ((input: Buffer) => Buffer) | null;
+}
+const retainedPicks = new WeakMap<EncoderOptions, RetainedPick>();
+const BARE_ENCODERS: EncoderOptions = {};
+
+function retainedPickFor(encoders: EncoderOptions, level: number): RetainedPick {
+  let pick = retainedPicks.get(encoders);
+  if (pick === undefined || pick.level !== level) {
+    pick = { level };
+    retainedPicks.set(encoders, pick);
+  }
+  return pick;
+}
+
+/**
+ * The brotli options a kept encoder is built from: the app's, with the
+ * quality mapped from the level unless pinned. The per-body size hint and
+ * fitted window belong to the one-call path (retainedBrotliFor pins its own
+ * window unless the app did).
+ */
+function retainedBrotliOptions(level: number, custom?: BrotliOptions): BrotliOptions {
+  const c = z().constants;
+  const params: { [key: number]: number | boolean } = { ...(custom?.params ?? {}) };
+  if (params[c.BROTLI_PARAM_QUALITY] === undefined) {
+    params[c.BROTLI_PARAM_QUALITY] = brotliQuality(level);
+  }
+  return { ...custom, params };
+}
+
 /** Compress a buffer/string on the calling thread (see shouldInline). */
 export function compressBufferSync(
   data: Buffer | string,
@@ -398,32 +461,24 @@ export function compressBufferSync(
   const zlib = z();
   switch (encoding) {
     case 'br': {
-      const options = brotliOptions(buf.length, level, encoders?.brotli);
       if (encoders?.reuseEncoders !== false) {
-        // The kept encoder carries the quality (and a pinned window) only;
-        // the per-body window and size hint belong to the one-call path.
-        const retained = retainedBrotliFor({
-          ...options,
-          params: Object.fromEntries(
-            Object.entries(options.params ?? {}).filter(
-              ([k]) =>
-                Number(k) !== zlib.constants.BROTLI_PARAM_SIZE_HINT &&
-                (Number(k) !== zlib.constants.BROTLI_PARAM_LGWIN ||
-                  encoders?.brotli?.params?.[zlib.constants.BROTLI_PARAM_LGWIN] !== undefined)
-            )
-          ),
-        });
-        if (retained !== null) return retained(buf);
+        const pick = retainedPickFor(encoders ?? BARE_ENCODERS, level);
+        if (pick.br === undefined) {
+          pick.br = retainedBrotliFor(retainedBrotliOptions(level, encoders?.brotli));
+        }
+        if (pick.br !== null) return pick.br(buf);
       }
-      return zlib.brotliCompressSync(buf, options);
+      return zlib.brotliCompressSync(buf, brotliOptions(buf.length, level, encoders?.brotli));
     }
     case 'gzip': {
-      const options = zlibOptions(level, encoders?.gzip);
       if (encoders?.reuseEncoders !== false) {
-        const retained = retainedGzipFor(options);
-        if (retained !== null) return retained(buf);
+        const pick = retainedPickFor(encoders ?? BARE_ENCODERS, level);
+        if (pick.gzip === undefined) {
+          pick.gzip = retainedGzipFor(zlibOptions(level, encoders?.gzip));
+        }
+        if (pick.gzip !== null) return pick.gzip(buf);
       }
-      return zlib.gzipSync(buf, options);
+      return zlib.gzipSync(buf, zlibOptions(level, encoders?.gzip));
     }
     case 'deflate':
       return zlib.deflateSync(buf, zlibOptions(level, encoders?.gzip));

@@ -542,12 +542,22 @@ export class EngineResponse extends LazyEventEmitter {
   // after writeHead/write), _ended means the body is complete
   private _ended = false;
   private _aborted = false;
+  // Compression for this response alone, handed over by the compression
+  // middleware (route-level or global): the reply then takes the same path a
+  // server-level setting would, and json/send keep their shapes instead of
+  // being wrapped per request. Undefined means the server's own setting.
+  private _compression: CompressionSettings | undefined = undefined;
 
   constructor(server: MoroEngineServer, reqId: number, logger: any) {
     super();
     this._server = server;
     this._reqId = reqId;
     this._logger = logger;
+  }
+
+  /** @internal The compression middleware's hand-off (built-in/compression/middleware.ts). */
+  _useCompression(settings: CompressionSettings): void {
+    this._compression = settings;
   }
 
   get responseHeaders(): Record<string, string | string[]> {
@@ -741,7 +751,11 @@ export class EngineResponse extends LazyEventEmitter {
 
     try {
       const rh = this._responseHeaders;
-      if (rh === undefined && !this._server._compression.enabled) {
+      if (
+        rh === undefined &&
+        this._compression === undefined &&
+        !this._server._compression.enabled
+      ) {
         // Hot path: no user-set headers, no compression - one native call.
         // With templates (engine >= 1.1.6) the content-type pair was
         // materialised once in the engine; otherwise the shared pair goes
@@ -769,7 +783,7 @@ export class EngineResponse extends LazyEventEmitter {
   // fast path (zero extra work) whenever compression can't apply, so the
   // default (compression off) pays nothing.
   private _respondMaybeCompressed(body: string | Buffer, contentType?: string): void {
-    const s = this._server._compression;
+    const s = this._compression ?? this._server._compression;
     // HOT PATH: compression is off by default - bail before ANY per-response
     // work (byteLength scans the string; header reads allocate nothing but
     // still cost). The default config must pay zero for this feature.
@@ -924,7 +938,11 @@ export class EngineResponse extends LazyEventEmitter {
             ? TPL_JSON_UTF8
             : TPL_TEXT_UTF8
           : TPL_OCTET;
-      if (rh === undefined && !this._server._compression.enabled) {
+      if (
+        rh === undefined &&
+        this._compression === undefined &&
+        !this._server._compression.enabled
+      ) {
         // No app headers, no compression: the implied content-type rides a
         // prepared template (or the shared pair) - no header object at all.
         // Buffers pass through binary-safe (the engine accepts Uint8Array).

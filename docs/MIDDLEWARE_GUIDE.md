@@ -387,6 +387,13 @@ different and brotli falls back to the one-call API by itself. `reuseEncoders: f
 reuse off. A compressed `res.json()` reply carries `Content-Type: application/json`, the
 same type it carries without the middleware.
 
+On the native engine the middleware does not wrap `res.json` and `res.send` at all: it hands
+its settings to the response, and the reply takes the server's own buffered-response
+compression, the path a `performance.compression` setting takes. That is one property write
+per request, and the response keeps its shape for every later call. A `filter` is consulted
+per response, so a middleware with one keeps the wrapping path, as the middleware does on the
+other servers.
+
 // Per-route compression: the same factory, attached as route middleware
 app
 .get('/api/large-data')
