@@ -117,6 +117,8 @@ interface CacheEntry {
   sidecarStamps: Array<FileStamp | null>;
   bytes: number;
   checkedAt: number;
+  /** The disk check in flight past the revalidation window, shared by every request that crosses it together */
+  revalidating: Promise<boolean> | null;
 }
 
 const stampOf = (st: { mtimeMs: number; size: number; ino: number }): FileStamp => ({
@@ -257,8 +259,23 @@ export class StaticCore {
         }
         // Past the revalidation window: one look at the disk. Unchanged, the
         // entry serves on; changed or gone, it is dropped and the request
-        // takes the resolving path below, which rebuilds it.
-        if (await this.stillCurrent(entry)) {
+        // takes the resolving path below, which rebuilds it. The look is
+        // shared: requests arriving while it is in flight are served from
+        // the entry as they would have been a moment earlier (a thousand
+        // connections crossing the window together used to stat the file
+        // and both sidecars each, on the threadpool, every second), and the
+        // one that started it applies the verdict.
+        let check = entry.revalidating;
+        if (check !== null) return this.serveCached(req, res, entry);
+        check = this.stillCurrent(entry);
+        entry.revalidating = check;
+        let current: boolean;
+        try {
+          current = await check;
+        } finally {
+          entry.revalidating = null;
+        }
+        if (current) {
           entry.checkedAt = Date.now();
           return this.serveCached(req, res, entry);
         }
@@ -528,6 +545,7 @@ export class StaticCore {
       sidecarStamps,
       bytes,
       checkedAt: Date.now(),
+      revalidating: null,
     };
   }
 

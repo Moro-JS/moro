@@ -570,6 +570,44 @@ describe('staticFiles', () => {
       }
     });
 
+    it('shares one disk check among requests that cross the revalidation window together', async () => {
+      const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'moro-static-cache-')));
+      try {
+        await fs.writeFile(path.join(dir, 'a.js'), 'const a = 1;');
+        const mw = staticFiles({
+          root: dir,
+          cache: { revalidateMs: 30, watch: false },
+          precompressed: true,
+        });
+        expect((await run(mw, '/a.js')).res.body.toString()).toBe('const a = 1;');
+        await new Promise(r => setTimeout(r, 40));
+
+        // The namespace import is getter-only under ts-jest; the real module
+        // object is what the middleware's own import reads through.
+        const realModule = require('fs/promises') as typeof fs;
+        const real = realModule.stat;
+        let stats = 0;
+        (realModule as any).stat = async (...args: any[]) => {
+          stats++;
+          return (real as any).apply(realModule, args);
+        };
+        try {
+          const burst = await Promise.all(Array.from({ length: 24 }, () => run(mw, '/a.js')));
+          for (const r of burst) {
+            expect(r.nextCalled).toBe(false);
+            expect(r.res.statusCode).toBe(200);
+            expect(r.res.body.toString()).toBe('const a = 1;');
+          }
+          // the file and its two sidecar positions, once - not once per request
+          expect(stats).toBeLessThanOrEqual(3);
+        } finally {
+          (realModule as any).stat = real;
+        }
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
     it('revalidates on every request with revalidateMs: 0', async () => {
       const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'moro-static-cache-')));
       try {
