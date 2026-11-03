@@ -1,3 +1,14 @@
+## [1.8.20] - 2026-11-03
+
+### Changed
+
+- The compression middleware on the native engine no longer wraps `res.json` and `res.send` per request: it hands its settings to the response, and the reply takes the server's own buffered-response compression, the path a `performance.compression` setting takes. One property write per request, the response keeps its shape, and a route-level `compression()` costs what a server-level setting does. A `filter` is consulted per response, so a middleware with one keeps the wrapping path, as the middleware does on the other servers. Measured on the HttpArena json-comp mix at one worker, the route goes from 7% behind the fastest uWebSockets.js entry to 8% ahead of it.
+- Which kept encoder a settings object uses is settled once per level instead of being keyed by a serialised options object on every reply, and `Accept-Encoding` is parsed once per distinct header string per preference list (a bounded memo). `isCompressible` answers `application/json` and `text/html` before parsing the type.
+
+### Fixed
+
+- `performance.compression.gzip`, `.brotli` and `.reuseEncoders` reach the servers: the config validator dropped them, so a brotli quality pinned there compressed at the quality the shared level maps to (level 6 is quality 7), and the kept-encoder switch had no effect.
+
 ## [1.8.19] - 2026-10-30
 
 ### Changed
