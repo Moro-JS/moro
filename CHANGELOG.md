@@ -1,3 +1,9 @@
+## [1.8.21] - 2026-11-05
+
+### Fixed
+
+- `staticFiles({ cache })` revalidates an entry once per window, not once per request that crosses it. Requests arriving while the disk check is in flight are served from the entry, as they would have been a moment earlier, and the one that started the check applies its verdict. A thousand keep-alive connections crossing the window together used to stat the file and both sidecar positions each, on the threadpool, every second; measured on the HttpArena static-tls mix at one worker that was a fifth of the CPU per request.
+
 ## [1.8.20] - 2026-11-03
 
 ### Changed
