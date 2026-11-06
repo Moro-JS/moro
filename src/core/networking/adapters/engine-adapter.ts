@@ -318,6 +318,10 @@ class EngineConnectionWrapper implements WebSocketConnection {
     Array<(data: any, callback?: (response?: any) => void) => void>
   >();
   private anyHandlers: Array<(event: string, ...args: any[]) => void> = [];
+  // The 'message' and 'binary' handler lists, kept at hand: a raw text or a
+  // binary frame reaches them without a map lookup per frame.
+  private messageHandlers: Array<(data: any, callback?: (response?: any) => void) => void> = [];
+  private binaryHandlers: Array<(data: any, callback?: (response?: any) => void) => void> = [];
   private disconnectHandlers: Array<(reason?: any) => void> = [];
   private logger = connLogger;
   private _ip: string;
@@ -400,7 +404,8 @@ class EngineConnectionWrapper implements WebSocketConnection {
     }
     let handlers = this.eventHandlers.get(event);
     if (!handlers) {
-      handlers = [];
+      handlers =
+        event === 'message' ? this.messageHandlers : event === 'binary' ? this.binaryHandlers : [];
       this.eventHandlers.set(event, handlers);
     }
     handlers.push(handler);
@@ -445,8 +450,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
   handleRawText(text: string): void {
     if (!this.connected) return;
     for (const handler of this.anyHandlers) this.runHandler(handler, 'message', text);
-    const handlers = this.eventHandlers.get('message');
-    if (handlers) for (const handler of handlers) this.runHandler(handler, text);
+    for (const handler of this.messageHandlers) this.runHandler(handler, text);
   }
 
   // A user handler throwing must not kill the connection, skip sibling
@@ -482,8 +486,7 @@ class EngineConnectionWrapper implements WebSocketConnection {
 
   handleBinary(data: any): void {
     if (!this.connected) return;
-    const handlers = this.eventHandlers.get('binary');
-    if (handlers) for (const handler of handlers) this.runHandler(handler, data);
+    for (const handler of this.binaryHandlers) this.runHandler(handler, data);
   }
 
   handleDisconnect(reason?: any): void {

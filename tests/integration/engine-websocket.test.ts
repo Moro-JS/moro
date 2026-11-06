@@ -133,4 +133,44 @@ describeEngine('Native engine integrated WebSockets', () => {
     const rootRes = await roundtrip(`ws://localhost:${port}/`, { event: 'ping', data: 'y' });
     expect(rootRes.data.ns).toBe('root');
   });
+
+  it('a handler that throws synchronously answers with the error envelope and keeps the socket', async () => {
+    app = await createApp({
+      logger: { level: 'fatal' },
+      server: { engine: 'moro' },
+      websocket: {},
+    });
+    const errors: any[] = [];
+    app.on('websocket:error', (e: any) => errors.push(e));
+    app.websocket('/', {
+      boom: () => {
+        throw new Error('sync failure');
+      },
+      ping: (_socket: any, data: any) => ({ echo: data }),
+    });
+    const port = testPort();
+    await listen(app, port);
+
+    // The throw takes the same path as a rejection: websocket:error fires
+    // and the peer gets the error envelope (there is no callback here, so it
+    // arrives as the 'error' event).
+    const res = await roundtrip(`ws://localhost:${port}/`, {
+      event: 'boom',
+      data: 1,
+      callback: true,
+    });
+    expect(res.event).toBe('boom:response');
+    expect(res.data).toEqual({ success: false, error: 'sync failure' });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toBe('sync failure');
+
+    // A synchronous return value is the response, settled without a tick.
+    const ok = await roundtrip(`ws://localhost:${port}/`, {
+      event: 'ping',
+      data: 'z',
+      callback: true,
+    });
+    expect(ok.event).toBe('ping:response');
+    expect(ok.data).toEqual({ echo: 'z' });
+  });
 });

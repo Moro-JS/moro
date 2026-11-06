@@ -1014,32 +1014,60 @@ export class Moro extends EventEmitter {
           return;
         }
 
-        socket.on(event, (data: any, callback: any) => {
-          this.emit('websocket:event', { namespace, event, data });
+        // The handler's result, delivered: a reply frame or an envelope
+        // response, or nothing.
+        const settle = (result: any, callback: any) => {
+          if (this.listenerCount('websocket:response') > 0)
+            this.emit('websocket:response', { namespace, event, result });
+          if (raw) {
+            // Raw framing: the return value IS the reply frame
+            if (isFrame(result)) socket.send?.(result);
+            else if (result !== undefined && result !== null) {
+              socket.send?.(JSON.stringify(result));
+            }
+            return;
+          }
+          if (callback) callback(result);
+          else if (result) socket.emit(`${event}:response`, result);
+        };
+        const fail = (error: any, callback: any) => {
+          this.emit('websocket:error', { namespace, event, error });
+          // A raw peer has no envelope to carry an error object; the
+          // failure is surfaced through the websocket:error event only.
+          if (raw) return;
+          const errorResponse = { success: false, error: error?.message };
+          if (callback) callback(errorResponse);
+          else socket.emit('error', errorResponse);
+        };
 
-          Promise.resolve(handler(socket, data))
-            .then((result: any) => {
-              this.emit('websocket:response', { namespace, event, result });
-              if (raw) {
-                // Raw framing: the return value IS the reply frame
-                if (isFrame(result)) socket.send?.(result);
-                else if (result !== undefined && result !== null) {
-                  socket.send?.(JSON.stringify(result));
-                }
-                return;
-              }
-              if (callback) callback(result);
-              else if (result) socket.emit(`${event}:response`, result);
-            })
-            .catch((error: any) => {
-              this.emit('websocket:error', { namespace, event, error });
-              // A raw peer has no envelope to carry an error object; the
-              // failure is surfaced through the websocket:error event only.
-              if (raw) return;
-              const errorResponse = { success: false, error: error.message };
-              if (callback) callback(errorResponse);
-              else socket.emit('error', errorResponse);
-            });
+        // A synchronous handler is settled on the spot: no promise, no
+        // microtask, and its reply frame leaves in the same batch as the
+        // frame that provoked it. Only a thenable result waits. The
+        // framework events fire only when something listens, so an idle
+        // listener list costs no allocation per frame. A synchronous throw
+        // takes the same error path as a rejection, which the `.catch` of
+        // the promise form was always meant to give it.
+        socket.on(event, (data: any, callback: any) => {
+          if (this.listenerCount('websocket:event') > 0)
+            this.emit('websocket:event', { namespace, event, data });
+          let result: any;
+          try {
+            result = handler(socket, data);
+          } catch (error) {
+            fail(error, callback);
+            return;
+          }
+          if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
+            (result as Promise<any>)
+              .then((r: any) => settle(r, callback))
+              .catch((error: any) => fail(error, callback));
+            return;
+          }
+          try {
+            settle(result, callback);
+          } catch (error) {
+            fail(error, callback);
+          }
         });
       });
     });
@@ -2512,9 +2540,12 @@ export class Moro extends EventEmitter {
     const workerRef = mode.kind === 'thread' ? wt().threadId : process.pid;
     this.logger.info(`${label} initializing`, 'Worker');
 
-    if (mode.kind === 'process') {
-      // Worker-specific optimizations for high concurrency (a thread shares
-      // the primary's pool, sized before it was spawned)
+    if (mode.kind === 'process' && !process.env.UV_THREADPOOL_SIZE) {
+      // A worker process has a libuv pool of its own, sized at first use (a
+      // thread shares the primary's, sized before it was spawned). Only if
+      // the operator did not choose a size: this is one pool per process,
+      // and sixty-four processes with sixty-four threads each is a choice
+      // the operator must be able to make the other way.
       process.env.UV_THREADPOOL_SIZE = '64';
     }
 
