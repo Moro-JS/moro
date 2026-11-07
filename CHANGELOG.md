@@ -1,3 +1,15 @@
+## [1.8.22] - 2026-11-07
+
+### Changed
+
+- WebSocket event handlers are called directly and settled on the spot. A handler used to be called through `Promise.resolve()` and a `.then` chain, with `websocket:event` and `websocket:response` emitted around it with a fresh object each: a promise, a microtask and two allocations per frame, for a handler that returned its reply synchronously. Now only a thenable result waits, and a synchronous handler's reply - the `callback` value, the `<event>:response` emit or the raw reply frame - leaves in the same turn as the frame that provoked it, so it is written in the same batch on the native engine. The two framework events are emitted only when something listens, so an idle listener list costs nothing per frame. Measured with the engine's one callback scope per read (`@morojs/engine` 1.1.18) on an echo handler at one worker: 0.91 to 0.64 µs of CPU per frame at sixteen frames a read, 5.36 to 4.81 at one.
+- The engine adapter keeps the `'message'` and `'binary'` handler lists at hand, so a raw text or binary frame reaches its handlers without a map lookup per frame.
+
+### Fixed
+
+- A WebSocket handler that throws synchronously takes the error path: `websocket:error` is emitted and a non-raw peer receives the `{ success: false, error }` envelope through its callback or the `error` event; the socket stays open and later frames are answered. The throw used to happen before `Promise.resolve()` received anything, so the `.catch` never saw it: the adapter logged it and the peer got no answer and no event.
+- A cluster worker process keeps the `UV_THREADPOOL_SIZE` the operator set and fills in 64 only when nothing was chosen, as the thread path already did. It used to be overwritten on every worker; the pool is per process, and sixty-four processes with sixty-four threads each is a choice the operator must be able to make the other way.
+
 ## [1.8.21] - 2026-11-05
 
 ### Fixed
