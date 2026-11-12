@@ -1,3 +1,31 @@
+## [1.8.24] - 2026-11-12
+
+### Added
+
+- `server.ssl.library`: `'boringssl'`, `'openssl'` or `'auto'` (the default). `@morojs/engine` 1.1.20 terminates TLS with a BoringSSL it carries inside its binary, and ships a second binary on the OpenSSL of the running Node.js. `'auto'` is BoringSSL unless Node's OpenSSL is specially configured (FIPS mode, `--openssl-config` and its relatives, `OPENSSL_CONF`), in which case it is OpenSSL, so such a setup keeps working with nothing to change. The choice is per process (the first app started decides) and can also be made without code through the environment variable `MORO_ENGINE_TLS`. Older engines, and the Node and uWebSockets.js servers, have one TLS library and ignore the setting; naming a library an older engine cannot provide is logged, not fatal.
+- `app.engine.tls` on an app that terminates TLS on the native engine: `{ library, version, date?, reason, fallbackReason? }`, the library actually in use and why. For BoringSSL, `version` is the upstream snapshot the engine was built on and `date` its day, which is how old the bundled TLS code is.
+
+### Changed
+
+- An app still configured for uWebSockets.js keeps booting and keeps its native-engine performance. `server.engine: 'uws'`, `server.useUWebSockets: true` and `MORO_SERVER_ENGINE=uws` are still accepted and run the app on the Moro engine, as an app with no engine setting does, with one warning at startup saying so. `websocket.adapter: 'uws'` is still accepted and means the engine's own WebSocket support. With `http2` such an app is now served HTTP/2 by the engine, where the uWebSockets.js integration served HTTP/1.1 only. Remove the settings, and `uWebSockets.js` from your own `package.json`, at your convenience.
+- `server.useUWebSockets` no longer has a default value in the resolved config (it was `false`); it is present only when an app sets it.
+- `docs/UWEBSOCKETS_GUIDE.md` is replaced by `docs/HTTP_ENGINE_GUIDE.md`, which covers engine selection, what the engine serves, when to choose the Node.js server, and the steps for an app coming from uWebSockets.js. `docs/WEBSOCKET-ADAPTERS.md` now starts from the engine's own WebSockets.
+- Nothing needs configuring for the engine's move to BoringSSL, and an app behind a TLS-terminating proxy is not affected by it at all. For an app that terminates TLS itself, the framework now hands the engine its TLS configuration before the engine's binary is loaded (which is when the library is chosen). With no library named, the engine checks that BoringSSL accepts that configuration and loads its OpenSSL binary when it does not: a certificate with a key type BoringSSL has no support for (Ed448, DSA, a brainpool curve) is served by the engine on OpenSSL, as it was before, where it would otherwise have failed over to the Node https server. `app.engine.tls` then reports `reason: 'fallback'` with the cause, and a warning is logged once.
+- The engine's module is asked whether it can choose a TLS library with `in`, before any native function is read from it: reading one loads the binary, after which the choice can no longer be made.
+
+### Removed
+
+- The uWebSockets.js integration: the `UWebSocketsHttpServer` HTTP server, the `UWebSocketsAdapter` WebSocket adapter and its worker clustering, the `uWebSockets.js` optional peer dependency, and the `check:uws` / `update:uws` scripts. The native engine (`@morojs/engine`), the default since it shipped, replaced it: it is faster in our measurements, installs from npm with prebuilt binaries, and serves what that integration could not (HTTP/2, worker-thread clustering, certificate reload). The two class exports are gone from `@morojs/moro`; code that imported `UWebSocketsHttpServer` or `UWebSocketsAdapter` directly has to drop the import. Nothing else in the public API changes.
+- `UnifiedRouter.getNativeFastPathRoutes()` and `handleRouteError()`, and the servers' `setNativeRouteProvider()` hook. They existed to register routes on uWebSockets.js's own router and had no other caller.
+
+### Fixed
+
+- fix: disable detectOpenHandles in Jest configuration for improved test performance
+
+### Other
+
+- format fix
+
 ## [1.8.23] - 2026-11-12
 
 ### Added
