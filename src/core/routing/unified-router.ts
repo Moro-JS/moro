@@ -400,6 +400,17 @@ export class RouteBuilder {
 
 // ===== Unified Router =====
 
+const routeDone = (): true => true;
+
+// The promise a phase is waiting on, or undefined when the value it got back
+// is not one: the cores are asynchronous today, and one that becomes
+// synchronous must not be mistaken for a pending phase.
+function pendingOf(value: unknown): Promise<unknown> | undefined {
+  return value && typeof (value as any).then === 'function'
+    ? (value as Promise<unknown>)
+    : undefined;
+}
+
 export class UnifiedRouter {
   private static instance: UnifiedRouter | null = null;
 
@@ -817,10 +828,7 @@ export class UnifiedRouter {
         }
 
         // Non-fast-path static route
-        return (async () => {
-          await this.executeRoute(staticRoute, req, res, { params: {} });
-          return true;
-        })();
+        return this.runRoute(staticRoute, req, res, {});
       }
     }
 
@@ -868,10 +876,7 @@ export class UnifiedRouter {
       }
 
       // Non-fast-path dynamic routes (with middleware)
-      return (async () => {
-        await this.executeRoute(route, req, res, { params: radixResult.params });
-        return true;
-      })();
+      return this.runRoute(route, req, res, radixResult.params);
     }
 
     // No route found
@@ -895,87 +900,150 @@ export class UnifiedRouter {
 
   // ===== Route Execution =====
 
-  private async executeRoute(
+  // A route with middleware, run synchronously for as long as it is
+  // synchronous. Each phase and the handler report either "done" (undefined)
+  // or the promise they are waiting on; the first promise hands the rest of
+  // the route to resumeRoute, and until then nothing is allocated for the
+  // sake of asynchrony. A route whose middleware and handler all return
+  // plain values therefore answers inside the dispatch call: no async
+  // function, no await, and the response is ended before the server would
+  // have had to track the request as in flight. It used to cost three async
+  // functions and four awaits whatever the route did, because a route with
+  // any middleware at all took the async path.
+  //
+  // true when the route completed synchronously, else a promise of true.
+  private runRoute(
     route: InternalRoute,
     req: HttpRequest,
     res: HttpResponse,
-    matchResult: { params: Record<string, string> }
-  ): Promise<void> {
+    params: Record<string, string>
+  ): boolean | Promise<boolean> {
+    const pending = this.executeRoute(route, req, res, params);
+    return pending === undefined ? true : pending.then(routeDone);
+  }
+
+  private executeRoute(
+    route: InternalRoute,
+    req: HttpRequest,
+    res: HttpResponse,
+    params: Record<string, string>
+  ): void | Promise<void> {
     // The matcher already built a fresh params object - use it directly.
     // (No pooling: handlers may retain req past the response, so recycling
     // the object would alias params across requests.)
-    req.params = matchResult.params;
+    req.params = params;
 
     try {
-      // Performance: Skip empty executionOrder array iteration
-      // Most routes have empty or very short executionOrder
-      if (route.executionOrder.length > 0) {
-        // Execute middleware phases in order
-        for (const phase of route.executionOrder) {
-          if (res.headersSent) break;
-          await this.executePhase(phase, route, req, res);
-        }
+      // Execute middleware phases in order (most routes have none or few)
+      const order = route.executionOrder;
+      for (let i = 0; i < order.length; i++) {
+        if (res.headersSent) break;
+        const pending = this.executePhase(order[i] as string, route, req, res);
+        if (pending !== undefined) return this.resumeRoute(pending, i + 1, route, req, res);
       }
-
-      // Execute handler
-      if (!res.headersSent) {
-        const result = await route.schema.handler(req, res);
-        if (result !== undefined && !res.headersSent) {
-          await res.json(result);
-        }
-      } else {
-        // Headers already sent by middleware (e.g., cache hit, validation error, rate limit, auth)
-        // This is expected behavior, not an error
-        logger.debug('Handler skipped - response already sent by middleware', 'Execution');
+      const pending = this.executeHandler(route, req, res);
+      if (pending !== undefined) {
+        return pending.then(undefined, error => this.routeFailed(error, route, req, res));
       }
     } catch (error) {
-      logger.error('Route execution error', 'Execution', {
-        error: error instanceof Error ? error.message : String(error),
-        route: `${route.schema.method} ${route.schema.path}`,
-      });
-
-      const handled = await this.invokeErrorHandler(error, req, res);
-      if (!handled && !res.headersSent) {
-        res.status(500).json({
-          success: false,
-          error: 'Internal server error',
-          requestId: req.requestId,
-        });
-      }
+      return this.routeFailed(error, route, req, res);
     }
   }
 
-  private async executePhase(
-    phase: string,
+  // The rest of a route from the first phase that went asynchronous.
+  private async resumeRoute(
+    pending: Promise<unknown>,
+    next: number,
     route: InternalRoute,
     req: HttpRequest,
     res: HttpResponse
   ): Promise<void> {
+    try {
+      await pending;
+      const order = route.executionOrder;
+      for (let i = next; i < order.length; i++) {
+        if (res.headersSent) break;
+        const phase = this.executePhase(order[i] as string, route, req, res);
+        if (phase !== undefined) await phase;
+      }
+      const handler = this.executeHandler(route, req, res);
+      if (handler !== undefined) await handler;
+    } catch (error) {
+      await this.routeFailed(error, route, req, res);
+    }
+  }
+
+  // The handler, and its return value as the JSON reply when it did not
+  // answer itself. undefined when all of that happened synchronously.
+  private executeHandler(
+    route: InternalRoute,
+    req: HttpRequest,
+    res: HttpResponse
+  ): void | Promise<void> {
+    if (res.headersSent) {
+      // Headers already sent by middleware (e.g., cache hit, validation error, rate limit, auth)
+      // This is expected behavior, not an error
+      logger.debug('Handler skipped - response already sent by middleware', 'Execution');
+      return;
+    }
+    const result: any = route.schema.handler(req, res);
+    if (result && typeof result.then === 'function') {
+      return (result as Promise<any>).then(value => this.sendResult(value, res));
+    }
+    return this.sendResult(result, res);
+  }
+
+  private sendResult(result: any, res: HttpResponse): void | Promise<void> {
+    if (result === undefined || res.headersSent) return;
+    const sent: any = res.json(result);
+    if (sent && typeof sent.then === 'function') return sent as Promise<void>;
+  }
+
+  private async routeFailed(
+    error: unknown,
+    route: InternalRoute,
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<void> {
+    logger.error('Route execution error', 'Execution', {
+      error: error instanceof Error ? error.message : String(error),
+      route: `${route.schema.method} ${route.schema.path}`,
+    });
+
+    const handled = await this.invokeErrorHandler(error, req, res);
+    if (!handled && !res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        requestId: req.requestId,
+      });
+    }
+  }
+
+  // One phase of a route. undefined when it completed synchronously, else
+  // the promise it is waiting on. A phase that answered the request is seen
+  // by the caller through res.headersSent.
+  private executePhase(
+    phase: string,
+    route: InternalRoute,
+    req: HttpRequest,
+    res: HttpResponse
+  ): void | Promise<unknown> {
     const schema = route.schema;
     const middleware = schema.middleware;
 
     switch (phase) {
-      case 'before': {
+      case 'before':
         // Performance: Early exit if no middleware present (fast path)
-        if (!middleware || !('before' in middleware)) break;
-        const beforeMw = (middleware as MiddlewarePhases).before;
-        if (!beforeMw || beforeMw.length === 0) break;
-
-        const beforeLen = beforeMw.length;
-        for (let i = 0; i < beforeLen; i++) {
-          const r = this.executeMiddleware(beforeMw[i] as Middleware, req, res);
-          if (r) await r;
-          if (res.headersSent) return;
-        }
-        break;
-      }
+        if (!middleware || !('before' in middleware)) return;
+        return this.executeMiddlewareList((middleware as MiddlewarePhases).before, req, res);
 
       case 'rateLimit':
         // Use Core directly for route-based rate limiting
         if (route.rateLimitConfig) {
-          await rateLimitCore.checkLimit(req, res, route.rateLimitConfig);
+          return pendingOf(rateLimitCore.checkLimit(req, res, route.rateLimitConfig));
         }
-        break;
+        return;
 
       case 'auth':
         // Auth uses middleware (from requireAuth helper) - created lazily
@@ -991,74 +1059,69 @@ export class UnifiedRouter {
               }),
             });
           }
-          const r = this.executeMiddleware(route.authMiddleware, req, res);
-          if (r) await r;
+          return this.executeMiddleware(route.authMiddleware, req, res);
         }
-        break;
+        return;
 
       case 'validation':
-        // Use Core directly for route-based validation
+        // Use Core directly for route-based validation. A failed validation
+        // has already answered; the caller sees that through headersSent.
         if (route.validationConfig) {
-          const isValid = await validationCore.validate(req, res, route.validationConfig);
-          if (!isValid) {
-            return; // Validation failed, response already sent
-          }
+          return pendingOf(validationCore.validate(req, res, route.validationConfig));
         }
-        break;
+        return;
 
-      case 'transform': {
-        // Performance: Early exit if no middleware present (fast path)
-        if (!middleware || !('transform' in middleware)) break;
-        const transformMw = (middleware as MiddlewarePhases).transform;
-        if (!transformMw || transformMw.length === 0) break;
-
-        const transformLen = transformMw.length;
-        for (let i = 0; i < transformLen; i++) {
-          const r = this.executeMiddleware(transformMw[i] as Middleware, req, res);
-          if (r) await r;
-          if (res.headersSent) return;
-        }
-        break;
-      }
+      case 'transform':
+        if (!middleware || !('transform' in middleware)) return;
+        return this.executeMiddlewareList((middleware as MiddlewarePhases).transform, req, res);
 
       case 'cache':
-        // Use Core directly for route-based caching
+        // Use Core directly for route-based caching. A cache hit has already
+        // answered; the caller sees that through headersSent.
         if (route.cacheConfig) {
-          const cached = await cacheCore.tryGet(req, res, route.cacheConfig);
-          if (cached) {
-            return; // Cache hit, response already sent
-          }
+          return pendingOf(cacheCore.tryGet(req, res, route.cacheConfig));
         }
-        break;
+        return;
 
-      case 'after': {
-        // Performance: Early exit if no middleware present (fast path)
-        if (!middleware || !('after' in middleware)) break;
-        const afterMw = (middleware as MiddlewarePhases).after;
-        if (!afterMw || afterMw.length === 0) break;
+      case 'after':
+        if (!middleware || !('after' in middleware)) return;
+        return this.executeMiddlewareList((middleware as MiddlewarePhases).after, req, res);
 
-        const afterLen = afterMw.length;
-        for (let i = 0; i < afterLen; i++) {
-          const r = this.executeMiddleware(afterMw[i] as Middleware, req, res);
-          if (r) await r;
-          if (res.headersSent) return;
-        }
-        break;
-      }
-
-      case 'middleware': {
+      case 'middleware':
         // Handle array-style middleware (backward compatibility)
-        // Performance: Early exit if no middleware present (fast path)
-        if (!middleware || !Array.isArray(middleware) || middleware.length === 0) break;
+        if (!middleware || !Array.isArray(middleware)) return;
+        return this.executeMiddlewareList(middleware as Middleware[], req, res);
+    }
+  }
 
-        const middlewareLen = middleware.length;
-        for (let i = 0; i < middlewareLen; i++) {
-          const r = this.executeMiddleware(middleware[i] as Middleware, req, res);
-          if (r) await r;
-          if (res.headersSent) return;
-        }
-        break;
-      }
+  // A list of middleware in order, stopping once one of them has answered.
+  // Synchronous until one returns a promise; the rest then run behind it.
+  private executeMiddlewareList(
+    list: readonly Middleware[] | undefined,
+    req: HttpRequest,
+    res: HttpResponse
+  ): void | Promise<void> {
+    if (!list) return;
+    for (let i = 0; i < list.length; i++) {
+      const pending = this.executeMiddleware(list[i] as Middleware, req, res);
+      if (pending) return this.resumeMiddlewareList(pending, list, i + 1, req, res);
+      if (res.headersSent) return;
+    }
+  }
+
+  private async resumeMiddlewareList(
+    pending: Promise<void>,
+    list: readonly Middleware[],
+    next: number,
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<void> {
+    await pending;
+    if (res.headersSent) return;
+    for (let i = next; i < list.length; i++) {
+      const r = this.executeMiddleware(list[i] as Middleware, req, res);
+      if (r) await r;
+      if (res.headersSent) return;
     }
   }
 

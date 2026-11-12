@@ -751,13 +751,19 @@ export class EngineResponse extends LazyEventEmitter {
 
     try {
       const rh = this._responseHeaders;
-      if (
-        rh === undefined &&
-        this._compression === undefined &&
-        !this._server._compression.enabled
-      ) {
-        // Hot path: no user-set headers, no compression - one native call.
-        // With templates (engine >= 1.1.6) the content-type pair was
+      // With compression configured (on the server or by the route), the
+      // request's Accept-Encoding is read before anything else is done for
+      // it: a client that sent none cannot be compressed for, and its reply
+      // is then exactly the uncompressed one - same bytes, same single call.
+      let accept: string | undefined;
+      const compressing =
+        rh === undefined && (this._compression ?? this._server._compression).enabled;
+      if (compressing) {
+        accept = this._server._getHeader(this._reqId, 'accept-encoding') as string | undefined;
+      }
+      if (rh === undefined && (!compressing || !accept)) {
+        // Hot path: no user-set headers, nothing to compress for - one native
+        // call. With templates (engine >= 1.1.6) the content-type pair was
         // materialised once in the engine; otherwise the shared pair goes
         // with the call. Zero per-response header work either way.
         const tpl = this._server._template(TPL_JSON, this.statusCode);
@@ -771,7 +777,7 @@ export class EngineResponse extends LazyEventEmitter {
       if (rh === undefined || !('content-type' in rh)) {
         this.responseHeaders['content-type'] = 'application/json';
       }
-      this._respondMaybeCompressed(body, 'application/json');
+      this._respondMaybeCompressed(body, 'application/json', accept);
     } catch (err) {
       this._failSafe('Failed to send JSON response', err);
     }
@@ -782,7 +788,13 @@ export class EngineResponse extends LazyEventEmitter {
   // over threshold + the client accepts an encoding. Keeps the synchronous
   // fast path (zero extra work) whenever compression can't apply, so the
   // default (compression off) pays nothing.
-  private _respondMaybeCompressed(body: string | Buffer, contentType?: string): void {
+  // `accept` is the request's Accept-Encoding when the caller has already
+  // read it and found one; otherwise it is read here.
+  private _respondMaybeCompressed(
+    body: string | Buffer,
+    contentType?: string,
+    accept?: string
+  ): void {
     const s = this._compression ?? this._server._compression;
     // HOT PATH: compression is off by default - bail before ANY per-response
     // work (byteLength scans the string; header reads allocate nothing but
@@ -793,14 +805,19 @@ export class EngineResponse extends LazyEventEmitter {
       this._emitDone();
       return;
     }
-    const bytes = typeof body === 'string' ? Buffer.byteLength(body) : body.length;
+    // A string's UTF-8 length is at least its length, so one at or over the
+    // threshold needs no scan to pass it; the exact size is taken further
+    // down, once something will actually be compressed.
+    let bytes = -1;
+    if (typeof body !== 'string') bytes = body.length;
+    else if (body.length < s.threshold) bytes = Buffer.byteLength(body);
     const rh = this._responseHeaders;
     const alreadyEncoded = rh !== undefined && 'content-encoding' in rh;
     const ctHeader = rh?.['content-type'];
     const ct = contentType ?? (Array.isArray(ctHeader) ? ctHeader[0] : ctHeader);
     if (
       alreadyEncoded ||
-      bytes < s.threshold ||
+      (bytes !== -1 && bytes < s.threshold) ||
       !isCompressible(ct) ||
       this.statusCode === 204 ||
       this.statusCode === 304
@@ -811,14 +828,16 @@ export class EngineResponse extends LazyEventEmitter {
       return;
     }
 
-    const accept = this._server._getHeader(this._reqId, 'accept-encoding') as string | undefined;
-    const encoding = negotiateEncoding(accept, s.encodings);
+    const acceptEncoding =
+      accept ?? (this._server._getHeader(this._reqId, 'accept-encoding') as string | undefined);
+    const encoding = negotiateEncoding(acceptEncoding, s.encodings);
     if (!encoding) {
       this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
       this.headersSent = true;
       this._emitDone();
       return;
     }
+    if (bytes === -1) bytes = Buffer.byteLength(body as string);
 
     // A small body is compressed on this thread: cheaper than the threadpool
     // round trip, and the reply goes out in the same native call an
@@ -2370,7 +2389,11 @@ export class MoroEngineServer {
     // WebSocket upgrade: when a WS bridge is registered and this is an upgrade
     // request, hand the connection to the engine's native WS path. The engine
     // sends the 101 handshake and drives onWsOpen/Message/Close.
-    if (this._wsBridge) {
+    // Not when the engine upgrades by itself (_wsAutoOn): a valid handshake
+    // never reaches this callback then, and an invalid one has already been
+    // refused by the same check upgradeToWebSocket would repeat, so the probe
+    // would be one native call per request on the listener for nothing.
+    if (this._wsBridge && !this._wsAutoOn) {
       const upgrade = this._getHeader(reqId, 'upgrade');
       if (upgrade && upgrade.toLowerCase() === 'websocket') {
         // Snapshot handshake data now - the upgrade invalidates the reqId,

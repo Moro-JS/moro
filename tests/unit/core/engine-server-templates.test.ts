@@ -236,10 +236,51 @@ describe('MoroEngineServer prepared response templates (fake engine)', () => {
         res.json({ ok: true });
         return true;
       });
-      const b = compressed.simulate({ path: '/' });
+      // A client that accepts an encoding is negotiated for, so its reply
+      // goes through respond() whether or not the body ends up compressed.
+      const b = compressed.simulate({ path: '/', headers: { 'accept-encoding': 'gzip, br' } });
       await tick();
       expect(compressed.requests.get(b).ops[0].viaTemplate).toBeUndefined();
       expect(compressed.prepareCalls).toHaveLength(0);
+    });
+
+    it('compression configured, no Accept-Encoding: the reply is the uncompressed one', async () => {
+      // Nothing can be compressed for a client that accepts no encoding, so
+      // json() answers it exactly as a server without compression would:
+      // same bytes, through the prepared template.
+      const plain = createFakeEngine({ capabilities: TEMPLATE_CAPS });
+      const pserver = createServer(plain);
+      pserver.setRouterHandler((_req, res) => {
+        res.json({ ok: true, pad: 'x'.repeat(4096) });
+        return true;
+      });
+      const p = plain.simulate({ path: '/' });
+      await tick();
+
+      const compressed = createFakeEngine({ capabilities: TEMPLATE_CAPS });
+      const cserver = createServer(compressed);
+      cserver.configurePerformance({ compression: { enabled: true, threshold: 1024 } });
+      cserver.setRouterHandler((_req, res) => {
+        res.json({ ok: true, pad: 'x'.repeat(4096) });
+        return true;
+      });
+      const c = compressed.simulate({ path: '/' });
+      await tick();
+
+      const want = plain.requests.get(p).ops[0];
+      const got = compressed.requests.get(c).ops[0];
+      expect(want.viaTemplate).toBe(true);
+      expect(got.viaTemplate).toBe(true);
+      expect(got.body).toBe(want.body);
+      expect(got.status).toBe(want.status);
+
+      // ...and the same client asking for gzip gets it, with Vary.
+      const z = compressed.simulate({ path: '/', headers: { 'accept-encoding': 'gzip' } });
+      await tick();
+      const zipped = compressed.requests.get(z).ops[0];
+      expect(zipped.viaTemplate).toBeUndefined();
+      expect(foldFlat(zipped.headersFlat)['content-encoding']).toEqual(['gzip']);
+      expect(foldFlat(zipped.headersFlat)['vary']).toEqual(['Accept-Encoding']);
     });
 
     it('re-prepares after close() + listen() (template ids belong to one native server)', async () => {
