@@ -1,8 +1,8 @@
 // OpenTelemetry Core - request instrumentation over @opentelemetry/api
 //
-// MoroJS instruments its own request lifecycle: the native engine and the uWS
-// transport never touch Node's http module, so the generic
-// @opentelemetry/instrumentation-http sees nothing on them and would leave a
+// MoroJS instruments its own request lifecycle: the native engine never
+// touches Node's http module, so the generic
+// @opentelemetry/instrumentation-http sees nothing on it and would leave a
 // service without server spans. Only the API package is required (an optional
 // peer). The application owns the SDK, exporters, sampling and resource
 // attributes - the OpenTelemetry project's rule for libraries - so a NodeSDK

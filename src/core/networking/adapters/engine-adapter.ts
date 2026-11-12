@@ -1,8 +1,8 @@
 // @morojs/engine WebSocket adapter.
 // Bridges the native engine's RFC 6455 WebSocket callbacks (onWsOpen/Message/
 // Close, wsSend/wsClose on MoroEngineServer) to Moro's WebSocketAdapter model.
-// Message framing mirrors the uWS adapter: JSON { event, data } envelopes with
-// a default namespace, so app.websocket() handlers work identically.
+// Message framing: JSON { event, data } envelopes with a default namespace, as
+// on the other adapters, so app.websocket() handlers work identically.
 
 import crypto from 'crypto';
 import {
@@ -141,7 +141,7 @@ export class EngineWebSocketAdapter implements WebSocketAdapter {
       connection.handleBinary(data);
       return;
     }
-    // Text frames carry JSON { event, data } envelopes (uWS-adapter parity)
+    // Text frames carry JSON { event, data } envelopes
     const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf-8');
     let parsed: any;
     try {

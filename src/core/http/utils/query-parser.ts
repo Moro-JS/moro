@@ -1,6 +1,6 @@
 // Parse a raw query string ("a=1&b=2") into an object. Transport-neutral: the
-// single canonical implementation for the Node http server, the uWS adapter,
-// and the Moro engine adapter, so req.query is identical on every transport.
+// single canonical implementation for the Node http server and the Moro
+// engine adapter, so req.query is identical on every transport.
 //
 // Semantics follow application/x-www-form-urlencoded (WHATWG):
 //   - '+' decodes to a space in keys and values

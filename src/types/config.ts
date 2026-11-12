@@ -22,7 +22,7 @@ export type DeepPartial<T> = T extends object
 
 /** Unified SSL/TLS config (superset of both historical shapes). */
 export interface SSLConfig {
-  /** File-path shape (uWS-style; keyFile/certFile also accepted) */
+  /** File-path shape (keyFile/certFile also accepted) */
   key_file_name?: string;
   cert_file_name?: string;
   ca_file_name?: string | string[];
@@ -50,8 +50,7 @@ export interface SSLConfig {
    * The choice is per process: the first app to start decides. The environment
    * variable MORO_ENGINE_TLS sets it without a code change. `app.engine.tls`
    * reports what is in use. Needs @morojs/engine 1.1.20 or later; older
-   * engines, and the Node and uWebSockets.js servers, have one TLS library and
-   * ignore this.
+   * engines and the Node.js server have one TLS library and ignore this.
    */
   library?: 'boringssl' | 'openssl' | 'auto';
   /**
@@ -142,12 +141,16 @@ export interface ServerConfig {
    * - 'moro' (default): Moro's own native engine (@morojs/engine), falling back
    *   to the Node.js http server if it cannot load on this platform/Node ABI
    * - 'node': the Node.js http server (no native engine)
-   * - 'uws': opt in to uWebSockets.js, falling back to Node.js if it cannot load
-   * Any chosen engine that cannot load degrades to Node.js and logs why; the app
-   * never fails to boot. Inspect what actually booted via app.engine.
+   * An engine that cannot load degrades to Node.js and logs why; the app never
+   * fails to boot. Inspect what actually booted via app.engine.
+   *
+   * 'uws' selected uWebSockets.js, which was removed in 1.8.24. The value is
+   * still accepted so existing configurations keep working: such an app runs
+   * on the Moro engine and logs a warning. Remove it.
    */
   engine?: 'moro' | 'node' | 'uws';
-  /** @deprecated Use engine: 'uws' instead. Enable uWebSockets for both HTTP and WebSocket */
+  /** @deprecated uWebSockets.js was removed in 1.8.24. Still accepted; `true`
+   *  runs the app on the Moro engine (the default) with a warning. Remove it. */
   useUWebSockets?: boolean;
   /** Unified SSL/TLS config; flows to whichever runtime serves. */
   ssl?: SSLConfig;
@@ -475,7 +478,10 @@ export interface PerformanceConfig {
 
 export interface WebSocketConfig {
   enabled: boolean;
-  adapter?: string | 'socket.io' | 'ws' | 'uws';
+  /** 'socket.io' or 'ws' (both serve from the Node.js server). Unset, the
+   *  native engine serves WebSockets itself. 'uws' (uWebSockets.js, removed in
+   *  1.8.24) is still accepted and means the same as unset. */
+  adapter?: string | 'socket.io' | 'ws';
   compression?: boolean;
   customIdGenerator?: () => string;
   options?: {

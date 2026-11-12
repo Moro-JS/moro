@@ -4,13 +4,11 @@
 // HTTP backend available on this platform:
 //   - 'node' : the Node.js http server            (always present)
 //   - 'moro' : the native @morojs/engine          (when it loads)
-//   - 'uws'  : uWebSockets.js                      (only when resolvable/loadable)
 //
 // This makes Moro's parity guarantee explicit and executable. The route surface
-// deliberately covers the shapes the audit found diverging between uWS and the
-// others - notably a route that sets TWO cookies (the uWS Set-Cookie *folding*
-// bug: two cookies collapsed into one header) and the { success, data } fast-path
-// response shape.
+// deliberately covers the shapes an audit once found diverging between
+// backends - notably a route that sets TWO cookies (they must not be folded
+// into one header) and the { success, data } fast-path response shape.
 //
 // UnifiedRouter is a process-wide singleton, so backends are exercised one at a
 // time (reset + create + listen + collect + close per phase) and their captured
@@ -26,36 +24,23 @@ import { resetConfig } from '../../src/core/config/index.js';
 import { UnifiedRouter } from '../../src/core/routing/unified-router.js';
 import { closeApp, createTestPort } from '../setup.js';
 import { engineLoadable } from './engine-test-utils.js';
-import { loadNativeEngine } from '../../src/core/utilities/package-utils.js';
-
-// uWebSockets.js is a legacy user-installed peer; probe it directly (a
-// candidate-override load bypasses the default-engine memoization).
-const uwsLoadable = (() => {
-  try {
-    return loadNativeEngine({ candidates: ['uWebSockets.js'] }) !== null;
-  } catch {
-    return false;
-  }
-})();
 
 const testPort = () => createTestPort();
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));
 const log = (line: string) => process.stdout.write(line + '\n');
 
-type BackendId = 'node' | 'moro' | 'uws';
+type BackendId = 'node' | 'moro';
 
 // The package each engine backend MUST boot for its results to count as that
 // backend (guards against a silent fallback to Node polluting the comparison).
 const EXPECTED_PACKAGE: Record<Exclude<BackendId, 'node'>, string> = {
   moro: '@morojs/engine',
-  uws: 'uWebSockets.js',
 };
 
 const CANDIDATE_BACKENDS: Array<{ id: BackendId; label: string; available: boolean }> = [
   { id: 'node', label: 'node http', available: true },
   { id: 'moro', label: '@morojs/engine', available: engineLoadable },
-  { id: 'uws', label: 'uWebSockets.js', available: uwsLoadable },
 ];
 
 // Decided at module-load time (NOT from `comparable`, which is populated later in
@@ -273,7 +258,7 @@ describe('Cross-backend HTTP conformance', () => {
     expect(r.postEcho.json).toEqual({ received: POST_ECHO_BODY });
   });
 
-  // Every backend must set each cookie as its own header (the uWS folding guard).
+  // Every backend must set each cookie as its own header (never folded).
   it('every backend emits two distinct Set-Cookie headers', () => {
     for (const id of comparable) {
       expect(collected[id].results.twoCookies.setCookie.length).toBe(2);

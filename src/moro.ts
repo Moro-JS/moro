@@ -1815,16 +1815,6 @@ export class Moro extends EventEmitter {
           }
         }
       }
-
-      // Servers with a native router (uWS) additionally get fast-path routes
-      // registered directly on it - evaluated at listen so late-loaded routes
-      // are included; error handling shares the unified router's semantics
-      if (typeof httpServer.setNativeRouteProvider === 'function') {
-        httpServer.setNativeRouteProvider(
-          () => router.getNativeFastPathRoutes(),
-          (req: HttpRequest, res: HttpResponse, err: any) => router.handleRouteError(err, req, res)
-        );
-      }
       return;
     }
 
@@ -2905,7 +2895,7 @@ export class Moro extends EventEmitter {
           // idle sockets right away, then force-close whatever remains at the
           // deadline so this promise reflects a real close instead of only the
           // timer firing. (closeIdle/closeAllConnections exist on the Node http
-          // server; the uWS/engine backends ignore the optional calls.)
+          // server; the engine backend ignores the optional calls.)
           server?.closeIdleConnections?.();
           this.coreFramework.stopTlsWatch();
           await Promise.race([

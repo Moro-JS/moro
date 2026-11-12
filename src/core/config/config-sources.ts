@@ -237,7 +237,9 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
     // Normalize and whitelist like the other env enums (LOG_LEVEL etc.):
     // engine selection must never fail the boot, so an invalid value is
     // ignored rather than being handed to the validator to throw on.
-    // Legacy 'auto'/'native' values map to 'moro'.
+    // Legacy 'auto'/'native' values map to 'moro'. 'uws' (uWebSockets.js,
+    // removed in 1.8.24) is passed on: the framework runs it on the Moro
+    // engine with a warning instead of ignoring the variable silently.
     const rawEngine = process.env.MORO_SERVER_ENGINE.trim().toLowerCase();
     const engineValue =
       rawEngine === 'auto' || rawEngine === 'native'

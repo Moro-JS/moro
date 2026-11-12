@@ -4,8 +4,7 @@
 // Backs req.on('close') (SSE/monitor cleanup) and the response lifecycle
 // events ('finish'/'close'/'drain') that stream-oriented middleware needs.
 //
-// Shared, transport-neutral: used by both the uWS adapter (uws-http-server.ts)
-// and the Moro engine adapter (moro-engine-server.ts).
+// Transport-neutral; used by the Moro engine adapter (moro-engine-server.ts).
 export class LazyEventEmitter {
   _events: Record<string, Array<(...args: any[]) => void>> | null = null;
 

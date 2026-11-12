@@ -103,7 +103,6 @@ const app = await createApp({
   server: {
     engine: 'moro', // default - Moro's native engine (Node.js fallback if it can't load)
     // engine: 'node' - the Node.js http server (no native engine)
-    // engine: 'uws'  - opt in to uWebSockets.js
   },
 });
 
@@ -113,13 +112,13 @@ app.engine; // { server, enginePackage?, engineVersion?, protocols?, fallbackRea
 
 #### TLS / HTTPS (unified config)
 
-One `server.ssl` config flows to whichever runtime serves — the Moro engine terminates TLS in-process, as do the Node https server, uWebSockets.js (file paths only), and the HTTP/2 server. Both shapes are accepted:
+One `server.ssl` config flows to whichever runtime serves — the Moro engine terminates TLS in-process, as do the Node https server and the HTTP/2 server. Both shapes are accepted:
 
 ```typescript
 // Inline PEM (node-style) — works on engine, node, http2
 createApp({ server: { engine: 'moro', ssl: { key, cert, ca } } });
 
-// File paths — works on every runtime incl. uWS
+// File paths — works on every runtime
 createApp({ server: { engine: 'moro', ssl: { keyFile: './key.pem', certFile: './cert.pem' } } });
 ```
 
@@ -155,7 +154,7 @@ createApp({
 });
 ```
 
-See [HTTP Engine Guide](./docs/UWEBSOCKETS_GUIDE.md),
+See [HTTP Engine Guide](./docs/HTTP_ENGINE_GUIDE.md),
 [HTTP/2 Guide](./docs/HTTP2_GUIDE.md), and the
 [Configuration Reference](./docs/CONFIGURATION_REFERENCE.md) for the full
 defaults table.
@@ -187,7 +186,7 @@ export default { fetch: app.getHandler() };
 - [Authentication](https://morojs.com/docs/features/authentication)
 - [Validation](https://morojs.com/docs/validation)
 - [WebSockets](https://morojs.com/docs/features/websockets)
-- [uWebSockets.js Setup](./docs/UWEBSOCKETS_GUIDE.md)
+- [HTTP Engine Guide](./docs/HTTP_ENGINE_GUIDE.md)
 - [API Reference](https://morojs.com/technical)
 
 ## Examples

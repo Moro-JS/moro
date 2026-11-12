@@ -112,8 +112,8 @@ function expectNoPrototypePollution(input: string) {
  * Cookie values are percent-decoded, so `%0d%0a` legitimately decodes to CRLF -
  * that is required for `res.cookie(name, 'a\nb')` to round-trip. CRLF is
  * neutralised at the header-writing boundary instead, which every backend
- * enforces (Node throws ERR_INVALID_CHAR, uWS strips via sanitizeHeaderValue,
- * the native engine drops the header). So the parser-level invariant is
+ * enforces (Node throws ERR_INVALID_CHAR, the native engine drops the
+ * header). So the parser-level invariant is
  * round-trip fidelity, not CRLF absence.
  */
 function expectRoundTrip(value: string) {

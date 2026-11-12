@@ -1,23 +1,24 @@
 # WebSocket Adapter Examples
 
-MoroJS now supports pluggable WebSocket adapters, allowing you to choose the best WebSocket implementation for your needs or disable WebSockets entirely.
+MoroJS serves WebSockets from its native engine by default: RFC 6455 on the same port as HTTP, nothing to install. Adapters for Socket.IO and the `ws` library are there when you need those libraries' protocols or features, and WebSockets can be turned off entirely.
 
 ## Usage Examples
 
-### 1. Auto-Detection (Default)
+### 1. The Native Engine (Default)
 
 ```typescript
 import { Moro } from '@morojs/moro';
 
-// Automatically detects and uses available WebSocket adapter
-// Priority: uWebSockets.js > socket.io > native ws library
+// No adapter configured: the engine serves WebSockets itself, on the HTTP port.
+// (On the Node.js server - engine: 'node', or where the engine cannot load -
+// an installed socket.io or ws is detected and used, in that order.)
 const app = new Moro();
 
 app.websocket('/chat', {
   'join-room': (socket, data) => {
     socket.join(data.room);
     return { success: true };
-  }
+  },
 });
 ```
 
@@ -32,50 +33,33 @@ const app = new Moro({
     compression: true,
     options: {
       cors: { origin: '*' },
-      path: '/socket.io/'
-    }
-  }
+      path: '/socket.io/',
+    },
+  },
 });
 ```
 
-### 3. Use uWebSockets.js for Maximum Performance
+### 3. Raw Frames on the Engine
 
 ```typescript
-import { Moro, UWebSocketsAdapter } from '@morojs/moro';
+import { Moro } from '@morojs/moro';
 
-const app = new Moro({
-  websocket: {
-    adapter: new UWebSocketsAdapter(),
-    compression: true,
-    options: {
-      path: '/*',
-      maxPayloadLength: 100 * 1024 * 1024, // 100MB
-      idleTimeout: 120, // 2 minutes
-      cors: { origin: '*' }
-    }
-  }
-});
+const app = new Moro({ websocket: { enabled: true, compression: true } });
+
+// { raw: true }: frames reach the handlers as they arrived instead of as
+// JSON { event, data } envelopes - text frames as strings on `message`,
+// binary frames as bytes on `binary` - and socket.send() writes one frame.
+app.websocket(
+  '/echo',
+  {
+    message: (socket, text) => socket.send(text),
+    binary: (socket, bytes) => socket.send(bytes, true),
+  },
+  { raw: true }
+);
 ```
 
-Or via config file:
-
-```javascript
-// moro.config.js
-export default {
-  websocket: {
-    enabled: true,
-    adapter: 'uws', // String-based adapter selection
-    compression: true,
-    options: {
-      path: '/*',
-      maxPayloadLength: 100 * 1024 * 1024,
-      idleTimeout: 120
-    }
-  }
-};
-```
-
-### 4. Use Native WebSocket (ws) for Lightweight Implementation
+### 4. Use the `ws` Library
 
 ```typescript
 import { Moro, WSAdapter } from '@morojs/moro';
@@ -85,9 +69,9 @@ const app = new Moro({
     adapter: new WSAdapter(),
     options: {
       path: '/ws',
-      maxPayloadLength: 100 * 1024 * 1024 // 100MB
-    }
-  }
+      maxPayloadLength: 100 * 1024 * 1024, // 100MB
+    },
+  },
 });
 ```
 
@@ -98,7 +82,7 @@ import { Moro } from '@morojs/moro';
 
 // No WebSocket dependencies required
 const app = new Moro({
-  websocket: false
+  websocket: false,
 });
 
 // This would throw an error:
@@ -112,7 +96,7 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   WebSocketNamespace,
-  WebSocketConnection
+  WebSocketConnection,
 } from '@morojs/moro';
 
 class CustomWebSocketAdapter implements WebSocketAdapter {
@@ -133,20 +117,16 @@ class CustomWebSocketAdapter implements WebSocketAdapter {
 
 const app = new Moro({
   websocket: {
-    adapter: new CustomWebSocketAdapter()
-  }
+    adapter: new CustomWebSocketAdapter(),
+  },
 });
 ```
 
 ## Installation
 
-### For uWebSockets.js Users (Highest Performance)
+### For the Native Engine (Default)
 
-```bash
-npm install github:uNetworking/uWebSockets.js#v20.52.0
-```
-
-**Note**: uWebSockets.js is not in the npm registry - it must be installed from GitHub.
+Nothing to install: `@morojs/engine` comes with MoroJS.
 
 ### For Socket.IO Users
 
@@ -185,15 +165,15 @@ const app = new Moro();
 // Option 2: Explicit Socket.IO adapter
 const app = new Moro({
   websocket: {
-    adapter: new SocketIOAdapter()
-  }
+    adapter: new SocketIOAdapter(),
+  },
 });
 
 // Option 3: Explicit native ws adapter
 const app = new Moro({
   websocket: {
-    adapter: new WSAdapter()
-  }
+    adapter: new WSAdapter(),
+  },
 });
 
 // Option 3: Disable WebSockets
@@ -203,18 +183,22 @@ const app = new Moro({ websocket: false });
 ## Benefits
 
 1. **Bundle Size**: Only include WebSocket dependencies if needed
-2. **Performance**: Choose uWebSockets.js for maximum performance (up to 8x faster than socket.io)
+2. **Performance**: The native engine serves WebSockets from the same C++ core as HTTP, with no extra dependency
 3. **Flexibility**: Easy to switch between different implementations
 4. **Future-Proof**: Easy to add new WebSocket libraries as they emerge
 5. **Zero Changes**: Drop-in replacement - your code remains the same
 
 ## Adapter Comparison
 
-| Adapter | Bundle Size | Performance | Features | Use Case |
-|---------|-------------|-------------|----------|----------|
-| **uWebSockets.js** | ~1MB (native) | **Excellent** (500k+ msg/s) | High performance, backpressure, compression | **Production apps, gaming, real-time, high traffic** |
-| Socket.IO | ~244KB | Good (60-80k msg/s) | Rich features, rooms, namespaces, fallbacks | General purpose, feature-rich apps, broad compatibility |
-| Native WS | ~8KB | Very Good (100-150k msg/s) | Standards-compliant, lightweight | Performance-conscious, minimal footprint |
-| None | 0KB | N/A | HTTP only | REST APIs, static sites |
+| Adapter                     | Bundle Size              | Performance                | Features                                                        | Use Case                                                |
+| --------------------------- | ------------------------ | -------------------------- | --------------------------------------------------------------- | ------------------------------------------------------- |
+| **Native engine** (default) | none (ships with MoroJS) | **Fastest of the three**   | Same port as HTTP, backpressure, permessage-deflate, raw frames | **Production apps, real-time, high traffic**            |
+| Socket.IO                   | ~244KB                   | Good (60-80k msg/s)        | Rich features, rooms, namespaces, fallbacks                     | General purpose, feature-rich apps, broad compatibility |
+| Native WS                   | ~8KB                     | Very Good (100-150k msg/s) | Standards-compliant, lightweight                                | Performance-conscious, minimal footprint                |
+| None                        | 0KB                      | N/A                        | HTTP only                                                       | REST APIs, static sites                                 |
 
-**Performance numbers are approximate and based on 1000 concurrent connections*
+*_Performance numbers are approximate and based on 1000 concurrent connections_
+
+## uWebSockets.js
+
+The uWebSockets.js adapter was removed in MoroJS 1.8.24; the native engine replaced it. `websocket.adapter: 'uws'` is still accepted and now means the engine's own WebSocket support, so an existing configuration keeps working. The `UWebSocketsAdapter` export is gone; remove imports of it. See the [HTTP Engine Guide](./HTTP_ENGINE_GUIDE.md#coming-from-uwebsocketsjs).

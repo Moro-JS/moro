@@ -43,7 +43,7 @@ export interface WebSocketNamespaceOptions {
    * Raw framing: frames on this namespace are NOT `{ event, data }` JSON
    * envelopes. Every text frame reaches the `message` handler as a string and
    * every binary frame reaches `binary` as a Buffer; replies go out through
-   * `socket.send()`. Supported by the engine, uWS and ws adapters (Socket.IO
+   * `socket.send()`. Supported by the engine and ws adapters (Socket.IO
    * speaks its own protocol and ignores it).
    */
   raw?: boolean;

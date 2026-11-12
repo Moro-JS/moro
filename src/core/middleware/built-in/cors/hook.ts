@@ -49,7 +49,7 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
           path: request.path,
         });
         response.status(403).end();
-        // Set headersSent for custom response wrappers (UWS, HTTP/2) and mocks that support it
+        // Set headersSent for custom response wrappers (the engine, HTTP/2) and mocks that support it
         // Node.js native ServerResponse has a read-only headersSent getter
         const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
         if (!descriptor || descriptor.writable || descriptor.set) {
@@ -67,7 +67,7 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
       if (request.method === 'OPTIONS' && !config.preflightContinue) {
         logger.debug('Handling OPTIONS preflight request', 'Preflight', { path: request.path });
         response.status(204).end();
-        // Set headersSent for custom response wrappers (UWS, HTTP/2) and mocks that support it
+        // Set headersSent for custom response wrappers (the engine, HTTP/2) and mocks that support it
         // Node.js native ServerResponse has a read-only headersSent getter
         const descriptor = Object.getOwnPropertyDescriptor(response, 'headersSent');
         if (!descriptor || descriptor.writable || descriptor.set) {

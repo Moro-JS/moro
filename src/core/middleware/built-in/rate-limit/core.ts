@@ -30,7 +30,7 @@ export function shouldRefund(
 
 /**
  * Run `cb` once the response has been fully sent. Prefers the 'finish' event
- * (node, engine and uWS responses all emit it) and falls back to wrapping
+ * (node and engine responses both emit it) and falls back to wrapping
  * end() for the HTTP/2 response, which is a plain object with no emitter.
  */
 export function onResponseFinished(res: HttpResponse, cb: () => void): void {

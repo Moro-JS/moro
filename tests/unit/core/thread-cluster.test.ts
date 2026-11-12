@@ -259,7 +259,7 @@ describe('thread-cluster', () => {
     it.each([
       ['win32', { platform: 'win32' as const }],
       ['node engine', { engineServer: 'node' }],
-      ['uWS engine', { enginePackage: 'uWebSockets.js' }],
+      ['another engine package', { enginePackage: 'not-the-moro-engine' }],
       ['old engine', { workerThreadsCapable: false }],
       ['worker thread', { isMainThread: false }],
       ['no entry', { argv1: undefined }],

@@ -3,7 +3,7 @@
 // serves. One config (inline PEM and file-path variants) is driven over HTTPS
 // against the native engine and the Node https server, asserting parity, that
 // req.secure/protocol report https, and that a plain HTTP request to the TLS
-// port is rejected. uWS and http2 legs self-skip when their engine is absent.
+// port is rejected. The engine leg self-skips when the engine is absent.
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
@@ -21,8 +21,8 @@ const fileSSL = () => ({
   keyFile: fixturePath('localhost.key'),
   certFile: fixturePath('localhost.pem'),
 });
-// The uWS-era spelling of the file-path shape, still accepted by server.ssl
-const uwsFileSSL = () => ({
+// The underscore spelling of the file-path shape, still accepted by server.ssl
+const underscoreFileSSL = () => ({
   key_file_name: fixturePath('localhost.key'),
   cert_file_name: fixturePath('localhost.pem'),
 });
@@ -45,7 +45,7 @@ describeEngine('Unified SSL config on the native engine', () => {
   for (const [label, ssl] of [
     ['inline PEM', inlineSSL],
     ['file paths', fileSSL],
-    ['key_file_name/cert_file_name paths', uwsFileSSL],
+    ['key_file_name/cert_file_name paths', underscoreFileSSL],
   ] as const) {
     it(`serves HTTPS with ${label} ssl config ON THE ENGINE (no silent Node fallback)`, async () => {
       const port = testPort();

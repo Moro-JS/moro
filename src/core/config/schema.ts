@@ -38,8 +38,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     // engine: left unset so resolution can tell "user chose it" from "default".
     // Unset resolves to 'moro' (Moro's native engine, Node.js fallback if it
-    // can't load); set 'node' to disable it or 'uws' to opt into uWebSockets.js.
-    useUWebSockets: false, // Deprecated alias for engine: 'uws'
+    // can't load); set 'node' to disable it.
     requestTracking: {
       enabled: true, // Enable by default for debugging
     },

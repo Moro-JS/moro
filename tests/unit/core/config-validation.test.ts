@@ -100,10 +100,13 @@ describe('Configuration System Validation', () => {
       // distinguish an explicit choice from the 'moro' resolution default
       const config = loadConfig();
       expect(config.server.engine).toBeUndefined();
-      expect(config.server.useUWebSockets).toBe(false);
+      // No default for the removed uWebSockets.js switch either.
+      expect(config.server.useUWebSockets).toBeUndefined();
     });
 
     it('should accept engine via createApp options', () => {
+      // 'uws' (uWebSockets.js, removed in 1.8.24) still validates: an existing
+      // configuration must keep booting. The framework runs it on 'moro'.
       for (const engine of ['moro', 'node', 'uws'] as const) {
         resetConfig();
         const config = loadConfigWithOptions({ server: { engine } });
@@ -112,9 +115,13 @@ describe('Configuration System Validation', () => {
     });
 
     it('should accept engine via MORO_SERVER_ENGINE', () => {
+      process.env.MORO_SERVER_ENGINE = 'node';
+      expect(loadConfig().server.engine).toBe('node');
+      // The removed engine's name is passed through, not dropped, so the
+      // framework can say what it did with it.
+      resetConfig();
       process.env.MORO_SERVER_ENGINE = 'uws';
-      const config = loadConfig();
-      expect(config.server.engine).toBe('uws');
+      expect(loadConfig().server.engine).toBe('uws');
     });
 
     it("should map legacy 'auto'/'native' to 'moro'", () => {
@@ -145,10 +152,10 @@ describe('Configuration System Validation', () => {
       expect(loadConfig().server.engine).toBe('moro');
     });
 
-    it('should keep honoring the deprecated useUWebSockets flag', () => {
+    it('should keep accepting the removed useUWebSockets flag', () => {
       const config = loadConfigWithOptions({ server: { useUWebSockets: true } });
       expect(config.server.useUWebSockets).toBe(true);
-      // engine stays unset; resolution turns useUWebSockets:true into 'uws'
+      // engine stays unset; the framework boots such an app on 'moro' with a warning
       expect(config.server.engine).toBeUndefined();
     });
   });

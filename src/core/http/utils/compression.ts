@@ -1,5 +1,5 @@
 /**
- * Shared response compression, used by every runtime (Node, uWS, HTTP/2, and
+ * Shared response compression, used by every runtime (Node, HTTP/2, and
  * the native engine) so switching engines never silently drops compression.
  *
  * Scope: BUFFERED responses only (json/send/end with a full body). The

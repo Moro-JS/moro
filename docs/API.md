@@ -264,7 +264,7 @@ Same pattern as `get()` but for different HTTP methods.
 
 #### Request bodies
 
-`req.body` is parsed before the handler runs, by Content-Type, identically on the Node, uWS and native-engine servers:
+`req.body` is parsed before the handler runs, by Content-Type, identically on the Node and native-engine servers:
 
 | Content-Type                                                                               | `req.body`                                  |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
@@ -440,7 +440,7 @@ app.listen(3000, '0.0.0.0', () => {
 
 #### app.reloadTLS(ssl?)
 
-Rotate the TLS certificate and key on the running listener without a restart. With no argument the `server.ssl` key/cert files are re-read; with one, the given material (either `ssl` shape) replaces them. The new pair is validated first (file readable, PEM parses, key matches certificate), so a bad or half-written file rejects and the current certificate keeps serving. Connections that already handshaked are untouched. Works on the native engine (`@morojs/engine` 1.1.8+), the Node https server and HTTP/2; not on uWebSockets.js.
+Rotate the TLS certificate and key on the running listener without a restart. With no argument the `server.ssl` key/cert files are re-read; with one, the given material (either `ssl` shape) replaces them. The new pair is validated first (file readable, PEM parses, key matches certificate), so a bad or half-written file rejects and the current certificate keeps serving. Connections that already handshaked are untouched. Works on the native engine (`@morojs/engine` 1.1.8+), the Node https server and HTTP/2.
 
 ```typescript
 await app.reloadTLS(); // re-read server.ssl.keyFile / certFile
@@ -549,7 +549,7 @@ When the route has nothing else configured - no `.auth()`, `.rateLimit()`,
 `.cache()`, validation or custom middleware, and a literal path - Moro's
 native engine (`@morojs/engine` >= 1.1.6) answers it itself: no call into JS,
 no routing and no header building per request. With any of those configured,
-or on the Node, uWebSockets and HTTP/2 servers, an equivalent handler sends
+or on the Node and HTTP/2 servers, an equivalent handler sends
 the same bytes after that configuration has run. HEAD against a literal GET
 still reaches the handler, so method policy stays in JS. Routes registered
 after `listen()` keep working through the handler until the next `listen()`.
@@ -2237,7 +2237,7 @@ app.websocket(
 );
 ```
 
-`socket.send(data, isBinary?)` exists on every built-in adapter: a string is sent as a text frame, a Buffer/ArrayBuffer/Uint8Array as a binary frame unless `isBinary` says otherwise. Raw namespaces are supported by the native engine, the `ws` adapter and the uWebSockets adapter; the Socket.IO adapter speaks its own protocol and ignores `raw`. Ping/pong, the close handshake and message size limits are unchanged.
+`socket.send(data, isBinary?)` exists on every built-in adapter: a string is sent as a text frame, a Buffer/ArrayBuffer/Uint8Array as a binary frame unless `isBinary` says otherwise. Raw namespaces are supported by the native engine and the `ws` adapter; the Socket.IO adapter speaks its own protocol and ignores `raw`. Ping/pong, the close handshake and message size limits are unchanged.
 
 Namespaces are routed by the upgrade URL. On the native engine that is the path itself (`ws://host/ws`); the `ws` adapter mounts under its base path (`websocket.options.path`, default `/ws`), so the same namespace is `ws://host/ws/ws` there and the base path alone reaches the `/` namespace.
 

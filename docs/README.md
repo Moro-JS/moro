@@ -35,9 +35,9 @@ Complete documentation for the MoroJS framework (v1.8.x).
 ### Features & Middleware
 
 - **[Middleware Guide](./MIDDLEWARE_GUIDE.md)** - Complete reference for all 18+ built-in middleware
-- **[HTTP Engine Guide](./UWEBSOCKETS_GUIDE.md)** - Native engine, Node fallback, and uWebSockets.js setup
+- **[HTTP Engine Guide](./HTTP_ENGINE_GUIDE.md)** - The native engine, its Node.js fallback, and migrating from uWebSockets.js
 - **[HTTP/2 Guide](./HTTP2_GUIDE.md)** - HTTP/2 server push, stream prioritization, and multiplexing
-- **[WebSocket Adapters](./WEBSOCKET-ADAPTERS.md)** - Socket.IO, ws, and uWebSockets.js WebSocket adapters
+- **[WebSocket Adapters](./WEBSOCKET-ADAPTERS.md)** - The engine's own WebSockets, and the Socket.IO and ws adapters
 - **[Worker Threads Guide](./WORKERS_GUIDE.md)** - CPU-intensive task offloading with worker threads
 - **[Message Queue Guide](./QUEUE_GUIDE.md)** - Production-ready queue system with multiple adapters
 - **[gRPC Guide](./GRPC_GUIDE.md)** - High-performance microservices with gRPC

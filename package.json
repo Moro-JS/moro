@@ -48,8 +48,6 @@
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
-    "check:uws": "node scripts/check-uws-version.mjs",
-    "update:uws": "node scripts/check-uws-version.mjs --update",
     "prerelease": "npm run lint:fix && npm run format && npm run build && node scripts/release.js",
     "prerelease:patch": "npm run lint:fix && npm run format && npm run build && node scripts/release.js patch",
     "prerelease:minor": "npm run lint:fix && npm run format && npm run build && node scripts/release.js minor",
@@ -149,7 +147,6 @@
     "resend": ">=6.4.2",
     "socket.io": ">=4.8.1",
     "swagger-ui-dist": ">=5.28.1",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#semver:^v20.52.0",
     "ws": ">=8.18.0",
     "yup": ">=1.7.1",
     "zod": ">=3.22.0"
@@ -239,9 +236,6 @@
     "swagger-ui-dist": {
       "optional": true
     },
-    "uWebSockets.js": {
-      "optional": true
-    },
     "ws": {
       "optional": true
     },
@@ -289,7 +283,6 @@
     "typedoc-plugin-markdown": "^4.8.1",
     "typedoc-theme-hierarchy": "^6.0.0",
     "typescript": "^5.9.2",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#semver:^v20.52.0",
     "ws": "^8.21.0",
     "zod": "^4.1.8"
   },

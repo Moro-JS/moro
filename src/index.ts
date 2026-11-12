@@ -95,7 +95,7 @@ export type {
 export type { WorkersEnv, WorkersContext } from './core/runtime/cloudflare-workers-adapter.js';
 
 // Core exports
-export { MoroHttpServer, UWebSocketsHttpServer, MoroEngineServer } from './core/http/index.js';
+export { MoroHttpServer, MoroEngineServer } from './core/http/index.js';
 export { middleware } from './core/middleware/built-in/index.js';
 
 // Re-declared (not re-exported) so the @deprecated tag reaches consumers:
@@ -218,11 +218,7 @@ export type {
 } from './core/networking/websocket-adapter.js';
 
 // Built-in WebSocket Adapters
-export {
-  SocketIOAdapter,
-  WSAdapter,
-  UWebSocketsAdapter,
-} from './core/networking/adapters/index.js';
+export { SocketIOAdapter, WSAdapter } from './core/networking/adapters/index.js';
 
 // Intelligent Routing System
 export { createRoute, defineRoute, EXECUTION_PHASES } from './core/routing/index.js';

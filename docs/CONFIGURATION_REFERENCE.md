@@ -83,7 +83,7 @@ Configure the HTTP server settings.
 | ---------------- | ----------- | ------------- | ----------------------------------------------------------------------------- |
 | `port`           | `number`    | `3001`        | Server port to listen on (1-65535)                                            |
 | `host`           | `string`    | `'localhost'` | Server host to bind to                                                        |
-| `engine`         | `string`    | `'moro'`      | `'moro' \| 'node' \| 'uws'`; unset ⇒ moro with Node fallback                  |
+| `engine`         | `string`    | `'moro'`      | `'moro' \| 'node'`; unset ⇒ moro with Node fallback                           |
 | `bodySizeLimit`  | `string`    | `'10mb'`      | Non-multipart body cap (413 over)                                             |
 | `maxUploadSize`  | `string`    | `'100mb'`     | Multipart body cap (413 over)                                                 |
 | `maxConnections` | `number`    | `0`           | Max concurrent connections; `0` = unlimited (**was `1000`**, see below)       |
@@ -111,8 +111,8 @@ ssl: {
 ```
 
 The Moro engine terminates TLS in-process; Node uses
-`https.createServer`; uWS needs file paths (inline PEM errors loudly); HTTP/2
-uses it too. `options.https` remains a supported alias.
+`https.createServer`; HTTP/2 uses it too. `options.https` remains a supported
+alias.
 
 **TLS library** (`server.ssl.library`, `@morojs/engine` 1.1.20+). The engine
 ships with BoringSSL bundled and uses it by default; `'openssl'` uses the
@@ -133,8 +133,7 @@ The bundled BoringSSL is updated through engine releases, which follow
 upstream's snapshots automatically (about every three weeks). Keep
 `@morojs/engine` updated as you keep Node.js updated; a TLS server on a build
 more than 180 days old logs a `MORO_ENGINE_TLS_STALE` process warning. The
-Node and uWebSockets.js servers have one TLS library each and ignore
-`library`.
+Node.js server has one TLS library and ignores `library`.
 
 **Timeouts** (`server.timeouts`, ms; `0` = default/disabled): `request` (full
 receive budget, doesn't reset on activity), `idle` (socket inactivity; engine
@@ -890,11 +889,11 @@ Configure performance optimizations.
 
 #### Clustering
 
-| Property            | Type      | Default     | Description                                                                                                                                                         |
-| ------------------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`           | `boolean` | `false`     | Enable clustering                                                                                                                                                   |
-| `workers`           | `number`  | `1`         | Number of workers (or `'auto'`). Worker threads in one process with the native engine on macOS/Linux; worker processes on Windows and with `engine: 'node'`/`'uws'` |
-| `memoryPerWorkerGB` | `number`  | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified)                                                                                               |
+| Property            | Type      | Default     | Description                                                                                                                                                 |
+| ------------------- | --------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`           | `boolean` | `false`     | Enable clustering                                                                                                                                           |
+| `workers`           | `number`  | `1`         | Number of workers (or `'auto'`). Worker threads in one process with the native engine on macOS/Linux; worker processes on Windows and with `engine: 'node'` |
+| `memoryPerWorkerGB` | `number`  | `undefined` | Memory allocation per worker in GB (auto-calculated if not specified)                                                                                       |
 
 **Note:** When `memoryPerWorkerGB` is not specified, MoroJS automatically calculates the optimal memory allocation per worker based on available system memory and CPU count, leaving headroom for the main process.
 

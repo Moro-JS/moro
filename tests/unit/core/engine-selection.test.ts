@@ -1,13 +1,18 @@
-// Unit Tests - HTTP engine selection (engine: 'moro' | 'node' | 'uws')
+// Unit Tests - HTTP engine selection (engine: 'moro' | 'node')
 //
-// Default is 'moro' (Moro's native engine), with 'node' to disable it and
-// 'uws' to opt into uWebSockets.js. A chosen native engine that can't load on
-// this platform/Node ABI degrades to the Node.js http server (never throws).
-// Expectations adapt via moroLoadable / uwsLoadable so the suite is correct
-// whether or not each engine has a prebuilt binary here.
-import { describe, it, expect, beforeEach } from '@jest/globals';
+// Default is 'moro' (Moro's native engine), with 'node' to disable it. A
+// native engine that can't load on this platform/Node ABI degrades to the
+// Node.js http server (never throws). Expectations adapt via moroLoadable so
+// the suite is correct whether or not the engine has a prebuilt binary here.
+//
+// uWebSockets.js was removed in 1.8.24. The settings that selected it
+// (engine: 'uws', useUWebSockets: true, MORO_SERVER_ENGINE=uws) must not
+// break an app that still carries them: it boots on the Moro engine, exactly
+// as with no setting, and says so once.
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { createApp } from '../../../src/index.js';
 import { resetConfig } from '../../../src/core/config/index.js';
+import { logger } from '../../../src/core/logger/index.js';
 import {
   loadNativeEngine,
   resetNativeEngineLoaderForTesting,
@@ -17,8 +22,28 @@ const moroEngine = loadNativeEngine({ candidates: ['@morojs/engine'] });
 const moroLoadable = moroEngine !== null;
 // @morojs/engine 1.1.19 and later serve HTTP/2 themselves.
 const moroServesH2 = moroEngine?.capabilities?.http2 === true;
-const uwsLoadable = loadNativeEngine({ candidates: ['uWebSockets.js'] }) !== null;
 const quiet = { logger: { level: 'fatal' as const } };
+
+// Every warning logged while `fn` ran, as one string. Entries are read from
+// an output added to the global logger (framework loggers share its outputs),
+// so nothing depends on what the test setup lets through to the console.
+async function captureLogs<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
+  const lines: string[] = [];
+  logger.addOutput({
+    name: 'engine-selection-capture',
+    write: (entry: any) => {
+      if (entry.level === 'warn') lines.push(String(entry.message));
+    },
+  } as any);
+  try {
+    const result = await fn();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return { result, output: lines.join('\n') };
+  } finally {
+    logger.removeOutput('engine-selection-capture');
+    logger.setLevel('error');
+  }
+}
 
 describe('HTTP engine selection', () => {
   beforeEach(() => {
@@ -45,7 +70,7 @@ describe('HTTP engine selection', () => {
     expect(app.engine.fallbackReason).toBeUndefined();
   });
 
-  it("engine: 'moro' uses @morojs/engine (never falls to uWS)", async () => {
+  it("engine: 'moro' uses @morojs/engine", async () => {
     const app = await createApp({ ...quiet, server: { engine: 'moro' } });
     if (moroLoadable) {
       expect(app.engine.server).toBe('engine');
@@ -55,24 +80,75 @@ describe('HTTP engine selection', () => {
     }
   });
 
-  it("engine: 'uws' opts into uWebSockets.js (never uses the Moro engine)", async () => {
-    const app = await createApp({ ...quiet, server: { engine: 'uws' } });
-    if (uwsLoadable) {
-      expect(app.engine.server).toBe('engine');
-      expect(app.engine.enginePackage).toBe('uWebSockets.js');
-    } else {
-      expect(app.engine.server).toBe('node');
-    }
-  });
+  describe('settings left over from uWebSockets.js (removed in 1.8.24)', () => {
+    const savedEnv = process.env.MORO_SERVER_ENGINE;
+    afterEach(() => {
+      if (savedEnv === undefined) delete process.env.MORO_SERVER_ENGINE;
+      else process.env.MORO_SERVER_ENGINE = savedEnv;
+    });
 
-  it('deprecated useUWebSockets: true opts into uws', async () => {
-    const app = await createApp({ ...quiet, server: { useUWebSockets: true } });
-    if (uwsLoadable) {
-      expect(app.engine.server).toBe('engine');
-      expect(app.engine.enginePackage).toBe('uWebSockets.js');
-    } else {
-      expect(app.engine.server).toBe('node');
-    }
+    const expectTheDefaultEngine = (app: any) => {
+      if (moroLoadable) {
+        expect(app.engine.server).toBe('engine');
+        expect(app.engine.enginePackage).toBe('@morojs/engine');
+        expect(app.engine.fallbackReason).toBeUndefined();
+      } else {
+        expect(app.engine.server).toBe('node');
+      }
+    };
+
+    it("engine: 'uws' boots on the Moro engine and says why", async () => {
+      const { result: app, output } = await captureLogs(() =>
+        createApp({ logger: { level: 'warn' }, server: { engine: 'uws' } } as any)
+      );
+      expectTheDefaultEngine(app);
+      expect(output).toMatch(/server\.engine: 'uws' is no longer supported/);
+      expect(output).toMatch(/uWebSockets\.js was removed from MoroJS in 1\.8\.24/);
+      expect(output).toMatch(/runs on the Moro engine instead/);
+    });
+
+    it('useUWebSockets: true does the same', async () => {
+      const { result: app, output } = await captureLogs(() =>
+        createApp({ logger: { level: 'warn' }, server: { useUWebSockets: true } } as any)
+      );
+      expectTheDefaultEngine(app);
+      expect(output).toMatch(/server\.useUWebSockets is no longer supported/);
+    });
+
+    it('MORO_SERVER_ENGINE=uws does the same', async () => {
+      process.env.MORO_SERVER_ENGINE = 'uws';
+      const { result: app, output } = await captureLogs(() =>
+        createApp({ logger: { level: 'warn' } } as any)
+      );
+      expectTheDefaultEngine(app);
+      expect(output).toMatch(/server\.engine: 'uws' is no longer supported/);
+    });
+
+    it('useUWebSockets: false is silent', async () => {
+      const { result: app, output } = await captureLogs(() =>
+        createApp({ logger: { level: 'warn' }, server: { useUWebSockets: false } } as any)
+      );
+      expectTheDefaultEngine(app);
+      expect(output).not.toMatch(/no longer supported/);
+    });
+
+    it("the 'uws' WebSocket adapter name keeps the app on the engine", async () => {
+      const app = await createApp({
+        ...quiet,
+        websocket: { enabled: true, adapter: 'uws' },
+      } as any);
+      expectTheDefaultEngine(app);
+    });
+
+    it('an app with none of them is not warned', async () => {
+      const { output } = await captureLogs(() => createApp({ logger: { level: 'warn' } } as any));
+      expect(output).not.toMatch(/uWebSockets/);
+    });
+
+    it('with http2 it is served as the default engine serves it', async () => {
+      const app = await createApp({ ...quiet, http2: true, server: { engine: 'uws' } } as any);
+      expect(app.engine.server).toBe(moroServesH2 ? 'engine' : 'http2');
+    });
   });
 
   it("legacy engine: 'auto'/'native' map to 'moro'", async () => {
@@ -84,7 +160,7 @@ describe('HTTP engine selection', () => {
     }
   });
 
-  it('explicit engine option outranks useUWebSockets', async () => {
+  it("engine: 'node' is honoured beside a leftover useUWebSockets", async () => {
     const app = await createApp({
       ...quiet,
       server: { engine: 'node', useUWebSockets: true },

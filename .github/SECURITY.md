@@ -88,8 +88,8 @@ that surface directly rather than asserting it is safe:
   print the seed; reproduce with
   `MORO_FUZZ_SEED=<seed> npm run test:fuzz`.
 - **Header injection** is neutralised at the write boundary on every backend:
-  Node throws `ERR_INVALID_CHAR`, uWebSockets.js strips CR/LF, and the native
-  engine drops the offending header.
+  Node throws `ERR_INVALID_CHAR` and the native engine drops the offending
+  header.
 - **Dependency audit** runs in CI; releases are published with npm provenance
   attestations via OIDC trusted publishing.
 

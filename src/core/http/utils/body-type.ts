@@ -1,4 +1,4 @@
-// Request-body text/binary classification, shared by the Node, uWS and native
+// Request-body text/binary classification, shared by the Node and native
 // engine servers so `req.body` has the same shape on every backend.
 //
 // JSON, urlencoded and multipart bodies are parsed into objects upstream of

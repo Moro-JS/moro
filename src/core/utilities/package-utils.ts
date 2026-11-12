@@ -66,11 +66,10 @@ export function createUserRequire() {
 // ---------------------------------------------------------------------------
 
 /**
- * Package names probed for the native HTTP engine, in priority order.
- * '@morojs/engine' is Moro's own engine (installed as an optionalDependency of
- * the framework); 'uWebSockets.js' is honored as a legacy user-installed peer.
+ * Package names probed for the native HTTP engine. '@morojs/engine' is Moro's
+ * own engine, installed as a dependency of the framework.
  */
-export const NATIVE_ENGINE_PACKAGES = ['@morojs/engine', 'uWebSockets.js'] as const;
+export const NATIVE_ENGINE_PACKAGES = ['@morojs/engine'] as const;
 
 const FRAMEWORK_PACKAGE_NAME = '@morojs/moro';
 
@@ -257,8 +256,7 @@ export interface NativeEngineLoadResult {
   source: string;
   /** The engine package's version, when its package.json is resolvable */
   version?: string;
-  /** Feature flags (Moro-shaped engine only; all-false for uWS or an
-   *  engine too old to advertise them). */
+  /** Feature flags (all-false for an engine too old to advertise them). */
   capabilities?: EngineCapabilities;
   /** The TLS library in use (@morojs/engine 1.1.20+). */
   tls?: EngineTlsInfo;
@@ -273,9 +271,7 @@ const capabilitiesCache = new WeakMap<object, EngineCapabilities>();
 /**
  * Feature-detect a loaded engine module. Reads probe().capabilities when the
  * engine exposes it (>= 1.1.0); otherwise everything is false so the framework
- * passes only the options an older engine understood. uWS-style modules (no
- * probe/serve) report all-false — their SSL/limits go through the uWS-specific
- * paths, not these flags.
+ * passes only the options an older engine understood.
  */
 export function getEngineCapabilities(module: any): EngineCapabilities {
   const surface = module?.default || module;
@@ -350,10 +346,10 @@ function findFrameworkAnchor(): ReturnType<typeof createRequire> | null {
 }
 
 /**
- * Synchronously load the native HTTP engine, trying '@morojs/engine' first and
- * falling back to a user-installed 'uWebSockets.js'. Loading is require-based
- * (both packages are CJS at their core - .node addon loading is require-based),
- * so the instance is shared with any later import() via the CJS module cache.
+ * Synchronously load the native HTTP engine ('@morojs/engine'). Loading is
+ * require-based (the package is CJS at its core - .node addon loading is
+ * require-based), so the instance is shared with any later import() via the
+ * CJS module cache.
  *
  * The default call is memoized: the engine either loads once per process or it
  * doesn't. Failure details are retained for logging via
@@ -386,34 +382,27 @@ export function loadNativeEngine(options?: {
   const userRequire = createUserRequire();
 
   for (const candidate of candidates) {
-    // Moro's own engine lives in moro's dependencies (framework anchor first);
-    // the legacy uWS peer dep lives in the user's node_modules (cwd first).
-    const anchors =
-      candidate === 'uWebSockets.js'
-        ? [userRequire, frameworkRequire]
-        : [frameworkRequire, userRequire];
+    // The engine lives in moro's dependencies (framework anchor first); the
+    // user's node_modules is the fallback for exotic layouts.
+    const anchors = [frameworkRequire, userRequire];
 
     for (const anchor of anchors) {
       if (!anchor) continue;
       try {
         const module = anchor(candidate);
-        // Capability check: the HTTP server needs either a uWS-style App()
-        // factory or the Moro-shaped engine surface (serve()/respond()).
-        // A package that loads but can't serve (e.g. a pre-M1 @morojs/engine
-        // that only exposes probe()) must not shadow a usable alternative.
+        // Capability check: the HTTP server needs the engine surface
+        // (serve()/respond()). A package that loads but can't serve (e.g. a
+        // pre-M1 @morojs/engine that only exposes probe()) is not usable.
         const surface = module?.default || module;
         // First of all, and before anything reads a native function off the
         // module: that read is what loads @morojs/engine's binary, and the
         // TLS library is chosen by which binary gets loaded.
         if (candidate === '@morojs/engine') applyTlsPreference(surface);
-        const uwsStyle = typeof surface?.App === 'function';
         const moroStyle =
-          !uwsStyle &&
-          typeof surface?.serve === 'function' &&
-          typeof surface?.respond === 'function';
-        if (!uwsStyle && !moroStyle) {
+          typeof surface?.serve === 'function' && typeof surface?.respond === 'function';
+        if (!moroStyle) {
           errors.push(
-            `${candidate}: loaded but provides neither App() nor serve()/respond() - not a usable HTTP engine`
+            `${candidate}: loaded but does not provide serve()/respond() - not a usable HTTP engine`
           );
           continue;
         }
@@ -424,12 +413,12 @@ export function loadNativeEngine(options?: {
         } catch {
           version = undefined;
         }
-        const tls = moroStyle ? getEngineTlsInfo(module) : undefined;
+        const tls = getEngineTlsInfo(module);
         result = {
           module,
           source: candidate,
           ...(version !== undefined ? { version } : {}),
-          capabilities: moroStyle ? getEngineCapabilities(module) : NO_CAPABILITIES,
+          capabilities: getEngineCapabilities(module),
           ...(tls ? { tls } : {}),
         };
         break;
@@ -441,15 +430,15 @@ export function loadNativeEngine(options?: {
     if (result) break;
   }
 
-  // Candidate-override probes (e.g. the clustering worker's uWS-only check)
-  // must not clobber the diagnostics of the real default load, which
+  // Candidate-override probes must not clobber the diagnostics of the real
+  // default load, which
   // framework startup logging reads via getNativeEngineLoadErrors().
   if (useCache) {
     engineLoadErrors = result ? [] : [...new Set(errors)];
     cachedEngine = result;
   }
   // Hand this specific call's failure detail back to a caller that asked for it,
-  // regardless of caching (so 'moro'/'uws' fallback reasons are precise).
+  // regardless of caching (so the fallback reason is precise).
   if (options?.collectErrors && !result) {
     options.collectErrors.push(...new Set(errors));
   }

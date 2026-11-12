@@ -1,6 +1,6 @@
 // Unit tests for the shared query-string parser. Semantics must match
 // application/x-www-form-urlencoded (WHATWG) and be identical across the
-// Node, uWS, and engine transports.
+// Node and engine transports.
 import { describe, it, expect } from '@jest/globals';
 import { parseRawQueryString } from '../../../src/core/http/utils/query-parser.js';
 

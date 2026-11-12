@@ -2,19 +2,18 @@
  * Unified SSL/TLS configuration.
  *
  * MoroJS historically carried TWO incompatible SSL shapes:
- *   - `config.server.ssl` = uWS-style file paths { key_file_name, cert_file_name, passphrase }
- *   - `options.https`      = node-style buffers    { key, cert, ca }
- * and each reached only one runtime (uWS / http2 respectively). This module
- * normalizes both into ONE internal shape and projects it back out for each
- * of the four servers (Node https, uWS SSLApp, HTTP/2, the native engine), so
- * a single `server.ssl` config flows everywhere.
+ *   - `config.server.ssl` = file paths         { key_file_name, cert_file_name, passphrase }
+ *   - `options.https`      = node-style buffers { key, cert, ca }
+ * and each reached only one runtime. This module normalizes both into ONE
+ * internal shape and projects it back out for each server (the native engine,
+ * Node https, HTTP/2), so a single `server.ssl` config flows everywhere.
  */
 import { readFileSync } from 'fs';
 import type { MoroLogger } from '../../logger/index.js';
 
 /** Raw, un-normalized SSL config as a user may supply it (either shape). */
 export interface SSLConfigInput {
-  // File-path shape (uWS-style; also accepted node-style keyFile/certFile)
+  // File-path shape (also accepted: node-style keyFile/certFile)
   key_file_name?: string;
   cert_file_name?: string;
   ca_file_name?: string | string[];
@@ -124,26 +123,6 @@ export function sslForNode(ssl: NormalizedSSLConfig): {
     ...(ssl.rejectUnauthorized !== undefined && {
       rejectUnauthorized: ssl.rejectUnauthorized,
     }),
-  };
-}
-
-/**
- * Project for uWebSockets.js SSLApp, which requires FILE PATHS (it has no
- * inline-PEM option). Returns null when only inline PEM is available so the
- * caller can log a clear error instead of silently booting plain HTTP.
- */
-export function sslForUws(ssl: NormalizedSSLConfig): {
-  key_file_name: string;
-  cert_file_name: string;
-  ca_file_name?: string;
-  passphrase?: string;
-} | null {
-  if (!ssl.keyFile || !ssl.certFile) return null;
-  return {
-    key_file_name: ssl.keyFile,
-    cert_file_name: ssl.certFile,
-    ...(ssl.caFile && ssl.caFile[0] && { ca_file_name: ssl.caFile[0] }),
-    ...(ssl.passphrase && { passphrase: ssl.passphrase }),
   };
 }
 

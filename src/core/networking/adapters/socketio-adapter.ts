@@ -72,7 +72,7 @@ export class SocketIOAdapter implements WebSocketAdapter {
       // Socket.IO clients speak the Socket.IO protocol, so there is no raw
       // frame to expose; the namespace behaves as an event namespace.
       createFrameworkLogger('SocketIOAdapter').warn(
-        `WebSocket namespace ${namespace}: { raw: true } is not supported by the Socket.IO adapter (use the engine, ws or uWS adapter for raw frames)`,
+        `WebSocket namespace ${namespace}: { raw: true } is not supported by the Socket.IO adapter (use the engine or ws adapter for raw frames)`,
         'Namespace'
       );
     }

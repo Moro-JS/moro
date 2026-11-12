@@ -1,8 +1,7 @@
 // @ts-nocheck
 // Integration - binary request bodies reach the handler byte-exact as a
 // Buffer (Content-Length and chunked), while text bodies remain strings.
-// Runs on the Node http server (always) and the native engine (when built);
-// the uWS backend shares the same classifier and self-skips here.
+// Runs on the Node http server (always) and the native engine (when built).
 import { describe, it, expect, afterEach } from '@jest/globals';
 import * as http from 'http';
 import * as crypto from 'crypto';

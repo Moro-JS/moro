@@ -103,8 +103,7 @@ function validateServerConfig(config: any, path: string) {
     result.timeouts = validateServerTimeouts(config.timeouts, `${path}.timeouts`);
   }
   // `timeout` is a deprecated alias for `timeouts.request`. Fold it forward
-  // when set and the canonical field is absent (matching the useUWebSockets
-  // deprecation pattern).
+  // when set and the canonical field is absent.
   if (config.timeout && config.timeout > 0 && result.timeouts?.request === undefined) {
     result.timeouts = { ...(result.timeouts ?? {}), request: result.timeout };
     if (config.timeouts?.request === undefined) {
@@ -125,7 +124,10 @@ function validateServerConfig(config: any, path: string) {
     result.http2 = validateHttp2Config(config.http2, `${path}.http2`);
   }
 
-  // Optional HTTP engine selection ('moro' | 'node' | 'uws')
+  // Optional HTTP engine selection ('moro' | 'node'). 'uws' named the
+  // uWebSockets.js engine, removed in 1.8.24: it is still accepted so that an
+  // existing configuration keeps booting, and the framework runs such an app
+  // on the Moro engine and says so (framework.ts resolveEngineMode).
   if (config.engine !== undefined) {
     // Map legacy values from the earlier 'auto'/'native' scheme to 'moro'
     let engine = config.engine;
@@ -140,14 +142,10 @@ function validateServerConfig(config: any, path: string) {
     result.lendBodies = validateBoolean(config.lendBodies, `${path}.lendBodies`);
   }
 
-  // Optional uWebSockets configuration (deprecated alias for engine: 'uws')
+  // The oldest spelling of engine: 'uws'. Accepted for the same reason and
+  // handled in the same place.
   if (config.useUWebSockets !== undefined) {
     result.useUWebSockets = validateBoolean(config.useUWebSockets, `${path}.useUWebSockets`);
-    // The default config merges useUWebSockets: false in, so only an actual
-    // opt-in warrants the deprecation nudge
-    if (result.useUWebSockets && config.engine === undefined) {
-      logger.warn(`${path}.useUWebSockets is deprecated - use ${path}.engine: 'uws' instead`);
-    }
   }
 
   // Optional SSL configuration
@@ -160,7 +158,7 @@ function validateServerConfig(config: any, path: string) {
 
 /**
  * Validate the unified SSL configuration (superset of both historical
- * shapes). Passes recognized keys through, folds the legacy uWS aliases, and
+ * shapes). Passes recognized keys through, folds the file-path aliases, and
  * rejects a partial key-without-cert (or vice versa) so a half-configured TLS
  * server fails loudly at boot instead of silently serving plaintext.
  */
@@ -170,7 +168,7 @@ function validateSSLConfig(config: any, path: string) {
   }
 
   const result: any = {};
-  // File-path shape (both the uWS key_file_name and node keyFile spellings).
+  // File-path shape (both the key_file_name and the keyFile spellings).
   if (config.keyFile !== undefined)
     result.keyFile = validateString(config.keyFile, `${path}.keyFile`);
   if (config.certFile !== undefined)

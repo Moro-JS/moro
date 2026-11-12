@@ -1,19 +1,18 @@
 // Moro Engine HTTP Server Implementation (@morojs/engine)
 //
-// One of the three HTTP backends, kept deliberately separate from the others:
-//   - MoroHttpServer        (http-server.ts)      -> Node's http module
-//   - UWebSocketsHttpServer (uws-http-server.ts)  -> uWebSockets.js (opt-in)
-//   - MoroEngineServer      (this file)           -> @morojs/engine, Moro's own
-//                                                    from-scratch native engine
+// One of the HTTP backends, kept deliberately separate from the others:
+//   - MoroEngineServer (this file)       -> @morojs/engine, Moro's own
+//                                           from-scratch native engine
+//   - MoroHttpServer   (http-server.ts)  -> Node's http module
+//   - MoroHttp2Server  (http2-server.ts) -> Node's http2 module
 //
 // Bridges the Moro-shaped native engine API (one JS crossing per request in,
 // one out - see the engine repo's docs/API.md) with Moro's HTTP abstractions.
-// Unlike the uWS adapter there is no materialize() hazard: every per-request
-// fetcher (getHeaders/getQuery/getBody/...) returns a stable snapshot, and the
-// body is already complete when onRequest fires. Keep-alive, Content-Length,
+// Every per-request fetcher (getHeaders/getQuery/getBody/...) returns a stable
+// snapshot, and the body is already complete when onRequest fires. Keep-alive, Content-Length,
 // Date, chunked encoding, HEAD body suppression and native 413/400 are all
-// engine concerns - this adapter never sees them. No dependency on the uWS
-// adapter: shared helpers live in ./utils.
+// engine concerns - this adapter never sees them. Helpers shared with the
+// Node servers live in ./utils.
 
 import { setImmediate } from 'node:timers';
 import { randomUUID } from 'crypto';
@@ -43,7 +42,7 @@ import {
 import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
 import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
 import { InflightRegistry } from './utils/inflight-registry.js';
-import { parseRawQueryString as parseUwsQueryString } from './utils/query-parser.js';
+import { parseRawQueryString } from './utils/query-parser.js';
 import { PathMatcher } from '../routing/path-matcher.js';
 
 /** Engine method table - onRequest's methodIdx indexes into this */
@@ -175,7 +174,7 @@ const JSON_BODY_START = /^\s*[{[]/;
  * Headers/query/cookies/ip/requestId are lazy: a synchronous handler that
  * never reads them pays nothing (no native crossing, no UUID). Every fetcher
  * returns a stable snapshot and reqIds are safe no-ops after the response
- * terminates, so - unlike the uWS adapter - there is no validity window.
+ * terminates, so there is no validity window.
  */
 export class EngineRequest extends LazyEventEmitter {
   method: string;
@@ -221,10 +220,6 @@ export class EngineRequest extends LazyEventEmitter {
     this.path = path;
   }
 
-  /** Engine snapshots are stable - nothing to detach. No-op kept for
-   *  interface parity with UwsRequest so shared dispatch code can call it. */
-  materialize(): void {}
-
   // Lazy like context: dispatch writes params through the setter only for
   // parametric routes, so a handler that never reads req.params on a static
   // route pays no allocation.
@@ -267,7 +262,7 @@ export class EngineRequest extends LazyEventEmitter {
     let q = this._query;
     if (q === undefined) {
       const qs = this._rawQueryString();
-      q = qs ? parseUwsQueryString(qs) : {};
+      q = qs ? parseRawQueryString(qs) : {};
       this._query = q;
     }
     return q;
@@ -409,7 +404,7 @@ export class EngineRequest extends LazyEventEmitter {
     this._socket = value;
   }
 
-  // ==== Express-compatible request helpers (parity with the uWS adapter) ====
+  // ==== Express-compatible request helpers ====
 
   get hostname(): string {
     const host = this.headers.host || '';
@@ -521,8 +516,8 @@ export class EngineRequest extends LazyEventEmitter {
 }
 
 /**
- * Prototype-based response object for the engine adapter. Same
- * MoroResponseMethods surface as the uWS adapter's ResponsePrototype.
+ * Prototype-based response object for the engine adapter, with the
+ * MoroResponseMethods surface.
  *
  * Terminal writes (json/send/end/redirect) go out as ONE respond() call -
  * status + headers + body in a single native crossing. Streaming responses
@@ -1452,7 +1447,7 @@ export class EngineResponse extends LazyEventEmitter {
     chosen();
   }
 
-  // ==== Express-compatible response helpers (parity with the uWS adapter) ====
+  // ==== Express-compatible response helpers ====
 
   set(field: string | Record<string, any>, value?: any) {
     if (this.headersSent) return this;
@@ -1605,7 +1600,7 @@ export class EngineResponse extends LazyEventEmitter {
 /**
  * Moro Engine HTTP Server Adapter
  * Bridges @morojs/engine with Moro's HTTP abstractions. Duck-typed to the
- * same surface framework.ts/moro.ts use on UWebSocketsHttpServer.
+ * surface framework.ts/moro.ts use on every HTTP server.
  */
 export class MoroEngineServer {
   /** @internal read by EngineRequest/EngineResponse for lazy fetchers */
@@ -1846,10 +1841,7 @@ export class MoroEngineServer {
     }
     const surface = engineModule.default || engineModule;
     if (typeof surface.serve !== 'function' || typeof surface.respond !== 'function') {
-      throw new Error(
-        'Engine module does not provide the @morojs/engine API (serve/respond) - ' +
-          'use UWebSocketsHttpServer for uWS-style modules'
-      );
+      throw new Error('Engine module does not provide the @morojs/engine API (serve/respond)');
     }
     this._engine = surface;
     this._respond = surface.respond;
@@ -2422,17 +2414,6 @@ export class MoroEngineServer {
     return false;
   }
 
-  // The engine has no native route table - every request already reaches the
-  // unified router through a single onRequest callback with zero middleware
-  // machinery, so there is no fast path to register. Accepted for interface
-  // parity with the uWS adapter.
-  setNativeRouteProvider(_provider: () => Array<any>, _onError?: (...args: any[]) => any): void {
-    this.logger.debug(
-      'Native route provider noted (engine dispatch is already direct)',
-      'NativeRoutes'
-    );
-  }
-
   private onRequest(reqId: number, methodIdx: number, path: string): void {
     // WebSocket upgrade: when a WS bridge is registered and this is an upgrade
     // request, hand the connection to the engine's native WS path. The engine
@@ -2811,7 +2792,7 @@ export class MoroEngineServer {
   }
 
   // Parse the engine-buffered body (JSON/urlencoded/multipart/text - identical
-  // semantics to the Node and uWS servers' readBody). getBody returns a STABLE
+  // semantics to the Node server's readBody). getBody returns a STABLE
   // ArrayBuffer copy, so Buffer.from() views it with no aliasing hazard.
   //
   // With the engine's typed reads (getBodyType/getBodyText) a body the
@@ -2924,7 +2905,7 @@ export class MoroEngineServer {
         });
         httpReq.body = body;
       } else if (isMultipart) {
-        // Shared parser (same as the Node/uWS servers) - stringifying
+        // Shared parser (same as the Node server) - stringifying
         // multipart would corrupt binary uploads and lose fields/files
         httpReq.body = parseMultipartBuffer(buffer, contentType, this.multipartLimits);
       } else {
@@ -3065,7 +3046,7 @@ export class MoroEngineServer {
     }
   }
 
-  // Public API - matches MoroHttpServer/UWebSocketsHttpServer interface
+  // Public API - matches the MoroHttpServer interface
 
   use(middleware: Middleware): void {
     // Defensive check: Don't add MiddlewareInterface objects to globalMiddleware
@@ -3094,7 +3075,6 @@ export class MoroEngineServer {
 
   // Note: Route registration methods (get, post, etc.) are not used by the
   // engine adapter - all routing is handled by UnifiedRouter via setRouterHandler
-  // (same as the uWS adapter)
 
   setHookManager(hookManager: any): void {
     this.hookManager = hookManager;
@@ -3201,7 +3181,7 @@ export class MoroEngineServer {
         this.logger.info('Moro engine HTTP server closed', 'Close');
         if (callback) {
           // Give the event loop time to process the engine's socket teardown
-          // before invoking the callback (matches the uWS adapter)
+          // before invoking the callback
           setTimeout(() => {
             callback();
           }, 50);

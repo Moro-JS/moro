@@ -1,7 +1,7 @@
 // Compression Core Logic
 //
 // The global compression middleware wraps res.json/res.send uniformly across
-// EVERY runtime (Node, uWS, HTTP/2, engine), so it is the single source of
+// EVERY runtime (Node, HTTP/2, engine), so it is the single source of
 // response compression parity. It delegates encoding choice and content-type
 // filtering to the shared utility (utils/compression) so brotli, q-value
 // negotiation, and the compressible-type allowlist behave identically here and

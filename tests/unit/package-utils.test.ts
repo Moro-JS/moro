@@ -153,15 +153,12 @@ describe('Package Utils', () => {
 
   describe('loadNativeEngine', () => {
     // A package counts as a usable engine only if it both requires AND exposes
-    // a usable HTTP surface - either uWS-style App() or the Moro-shaped
-    // serve()/respond(). This mirrors loadNativeEngine's own capability check
-    // so the ground truth tracks whichever engine is installed on this machine.
+    // the engine's HTTP surface, serve()/respond(). This mirrors
+    // loadNativeEngine's own capability check, so the ground truth tracks the
+    // engine installed on this machine.
     const hasEngineSurface = (m: any) => {
       const s = m?.default || m;
-      return (
-        typeof s?.App === 'function' ||
-        (typeof s?.serve === 'function' && typeof s?.respond === 'function')
-      );
+      return typeof s?.serve === 'function' && typeof s?.respond === 'function';
     };
     const directlyLoadable = NATIVE_ENGINE_PACKAGES.filter(name => {
       try {
@@ -190,7 +187,7 @@ describe('Package Utils', () => {
       // Prime the cached default-candidates load state (whatever it is)
       loadNativeEngine();
       const before = getNativeEngineLoadErrors();
-      // An override probe (e.g. the clustering worker's uWS-only check) must
+      // An override probe must
       // not overwrite the diagnostics that startup logging reads
       loadNativeEngine({ candidates: ['this-package-does-not-exist-12345'] });
       expect(getNativeEngineLoadErrors()).toEqual(before);

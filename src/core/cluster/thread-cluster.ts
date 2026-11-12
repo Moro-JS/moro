@@ -5,7 +5,7 @@
 // the workers are worker_threads inside ONE process, each binding the port
 // with SO_REUSEPORT exactly as the process workers did. Everything that
 // cannot be a thread stays on node:cluster automatically - Windows (no
-// SO_REUSEPORT), the node/uWS engines, an older engine, a REPL/eval entry,
+// SO_REUSEPORT), the Node.js server, an older engine, a REPL/eval entry,
 // or a worker thread that fails to boot (see resolveClusterTransport and the
 // boot-phase fallback in Moro.startThreadPrimary).
 //
@@ -216,7 +216,7 @@ export interface TransportInput {
   platform: NodeJS.Platform;
   isMainThread: boolean;
   argv1: string | undefined;
-  /** app.engine.server: 'engine' | 'node' | 'uws' */
+  /** app.engine.server: 'engine' | 'node' | 'http2' */
   engineServer: string;
   /** app.engine.enginePackage, e.g. '@morojs/engine' */
   enginePackage?: string | undefined;

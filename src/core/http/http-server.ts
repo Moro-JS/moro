@@ -94,7 +94,7 @@ const TYPE_SHORTHANDS: Record<string, string> = {
   form: 'application/x-www-form-urlencoded',
 };
 
-// Canonical query parsing shared with the uWS/engine transports - identical
+// Canonical query parsing shared with the engine transport - identical
 // req.query semantics everywhere ('+' as space, malformed escapes tolerated).
 const parseQueryString = parseRawQueryString;
 
@@ -1596,7 +1596,7 @@ export class MoroHttpServer {
 
       if (!httpRes.headersSent) {
         // A malformed body is a client error: default to 400 (parity with the
-        // engine/uWS transports), not the generic 500.
+        // engine transport), not the generic 500.
         const isBadRequest = (error as any)?.statusCode === 400;
         const defaultStatus = isBadRequest ? 400 : 500;
         const defaultError = isBadRequest ? 'Invalid request body' : 'Internal server error';
@@ -1787,7 +1787,7 @@ export class MoroHttpServer {
 
     // Buffer every body up to maxSize and parse it into its real shape. The
     // incremental limit check below already bounds memory, and every other
-    // backend (uWS, engine) returns the parsed body here - previously bodies
+    // backend (the engine) returns the parsed body here - previously bodies
     // between maxSize/2 and maxSize resolved to a { type, parser } descriptor
     // object instead, so handlers/validation on the Node backend silently saw
     // a bogus shape for the exact same request that parsed normally elsewhere.
@@ -1822,7 +1822,7 @@ export class MoroHttpServer {
           if (totalLength > 0) (req as MoroIncomingMessage)._rawBody = body;
 
           if (isJsonMediaType(contentType)) {
-            // Empty JSON body -> null (parity with the engine/uWS servers, and
+            // Empty JSON body -> null (parity with the engine server, and
             // avoids JSON.parse('') throwing and 500ing an empty POST).
             resolve(totalLength === 0 ? null : JSON.parse(body.toString()));
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
@@ -1837,7 +1837,7 @@ export class MoroHttpServer {
         } catch (error) {
           // A malformed body is a client error (400), not a server error (500).
           // Tag it so the request-error path answers 400, matching the engine
-          // and uWS transports.
+          // transport.
           if (error instanceof Error && (error as any).statusCode === undefined) {
             (error as any).statusCode = 400;
           }

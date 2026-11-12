@@ -42,7 +42,7 @@ MoroJS is designed for high performance across all supported runtimes. The frame
 
 ### Framework Comparison
 
-Framework comparison benchmarks (MoroJS engine/uWS/node paths vs Fastify,
+Framework comparison benchmarks (MoroJS engine and node paths vs Fastify,
 Express, Koa, Elysia, and raw baselines — both realistic and pipelined
 profiles, full methodology, saved results files) live in the
 **[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**. Headline:
@@ -710,7 +710,7 @@ How the workers run is chosen for you. With the native engine on macOS/Linux
 (`@morojs/engine` ≥ 1.1.6) the workers are **worker threads in one process**,
 each binding the port with `SO_REUSEPORT`: shared binary and code pages
 (lower RSS per worker), one pid to supervise, a crashed worker is restarted
-with backoff. On Windows, with `engine: 'node'` or `'uws'`, or with an older
+with backoff. On Windows, with `engine: 'node'`, or with an older
 engine, the same config runs **worker processes** via `node:cluster` exactly
 as before. Either way the primary runs the job scheduler and the gRPC server
 once, and every worker loads auto-discovered modules and file-based routes,

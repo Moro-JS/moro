@@ -5,7 +5,6 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { requireBuiltin } from './utilities/builtin.js';
 import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
-import { UWebSocketsHttpServer } from './http/uws-http-server.js';
 import { MoroEngineServer } from './http/moro-engine-server.js';
 import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
@@ -28,7 +27,6 @@ import {
   normalizeSSLConfig,
   sslForEngine,
   sslForNode,
-  sslForUws,
   sslIsComplete,
   type NormalizedSSLConfig,
   type SSLConfigInput,
@@ -51,7 +49,7 @@ import { cors, helmet, compression, MIDDLEWARE_FACTORY } from './middleware/buil
  */
 export interface ServerKind {
   server: 'engine' | 'node' | 'http2';
-  /** Package backing the native engine ('@morojs/engine' or 'uWebSockets.js') */
+  /** Package backing the native engine ('@morojs/engine') */
   enginePackage?: string;
   engineVersion?: string | undefined;
   /** Present when the native engine was requested but the Node server booted */
@@ -80,7 +78,7 @@ type EngineChoice =
   | {
       kind: 'engine';
       engine: NativeEngineLoadResult;
-      requested: 'moro' | 'uws';
+      requested: 'moro';
       /** Serve HTTP/2 natively via the engine's ALPN (engine caps.http2). */
       h2?: boolean;
     }
@@ -110,8 +108,8 @@ export interface MoroOptions extends CoreMoroOptions {
 }
 
 export class Moro extends EventEmitter {
-  private httpServer: MoroHttpServer | UWebSocketsHttpServer | MoroEngineServer | MoroHttp2Server;
-  private server: Server | any; // HTTP/2 server type or uWebSockets app
+  private httpServer: MoroHttpServer | MoroEngineServer | MoroHttp2Server;
+  private server: Server | any; // HTTP/2 server type or the engine's handle
   private websocketAdapter?: WebSocketAdapter | undefined;
   private container: Container;
   private moduleLoader: ModuleLoader;
@@ -124,12 +122,10 @@ export class Moro extends EventEmitter {
   private logger: any;
   private options: MoroOptions;
   private config: any;
-  private usingUWebSockets = false;
-  // True when the Moro-shaped @morojs/engine backs this app (usingUWebSockets
-  // stays reserved for the legacy uWS-API-shaped engine)
+  // True when the native engine (@morojs/engine) backs this app
   private usingEngine = false;
   private usingHttp2 = false;
-  // Which server actually booted (engine = native uWS-style engine)
+  // Which server actually booted
   private engineInfo: ServerKind = { server: 'node' };
   /** The normalized server.ssl in effect (updated by reloadTLS) */
   private sslConfig: NormalizedSSLConfig | null = null;
@@ -164,12 +160,10 @@ export class Moro extends EventEmitter {
     this.logger = createFrameworkLogger('Core');
 
     // Resolve which HTTP server backs this app: the native engine
-    // (@morojs/engine, or a legacy user-installed uWebSockets.js), Node's
-    // http server, or the http2 server. The engine module is loaded
-    // SYNCHRONOUSLY here - UWebSocketsHttpServer finishes initialization
-    // asynchronously, so a load failure (package missing, or no prebuilt
-    // binary for this Node ABI) surfacing there would never hit the fallback
-    // and the app would hang at listen() bound to nothing.
+    // (@morojs/engine), Node's http server, or the http2 server. The engine
+    // module is loaded SYNCHRONOUSLY here, so a load failure (package missing,
+    // or no prebuilt binary for this Node ABI) is known before a server is
+    // constructed and the Node.js server can take its place.
     // One normalized SSL config + one flattened limits object, built here and
     // projected per-runtime, so a single server.ssl / server.limits flows
     // everywhere regardless of which server boots.
@@ -191,45 +185,25 @@ export class Moro extends EventEmitter {
 
     if (engineChoice.kind === 'engine') {
       try {
-        // The two native engines expose different APIs: @morojs/engine is
-        // Moro-shaped (serve/respond, one JS crossing each way), the legacy
-        // uWS peer is App()-shaped. Pick the adapter by capability.
-        const engineSurface = engineChoice.engine.module?.default || engineChoice.engine.module;
         const caps = engineChoice.engine.capabilities;
-        if (
-          typeof engineSurface?.serve === 'function' &&
-          typeof engineSurface?.respond === 'function'
-        ) {
-          this.httpServer = new MoroEngineServer({
-            // Project to the engine's own option names (key_file_name / key,
-            // ...). The normalized shape's keyFile/certFile mean nothing to
-            // serve(), which would throw and silently fall back to Node https.
-            ...(ssl ? { ssl: sslForEngine(ssl) } : {}),
-            limits: rt,
-            maxBodySize: rt.maxBodySize,
-            maxUploadSize: rt.maxUploadSize,
-            engineModule: engineChoice.engine.module,
-            // Cluster workers each bind the port; SO_REUSEPORT lets the kernel
-            // balance accepts across them (Windows is gated to Node earlier).
-            reusePort: this.config.performance?.clustering?.enabled === true,
-            lendBodies: this.config.server?.lendBodies === true,
-            ...(caps ? { capabilities: caps } : {}),
-            ...(engineChoice.h2 ? { http2Settings: this.resolveH2Settings(options) } : {}),
-          });
-          this.server = (this.httpServer as MoroEngineServer).getServer();
-          this.usingEngine = true;
-        } else {
-          this.httpServer = new UWebSocketsHttpServer({
-            sslInlineOnly: ssl ? !sslForUws(ssl) : false,
-            limits: rt,
-            maxBodySize: rt.maxBodySize,
-            maxUploadSize: rt.maxUploadSize,
-            engineModule: engineChoice.engine.module,
-            ...(ssl ? { ssl: sslForUws(ssl) } : {}),
-          });
-          this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
-          this.usingUWebSockets = true;
-        }
+        this.httpServer = new MoroEngineServer({
+          // Project to the engine's own option names (key_file_name / key,
+          // ...). The normalized shape's keyFile/certFile mean nothing to
+          // serve(), which would throw and silently fall back to Node https.
+          ...(ssl ? { ssl: sslForEngine(ssl) } : {}),
+          limits: rt,
+          maxBodySize: rt.maxBodySize,
+          maxUploadSize: rt.maxUploadSize,
+          engineModule: engineChoice.engine.module,
+          // Cluster workers each bind the port; SO_REUSEPORT lets the kernel
+          // balance accepts across them (Windows is gated to Node earlier).
+          reusePort: this.config.performance?.clustering?.enabled === true,
+          lendBodies: this.config.server?.lendBodies === true,
+          ...(caps ? { capabilities: caps } : {}),
+          ...(engineChoice.h2 ? { http2Settings: this.resolveH2Settings(options) } : {}),
+        });
+        this.server = (this.httpServer as MoroEngineServer).getServer();
+        this.usingEngine = true;
         // Read after the server exists: creating it is the last point at which
         // the engine may still have settled on its other TLS library.
         const engineTls = ssl ? getEngineTlsInfo(engineChoice.engine.module) : undefined;
@@ -269,7 +243,6 @@ export class Moro extends EventEmitter {
           `Native engine (${engineChoice.requested}) failed to initialize, falling back to Node.js http.Server. Error: ${reason}`,
           'ServerInit'
         );
-        this.usingUWebSockets = false;
         this.usingEngine = false;
         this.engineInfo = { server: 'node', fallbackReason: reason };
         this.httpServer = new MoroHttpServer({
@@ -435,35 +408,20 @@ export class Moro extends EventEmitter {
         return;
       }
 
-      // If using uWebSockets HTTP server, automatically use uWebSockets for WebSocket too
-      if (this.usingUWebSockets) {
-        const { UWebSocketsAdapter } = await import('./networking/adapters/index.js');
-        this.websocketAdapter = new UWebSocketsAdapter();
+      // Use provided adapter or try to auto-detect
+      if (wsConfig.adapter && typeof wsConfig.adapter === 'object') {
+        this.websocketAdapter = wsConfig.adapter;
+      } else {
+        this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
+      }
 
-        // For uWebSockets, we need to integrate with the existing app
-        const uwsHttpServer = this.httpServer as UWebSocketsHttpServer;
-        await this.websocketAdapter.initialize(uwsHttpServer.getApp(), wsConfig.options);
+      if (this.websocketAdapter) {
+        await this.websocketAdapter.initialize(this.server, wsConfig.options);
 
         this.logger.info(
-          'uWebSockets adapter initialized (integrated with HTTP server)',
+          `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
           'WebSocketSetup'
         );
-      } else {
-        // Use provided adapter or try to auto-detect
-        if (wsConfig.adapter && typeof wsConfig.adapter === 'object') {
-          this.websocketAdapter = wsConfig.adapter;
-        } else {
-          this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
-        }
-
-        if (this.websocketAdapter) {
-          await this.websocketAdapter.initialize(this.server, wsConfig.options);
-
-          this.logger.info(
-            `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
-            'WebSocketSetup'
-          );
-        }
       }
 
       // Configure adapter features (if adapter was created)
@@ -496,13 +454,14 @@ export class Moro extends EventEmitter {
       const adapterType = this.config.websocket.adapter;
 
       if (adapterType === 'uws') {
-        // The uws adapter only works integrated with the native engine's own
-        // app (setupWebSockets handles that path before detection runs).
-        // Standalone it would register routes on a second, never-listening
-        // uWS app - fall through to the Node-compatible adapters instead.
+        // 'uws' used to name the uWebSockets.js adapter, removed in 1.8.24. On
+        // the native engine the name now simply means the engine's own
+        // WebSocket support (setupWebSockets takes that path before detection
+        // runs). Reaching this point means the Node.js server is serving, so
+        // the Node-compatible adapters are what is left.
         this.logger.warn(
-          "websocket adapter 'uws' requires a native engine HTTP server " +
-            "(engine: 'moro' or 'uws') - falling back to socket.io/ws detection",
+          "websocket adapter 'uws' (uWebSockets.js) was removed - the native engine " +
+            'serves WebSockets itself; on the Node.js server, using socket.io/ws detection',
           'AdapterDetection'
         );
       } else if (adapterType === 'socket.io' && isPackageAvailable('socket.io')) {
@@ -522,10 +481,7 @@ export class Moro extends EventEmitter {
       }
     }
 
-    // Auto-detect. The uws adapter is deliberately NOT probed here: it only
-    // works integrated with the native engine's app (the usingUWebSockets
-    // branch of setupWebSockets), and with the engine installed by default a
-    // resolvable package no longer implies the engine is serving HTTP.
+    // Auto-detect among the adapters that attach to a Node.js http.Server.
 
     // Try socket.io first
     if (isPackageAvailable('socket.io')) {
@@ -550,7 +506,7 @@ export class Moro extends EventEmitter {
     }
 
     this.logger.warn(
-      'No WebSocket adapter found. Install uWebSockets.js, socket.io, or ws for WebSocket support',
+      'No WebSocket adapter found. Use the native engine (the default), or install socket.io or ws for WebSocket support on the Node.js server',
       'AdapterDetection'
     );
     return null;
@@ -1243,7 +1199,7 @@ export class Moro extends EventEmitter {
       this.logger.debug(`Registering module route: ${route.method} ${fullPath}`, 'Router');
 
       // Register route directly with http-server using its routing methods
-      // Cast to any to handle different server types (MoroHttpServer, UWebSocketsHttpServer, MoroHttp2Server)
+      // Cast to any to handle different server types (MoroHttpServer, MoroEngineServer, MoroHttp2Server)
       const server = this.httpServer as any;
       if (server[method] && typeof server[method] === 'function') {
         server[method](fullPath, route.handler);
@@ -1331,10 +1287,6 @@ export class Moro extends EventEmitter {
     if (!current) {
       throw new Error('reloadTLS: this app was not started with TLS (server.ssl)');
     }
-    if (this.usingUWebSockets) {
-      throw new Error('reloadTLS is not supported on the uWebSockets.js engine');
-    }
-
     let next: NormalizedSSLConfig;
     if (ssl) {
       const update = normalizeSSLConfig(ssl, undefined, this.logger);
@@ -1410,10 +1362,6 @@ export class Moro extends EventEmitter {
         'server.ssl.watch needs keyFile/certFile paths - inline PEM cannot be watched',
         'TLS'
       );
-      return;
-    }
-    if (this.usingUWebSockets) {
-      this.logger.warn('server.ssl.watch is not supported on the uWebSockets.js engine', 'TLS');
       return;
     }
     const debounceMs =
@@ -1499,44 +1447,29 @@ export class Moro extends EventEmitter {
 
   // Decide which HTTP server to construct. Engine values:
   //   'moro' (default) - Moro's own native engine (@morojs/engine)
-  //   'uws'            - opt in to uWebSockets.js
   //   'node'           - the Node.js http server (no native engine)
-  // A chosen native engine that cannot load on this platform/Node ABI (e.g.
-  // no prebuilt binary) silently degrades to the Node.js http server and logs
+  // A native engine that cannot load on this platform/Node ABI (e.g. no
+  // prebuilt binary) silently degrades to the Node.js http server and logs
   // why - the app never fails to boot. The engine load happens here,
   // synchronously; the CJS module cache shares the instance with the server.
   private resolveEngineMode(options: MoroOptions): EngineChoice {
     const server = this.config.server || {};
-    // Explicit engine wins. The deprecated useUWebSockets:true counts as an
-    // explicit 'uws' choice - it always beat http2 before the engine option
-    // existed, and silently changing that transport on upgrade would break
-    // existing apps.
-    let engineExplicit = server.engine !== undefined || server.useUWebSockets === true;
-    let mode: 'moro' | 'node' | 'uws' = server.engine ?? (server.useUWebSockets ? 'uws' : 'moro');
-
-    // A user-provided uWS adapter INSTANCE implies the uWS engine when the
-    // engine wasn't chosen explicitly - otherwise the instance would be
-    // silently discarded in favor of the default engine's WS bridge.
-    const wsAdapterOption =
-      options.websocket && typeof options.websocket === 'object'
-        ? (options.websocket as any).adapter
-        : undefined;
-    const isUwsAdapterInstance =
-      wsAdapterOption &&
-      typeof wsAdapterOption.getAdapterName === 'function' &&
-      wsAdapterOption.getAdapterName() === 'uWebSockets.js';
-    if (isUwsAdapterInstance) {
-      if (!engineExplicit && mode === 'moro') {
-        mode = 'uws';
-        engineExplicit = true;
-      } else if (mode === 'moro') {
-        this.logger.warn(
-          "A uWebSockets.js adapter instance was provided but engine: 'moro' is set - " +
-            'the instance is superseded by the Moro engine WebSocket bridge',
-          'ServerInit'
-        );
-      }
+    // uWebSockets.js was removed in 1.8.24. An app still configured for it
+    // (engine: 'uws', or the older useUWebSockets: true) is not broken by
+    // that: it runs on the Moro engine, which replaced it, exactly as an app
+    // with no engine setting does, and is told once.
+    const askedForUws = server.engine === 'uws' || server.useUWebSockets === true;
+    if (askedForUws) {
+      this.logger.warn(
+        (server.engine === 'uws' ? "server.engine: 'uws'" : 'server.useUWebSockets') +
+          ' is no longer supported: uWebSockets.js was removed from MoroJS in 1.8.24. ' +
+          "This app runs on the Moro engine instead (engine: 'moro', the default); " +
+          'remove the setting to silence this warning.',
+        'ServerInit'
+      );
     }
+    const engineExplicit = server.engine === 'moro' || server.engine === 'node';
+    const mode: 'moro' | 'node' = server.engine === 'node' ? 'node' : 'moro';
 
     // HTTP/2 is wanted via either the top-level option or server.http2 config.
     const wantH2 = Boolean(options.http2 ?? this.config.server?.http2);
@@ -1569,10 +1502,9 @@ export class Moro extends EventEmitter {
       return wantH2 ? { kind: 'http2' } : { kind: 'node', fallbackReason: gate };
     }
 
-    // Load the specific package for the chosen engine - 'moro' never silently
-    // uses uWS and vice-versa; each falls back only to Node. The load happens
-    // BEFORE the http2 decision so we can feature-detect native ALPN h2.
-    const pkg = mode === 'uws' ? 'uWebSockets.js' : '@morojs/engine';
+    // Load the engine; it falls back only to Node. The load happens BEFORE
+    // the http2 decision so we can feature-detect native ALPN h2.
+    const pkg = '@morojs/engine';
     const loadErrors: string[] = [];
     const engine = loadNativeEngine({ candidates: [pkg], collectErrors: loadErrors });
     if (!engine) {
@@ -1597,15 +1529,6 @@ export class Moro extends EventEmitter {
     // HTTP/2 decision, now that the engine is loaded and its capabilities known.
     if (wantH2) {
       const canH2 = engine.capabilities?.http2 === true;
-      if (mode === 'uws') {
-        // uWebSockets.js does not serve HTTP/2 through this integration.
-        this.logger.warn(
-          "engine: 'uws' does not serve HTTP/2 - serving HTTP/1.1 (use engine: " +
-            "'moro' with an h2-capable build, or engine: 'node' for the http2 server)",
-          'ServerInit'
-        );
-        return { kind: 'engine', engine, requested: mode };
-      }
       if (canH2) {
         // The Moro engine speaks ALPN h2 + http/1.1 on one TLS port.
         return { kind: 'engine', engine, requested: mode, h2: true };
@@ -1642,11 +1565,14 @@ export class Moro extends EventEmitter {
         : undefined;
     if (optionsAdapter && typeof optionsAdapter.getAdapterName === 'function') {
       const name = optionsAdapter.getAdapterName();
-      if (name && name !== 'uWebSockets.js') {
+      if (name) {
         return `websocket adapter '${name}' requires the Node.js http server`;
       }
     }
 
+    // 'uws' named the uWebSockets.js adapter (removed in 1.8.24). It always
+    // ran on a native engine, so it keeps meaning "the engine's own
+    // WebSockets" rather than forcing an app onto the Node.js server.
     const configuredAdapter = this.config.websocket?.adapter;
     if (typeof configuredAdapter === 'string' && configuredAdapter !== 'uws') {
       return `websocket adapter '${configuredAdapter}' requires the Node.js http server`;
