@@ -17,7 +17,11 @@ import {
   isPackageAvailable,
   loadNativeEngine,
   getNativeEngineLoadErrors,
+  getEngineTlsInfo,
+  getNativeEngineTlsNote,
+  setNativeEngineTlsLibrary,
   NativeEngineLoadResult,
+  type EngineTlsInfo,
 } from './utilities/package-utils.js';
 import { parseSizeToBytes, type HttpRuntimeLimits } from './http/utils/size.js';
 import {
@@ -54,6 +58,9 @@ export interface ServerKind {
   fallbackReason?: string | undefined;
   /** Protocols the booted server can speak (observability for app.engine). */
   protocols?: Array<'http/1.1' | 'h2'>;
+  /** With TLS on the native engine: the library terminating it
+   *  (@morojs/engine 1.1.20+; see server.ssl.library). */
+  tls?: EngineTlsInfo;
 }
 
 // Flattened, size-resolved server limits built once and passed to whichever
@@ -163,13 +170,23 @@ export class Moro extends EventEmitter {
     // asynchronously, so a load failure (package missing, or no prebuilt
     // binary for this Node ABI) surfacing there would never hit the fallback
     // and the app would hang at listen() bound to nothing.
-    const engineChoice = this.resolveEngineMode(options);
-
     // One normalized SSL config + one flattened limits object, built here and
     // projected per-runtime, so a single server.ssl / server.limits flows
     // everywhere regardless of which server boots.
     const ssl = normalizeSSLConfig(this.config.server?.ssl, options.https as any, this.logger);
     this.sslConfig = ssl;
+
+    // The engine ships a binary with BoringSSL inside and one on Node's
+    // OpenSSL, and which is loaded is decided when it is loaded. So
+    // server.ssl.library, and the TLS configuration about to be served, reach
+    // the loader before the engine is resolved: with no library named it
+    // checks that BoringSSL takes this configuration and loads the OpenSSL
+    // binary otherwise.
+    setNativeEngineTlsLibrary(
+      this.config.server?.ssl?.library,
+      ssl && sslIsComplete(ssl) ? sslForEngine(ssl) : undefined
+    );
+    const engineChoice = this.resolveEngineMode(options);
     const rt = this.buildRuntimeLimits();
 
     if (engineChoice.kind === 'engine') {
@@ -213,12 +230,28 @@ export class Moro extends EventEmitter {
           this.server = (this.httpServer as UWebSocketsHttpServer).getApp();
           this.usingUWebSockets = true;
         }
+        // Read after the server exists: creating it is the last point at which
+        // the engine may still have settled on its other TLS library.
+        const engineTls = ssl ? getEngineTlsInfo(engineChoice.engine.module) : undefined;
         this.engineInfo = {
           server: 'engine',
           enginePackage: engineChoice.engine.source,
           engineVersion: engineChoice.engine.version,
           protocols: engineChoice.h2 && caps?.http2 ? ['h2', 'http/1.1'] : ['http/1.1'],
+          ...(engineTls ? { tls: engineTls } : {}),
         };
+        if (ssl) {
+          // A choice that could not be honoured, or a BoringSSL binary that
+          // would not load, changes which library terminates TLS: say so once.
+          const note = getNativeEngineTlsNote();
+          if (note) this.logger.warn(note, 'TLS');
+          if (engineTls?.fallbackReason) {
+            this.logger.warn(
+              `TLS is served by Node's OpenSSL instead of the engine's bundled BoringSSL: ${engineTls.fallbackReason}`,
+              'TLS'
+            );
+          }
+        }
         this.logger.info(
           `HTTP engine: ${engineChoice.engine.source}` +
             (engineChoice.engine.version ? ` v${engineChoice.engine.version}` : '') +

@@ -160,6 +160,96 @@ const CAP_KEYS = [
   'bodyLent',
 ] as const;
 
+/** The TLS library a loaded @morojs/engine terminates TLS with (1.1.20+). */
+export interface EngineTlsInfo {
+  library: 'boringssl' | 'openssl';
+  /** BoringSSL: the upstream snapshot tag; OpenSSL: that library's version. */
+  version: string;
+  /** BoringSSL only: the day of that snapshot (YYYY-MM-DD). */
+  date?: string;
+  /** Why this library ('default', 'selectTls()', 'MORO_ENGINE_TLS', ...). */
+  reason: string;
+  /** With reason 'fallback': why the BoringSSL binary could not be loaded. */
+  fallbackReason?: string;
+}
+
+export type EngineTlsLibrary = 'boringssl' | 'openssl' | 'auto';
+
+// server.ssl.library and the ssl options the server will be created with,
+// handed to the engine before its binary is loaded.
+let preferredTlsLibrary: EngineTlsLibrary | undefined;
+let plannedEngineSsl: Record<string, unknown> | undefined;
+let tlsLibraryNote: string | undefined;
+
+/**
+ * Tell the engine which TLS library to load, and what TLS configuration it is
+ * about to serve. Effective only before the engine's binary is loaded in this
+ * thread (the first probe()/serve()), so the framework calls it before it
+ * resolves the engine.
+ *
+ * `ssl` is the engine-shaped ssl options (sslForEngine). With no library
+ * named, the engine checks that its bundled BoringSSL accepts them and loads
+ * its OpenSSL binary when it does not - a key type or cipher BoringSSL lacks
+ * keeps being served by the engine instead of failing over to Node's server.
+ */
+export function setNativeEngineTlsLibrary(
+  library: EngineTlsLibrary | undefined,
+  ssl?: Record<string, unknown>
+): void {
+  preferredTlsLibrary = library;
+  plannedEngineSsl = ssl;
+}
+
+/** Why server.ssl.library could not be applied, when it could not. */
+export function getNativeEngineTlsNote(): string | undefined {
+  return tlsLibraryNote;
+}
+
+/**
+ * Apply the preference to a freshly required engine module. Never throws: a
+ * choice that cannot be honoured is reported (getNativeEngineTlsNote), and the
+ * engine serves with the library it has.
+ * @internal
+ */
+export function applyTlsPreference(surface: any): void {
+  tlsLibraryNote = undefined;
+  if (!preferredTlsLibrary && !plannedEngineSsl) return;
+  // `in`, not typeof: reading a native function off the engine's module loads
+  // its binary, and this has to run before that.
+  const canSelect = surface !== null && typeof surface === 'object' && 'selectTls' in surface;
+  if (!canSelect || typeof surface.selectTls !== 'function') {
+    if (preferredTlsLibrary && preferredTlsLibrary !== 'auto') {
+      tlsLibraryNote = `server.ssl.library: '${preferredTlsLibrary}' needs @morojs/engine 1.1.20 or later; this engine has one TLS library (Node's OpenSSL)`;
+    }
+    return;
+  }
+  try {
+    surface.selectTls(preferredTlsLibrary ?? 'auto', plannedEngineSsl);
+  } catch (error) {
+    tlsLibraryNote = error instanceof Error ? error.message.split('\n')[0] : String(error);
+  }
+}
+
+/** probe().tls of a loaded engine module, when it reports one. */
+export function getEngineTlsInfo(module: any): EngineTlsInfo | undefined {
+  const surface = module?.default || module;
+  try {
+    const tls = typeof surface?.probe === 'function' ? surface.probe()?.tls : undefined;
+    if (tls && (tls.library === 'boringssl' || tls.library === 'openssl')) {
+      return {
+        library: tls.library,
+        version: String(tls.version ?? ''),
+        ...(typeof tls.date === 'string' ? { date: tls.date } : {}),
+        reason: String(tls.reason ?? ''),
+        ...(typeof tls.fallbackReason === 'string' ? { fallbackReason: tls.fallbackReason } : {}),
+      };
+    }
+  } catch {
+    // an engine that cannot be probed reports nothing
+  }
+  return undefined;
+}
+
 export interface NativeEngineLoadResult {
   /** The loaded engine module (CJS namespace: App, SSLApp, ...) */
   module: any;
@@ -170,6 +260,8 @@ export interface NativeEngineLoadResult {
   /** Feature flags (Moro-shaped engine only; all-false for uWS or an
    *  engine too old to advertise them). */
   capabilities?: EngineCapabilities;
+  /** The TLS library in use (@morojs/engine 1.1.20+). */
+  tls?: EngineTlsInfo;
 }
 
 const NO_CAPABILITIES: EngineCapabilities = Object.freeze(
@@ -310,6 +402,10 @@ export function loadNativeEngine(options?: {
         // A package that loads but can't serve (e.g. a pre-M1 @morojs/engine
         // that only exposes probe()) must not shadow a usable alternative.
         const surface = module?.default || module;
+        // First of all, and before anything reads a native function off the
+        // module: that read is what loads @morojs/engine's binary, and the
+        // TLS library is chosen by which binary gets loaded.
+        if (candidate === '@morojs/engine') applyTlsPreference(surface);
         const uwsStyle = typeof surface?.App === 'function';
         const moroStyle =
           !uwsStyle &&
@@ -328,11 +424,13 @@ export function loadNativeEngine(options?: {
         } catch {
           version = undefined;
         }
+        const tls = moroStyle ? getEngineTlsInfo(module) : undefined;
         result = {
           module,
           source: candidate,
           ...(version !== undefined ? { version } : {}),
           capabilities: moroStyle ? getEngineCapabilities(module) : NO_CAPABILITIES,
+          ...(tls ? { tls } : {}),
         };
         break;
       } catch (error) {

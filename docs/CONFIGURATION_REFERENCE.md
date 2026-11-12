@@ -107,11 +107,34 @@ ssl: {
 // also: minVersion 'TLSv1.2'|'TLSv1.3', requestCert, rejectUnauthorized
 // watch: true | { debounceMs } - reload the certificate when the files change
 //   (file-path shape; same as calling app.reloadTLS() after a rotation)
+// library: 'boringssl' | 'openssl' | 'auto' - the native engine's TLS library
 ```
 
 The Moro engine terminates TLS in-process; Node uses
 `https.createServer`; uWS needs file paths (inline PEM errors loudly); HTTP/2
 uses it too. `options.https` remains a supported alias.
+
+**TLS library** (`server.ssl.library`, `@morojs/engine` 1.1.20+). The engine
+ships with BoringSSL bundled and uses it by default; `'openssl'` uses the
+OpenSSL of the running Node.js instead. `'auto'` (the default) is BoringSSL
+unless Node's OpenSSL is specially configured — FIPS mode, `--openssl-config`
+and its relatives, `OPENSSL_CONF` — in which case it is OpenSSL, so a FIPS or
+provider setup keeps working with nothing to change. The choice is per
+process (the first app started decides); the environment variable
+`MORO_ENGINE_TLS` sets it without a code change, and `app.engine.tls` reports
+the library in use and why:
+
+```javascript
+app.engine.tls;
+// { library: 'boringssl', version: '0.20261105.0', date: '2026-11-05', reason: 'default' }
+```
+
+The bundled BoringSSL is updated through engine releases, which follow
+upstream's snapshots automatically (about every three weeks). Keep
+`@morojs/engine` updated as you keep Node.js updated; a TLS server on a build
+more than 180 days old logs a `MORO_ENGINE_TLS_STALE` process warning. The
+Node and uWebSockets.js servers have one TLS library each and ignore
+`library`.
 
 **Timeouts** (`server.timeouts`, ms; `0` = default/disabled): `request` (full
 receive budget, doesn't reset on activity), `idle` (socket inactivity; engine

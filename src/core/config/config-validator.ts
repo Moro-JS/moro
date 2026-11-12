@@ -197,6 +197,13 @@ function validateSSLConfig(config: any, path: string) {
       `${path}.minVersion`
     );
   }
+  if (config.library !== undefined) {
+    result.library = validateEnum(
+      config.library,
+      ['boringssl', 'openssl', 'auto'],
+      `${path}.library`
+    );
+  }
   if (config.requestCert !== undefined) {
     result.requestCert = validateBoolean(config.requestCert, `${path}.requestCert`);
   }

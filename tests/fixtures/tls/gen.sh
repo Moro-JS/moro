@@ -62,5 +62,14 @@ openssl req -x509 -new -key selfsigned.key -days "$DAYS" -sha256 \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
   -out selfsigned.pem
 
+# --- self-signed Ed448 leaf ----------------------------------------------------
+# A key type OpenSSL serves and BoringSSL does not have: the TLS-library tests
+# use it to prove that such a server is moved to the OpenSSL binary, not broken.
+openssl genpkey -algorithm ed448 -out ed448.key
+openssl req -x509 -new -key ed448.key -days "$DAYS" \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+  -out ed448.pem
+
 rm -f localhost.csr rsa.csr alt.csr san-localhost.ext san-alt.ext ca.srl
 echo "done - fixture PKI regenerated"

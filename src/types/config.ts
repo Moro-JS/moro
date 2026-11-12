@@ -38,6 +38,23 @@ export interface SSLConfig {
   requestCert?: boolean;
   rejectUnauthorized?: boolean;
   /**
+   * Which TLS library the native engine terminates TLS with. Default: 'auto'.
+   *
+   * - 'boringssl': BoringSSL, bundled with @morojs/engine and updated with it.
+   * - 'openssl': the OpenSSL of the running Node.js - for FIPS mode, OpenSSL
+   *   providers or engines, or a system crypto policy.
+   * - 'auto': BoringSSL, unless Node's OpenSSL is specially configured
+   *   (--enable-fips, --openssl-config and its relatives, OPENSSL_CONF, FIPS
+   *   mode on), in which case OpenSSL.
+   *
+   * The choice is per process: the first app to start decides. The environment
+   * variable MORO_ENGINE_TLS sets it without a code change. `app.engine.tls`
+   * reports what is in use. Needs @morojs/engine 1.1.20 or later; older
+   * engines, and the Node and uWebSockets.js servers, have one TLS library and
+   * ignore this.
+   */
+  library?: 'boringssl' | 'openssl' | 'auto';
+  /**
    * Reload the certificate when the key/cert files change on disk (file-path
    * shape only; `true` = 1000 ms debounce). Equivalent to calling
    * `app.reloadTLS()` after each change.
