@@ -2,6 +2,7 @@
 // Replaces 6 different pathToRegex implementations across the codebase
 
 import { LRUCache } from '../pooling/lru-cache.js';
+import { decodeParam } from './decode-param.js';
 
 export interface CompiledPath {
   pattern: RegExp | null;
@@ -113,7 +114,7 @@ export class PathMatcher {
     const paramNames = compiledPath.paramNames;
     const paramCount = paramNames.length;
     for (let i = 0; i < paramCount; i++) {
-      params[paramNames[i] as string] = matches[i + 1] as string;
+      params[paramNames[i] as string] = decodeParam(matches[i + 1] as string);
     }
 
     return { params };

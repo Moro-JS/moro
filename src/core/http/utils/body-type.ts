@@ -64,3 +64,19 @@ export function bodyIsText(contentType: string | undefined): boolean {
   // message/*, model/*, image/*, audio/*, video/*, font/*, ...
   return false;
 }
+
+/**
+ * True when the Content-Type's media type is `application/json` (parameters
+ * such as charset allowed), the type whose body `req.body` parses as JSON.
+ * A substring test is not enough: `application/jsonp` or
+ * `application/jsonpatch` would parse as JSON and a malformed body of theirs
+ * would be reported as a bad request instead of an unsupported type.
+ */
+export function isJsonMediaType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  // The exact header nearly every client sends: no slice, trim or lowercase
+  if (contentType === 'application/json') return true;
+  const semi = contentType.indexOf(';');
+  const mime = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase();
+  return mime === 'application/json';
+}

@@ -147,3 +147,65 @@ describe('multipart-parser', () => {
     expect(result.files.doc.data.toString()).toBe('DOC');
   });
 });
+
+describe('multipart-parser: ordered parts and strict framing', () => {
+  const type = 'multipart/form-data; boundary=X';
+
+  it('keeps every part in order, repeated names included', () => {
+    const body = buildBody('X', [
+      { headers: ['Content-Disposition: form-data; name="file"; filename="a.bin"'], body: 'first' },
+      { headers: ['Content-Disposition: form-data; name="note"'], body: 'text' },
+      {
+        headers: ['Content-Disposition: form-data; name="file"; filename="b.bin"'],
+        body: 'second',
+      },
+    ]);
+    const result = parseMultipart(body, type);
+    expect(result.parts.map(p => [p.name, p.filename, p.data.toString()])).toEqual([
+      ['file', 'a.bin', 'first'],
+      ['note', undefined, 'text'],
+      ['file', 'b.bin', 'second'],
+    ]);
+    // fields/files keep their last-wins shape
+    expect(result.files.file.filename).toBe('b.bin');
+    expect(result.fields.note).toBe('text');
+  });
+
+  it('records an unselected file input as a file part with an empty filename', () => {
+    const body = buildBody('X', [
+      { headers: ['Content-Disposition: form-data; name="file"; filename=""'], body: '' },
+    ]);
+    const result = parseMultipart(body, type);
+    expect(result.parts).toHaveLength(1);
+    expect(result.parts[0]?.filename).toBe('');
+    expect(result.parts[0]?.size).toBe(0);
+  });
+
+  it('records a text part with no filename as a non-file part', () => {
+    const body = buildBody('X', [
+      { headers: ['Content-Disposition: form-data; name="file"'], body: 'plain' },
+    ]);
+    const result = parseMultipart(body, type);
+    expect(result.parts[0]?.filename).toBeUndefined();
+    expect(result.files.file).toBeUndefined();
+    expect(result.fields.file).toBe('plain');
+  });
+
+  it('throws when the closing delimiter is missing', () => {
+    const complete = buildBody('X', [
+      { headers: ['Content-Disposition: form-data; name="a"'], body: 'v' },
+    ]);
+    const truncated = complete.subarray(0, complete.length - Buffer.from(`--X--${CRLF}`).length);
+    expect(() => parseMultipart(truncated, type)).toThrow(/closing delimiter/);
+  });
+
+  it('throws when the body never contains the boundary', () => {
+    expect(() => parseMultipart(Buffer.from('--wrong--\r\n'), type)).toThrow(/boundary not found/);
+    expect(() => parseMultipart(Buffer.alloc(0), type)).toThrow(/boundary not found/);
+  });
+
+  it('throws when a part has no header block', () => {
+    const body = Buffer.from(`--X${CRLF}Content-Disposition: form-data; name="a"`);
+    expect(() => parseMultipart(body, type)).toThrow();
+  });
+});

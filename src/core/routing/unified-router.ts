@@ -2,6 +2,7 @@
 // Combines best features from both systems with zero breaking changes
 
 import { PathMatcher, CompiledPath } from './path-matcher.js';
+import { decodeParam } from './decode-param.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse } from '../../types/http.js';
@@ -670,39 +671,47 @@ export class UnifiedRouter {
   }
 
   /**
-   * Compile specialized param extractor for common cases
+   * Compile specialized param extractor for common cases. Every value is
+   * percent-decoded (`/user/%30%30%34%32` names the id `0042`); a malformed
+   * escape keeps the raw text, so an odd URL is a 400 for the handler to
+   * give, not a 500 from a URIError here. A value without a '%' is returned
+   * as is, which is the common case and costs no call.
    */
   private compileParamExtractor(
     compiledPath: CompiledPath
   ): (matches: RegExpMatchArray) => Record<string, string> {
     const paramNames = compiledPath.paramNames;
     const paramCount = paramNames.length;
+    const decode = decodeParam;
 
     // Specialized extractors for common cases
     if (paramCount === 0) {
       return () => ({}); // No allocation needed
     } else if (paramCount === 1) {
       const name = paramNames[0] as string;
-      return matches => ({ [name]: matches[1] as string });
+      return matches => ({ [name]: decode(matches[1] as string) });
     } else if (paramCount === 2) {
       const name1 = paramNames[0] as string;
       const name2 = paramNames[1] as string;
-      return matches => ({ [name1]: matches[1] as string, [name2]: matches[2] as string });
+      return matches => ({
+        [name1]: decode(matches[1] as string),
+        [name2]: decode(matches[2] as string),
+      });
     } else if (paramCount === 3) {
       const name1 = paramNames[0] as string;
       const name2 = paramNames[1] as string;
       const name3 = paramNames[2] as string;
       return matches => ({
-        [name1]: matches[1] as string,
-        [name2]: matches[2] as string,
-        [name3]: matches[3] as string,
+        [name1]: decode(matches[1] as string),
+        [name2]: decode(matches[2] as string),
+        [name3]: decode(matches[3] as string),
       });
     } else {
       // Generic path for 4+ params
       return matches => {
         const params: Record<string, string> = {};
         for (let i = 0; i < paramCount; i++) {
-          params[paramNames[i] as string] = matches[i + 1] as string;
+          params[paramNames[i] as string] = decode(matches[i + 1] as string);
         }
         return params;
       };

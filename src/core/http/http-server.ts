@@ -1,6 +1,6 @@
 // src/core/http-server.ts
 import type { IncomingMessage, ServerResponse, Server } from 'http';
-import { bodyIsText } from './utils/body-type.js';
+import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
 import type { Server as HttpsServer } from 'https';
 import { createRequire } from 'module';
 import { promisify } from 'util';
@@ -1821,7 +1821,7 @@ export class MoroHttpServer {
               : Buffer.concat(chunks, totalLength);
           if (totalLength > 0) (req as MoroIncomingMessage)._rawBody = body;
 
-          if (contentType.includes('application/json')) {
+          if (isJsonMediaType(contentType)) {
             // Empty JSON body -> null (parity with the engine/uWS servers, and
             // avoids JSON.parse('') throwing and 500ing an empty POST).
             resolve(totalLength === 0 ? null : JSON.parse(body.toString()));

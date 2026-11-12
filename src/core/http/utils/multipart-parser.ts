@@ -14,8 +14,23 @@
 //   - part/header counts are capped so a crafted body cannot amplify one
 //     bounded upload into millions of allocations
 
+export interface MultipartPart {
+  /** The part's form field name */
+  name: string;
+  /** The filename parameter, or undefined for a non-file field; an uploaded
+   *  file input left empty arrives as filename "" */
+  filename?: string;
+  /** The part's own Content-Type, when it declared one */
+  mimetype?: string;
+  /** The part's bytes */
+  data: Buffer;
+  size: number;
+}
+
 export interface ParsedMultipart {
+  /** Non-file parts by name, last-wins */
   fields: Record<string, string>;
+  /** File parts by name, last-wins */
   files: Record<
     string,
     {
@@ -25,6 +40,10 @@ export interface ParsedMultipart {
       size: number;
     }
   >;
+  /** Every part in order, repeated names included: what tells two `file`
+   *  parts from one, and a file input left unselected (filename "") from a
+   *  text field of the same name */
+  parts: MultipartPart[];
 }
 
 export interface MultipartLimits {
@@ -122,9 +141,12 @@ function decodeExtendedValue(value: string): string | null {
 
 /**
  * Parse a buffered multipart/form-data payload into fields and files.
- * Duplicate part names are last-wins (matching URLSearchParams-style access).
- * @throws Error when the content type carries no boundary or the part count
- *   exceeds the limit
+ * Duplicate part names are last-wins in `fields` and `files` (matching
+ * URLSearchParams-style access); `parts` keeps every part in order.
+ * @throws Error when the content type carries no boundary, the body does not
+ *   start with the boundary, a part has no header block, the closing
+ *   delimiter is missing (RFC 2046 §5.1.1: a truncated message is not one),
+ *   or the part count exceeds the limit
  */
 export function parseMultipart(
   buffer: Buffer,
@@ -145,6 +167,7 @@ export function parseMultipart(
   // key instead of silently vanishing into the prototype setter.
   const fields: ParsedMultipart['fields'] = Object.create(null);
   const files: ParsedMultipart['files'] = Object.create(null);
+  const parts: MultipartPart[] = [];
 
   const dashBoundary = Buffer.from(`--${boundary}`);
   const delimiter = Buffer.from(`\r\n--${boundary}`);
@@ -156,7 +179,7 @@ export function parseMultipart(
     pos = dashBoundary.length;
   } else {
     const first = buffer.indexOf(delimiter);
-    if (first === -1) return { fields, files };
+    if (first === -1) throw new Error('Malformed multipart body: boundary not found');
     pos = first + delimiter.length;
   }
 
@@ -166,38 +189,41 @@ export function parseMultipart(
     // optional padding then CRLF starts the part.
     if (buffer[pos] === 0x2d && buffer[pos + 1] === 0x2d) break;
     const lineEnd = buffer.indexOf(CRLF_BUF, pos);
-    if (lineEnd === -1) break;
+    if (lineEnd === -1) throw new Error('Malformed multipart body: unterminated boundary line');
     const partStart = lineEnd + 2;
     const next = buffer.indexOf(delimiter, partStart);
-    const partEnd = next === -1 ? buffer.length : next;
+    // No delimiter after the part: the message was cut off before its
+    // closing delimiter, so the last part cannot be trusted to be complete.
+    if (next === -1) throw new Error('Malformed multipart body: missing closing delimiter');
 
     if (++partCount > maxParts) {
       throw new MultipartLimitError(`Multipart payload exceeds ${maxParts} parts`);
     }
     // The delimiter includes the part's trailing CRLF, so the slice is the
     // exact content - no trailing-byte trimming needed.
-    parsePart(buffer.subarray(partStart, partEnd), fields, files, maxHeaderBytes, {
+    parsePart(buffer.subarray(partStart, next), fields, files, parts, maxHeaderBytes, {
       maxFiles,
       maxFileSize,
       fileCount,
     });
 
-    if (next === -1) break;
     pos = next + delimiter.length;
   }
 
-  return { fields, files };
+  return { fields, files, parts };
 }
 
 function parsePart(
   part: Buffer,
   fields: ParsedMultipart['fields'],
   files: ParsedMultipart['files'],
+  parts: MultipartPart[],
   maxHeaderBytes: number,
   fileLimits: { maxFiles: number; maxFileSize: number; fileCount: { n: number } }
 ): void {
   const headerEndPos = part.indexOf(HEADER_SEPARATOR);
-  if (headerEndPos === -1 || headerEndPos > maxHeaderBytes) return;
+  if (headerEndPos === -1) throw new Error('Malformed multipart part: no header block');
+  if (headerEndPos > maxHeaderBytes) return;
 
   // Headers are always text - safe to convert to string
   const headerText = part.subarray(0, headerEndPos).toString('utf8');
@@ -216,7 +242,7 @@ function parsePart(
       partContentType = line.slice(colon + 1).trim();
     }
   }
-  if (!disposition) return;
+  if (!disposition) throw new Error('Malformed multipart part: no Content-Disposition');
 
   const params = parseDispositionParams(disposition);
   const name = params.get('name');
@@ -229,6 +255,11 @@ function parsePart(
     ? decodeExtendedValue(params.get('filename*') as string)
     : null;
   const filename = extendedFilename ?? params.get('filename');
+
+  const recorded: MultipartPart = { name, data: content, size: content.length };
+  if (filename !== undefined && filename !== null) recorded.filename = filename;
+  if (partContentType !== undefined) recorded.mimetype = partContentType;
+  parts.push(recorded);
 
   if (filename !== undefined && filename !== null) {
     if (fileLimits.maxFileSize && content.length > fileLimits.maxFileSize) {

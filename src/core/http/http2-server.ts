@@ -15,6 +15,7 @@ import type {
   OutgoingHttpHeaders,
 } from 'http2';
 import { createRequire } from 'module';
+import { isJsonMediaType } from './utils/body-type.js';
 import { promisify } from 'util';
 import { createFrameworkLogger } from '../logger/index.js';
 import {
@@ -1086,7 +1087,7 @@ export class MoroHttp2Server {
         try {
           const body = Buffer.concat(chunks);
 
-          if (contentType.includes('application/json')) {
+          if (isJsonMediaType(contentType)) {
             resolve(JSON.parse(body.toString()));
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
             resolve(this.parseUrlEncoded(body.toString()));

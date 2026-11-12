@@ -1,4 +1,5 @@
 // High-performance Radix Tree for dynamic route matching
+import { decodeParam } from './decode-param.js';
 
 export interface RadixNode {
   // Store hash for faster lookups
@@ -206,7 +207,7 @@ export class RadixTree {
       const params: Record<string, string> = {};
       if (result.paramPath) {
         for (let i = 0; i < result.paramPath.length; i++) {
-          params[result.paramPath[i] as string] = paramValues[i] as string;
+          params[result.paramPath[i] as string] = decodeParam(paramValues[i] as string);
         }
       }
       return { handler: result.handler, params };

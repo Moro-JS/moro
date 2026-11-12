@@ -40,7 +40,7 @@ import {
   negotiateEncoding,
   type CompressionSettings,
 } from './utils/compression.js';
-import { bodyIsText } from './utils/body-type.js';
+import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
 import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
 import { parseRawQueryString as parseUwsQueryString } from './utils/query-parser.js';
 import { PathMatcher } from '../routing/path-matcher.js';
@@ -2676,25 +2676,49 @@ export class MoroEngineServer {
     }
   }
 
-  // Error shaping shared by the async pipeline and the sync fast path:
-  // 413/400 client responses, error hooks, the app's error handler, then 500.
+  // Error shaping shared by the async pipeline and the sync fast path: the
+  // app's error handler first, then the 413/400 client responses, error
+  // hooks, and 500. The handler goes first for client errors too, as it does
+  // on the Node server: a body that failed to parse is a 400 by default, but
+  // the app may know the request better (a route that only takes multipart
+  // answers a JSON body with 415 whatever the bytes were).
   private async handleDispatchError(
     error: unknown,
     httpReq: EngineRequest,
     httpRes: EngineResponse
   ): Promise<void> {
     {
+      const clientStatus = (error as any)?.statusCode;
+      const isClientError = clientStatus === 400 || clientStatus === 413;
+
+      if (isClientError && this.errorHandler && !httpRes.writableEnded && !httpRes.headersSent) {
+        try {
+          await this.errorHandler(
+            error,
+            httpReq as any as HttpRequest,
+            httpRes as any as HttpResponse
+          );
+          if (httpRes.headersSent || httpRes.writableEnded) return;
+        } catch (handlerError) {
+          this.logger.error(
+            `Error handler threw: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`,
+            'ErrorHandler'
+          );
+        }
+      }
+
       // Payload-too-large: respond 413 rather than a generic 500
-      if ((error as any)?.statusCode === 413 && !httpRes.writableEnded && !httpRes.headersSent) {
+      if (clientStatus === 413 && !httpRes.writableEnded && !httpRes.headersSent) {
         httpRes._sendConstantJson(413, '{"success":false,"error":"Request entity too large"}');
         return;
       }
 
       // Malformed body (parseBody): a client error, not a server error
-      if ((error as any)?.statusCode === 400 && !httpRes.writableEnded && !httpRes.headersSent) {
+      if (clientStatus === 400 && !httpRes.writableEnded && !httpRes.headersSent) {
         httpRes._sendConstantJson(400, '{"success":false,"error":"Invalid request body"}');
         return;
       }
+      if (isClientError) return;
 
       this.logger.error(
         `Request handling error: ${error instanceof Error ? error.message : String(error)}`,
@@ -2773,7 +2797,7 @@ export class MoroEngineServer {
     httpReq._rawBody = buffer;
 
     try {
-      if (contentType.includes('application/json')) {
+      if (isJsonMediaType(contentType)) {
         httpReq.body = JSON.parse(buffer.toString('utf-8'));
       } else if (contentType.includes('application/x-www-form-urlencoded')) {
         const params = new URLSearchParams(buffer.toString('utf-8'));

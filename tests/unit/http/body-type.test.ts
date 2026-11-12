@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Unit - request-body text/binary classification shared by every server.
 import { describe, it, expect } from '@jest/globals';
-import { bodyIsText } from '../../../src/core/http/utils/body-type.js';
+import { bodyIsText, isJsonMediaType } from '../../../src/core/http/utils/body-type.js';
 
 describe('bodyIsText', () => {
   it.each([
@@ -37,5 +37,29 @@ describe('bodyIsText', () => {
     'font/woff2',
   ])('%s stays a Buffer', ct => {
     expect(bodyIsText(ct)).toBe(false);
+  });
+});
+
+describe('isJsonMediaType', () => {
+  it.each([
+    'application/json',
+    'application/json; charset=utf-8',
+    'APPLICATION/JSON',
+    ' application/json ; charset=utf-8',
+  ])('%s is the JSON media type', ct => {
+    expect(isJsonMediaType(ct)).toBe(true);
+  });
+
+  it.each([
+    undefined,
+    '',
+    'application/jsonp',
+    'application/jsonpatch+json; q=1', // a +json type is text, not application/json itself
+    'application/problem+json',
+    'text/json',
+    'text/plain',
+    'application/x-www-form-urlencoded',
+  ])('%s is not', ct => {
+    expect(isJsonMediaType(ct)).toBe(false);
   });
 });

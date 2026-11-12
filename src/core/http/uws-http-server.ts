@@ -21,7 +21,7 @@ import {
   negotiateEncoding,
   type CompressionSettings,
 } from './utils/compression.js';
-import { bodyIsText } from './utils/body-type.js';
+import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
 
 // Back-compat alias (this parser is now the transport-neutral one in utils/)
 const parseUwsQueryString = parseRawQueryString;
@@ -1744,7 +1744,7 @@ export class UWebSocketsHttpServer {
         }
 
         try {
-          if (contentType.includes('application/json')) {
+          if (isJsonMediaType(contentType)) {
             httpReq.body = totalLength === 0 ? null : JSON.parse(buffer.toString('utf-8'));
           } else if (contentType.includes('application/x-www-form-urlencoded')) {
             const params = new URLSearchParams(buffer.toString('utf-8'));
