@@ -53,7 +53,10 @@ export default {
   // JEST_WORKER_ID, so parallel workers don't collide.
   maxWorkers: '50%',
   forceExit: false,
-  detectOpenHandles: true,
+  // Off by default: Jest runs serially whenever detectOpenHandles is on (it
+  // cannot see handles inside workers), which overrides maxWorkers above. To
+  // find a leaked handle, use `npm run test:debug`, which turns it on.
+  detectOpenHandles: false,
   openHandlesTimeout: 1000,
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   // Memory optimization settings for CI environments
