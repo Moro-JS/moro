@@ -195,6 +195,7 @@ export class Moro extends EventEmitter {
             // Cluster workers each bind the port; SO_REUSEPORT lets the kernel
             // balance accepts across them (Windows is gated to Node earlier).
             reusePort: this.config.performance?.clustering?.enabled === true,
+            lendBodies: this.config.server?.lendBodies === true,
             ...(caps ? { capabilities: caps } : {}),
             ...(engineChoice.h2 ? { http2Settings: this.resolveH2Settings(options) } : {}),
           });

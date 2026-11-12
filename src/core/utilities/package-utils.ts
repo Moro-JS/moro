@@ -128,6 +128,12 @@ export interface EngineCapabilities {
   wsAutoUpgrade: boolean;
   /** I/O transport in use ('epoll', 'uv', 'uring'), when the engine reports it. */
   transport?: string;
+  /** getBodyType()/getBodyText() exist (engine >= 1.1.19): the body's media
+   *  type in one call, and an all-ASCII body as a heap string. */
+  bodyText: boolean;
+  /** getBodyLent() exists (engine >= 1.1.19): the body as a buffer valid for
+   *  the request only. Gates server.lendBodies. */
+  bodyLent: boolean;
 }
 
 // One place to name every boolean flag: getEngineCapabilities coerces each
@@ -150,6 +156,8 @@ const CAP_KEYS = [
   'batchDispatch',
   'paramRoutes',
   'wsAutoUpgrade',
+  'bodyText',
+  'bodyLent',
 ] as const;
 
 export interface NativeEngineLoadResult {

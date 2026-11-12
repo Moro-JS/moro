@@ -182,10 +182,21 @@ export class EngineRequest extends LazyEventEmitter {
   body: any = null;
   /** Undecoded request body bytes (parseBody keeps the same Buffer it parsed) */
   _rawBody: Buffer | undefined = undefined;
+  /** The body as the engine's one-byte string of its bytes, when it was read
+   *  as text (an all-ASCII body): rawBody is made from it on first use. */
+  _rawText: string | undefined = undefined;
 
   /** The request body exactly as received, before any parsing; null when empty. */
   get rawBody(): Buffer | null {
-    return this._rawBody ?? null;
+    let raw = this._rawBody;
+    if (raw === undefined) {
+      const text = this._rawText;
+      if (text === undefined) return null;
+      // Every byte was ASCII, so the string's code units are the bytes.
+      raw = Buffer.from(text, 'latin1');
+      this._rawBody = raw;
+    }
+    return raw;
   }
 
   _server: MoroEngineServer;
@@ -1606,6 +1617,11 @@ export class MoroEngineServer {
   /** @internal */ _getHeaders!: (reqId: number) => string[] | undefined;
   /** @internal */ _getHeader!: (reqId: number, name: string) => string | undefined;
   /** @internal */ _getBody!: (reqId: number) => ArrayBuffer | null;
+  // Typed body reads (capabilities.bodyText / bodyLent), undefined on an
+  // engine without them.
+  private _getBodyType?: (reqId: number) => string | null;
+  private _getBodyText?: (reqId: number) => string | null;
+  private _getBodyLent?: (reqId: number) => ArrayBuffer | null;
   /** @internal */ _getRemoteAddress!: (reqId: number) => string | undefined;
   /** @internal */ _getMethod!: (reqId: number) => string | undefined;
   // The WebSocket natives, hoisted for the same reason: wsSend runs once per
@@ -1792,6 +1808,9 @@ export class MoroEngineServer {
       /** Bind with SO_REUSEPORT so cluster workers can share the port
        * (POSIX only; the framework gates Windows clustering to Node) */
       reusePort?: boolean;
+      /** server.lendBodies: unparsed (binary) bodies are views over the
+       *  engine's bytes, valid until the response is sent. */
+      lendBodies?: boolean;
     } = {}
   ) {
     if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
@@ -1866,6 +1885,22 @@ export class MoroEngineServer {
       this._wsGetHeaders = surface.wsGetHeaders;
       this._wsGetQuery = surface.wsGetQuery;
       this._wsGetRemoteAddress = surface.wsGetRemoteAddress;
+    }
+    if (
+      this._capabilities?.bodyText === true &&
+      typeof surface.getBodyType === 'function' &&
+      typeof surface.getBodyText === 'function'
+    ) {
+      this._getBodyType = surface.getBodyType;
+      this._getBodyText = surface.getBodyText;
+    }
+    if (
+      options.lendBodies === true &&
+      this._getBodyType !== undefined &&
+      this._capabilities?.bodyLent === true &&
+      typeof surface.getBodyLent === 'function'
+    ) {
+      this._getBodyLent = surface.getBodyLent;
     }
     if (
       this._capabilities?.batchDispatch === true &&
@@ -2768,17 +2803,89 @@ export class MoroEngineServer {
   // Parse the engine-buffered body (JSON/urlencoded/multipart/text - identical
   // semantics to the Node and uWS servers' readBody). getBody returns a STABLE
   // ArrayBuffer copy, so Buffer.from() views it with no aliasing hazard.
+  //
+  // With the engine's typed reads (getBodyType/getBodyText) a body the
+  // framework decodes anyway - JSON, a form, text - is read as a string in
+  // the first place when it is ASCII, which such bodies overwhelmingly are:
+  // one heap string instead of an ArrayBuffer, a Buffer over it and the
+  // string decoded from that. The difference is more than the two objects.
+  // An ArrayBuffer's bytes live outside the JS heap, and V8 counts them
+  // against the old-generation limit until a collection frees them; a server
+  // taking a few kilobytes of body per request ran a full mark-compact every
+  // few thousand requests because of it, however short-lived each body was.
+  // A string is collected with the rest of the young generation.
+  // `req.rawBody` is unchanged for the caller: the exact bytes, made from
+  // the string the first time it is read.
   private parseBody(httpReq: EngineRequest): void {
-    const raw: ArrayBuffer | null = this._getBody(httpReq._reqId);
-    if (!raw || raw.byteLength === 0) return;
+    const reqId = httpReq._reqId;
+    const getBodyType = this._getBodyType;
+    let raw: ArrayBuffer | null;
+    let contentType: string;
+    let isMultipart: boolean;
+    if (getBodyType !== undefined && this._getBodyText !== undefined) {
+      // The media type and "is there a body" in one crossing.
+      const type = getBodyType(reqId);
+      if (type === null) return;
+      contentType = type;
+      isMultipart = contentType.includes('multipart/form-data');
+      const isJson = !isMultipart && isJsonMediaType(contentType);
+      const isForm =
+        !isMultipart && !isJson && contentType.includes('application/x-www-form-urlencoded');
+      const decoded = isJson || isForm || (!isMultipart && bodyIsText(contentType));
+      if (decoded) {
+        const text = this._getBodyText(reqId);
+        if (text !== null) {
+          // ASCII: one code unit per byte, so the length is the size.
+          if (text.length > this.maxBodySize) {
+            const error: any = new Error('Request body too large');
+            error.statusCode = 413;
+            throw error;
+          }
+          httpReq._rawText = text;
+          if (isJson) {
+            try {
+              httpReq.body = JSON.parse(text);
+            } catch (parseError) {
+              const error: any = new Error(
+                `Invalid request body: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+              );
+              error.statusCode = 400;
+              throw error;
+            }
+          } else if (isForm) {
+            const params = new URLSearchParams(text);
+            const body: Record<string, any> = {};
+            params.forEach((value, key) => {
+              body[key] = value;
+            });
+            httpReq.body = body;
+          } else {
+            httpReq.body = text;
+          }
+          return;
+        }
+        // Not ASCII: decoded from the bytes, below.
+      }
+      // A body the framework hands on as it came (not decoded, not
+      // multipart, whose parts are views that outlive the request) is lent
+      // when the app asked for that (server.lendBodies).
+      raw =
+        !decoded && !isMultipart && this._getBodyLent !== undefined
+          ? this._getBodyLent(reqId)
+          : this._getBody(reqId);
+      if (!raw || raw.byteLength === 0) return;
+    } else {
+      raw = this._getBody(reqId);
+      if (!raw || raw.byteLength === 0) return;
 
-    // One header through one crossing: materialising the header object here
-    // would cost every request with a body a string per header line.
-    const contentType =
-      (httpReq._headers !== undefined
-        ? httpReq._headers['content-type']
-        : this._getHeader(httpReq._reqId, 'content-type')) || '';
-    const isMultipart = contentType.includes('multipart/form-data');
+      // One header through one crossing: materialising the header object here
+      // would cost every request with a body a string per header line.
+      contentType =
+        (httpReq._headers !== undefined
+          ? httpReq._headers['content-type']
+          : this._getHeader(reqId, 'content-type')) || '';
+      isMultipart = contentType.includes('multipart/form-data');
+    }
     const maxSize = isMultipart ? this.maxUploadSize : this.maxBodySize;
 
     // The engine natively enforces the larger of the two limits; the tighter

@@ -96,6 +96,16 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     batch.control[0] = slot + 1 >= count ? count : slot + 1;
   };
 
+  // A lent body (getBodyLent) ends with its request, as on the engine:
+  // detached, so every view over it is empty from then on.
+  const takeBack = (r: any) => {
+    if (!r.lent) return;
+    const lent = r.lent;
+    r.lent = undefined;
+    globalThis.structuredClone(lent, { transfer: [lent] });
+  };
+  const bodyCalls: string[] = [];
+
   // reqIds are safe no-ops after terminal/abort - the fake enforces that
   const live = (reqId: number) => {
     const r = requests.get(reqId);
@@ -140,11 +150,40 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       return undefined;
     },
     getBody(reqId: number) {
+      bodyCalls.push('getBody');
       const r = live(reqId);
       if (!r || !r.body) return null;
       const copy = new ArrayBuffer(r.body.length);
       new Uint8Array(copy).set(r.body);
       return copy;
+    },
+    // The typed body reads (engine >= 1.1.19). Only an engine advertising
+    // capabilities.bodyText / bodyLent is asked for them.
+    getBodyType(reqId: number) {
+      bodyCalls.push('getBodyType');
+      const r = live(reqId);
+      if (!r || !r.body || r.body.length === 0) return null;
+      for (let i = 0; i + 1 < r.headersFlat.length; i += 2) {
+        if (r.headersFlat[i] === 'content-type') return r.headersFlat[i + 1];
+      }
+      return '';
+    },
+    getBodyText(reqId: number) {
+      bodyCalls.push('getBodyText');
+      const r = live(reqId);
+      if (!r || !r.body) return null;
+      for (let i = 0; i < r.body.length; i++) if (r.body[i] > 0x7f) return null;
+      return r.body.toString('latin1');
+    },
+    getBodyLent(reqId: number) {
+      bodyCalls.push('getBodyLent');
+      const r = live(reqId);
+      if (!r || !r.body || r.body.length === 0) return null;
+      if (!r.lent) {
+        r.lent = new ArrayBuffer(r.body.length);
+        new Uint8Array(r.lent).set(r.body);
+      }
+      return r.lent;
     },
     getRemoteAddress(reqId: number) {
       return live(reqId)?.remoteAddress;
@@ -154,6 +193,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       if (!r) return;
       r.ops.push({ type: 'respond', status, headersFlat, body });
       r.terminal = true;
+      takeBack(r);
       advance(r);
     },
     writeHead(reqId: number, status: number, headersFlat: string[] | null) {
@@ -178,6 +218,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       if (!r) return;
       r.ops.push({ type: 'end', chunk });
       r.terminal = true;
+      takeBack(r);
       advance(r);
     },
     isAborted(reqId: number) {
@@ -223,6 +264,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
         });
       }
       r.terminal = true;
+      takeBack(r);
       advance(r);
     },
     respondPreparedEmpty(reqId: number, tplId: number) {
@@ -244,6 +286,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
       if (!r) return;
       r.ops.push({ type: 'end', chunk, viaEndWith: true });
       r.terminal = true;
+      takeBack(r);
       advance(r);
     },
 
@@ -320,6 +363,8 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     get callbacks() {
       return callbacks;
     },
+    /** Which body reads the adapter made, in order. */
+    bodyCalls,
     simulate(options: any = {}) {
       const method = (options.method || 'GET').toUpperCase();
       let methodIdx = METHODS.indexOf(method);
@@ -362,6 +407,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
           body: fixed.body,
         });
         r.terminal = true;
+        takeBack(r);
         return reqId;
       }
       // A parameter route: prefix + one non-empty segment without '/' + suffix.
@@ -382,6 +428,7 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
           body: reqPath.slice(echo.prefix.length, reqPath.length - echo.suffix.length),
         });
         r.terminal = true;
+        takeBack(r);
         return reqId;
       }
       callbacks.onRequest(reqId, methodIdx, options.path || '/');
@@ -389,7 +436,10 @@ export function createFakeEngine(options: FakeEngineOptions = {}) {
     },
     abort(reqId: number) {
       const r = requests.get(reqId);
-      if (r) r.aborted = true;
+      if (r) {
+        r.aborted = true;
+        takeBack(r);
+      }
       callbacks.onAborted(reqId);
     },
     // Deliver `list` (simulate() option objects) as ONE onRequestBatch call,

@@ -136,6 +136,10 @@ function validateServerConfig(config: any, path: string) {
     result.engine = validateEnum(engine, ['moro', 'node', 'uws'], `${path}.engine`);
   }
 
+  if (config.lendBodies !== undefined) {
+    result.lendBodies = validateBoolean(config.lendBodies, `${path}.lendBodies`);
+  }
+
   // Optional uWebSockets configuration (deprecated alias for engine: 'uws')
   if (config.useUWebSockets !== undefined) {
     result.useUWebSockets = validateBoolean(config.useUWebSockets, `${path}.useUWebSockets`);

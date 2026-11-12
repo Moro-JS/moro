@@ -20,22 +20,37 @@ function decodeComponent(component: string): string {
   }
 }
 
+// One pass over the string, a substring per key and per value and nothing
+// else: no array of pairs, no pair strings cut out only to be cut again. The
+// two characters that need decoding are looked for once in the whole string
+// rather than in every component, so a query with neither - most of them -
+// is sliced and stored as is.
 export function parseRawQueryString(queryString: string): Record<string, string> {
   const result: Record<string, string> = Object.create(null);
   if (!queryString) return result;
-  if (queryString[0] === '?') queryString = queryString.substring(1);
-  const pairs = queryString.split('&');
-  for (let i = 0; i < pairs.length; i++) {
-    const pair = pairs[i];
-    if (!pair) continue;
-    const eqIdx = pair.indexOf('=');
-    if (eqIdx === -1) {
-      result[decodeComponent(pair)] = '';
-    } else {
-      result[decodeComponent(pair.substring(0, eqIdx))] = decodeComponent(
-        pair.substring(eqIdx + 1)
-      );
+  const len = queryString.length;
+  let start = queryString.charCodeAt(0) === 63 /* ? */ ? 1 : 0;
+  const encoded = queryString.indexOf('%') !== -1 || queryString.indexOf('+') !== -1;
+  // The next '=' at or after `start`, found once and kept until a pair has
+  // moved past it: looking it up per pair would rescan the rest of the
+  // string for every pair that has none.
+  let eq = queryString.indexOf('=', start);
+  while (start < len) {
+    let end = queryString.indexOf('&', start);
+    if (end === -1) end = len;
+    if (end > start) {
+      if (eq !== -1 && eq < start) eq = queryString.indexOf('=', start);
+      if (eq === -1 || eq > end) {
+        const key = queryString.substring(start, end);
+        result[encoded ? decodeComponent(key) : key] = '';
+      } else {
+        const key = queryString.substring(start, eq);
+        const value = queryString.substring(eq + 1, end);
+        if (encoded) result[decodeComponent(key)] = decodeComponent(value);
+        else result[key] = value;
+      }
     }
+    start = end + 1;
   }
   return result;
 }

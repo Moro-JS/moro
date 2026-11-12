@@ -134,6 +134,23 @@ export interface ServerConfig {
   useUWebSockets?: boolean;
   /** Unified SSL/TLS config; flows to whichever runtime serves. */
   ssl?: SSLConfig;
+  /**
+   * Lend binary request bodies instead of handing them over. Default: false.
+   *
+   * A body the framework does not parse (anything that is not JSON, a form,
+   * text or multipart) arrives as a Buffer in `req.body`. With this on, that
+   * Buffer is a view over the native engine's own copy of the bytes: nothing
+   * is allocated or copied for it, and it is valid until the response has
+   * been sent. After that it is empty (length 0). Meant for services that
+   * relay, hash, store or echo a body while answering and keep none of it;
+   * a handler that keeps the body for later must copy it
+   * (`Buffer.from(req.body)`) before responding.
+   *
+   * Parsed bodies (JSON, forms, text, multipart) and `req.rawBody` for them
+   * are not affected. Honoured by the native engine (@morojs/engine 1.1.19+);
+   * every other server ignores it and keeps handing the body over.
+   */
+  lendBodies?: boolean;
 }
 
 export interface ServiceDiscoveryConfig {
