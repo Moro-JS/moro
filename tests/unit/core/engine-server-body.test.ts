@@ -250,6 +250,54 @@ describe('MoroEngineServer request bodies (fake engine)', () => {
     });
   });
 
+  describe('HTTP/2 through the engine', () => {
+    const H2 = { ...TYPED, http2: true };
+
+    it('passes the HTTP/2 settings to serve() when the engine can serve it', () => {
+      const engine = createFakeEngine({ capabilities: H2 });
+      const server = createServer(engine, {
+        http2Settings: {
+          allowHTTP1: true,
+          settings: { maxConcurrentStreams: 50, initialWindowSize: 65536 },
+        },
+      });
+      server.listen(0);
+      expect(engine.serveOptions.http2).toEqual({
+        maxConcurrentStreams: 50,
+        initialWindowSize: 65536,
+      });
+    });
+
+    it('with no settings given, turns it on with the engine defaults', () => {
+      const engine = createFakeEngine({ capabilities: H2 });
+      createServer(engine, { http2Settings: { allowHTTP1: true } }).listen(0);
+      expect(engine.serveOptions.http2).toEqual({});
+    });
+
+    it('never passes the option to an engine that cannot serve HTTP/2, or when it was not asked for', () => {
+      const old = createFakeEngine({ capabilities: TYPED });
+      createServer(old, { http2Settings: { settings: { maxConcurrentStreams: 50 } } }).listen(0);
+      expect('http2' in old.serveOptions).toBe(false);
+      const notAsked = createFakeEngine({ capabilities: H2 });
+      createServer(notAsked).listen(0);
+      expect('http2' in notAsked.serveOptions).toBe(false);
+    });
+
+    it('res.push() reports "not pushed", as a client that turned push off does', async () => {
+      const { seen } = await run(
+        createFakeEngine({ capabilities: H2 }),
+        { method: 'GET' },
+        {},
+        (_req, res, s) => {
+          s.pushed = res.push('/style.css', { headers: { 'content-type': 'text/css' } });
+          res.json({ ok: true });
+          return true;
+        }
+      );
+      expect(seen.pushed).toBe(null);
+    });
+  });
+
   describe('server.lendBodies', () => {
     const binary = {
       headers: { 'content-type': 'application/octet-stream' },

@@ -1519,6 +1519,17 @@ export class EngineResponse extends LazyEventEmitter {
     return this;
   }
 
+  /**
+   * HTTP/2 server push. The native engine does not push: RFC 9113 deprecates
+   * it and browsers have removed it. To the caller that is a client that
+   * turned push off, which is what this reports - null, nothing pushed - so
+   * code written against the Node HTTP/2 server's `res.push()` runs
+   * unchanged when the engine serves HTTP/2.
+   */
+  push(_path?: string, _options?: unknown): null {
+    return null;
+  }
+
   sendStatus(code: number) {
     if (this.headersSent) return;
     this.statusCode = code;

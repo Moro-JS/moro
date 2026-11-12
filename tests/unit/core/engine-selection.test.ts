@@ -13,7 +13,10 @@ import {
   resetNativeEngineLoaderForTesting,
 } from '../../../src/core/utilities/package-utils.js';
 
-const moroLoadable = loadNativeEngine({ candidates: ['@morojs/engine'] }) !== null;
+const moroEngine = loadNativeEngine({ candidates: ['@morojs/engine'] });
+const moroLoadable = moroEngine !== null;
+// @morojs/engine 1.1.19 and later serve HTTP/2 themselves.
+const moroServesH2 = moroEngine?.capabilities?.http2 === true;
 const uwsLoadable = loadNativeEngine({ candidates: ['uWebSockets.js'] }) !== null;
 const quiet = { logger: { level: 'fatal' as const } };
 
@@ -99,10 +102,17 @@ describe('HTTP engine selection', () => {
     expect(app.engine.fallbackReason).toContain('vercel-edge');
   });
 
-  it('http2 outranks the default engine but loses to an explicit engine', async () => {
-    // Default engine (engine unset) yields to explicit http2
+  it('http2 is served by the engine when it can, by the http2 server when it cannot', async () => {
     const app = await createApp({ ...quiet, http2: true } as any);
-    expect(app.engine.server).toBe('http2');
+    if (moroServesH2) {
+      // The engine speaks h2 and http/1.1 on the one port.
+      expect(app.engine.server).toBe('engine');
+      expect(app.engine.protocols).toEqual(['h2', 'http/1.1']);
+    } else {
+      // An engine without HTTP/2 (or none): the default engine yields to
+      // the dedicated http2 server rather than dropping the opt-in.
+      expect(app.engine.server).toBe('http2');
+    }
 
     // Explicitly chosen engine wins over http2
     if (moroLoadable) {
@@ -113,6 +123,12 @@ describe('HTTP engine selection', () => {
         server: { engine: 'moro' },
       } as any);
       expect(engineApp.engine.server).toBe('engine');
+      expect(engineApp.engine.protocols).toEqual(moroServesH2 ? ['h2', 'http/1.1'] : ['http/1.1']);
     }
+
+    // engine: 'node' with http2 is always the http2 server.
+    resetConfig();
+    const nodeApp = await createApp({ ...quiet, http2: true, server: { engine: 'node' } } as any);
+    expect(nodeApp.engine.server).toBe('http2');
   });
 });
