@@ -42,6 +42,7 @@ import {
 } from './utils/compression.js';
 import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
 import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
+import { InflightRegistry } from './utils/inflight-registry.js';
 import { parseRawQueryString as parseUwsQueryString } from './utils/query-parser.js';
 import { PathMatcher } from '../routing/path-matcher.js';
 
@@ -1734,8 +1735,9 @@ export class MoroEngineServer {
   private port?: number;
   private host?: string;
   // In-flight responses by reqId so onAborted/onWritable reach the wrappers;
-  // entries are dropped on terminal writes (_complete) and aborts
-  private inflight = new Map<number, EngineResponse>();
+  // entries are dropped on terminal writes (_complete) and aborts. Not a
+  // Map of responses: see InflightRegistry for what that cost.
+  private inflight = new InflightRegistry<EngineResponse>();
   // Small stable handle exposed via getServer()/getApp() (observability only)
   private handle: any;
   // Set by the engine WebSocket adapter when WS support is enabled; when
@@ -2613,11 +2615,8 @@ export class MoroEngineServer {
   }
 
   private onAborted(reqId: number): void {
-    const httpRes = this.inflight.get(reqId);
-    if (httpRes) {
-      this.inflight.delete(reqId);
-      httpRes._handleAbort();
-    }
+    const httpRes = this.inflight.take(reqId);
+    if (httpRes) httpRes._handleAbort();
   }
 
   private onWritable(reqId: number): void {
