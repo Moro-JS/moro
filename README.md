@@ -22,7 +22,7 @@ Build high-performance APIs with intelligent routing: declare what a route needs
 
 **Key Features:**
 
-- **Native C++ Engine** - ~111k req/s real-world through the full framework, 913k pipelined, on a single thread
+- **Native C++ Engine** - 2.4M req/s through the full framework on HttpArena's 64-core machine, 37M pipelined
 - **Intelligent Routing** - Declare auth, validation, rate limits and caching in any order; they always execute in the optimal, security-first one
 - **Enterprise Auth** - Built-in Better Auth with OAuth & RBAC
 - **Universal Validation** - Works with Zod, Joi, Yup, or Class Validator
@@ -34,7 +34,7 @@ Build high-performance APIs with intelligent routing: declare what a route needs
 
 ## Performance
 
-MoroJS is the fastest Node.js framework we've measured (not just because its ours) — its native engine beats uWebSockets.js in both benchmark profiles while running the **full framework** (routing, validation, middleware): **~102k req/s real-world at 0.9 ms latency** and **572k req/s pipelined**, on a single thread. That's ~1.5× Fastify and ~2× Express out of the box. Full comparison tables, methodology, and saved results live in the **[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**.
+Measured by people who aren't us. On [HttpArena](https://http-arena.com/frameworks/morojs/)'s 64-core machine MoroJS serves **2.4M requests per second** and **37M pipelined** through the full framework: 3.3× Fastify and 4.6× Express on the same test. On [The Benchmarker](https://web-frameworks-benchmark.vercel.app/result?f=morojs,morojs-engine&orderBy=level64) it serves **274k req/s** at 64 connections: 3.8× Fastify and 5.2× Express. To run the comparisons yourself, see the **[MoroJS Benchmark repo](https://github.com/Moro-JS/benchmark)**.
 
 ## Quick Start
 
@@ -204,7 +204,7 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 **vs Express** - Intelligent security-first middleware pipeline eliminates ordering bugs and configuration complexity
 
-**vs Fastify** - ~1.5x the throughput out of the box (Moro's native engine), plus multi-runtime deployment without adapters
+**vs Fastify** - 3.3× the throughput on HttpArena and 3.8× on The Benchmarker (Moro's native engine), plus multi-runtime deployment without adapters
 
 **vs NestJS** - Functional architecture without decorators, with a fraction of the per-request overhead
 

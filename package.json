@@ -71,7 +71,7 @@
     "morojs",
     "api",
     "email",
-    "gRP",
+    "grpc",
     "message-queue",
     "queue",
     "kafka",
