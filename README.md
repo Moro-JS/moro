@@ -38,7 +38,25 @@ Measured by people who aren't us. On [HttpArena](https://http-arena.com/framewor
 
 ## Quick Start
 
-### Install Manually
+### Use the CLI
+
+Scaffold a complete project and start it:
+
+```bash
+npx @morojs/cli init my-api
+cd my-api
+npm run dev
+```
+
+`init` asks what you want (runtime, database, auth, WebSockets, docs); pass `--fast` to skip the prompts, or name the choices up front:
+
+```bash
+npx @morojs/cli init my-api --runtime=node --database=postgresql --features=auth,websocket,docs
+```
+
+Learn more at [morojs.com/cli](https://morojs.com/cli)
+
+### Or Install Manually
 
 ```bash
 npm install @morojs/moro
@@ -46,7 +64,7 @@ npm install zod # peer dependency used by the `z` validation helper below
 ```
 
 ```typescript
-import { createApp, z } from '@morojs/moro';
+import { createApp, param, z } from '@morojs/moro';
 
 // createApp() is async — await it inside an async context
 (async () => {
@@ -77,19 +95,6 @@ import { createApp, z } from '@morojs/moro';
   app.listen(3000);
 })();
 ```
-
-### Or Use the CLI
-
-Scaffold a complete project with auth, database, WebSockets, and deployment ready:
-
-```bash
-npm install -g @morojs/cli
-morojs-cli init my-api --runtime=node --database=postgresql --features=auth,websocket,docs
-cd my-api
-npm run dev
-```
-
-Learn more at [morojs.com/cli](https://morojs.com/cli)
 
 ### HTTP Engine
 
