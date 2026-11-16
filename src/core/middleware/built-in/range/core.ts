@@ -1,117 +1,295 @@
 // HTTP Range Requests Core Logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import * as fs from 'fs/promises';
-import { createReadStream } from 'fs';
+import * as path from 'path';
+import { randomBytes } from 'crypto';
+import { createFrameworkLogger } from '../../../logger/index.js';
+
+const logger = createFrameworkLogger('RangeMiddleware');
 
 export interface RangeOptions {
   acceptRanges?: string;
   maxRanges?: number;
+  /**
+   * Directory that `res.sendRange()` paths are resolved against and confined
+   * to: a path that leads outside it (`../`, an absolute path, a symlink) is
+   * answered with a 404. Unset, `sendRange()` serves the path it is given.
+   * A call can pass its own: `res.sendRange(file, { root })`.
+   */
+  root?: string;
 }
 
+/** Second argument of `res.sendRange()`, when it is not an `fs.Stats`. */
+export interface SendRangeOptions {
+  /** Confine this call to a directory; overrides the middleware's `root`. */
+  root?: string;
+}
+
+interface ByteRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * What a `Range` header asks for:
+ * - a list of ranges, each one already clamped to the file;
+ * - `'unsatisfiable'` when it is well formed but none of it overlaps the file
+ *   (a 416);
+ * - `null` when the header is to be ignored and the whole file sent - bad
+ *   syntax, a unit other than bytes, or more ranges than `maxRanges` allows.
+ */
+type ParsedRange = ByteRange[] | 'unsatisfiable' | null;
+
+// One range-spec: `first-last`, `first-` or the suffix form `-length`. Digits
+// only - parseInt() would also take `1e2`, `0x10` and `5junk`.
+const RANGE_SPEC = /^(\d*)-(\d*)$/;
+
+// Errors that mean "there is no such file" rather than "the server broke"
+const NOT_FOUND_CODES = new Set([
+  'ENOENT',
+  'ENOTDIR',
+  'EISDIR',
+  'ENAMETOOLONG',
+  'ELOOP',
+  // A path with a NUL byte in it
+  'ERR_INVALID_ARG_VALUE',
+]);
+
 export class RangeCore {
+  // Bytes read and written per step when streaming
+  private static readonly CHUNK_SIZE = 64 * 1024;
+
   private acceptRanges: string;
   private maxRanges: number;
+  private servesRanges: boolean;
+  private root: string | undefined;
 
   constructor(options: RangeOptions = {}) {
+    // Checked at setup: a root that was meant to be set and came out empty
+    // must not quietly turn into "no confinement".
+    if (options.root !== undefined) RangeCore.assertRoot(options.root);
+    this.root = options.root;
     this.acceptRanges = options.acceptRanges || 'bytes';
-    this.maxRanges = options.maxRanges || 1;
+    const maxRanges = Number(options.maxRanges);
+    this.maxRanges = Number.isInteger(maxRanges) && maxRanges > 0 ? maxRanges : 1;
+    // Bytes is the only unit there is a parser for; advertising anything else
+    // (`none` included) means Range headers are not honoured.
+    this.servesRanges = this.acceptRanges.trim().toLowerCase() === 'bytes';
   }
 
   addRangeMethod(req: HttpRequest, res: HttpResponse): void {
-    (res as any).sendRange = async (filePath: string, stats?: any) => {
-      try {
-        if (!stats) {
-          stats = await fs.stat(filePath);
-        }
-
-        const fileSize = stats.size;
-        const range = req.headers.range;
-
-        // Set Accept-Ranges header
-        res.setHeader('Accept-Ranges', this.acceptRanges);
-
-        if (!range) {
-          // No range requested, send entire file
-          res.setHeader('Content-Length', fileSize);
-          const data = await fs.readFile(filePath);
-          res.end(data);
-          return;
-        }
-
-        // Parse range header
-        const ranges = this.parseRangeHeader(range, fileSize);
-
-        if (!ranges) {
-          res.status(416);
-          res.setHeader('Content-Range', `bytes */${fileSize}`);
-          res.json({ success: false, error: 'Range not satisfiable' });
-          return;
-        }
-
-        // Validate ranges
-        if (ranges.length > this.maxRanges) {
-          res.status(416).json({ success: false, error: 'Too many ranges' });
-          return;
-        }
-
-        if (ranges.length === 1) {
-          // Single range
-          const [firstRange] = ranges;
-          if (firstRange) {
-            await this.sendSingleRange(filePath, fileSize, firstRange, res);
-          }
-        } else {
-          // Multiple ranges - multipart response
-          await this.sendMultipleRanges(filePath, fileSize, ranges, res);
-        }
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          error: 'Range request failed',
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-    };
+    (res as any).sendRange = (filePath: string, statsOrOptions?: any) =>
+      this.sendRange(req, res, filePath, statsOrOptions);
   }
 
-  private parseRangeHeader(
-    range: string,
-    fileSize: number
-  ): Array<{ start: number; end: number }> | null {
-    // Validate range count before parsing to prevent DoS via excessive commas
-    let commaCount = 0;
-    for (let i = 0; i < range.length; i++) {
-      if (range.charCodeAt(i) === 44) commaCount++;
-    }
-    if (commaCount + 1 > this.maxRanges) {
-      return null;
-    }
+  /**
+   * Send a file, honouring `Range` and `If-Range`.
+   *
+   * The second argument is either an `fs.Stats` or `{ root }`. Stats only save
+   * the pre-flight stat: size comes from the descriptor the bytes are then
+   * read from, so a file replaced between the caller's stat and this call
+   * can't produce a Content-Length that disagrees with the body.
+   */
+  private async sendRange(
+    req: HttpRequest,
+    res: HttpResponse,
+    requestedPath: string,
+    statsOrOptions?: any
+  ): Promise<void> {
+    let handle: fs.FileHandle | undefined;
+    try {
+      const isStats = !!statsOrOptions && typeof statsOrOptions.isFile === 'function';
+      const callRoot = !isStats && statsOrOptions ? statsOrOptions.root : undefined;
+      const root = callRoot !== undefined ? callRoot : this.root;
 
-    const ranges = range
-      .replace(/bytes=/, '')
-      .split(',')
-      .map(r => {
-        const [start, end] = r.split('-');
-        return {
-          start: start ? parseInt(start) : 0,
-          end: end ? parseInt(end) : fileSize - 1,
-        };
-      });
-
-    // Validate ranges
-    for (const r of ranges) {
-      if (r.start >= fileSize || r.end >= fileSize || r.start > r.end) {
-        return null;
+      let filePath = requestedPath;
+      if (root !== undefined) {
+        RangeCore.assertRoot(root);
+        const confined = await RangeCore.resolveInRoot(root, requestedPath);
+        if (confined === null) {
+          this.sendNotFound(res);
+          return;
+        }
+        filePath = confined;
       }
+
+      // Checked before open(): opening a FIFO blocks until something writes to
+      // it, and a directory opens fine and only fails on the first read.
+      // Caller-supplied stats are for the path as the caller spelled it, so
+      // they are only trusted when no root has re-resolved that path.
+      const preflight = isStats && root === undefined ? statsOrOptions : await fs.stat(filePath);
+      if (!preflight.isFile()) {
+        this.sendNotFound(res);
+        return;
+      }
+
+      handle = await fs.open(filePath, 'r');
+      const opened = await handle.stat();
+      if (!opened.isFile()) {
+        this.sendNotFound(res);
+        return;
+      }
+
+      const fileSize = opened.size;
+      const isHead = req.method === 'HEAD';
+      res.setHeader('Accept-Ranges', this.acceptRanges);
+
+      // Range is defined for GET only, and is ignored when the representation
+      // the client holds a piece of is no longer the current one.
+      const rangeHeader = req.headers.range;
+      const parsed: ParsedRange =
+        this.servesRanges &&
+        typeof rangeHeader === 'string' &&
+        (req.method === undefined || req.method === 'GET') &&
+        this.ifRangeMatches(req, res)
+          ? this.parseRangeHeader(rangeHeader, fileSize)
+          : null;
+
+      if (parsed === 'unsatisfiable') {
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${fileSize}`);
+        res.json({ success: false, error: 'Range not satisfiable' });
+        return;
+      }
+
+      if (parsed === null) {
+        res.setHeader('Content-Length', fileSize);
+        if (isHead || fileSize === 0) {
+          res.end();
+          return;
+        }
+        if (!RangeCore.canStream(res)) {
+          res.end(await handle.readFile());
+        } else if (await this.pump(handle, res, 0, fileSize)) {
+          res.end();
+        }
+        return;
+      }
+
+      const [first] = parsed;
+      if (parsed.length === 1 && first) {
+        await this.sendSingleRange(handle, fileSize, first, res);
+      } else {
+        await this.sendMultipleRanges(handle, fileSize, parsed, res);
+      }
+    } catch (error) {
+      this.sendFailure(res, error);
+    } finally {
+      if (handle) await handle.close().catch(() => undefined);
     }
+  }
+
+  private static assertRoot(root: unknown): asserts root is string {
+    if (typeof root !== 'string' || root === '') {
+      throw new TypeError('sendRange: `root` must be a non-empty directory path');
+    }
+  }
+
+  /**
+   * The real path of `filePath` below `root`, or null when it is not below it.
+   *
+   * Two checks. The lexical one turns `../` and absolute paths away without
+   * touching the filesystem outside the root. The second compares real paths,
+   * which catches a symlink inside the root that points out of it; the root
+   * is resolved the same way, so it may itself be a symlink (a `current`
+   * release link, `/tmp` on macOS). The trailing separator matters: a bare
+   * prefix test would let `/srv/videos-private` pass for root `/srv/videos`.
+   */
+  private static async resolveInRoot(root: string, filePath: string): Promise<string | null> {
+    if (typeof filePath !== 'string') return null;
+
+    const withSep = (dir: string) => (dir.endsWith(path.sep) ? dir : dir + path.sep);
+
+    const base = path.resolve(root);
+    const candidate = path.resolve(base, filePath);
+    if (!candidate.startsWith(withSep(base))) return null;
+
+    const realBase = await fs.realpath(base);
+    const real = await fs.realpath(candidate);
+    return real.startsWith(withSep(realBase)) ? real : null;
+  }
+
+  private parseRangeHeader(header: string, fileSize: number): ParsedRange {
+    const eq = header.indexOf('=');
+    if (eq === -1 || header.slice(0, eq).trim().toLowerCase() !== 'bytes') return null;
+
+    // Count before splitting, so a header that is all commas costs one pass
+    // and no allocation.
+    let count = 1;
+    for (let i = eq + 1; i < header.length; i++) {
+      if (header.charCodeAt(i) === 44 && ++count > this.maxRanges) return null;
+    }
+
+    const ranges: ByteRange[] = [];
+    let requested = 0;
+
+    for (const spec of header.slice(eq + 1).split(',')) {
+      const match = RANGE_SPEC.exec(spec.trim());
+      if (!match) return null;
+
+      const rawStart = match[1] as string;
+      const rawEnd = match[2] as string;
+      if (rawStart === '' && rawEnd === '') return null;
+
+      let start: number;
+      let end: number;
+
+      if (rawStart === '') {
+        // Suffix form: the last N bytes, or the whole file when it is shorter
+        const suffix = Number(rawEnd);
+        if (suffix === 0) continue;
+        start = Math.max(fileSize - suffix, 0);
+        end = fileSize - 1;
+      } else {
+        start = Number(rawStart);
+        // A last-pos at or past the end means "to the end"
+        end = rawEnd === '' ? fileSize - 1 : Math.min(Number(rawEnd), fileSize - 1);
+      }
+
+      // Past the end of the file, or first-pos > last-pos
+      if (start >= fileSize || start > end) continue;
+
+      ranges.push({ start, end });
+      requested += end - start + 1;
+    }
+
+    if (ranges.length === 0) return 'unsatisfiable';
+
+    // Several ranges that add up to the file or more (overlapping ones, say)
+    // would make the multipart answer larger than the file itself.
+    if (ranges.length > 1 && requested >= fileSize) return null;
 
     return ranges;
   }
 
+  /**
+   * `If-Range` makes the range conditional on the client's copy still being
+   * current. It can only be checked against a validator the handler has put on
+   * this response (`ETag` or `Last-Modified`); with nothing to compare to, the
+   * precondition fails and the whole file is sent, which is always correct.
+   */
+  private ifRangeMatches(req: HttpRequest, res: HttpResponse): boolean {
+    const header = req.headers['if-range'];
+    if (header === undefined) return true;
+
+    const ifRange = String(header).trim();
+    const getHeader = (name: string): unknown =>
+      typeof (res as any).getHeader === 'function' ? (res as any).getHeader(name) : undefined;
+
+    // Strong comparison: a weak validator never matches
+    if (ifRange.startsWith('"')) return getHeader('ETag') === ifRange;
+    if (ifRange.startsWith('W/')) return false;
+
+    const lastModified = getHeader('Last-Modified');
+    if (typeof lastModified !== 'string') return false;
+    const expected = Date.parse(lastModified);
+    return !Number.isNaN(expected) && expected === Date.parse(ifRange);
+  }
+
   private async sendSingleRange(
-    filePath: string,
+    handle: fs.FileHandle,
     fileSize: number,
-    range: { start: number; end: number },
+    range: ByteRange,
     res: HttpResponse
   ): Promise<void> {
     const { start, end } = range;
@@ -121,35 +299,202 @@ export class RangeCore {
     res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
     res.setHeader('Content-Length', chunkSize);
 
-    // Stream the range
-    const stream = createReadStream(filePath, { start, end });
-    stream.pipe(res);
+    if (!RangeCore.canStream(res)) {
+      res.end(await RangeCore.readSlice(handle, start, chunkSize));
+    } else if (await this.pump(handle, res, start, chunkSize)) {
+      res.end();
+    }
   }
 
   private async sendMultipleRanges(
-    filePath: string,
+    handle: fs.FileHandle,
     fileSize: number,
-    ranges: Array<{ start: number; end: number }>,
+    ranges: ByteRange[],
     res: HttpResponse
   ): Promise<void> {
-    const boundary = 'MULTIPART_BYTERANGES';
+    // Unpredictable, so file content can't be crafted to contain it
+    const boundary = randomBytes(12).toString('hex');
+    const existingType =
+      typeof (res as any).getHeader === 'function' ? (res as any).getHeader('Content-Type') : null;
+    const partType =
+      typeof existingType === 'string' && existingType ? existingType : 'application/octet-stream';
+
+    const heads = ranges.map(({ start, end }) =>
+      Buffer.from(
+        `--${boundary}\r\n` +
+          `Content-Type: ${partType}\r\n` +
+          `Content-Range: bytes ${start}-${end}/${fileSize}\r\n\r\n`
+      )
+    );
+    const partEnd = Buffer.from('\r\n');
+    const tail = Buffer.from(`--${boundary}--\r\n`);
+
+    let contentLength = tail.length;
+    ranges.forEach(({ start, end }, i) => {
+      contentLength += (heads[i] as Buffer).length + (end - start + 1) + partEnd.length;
+    });
+
     res.status(206);
     res.setHeader('Content-Type', `multipart/byteranges; boundary=${boundary}`);
+    res.setHeader('Content-Length', contentLength);
 
-    for (const { start, end } of ranges) {
-      if (start >= fileSize || end >= fileSize) continue;
+    if (!RangeCore.canStream(res)) {
+      const parts: Buffer[] = [];
+      for (let i = 0; i < ranges.length; i++) {
+        const { start, end } = ranges[i] as ByteRange;
+        parts.push(heads[i] as Buffer);
+        parts.push(await RangeCore.readSlice(handle, start, end - start + 1));
+        parts.push(partEnd);
+      }
+      parts.push(tail);
+      res.end(Buffer.concat(parts));
+      return;
+    }
 
-      res.write(`\r\n--${boundary}\r\n`);
-      res.write(`Content-Range: bytes ${start}-${end}/${fileSize}\r\n\r\n`);
+    for (let i = 0; i < ranges.length; i++) {
+      const { start, end } = ranges[i] as ByteRange;
+      res.write(heads[i] as Buffer);
+      // false: the client went away mid-part, nothing left to write to
+      if (!(await this.pump(handle, res, start, end - start + 1))) return;
+      res.write(partEnd);
+    }
+    res.end(tail);
+  }
 
-      const stream = createReadStream(filePath, { start, end });
-      await new Promise<void>(resolve => {
-        stream.on('end', () => resolve());
-        stream.pipe(res, { end: false });
+  /**
+   * Copy `length` bytes of the file, from `start`, into the response, waiting
+   * on 'drain' whenever the response pushes back. Resolves `true` once they
+   * are all written and `false` if the client disconnected first; a read error
+   * rejects into sendRange's catch.
+   *
+   * Plain positional reads on the caller's handle, not a read stream: a stream
+   * closes the descriptor it is given when destroyed (several slices share
+   * one), and a stream 'error' nobody is listening for takes the process down.
+   */
+  private async pump(
+    handle: fs.FileHandle,
+    res: HttpResponse,
+    start: number,
+    length: number
+  ): Promise<boolean> {
+    const sink = res as any;
+    let closed = false;
+    let wake: (() => void) | null = null;
+    const onClose = () => {
+      closed = true;
+      if (wake) wake();
+    };
+    const onDrain = () => {
+      if (wake) wake();
+    };
+
+    sink.on('close', onClose);
+    sink.on('drain', onDrain);
+    try {
+      let position = start;
+      let remaining = length;
+
+      while (remaining > 0) {
+        if (closed) return false;
+
+        // A fresh buffer per chunk: the response may hold on to what it is
+        // handed until the socket takes it.
+        const chunk = Buffer.allocUnsafe(Math.min(remaining, RangeCore.CHUNK_SIZE));
+        const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+        if (bytesRead === 0) {
+          throw new Error('File ended before the declared Content-Length was sent');
+        }
+        if (closed) return false;
+
+        position += bytesRead;
+        remaining -= bytesRead;
+
+        const flushed = sink.write(
+          bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead)
+        );
+        if (flushed === false && remaining > 0 && !closed) {
+          await new Promise<void>(resolve => {
+            wake = resolve;
+          });
+          wake = null;
+        }
+      }
+
+      return !closed;
+    } finally {
+      sink.removeListener('close', onClose);
+      sink.removeListener('drain', onDrain);
+    }
+  }
+
+  /** Read one slice into memory - the fallback where streaming isn't available. */
+  private static async readSlice(
+    handle: fs.FileHandle,
+    start: number,
+    length: number
+  ): Promise<Buffer> {
+    const buffer = Buffer.allocUnsafe(length);
+    let filled = 0;
+    while (filled < length) {
+      const { bytesRead } = await handle.read(buffer, filled, length - filled, start + filled);
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    return filled === length ? buffer : buffer.subarray(0, filled);
+  }
+
+  /** HTTP/2 responses are plain objects with no stream plumbing to write into. */
+  private static canStream(res: HttpResponse): boolean {
+    const writable = res as any;
+    return (
+      typeof writable.write === 'function' &&
+      typeof writable.on === 'function' &&
+      typeof writable.removeListener === 'function'
+    );
+  }
+
+  private sendNotFound(res: HttpResponse): void {
+    res.status(404).json({ success: false, error: 'File not found' });
+  }
+
+  /**
+   * The client gets a status and nothing else: an fs error message carries the
+   * absolute path on disk, which belongs in the log and not in the response.
+   */
+  private sendFailure(res: HttpResponse, error: unknown): void {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const notFound = code !== undefined && NOT_FOUND_CODES.has(code);
+
+    if (!notFound) {
+      logger.error('Range request failed', 'SendRange', {
+        error: error instanceof Error ? error.message : String(error),
       });
     }
-    res.write(`\r\n--${boundary}--\r\n`);
-    res.end();
+
+    if (res.headersSent) {
+      // Part of the body is already on the wire, short of the declared
+      // Content-Length. Drop the connection so the client sees a truncated
+      // transfer instead of waiting on a keep-alive socket for the rest; the
+      // engine has no destroy() and does the same itself on a short end().
+      if (typeof (res as any).destroy === 'function') {
+        (res as any).destroy();
+      } else {
+        res.end();
+      }
+      return;
+    }
+
+    // Headers describing the body that is no longer coming
+    if (typeof (res as any).removeHeader === 'function') {
+      (res as any).removeHeader('Content-Range');
+      (res as any).removeHeader('Content-Length');
+    }
+
+    if (notFound) {
+      this.sendNotFound(res);
+    } else {
+      res.status(500).json({ success: false, error: 'Range request failed' });
+    }
   }
 
   getAcceptRanges(): string {

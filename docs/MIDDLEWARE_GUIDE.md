@@ -800,32 +800,28 @@ app.use(
   middleware.range({
     acceptRanges: 'bytes',
     maxRanges: 5,
+    root: './videos', // confine sendRange() to this directory
   })
 );
 
 // Serve video with range support
 app.get('/videos/:id', async (req, res) => {
-  const videoPath = `./videos/${req.params.id}.mp4`;
-  const stats = await fs.stat(videoPath);
-
-  // sendRange handles partial content automatically
-  res.sendRange(videoPath, stats);
+  // sendRange handles partial content automatically: 206 for a Range request,
+  // 416 for an unsatisfiable one, 404 if the file is missing
+  await res.sendRange(`${req.params.id}.mp4`);
 });
 
-// Range support for custom data
-app.get('/api/data', (req, res) => {
-  const data = getLargeData();
-
-  if (req.headers.range) {
-    const range = parseRange(req.headers.range, data.length);
-    res.status(206);
-    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${data.length}`);
-    return data.slice(range.start, range.end + 1);
-  }
-
-  return data;
+// A call can name its own root, which overrides the middleware's
+app.get('/download/:file', async (req, res) => {
+  await res.sendRange(`${req.params.file}`, { root: './files' });
 });
 ```
+
+`root` is optional. When it is set, the path is resolved against that directory
+and anything that leads outside it - `../`, an absolute path, a symlink pointing
+out - is answered with a 404. Route params arrive percent-decoded (`..%2F` is
+`../` by the time the handler runs), so set `root` whenever a path is built from
+one. Without it, `sendRange()` serves the path exactly as given.
 
 ### HTTP/2 Server Push
 

@@ -71,6 +71,18 @@ export interface MoroResponseMethods {
   redirect(url: string, status?: number): void;
   sendFile(filePath: string): Promise<void>;
   render?(template: string, data?: any): Promise<void>;
+  /**
+   * Send a file, honouring `Range` and `If-Range`. Installed on the response
+   * by `middleware.range()`.
+   *
+   * The optional second argument is either `{ root }`, which resolves
+   * `filePath` against that directory and answers 404 for anything that leads
+   * outside it, or an `fs.Stats` for the file, which only saves a stat call.
+   */
+  sendRange(
+    filePath: string,
+    statsOrOptions?: { isFile(): boolean } | { root?: string }
+  ): Promise<void>;
 
   // Per-response typed state bag (Express-compatible res.locals)
   locals: Record<string, any>;

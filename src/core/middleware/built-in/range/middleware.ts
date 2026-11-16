@@ -5,18 +5,29 @@ import { RangeCore, RangeOptions } from './core.js';
 /**
  * Create HTTP range requests middleware
  *
+ * Adds `res.sendRange(filePath)`, which sends a file and answers `Range`
+ * requests with `206 Partial Content` (suffix ranges, clamping and `If-Range`
+ * per RFC 9110), an unsatisfiable range with `416`, and a missing file with
+ * `404`. A request for more than `maxRanges` ranges gets the whole file.
+ *
+ * Without `root`, `sendRange` serves whatever path it is given - and route
+ * params arrive percent-decoded (`..%2F` is `../` by the time the handler
+ * runs). Set `root`, here or per call (`res.sendRange(file, { root })`), and
+ * the path is resolved against that directory: `../`, an absolute path or a
+ * symlink that leads outside it gets a 404.
+ *
  * @example
  * ```typescript
- * import { range } from '@morojs/moro';
+ * import { middleware } from '@morojs/moro';
  *
- * app.use(range({
+ * app.use(middleware.range({
  *   acceptRanges: 'bytes',
  *   maxRanges: 1,
+ *   root: './videos',
  * }));
  *
- * app.get('/video/:file', async (req, res) => {
- *   const filePath = `./videos/${req.params.file}`;
- *   await res.sendRange(filePath);
+ * app.get('/videos/:id', async (req, res) => {
+ *   await res.sendRange(`${req.params.id}.mp4`);
  * });
  * ```
  */

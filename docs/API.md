@@ -1537,10 +1537,20 @@ app.get('/page', (req, res) => {
 **HTTP Range Requests** - Partial content for streaming
 
 ```typescript
+// `root` confines sendRange() to a directory: "../", an absolute path or a
+// symlink that leads outside it gets a 404. Route params arrive
+// percent-decoded ("..%2F" is "../" in the handler), so set it whenever a
+// path is built from one. Without `root`, the path is served as given.
+app.use(middleware.range({ root: './videos' }));
+
 app.get('/video/:id', async (req, res) => {
-  const videoPath = `./videos/${req.params.id}.mp4`;
-  const stats = await fs.stat(videoPath);
-  res.sendRange(videoPath, stats);
+  // 206 for a Range request, 416 for an unsatisfiable one, 404 if the file is missing
+  await res.sendRange(`${req.params.id}.mp4`);
+});
+
+// Or per call, which overrides the middleware's root
+app.get('/download/:file', async (req, res) => {
+  await res.sendRange(`${req.params.file}`, { root: './files' });
 });
 ```
 
