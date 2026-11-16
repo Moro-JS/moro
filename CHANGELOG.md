@@ -1,3 +1,35 @@
+## [1.8.25] - 2026-11-16
+
+### Added
+
+- `root` for `res.sendRange()`, on the middleware (`middleware.range({ root: './videos' })`) or per call (`res.sendRange(file, { root: './files' })`, which overrides the middleware's). With a root in effect the path is resolved against that directory, and anything that leads outside it is answered with a 404: `../`, an absolute path, a sibling directory that shares the prefix, a symlink pointing out. A symlink that stays inside is followed, and the root may itself be a symlink. Route params arrive percent-decoded (`..%2F` is `../` by the time the handler runs), so set it whenever a path is built from one. It is optional: without it `sendRange()` serves the path it is given, and `sendRange(path)` and `sendRange(path, stats)` work as before. An empty or non-string root is an error, not "no root".
+- `res.sendRange()` is on the `HttpResponse` type, so the documented call compiles without a cast.
+
+### Changed
+
+- A file that is missing, is a directory or is not a regular file is answered with `404 { success: false, error: 'File not found' }`. It was a 500.
+- A `Range` header that is malformed, names a unit other than `bytes`, or asks for more ranges than `maxRanges` is ignored and the whole file is sent with a 200, as `middleware.staticFiles()` does. Malformed headers were a 500, or were half-parsed and served (`bytes=1e2-2e2`, `bytes=0x10-0x20`, `bytes=0-9junk`); too many ranges was a 416.
+- A multi-range response has a boundary generated per response, a `Content-Length`, and a `Content-Type` on each part (the response's own, or `application/octet-stream`). A set of ranges that adds up to the file or more is answered with the file, once.
+- `If-Range` is honoured against an `ETag` or `Last-Modified` the handler has set on the response. When it does not match, or there is nothing to compare it to, the whole file is sent.
+- The file is streamed with backpressure whether or not a range was asked for; a request with no `Range` header used to read the whole file into memory first. Its size is taken from the descriptor the bytes are read from, so stats passed by the caller can no longer produce a `Content-Length` that disagrees with the body.
+- `acceptRanges` set to anything but `'bytes'` now means `Range` headers are not served, where it only changed the advertised header.
+- A `HEAD` route that calls `sendRange()` gets the headers and no body.
+- docs: update Quick Start section to emphasize CLI usage and streamline project initialization
+- docs: update performance metrics in README and fix typo in package.json
+
+### Fixed
+
+- `bytes=-N` returns the last N bytes of the file. It returned the first N + 1. A suffix longer than the file returns the whole file as a 206 instead of a 416, and `bytes=-0` is a 416. (#36, reported by trackoor, UCSB PLSE)
+- A `last-pos` at or past the end of the file is clamped to the last byte, per RFC 9110: `bytes=995-2000` and `bytes=0-1000` on a 1000-byte file are 206 responses, where both were a 416. (#36)
+
+### Security
+
+- A file that disappeared between the stat and the read, including one whose stats the caller had passed in, raised an unhandled stream error and stopped the process. It is a 404 now.
+- Error responses from `sendRange()` no longer carry a `details` field. It held the filesystem error message, which includes the absolute path on disk. The error is logged instead.
+- A non-numeric range such as `bytes=abc-def` no longer produces `Content-Range: bytes NaN-NaN/…` and a 500.
+- A read error part-way through a multi-range response no longer leaves the request hanging.
+- The `sendRange()` samples in `docs/API.md`, `docs/MIDDLEWARE_GUIDE.md` and the JSDoc built a path straight from a route param, which let `..%2F` read files outside the intended directory. They use `root` now. If you copied one, add `root` or validate the param.
+
 ## [1.8.24] - 2026-11-12
 
 ### Added
