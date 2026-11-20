@@ -10,6 +10,8 @@
 // break an app that still carries them: it boots on the Moro engine, exactly
 // as with no setting, and says so once.
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { readdirSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import { createApp } from '../../../src/index.js';
 import { resetConfig } from '../../../src/core/config/index.js';
 import { logger } from '../../../src/core/logger/index.js';
@@ -79,6 +81,78 @@ describe('HTTP engine selection', () => {
       expect(app.engine.server).toBe('node');
     }
   });
+
+  // MORO_ENGINE_BINARY makes the engine load the native binary it names in
+  // place of the installed one (instrumented builds, A/B runs). The engine
+  // does not report where its binary came from; the framework reads the
+  // variable as the engine loads and names the file whenever it names the engine.
+  (moroLoadable ? it : it.skip)(
+    'names the binary in its start-up lines when MORO_ENGINE_BINARY chose it',
+    async () => {
+      // The binary of this platform, C library and Node ABI, as installed. On
+      // Linux an install can carry the glibc and the musl package side by
+      // side, and only the one for this C library loads.
+      const libc =
+        process.platform !== 'linux'
+          ? ''
+          : (process.report?.getReport() as any)?.header?.glibcVersionRuntime
+            ? '_gnu'
+            : '_musl';
+      const wanted = `moro_engine_${process.platform}_${process.arch}${libc}_${process.versions.modules}.node`;
+      const scope = join(dirname(require.resolve('@morojs/engine/package.json')), '..');
+      const binary = readdirSync(scope)
+        .filter(name => name.startsWith('engine-'))
+        .flatMap(name => readdirSync(join(scope, name)).map(file => join(scope, name, file)))
+        .find(file => basename(file) === wanted) as string;
+      expect(binary).toEqual(expect.any(String));
+
+      const startUp = async (override: string | undefined) => {
+        let seen: { engine: any; lines: string[] } | undefined;
+        if (override === undefined) delete process.env.MORO_ENGINE_BINARY;
+        else process.env.MORO_ENGINE_BINARY = override;
+        try {
+          // An engine of its own: it reads the variable when it loads its binary
+          await jest.isolateModulesAsync(async () => {
+            const moro = await import('../../../src/index.js');
+            const logging = await import('../../../src/core/logger/index.js');
+            const log = jest
+              .spyOn(logging.MoroLogger.prototype as any, 'log')
+              .mockImplementation(() => {});
+            const app = await moro.createApp({ logger: { level: 'info' as const } });
+            try {
+              await new Promise<void>(resolve => app.listen(0, '127.0.0.1', () => resolve()));
+              seen = {
+                engine: app.engine,
+                lines: log.mock.calls
+                  .map(call => String(call[1]))
+                  .filter(line => line.startsWith('HTTP engine:')),
+              };
+            } finally {
+              await app.close();
+              log.mockRestore();
+            }
+          });
+        } finally {
+          delete process.env.MORO_ENGINE_BINARY;
+        }
+        return seen as { engine: any; lines: string[] };
+      };
+
+      const overridden = await startUp(binary);
+      expect(overridden.engine.server).toBe('engine');
+      expect(overridden.engine.engineBinary).toBe(binary);
+      expect(overridden.lines).toHaveLength(2);
+      for (const line of overridden.lines) {
+        expect(line).toContain(`MORO_ENGINE_BINARY=${binary}`);
+      }
+
+      const installed = await startUp(undefined);
+      expect(installed.engine.server).toBe('engine');
+      expect(installed.engine.engineBinary).toBeUndefined();
+      expect(installed.lines).toHaveLength(2);
+      expect(installed.lines.join(' ')).not.toContain('MORO_ENGINE_BINARY');
+    }
+  );
 
   describe('settings left over from uWebSockets.js (removed in 1.8.24)', () => {
     const savedEnv = process.env.MORO_SERVER_ENGINE;
@@ -206,5 +280,7 @@ describe('HTTP engine selection', () => {
     resetConfig();
     const nodeApp = await createApp({ ...quiet, http2: true, server: { engine: 'node' } } as any);
     expect(nodeApp.engine.server).toBe('http2');
+    // The Node.js HTTP/2 server answers HTTP/2 streams only
+    expect(nodeApp.engine.protocols).toEqual(['h2']);
   });
 });

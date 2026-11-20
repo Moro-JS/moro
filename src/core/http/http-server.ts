@@ -1,16 +1,35 @@
 // src/core/http-server.ts
 import type { IncomingMessage, ServerResponse, Server } from 'http';
-import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
+import { isMultipartMediaType } from './utils/body-type.js';
 import type { Server as HttpsServer } from 'https';
 import { createRequire } from 'module';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
+import type { MultipartLimits } from './utils/multipart-parser.js';
+import { parseBufferedBody, payloadTooLarge } from './utils/body-parser.js';
+import { negotiateEncoding, type Encoding } from './utils/compression.js';
+import { absoluteTargetOf, hostnameOf } from './utils/hostname.js';
 import {
-  parseMultipart as parseMultipartBuffer,
-  type MultipartLimits,
-} from './utils/multipart-parser.js';
+  clearCookieOptions,
+  serializeCookie,
+  unsignedCookieError,
+} from './utils/cookie-attributes.js';
+import {
+  clientAddress,
+  firstForwarded,
+  forwardedAddresses,
+  type ProxyTrust,
+} from './utils/trust-proxy.js';
+import { dispatchMiddleware, WAIT_FOR_NEXT } from './utils/middleware-dispatch.js';
 import { parseRawQueryString } from './utils/query-parser.js';
+import {
+  attachmentDisposition,
+  clearRepresentationHeaders,
+  destroyUnfinishedResponse,
+  locationHeaderValue,
+} from './utils/response-headers.js';
+import { fileCacheControl, locateFile } from './utils/file-send.js';
 import type { HttpRuntimeLimits } from './utils/size.js';
 import {
   HttpRequest,
@@ -18,8 +37,9 @@ import {
   HttpHandler,
   Middleware,
   RouteEntry,
+  SendFileOptions,
 } from '../../types/http.js';
-import { PathMatcher } from '../routing/path-matcher.js';
+import { PathMatcher, literalPathPattern } from '../routing/path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
 
 // `node:https` and `node:zlib` are resolved on first use rather than at import
@@ -62,6 +82,30 @@ function compressors() {
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
+// What res.json() can produce, in preference order.
+const JSON_ENCODINGS: Encoding[] = ['gzip', 'deflate'];
+
+// The encoding res.json() compresses with for an Accept-Encoding header.
+// A header without parameters is decided as it always was: gzip when it is
+// named, else deflate when it is. Parameters can carry q-values, and
+// `gzip;q=0` is a refusal, so those headers are negotiated properly - but
+// only between the encodings the header names, never one it left out.
+function jsonEncodingFor(acceptEncoding: string | undefined): 'gzip' | 'deflate' | undefined {
+  if (!acceptEncoding) return undefined;
+  const named = acceptEncoding.includes('gzip')
+    ? 'gzip'
+    : acceptEncoding.includes('deflate')
+      ? 'deflate'
+      : undefined;
+  if (named === undefined || acceptEncoding.indexOf(';') === -1) return named;
+  const negotiated = negotiateEncoding(acceptEncoding, JSON_ENCODINGS);
+  return negotiated === 'gzip' || negotiated === 'deflate' ? negotiated : undefined;
+}
+
+// res.sendFile(): files up to this size are read and sent in one write; larger
+// files are streamed so memory use does not scale with file size.
+const SEND_FILE_INLINE_MAX_BYTES = 64 * 1024;
+
 const STATUS_MESSAGES: Record<number, string> = {
   200: 'OK',
   201: 'Created',
@@ -98,7 +142,11 @@ const TYPE_SHORTHANDS: Record<string, string> = {
 // req.query semantics everywhere ('+' as space, malformed escapes tolerated).
 const parseQueryString = parseRawQueryString;
 
-function parseCookieHeader(cookieHeader: string): Record<string, string> {
+/**
+ * req.cookies from a Cookie header. The serverless runtimes use it too, so a
+ * cookie reads the same on every runtime.
+ */
+export function parseCookieHeader(cookieHeader: string): Record<string, string> {
   const cookies: Record<string, string> = {};
   if (!cookieHeader) return cookies;
 
@@ -135,6 +183,24 @@ function parseCookieHeader(cookieHeader: string): Record<string, string> {
 // the `_server` back-reference, so methods can reach server config (logger,
 // compression settings) without any per-request allocation.
 // ---------------------------------------------------------------------------
+
+// The compiled server.trustProxy of the server a request belongs to;
+// undefined when the setting is absent. Read only by the lazy getters below
+// (also when the HTTP/2 server borrows them), never per request.
+function proxyTrustOf(req: {
+  _server?: { proxyTrust?: ProxyTrust | undefined };
+}): ProxyTrust | undefined {
+  const server = req._server;
+  return server ? server.proxyTrust : undefined;
+}
+
+// Whether the peer this request's socket is connected to is a trusted proxy
+function peerIsTrusted(req: { socket?: any }, trust: ProxyTrust): boolean {
+  const fixed = trust.peer;
+  if (fixed !== undefined) return fixed;
+  const socket = req.socket;
+  return trust((socket && socket.remoteAddress) || '', 0);
+}
 
 export class MoroIncomingMessage extends http.IncomingMessage {
   /** Bound on the per-server subclass prototype - no per-request write needed */
@@ -221,6 +287,11 @@ export class MoroIncomingMessage extends http.IncomingMessage {
     let v = L.ip;
     if (v === undefined) {
       v = (this.socket && this.socket.remoteAddress) || '';
+      // server.trustProxy: the client as the trusted proxies report it
+      const trust = proxyTrustOf(this);
+      if (trust !== undefined) {
+        v = clientAddress(v, this.headers['x-forwarded-for'] as string | undefined, trust);
+      }
       L.ip = v;
     }
     return v;
@@ -241,8 +312,16 @@ export class MoroIncomingMessage extends http.IncomingMessage {
     const L = this._lazy ?? (this._lazy = {});
     let v = L.hostname;
     if (v === undefined) {
-      const host = (this.headers.host || '') as string;
-      v = host ? host.split(':')[0] : '';
+      let host = (this.headers.host || '') as string;
+      // server.trustProxy: X-Forwarded-Host counts when a trusted proxy sent it
+      const trust = proxyTrustOf(this);
+      if (trust !== undefined) {
+        const forwardedHost = firstForwarded(
+          this.headers['x-forwarded-host'] as string | undefined
+        );
+        if (forwardedHost !== undefined && peerIsTrusted(this, trust)) host = forwardedHost;
+      }
+      v = hostnameOf(host);
       L.hostname = v;
     }
     return v;
@@ -256,11 +335,23 @@ export class MoroIncomingMessage extends http.IncomingMessage {
     let v = L.protocol;
     if (v === undefined) {
       const forwardedProto = this.headers['x-forwarded-proto'] as string | undefined;
-      v = forwardedProto
-        ? (forwardedProto.split(',')[0] ?? '').trim()
-        : (this.socket as any)?.encrypted
-          ? 'https'
-          : 'http';
+      const trust = proxyTrustOf(this);
+      if (trust !== undefined) {
+        // server.trustProxy is set: the header counts only from a trusted proxy
+        const forwarded = firstForwarded(forwardedProto);
+        v =
+          forwarded !== undefined && peerIsTrusted(this, trust)
+            ? forwarded
+            : (this.socket as any)?.encrypted
+              ? 'https'
+              : 'http';
+      } else {
+        v = forwardedProto
+          ? (forwardedProto.split(',')[0] ?? '').trim()
+          : (this.socket as any)?.encrypted
+            ? 'https'
+            : 'http';
+      }
       L.protocol = v;
     }
     return v;
@@ -296,12 +387,22 @@ export class MoroIncomingMessage extends http.IncomingMessage {
     let v = L.ips;
     if (v === undefined) {
       const forwardedFor = this.headers['x-forwarded-for'] as string | undefined;
-      v = forwardedFor
-        ? forwardedFor
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-        : [];
+      const trust = proxyTrustOf(this);
+      if (trust !== undefined) {
+        // server.trustProxy is set: the client and the trusted proxies only
+        v = forwardedAddresses(
+          ((this.socket as any) && (this.socket as any).remoteAddress) || '',
+          forwardedFor,
+          trust
+        );
+      } else {
+        v = forwardedFor
+          ? forwardedFor
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean)
+          : [];
+      }
       L.ips = v;
     }
     return v;
@@ -400,6 +501,9 @@ export class MoroIncomingMessage extends http.IncomingMessage {
   }
 }
 
+// The Set-Cookie serializer every server and runtime shares
+export { serializeCookie, clearCookieOptions };
+
 export class MoroServerResponse extends http.ServerResponse {
   /** Bound on the per-server subclass prototype - no per-request write needed */
   declare _server: MoroHttpServer;
@@ -427,13 +531,25 @@ export class MoroServerResponse extends http.ServerResponse {
     if (this.headersSent) return;
 
     const jsonString = JSON.stringify(data);
+    // Nothing to serialise (undefined, a function), or a status that cannot
+    // carry a body: the head alone, with no length for a 204 (RFC 9110 8.6).
+    if (jsonString === undefined || this.statusCode === 204) {
+      this.writeHead(
+        this.statusCode || 200,
+        this.statusCode === 204
+          ? { 'Content-Type': JSON_CONTENT_TYPE }
+          : { 'Content-Type': JSON_CONTENT_TYPE, 'Content-Length': 0 }
+      );
+      this.end();
+      return;
+    }
     const server = this._server;
 
     // Compression - EARLY EXIT if disabled or below threshold
     if (server && server.compressionEnabled && jsonString.length > server.compressionThreshold) {
-      const acceptEncoding = (this as any).req?.headers['accept-encoding'];
+      const encoding = jsonEncodingFor((this as any).req?.headers['accept-encoding']);
 
-      if (acceptEncoding && acceptEncoding.includes('gzip')) {
+      if (encoding === 'gzip') {
         const buffer = Buffer.from(jsonString, 'utf8');
         // A small body is compressed here and now rather than on the threadpool
         // (see compressionMaxInlineBytes); a failure takes the async path below.
@@ -485,7 +601,7 @@ export class MoroServerResponse extends http.ServerResponse {
             }
           });
         return;
-      } else if (acceptEncoding && acceptEncoding.includes('deflate')) {
+      } else if (encoding === 'deflate') {
         const buffer = Buffer.from(jsonString, 'utf8');
         if (
           server.compressionMaxInlineBytes > 0 &&
@@ -596,20 +712,12 @@ export class MoroServerResponse extends http.ServerResponse {
       return this;
     }
 
-    const cookieValue = encodeURIComponent(value);
-    let cookieString = `${name}=${cookieValue}`;
+    // Signing is done by the cookie middleware, which replaces this method.
+    // Reaching here with `signed` means no signer is registered, and the
+    // value must not go out unsigned under a name the application trusts.
+    if (options.signed) throw unsignedCookieError(name);
 
-    // maxAge: 0 is meaningful (immediate expiry - clearCookie relies on it)
-    if (options.maxAge !== undefined && options.maxAge !== null)
-      cookieString += `; Max-Age=${options.maxAge}`;
-    if (options.expires) cookieString += `; Expires=${options.expires.toUTCString()}`;
-    if (options.httpOnly) cookieString += '; HttpOnly';
-    if (options.secure) cookieString += '; Secure';
-    if (options.sameSite) cookieString += `; SameSite=${options.sameSite}`;
-    if (options.domain) cookieString += `; Domain=${options.domain}`;
-    // Path defaults to '/' (Express behavior) so clearCookie() from a nested
-    // route can clear a cookie originally set at the site root.
-    cookieString += `; Path=${options.path ?? '/'}`;
+    const cookieString = serializeCookie(name, value, options, this.req);
 
     const existingCookies = this.getHeader('Set-Cookie') || [];
     // Avoid spread operator - direct array manipulation
@@ -621,39 +729,65 @@ export class MoroServerResponse extends http.ServerResponse {
   }
 
   clearCookie(name: string, options: any = {}): this {
-    // Avoid spread operator - manually set properties
-    const clearOptions: any = {
-      expires: new Date(0),
-      maxAge: 0,
-    };
-    // Copy other options manually
-    if (options.path !== undefined) clearOptions.path = options.path;
-    if (options.domain !== undefined) clearOptions.domain = options.domain;
-    if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
-    if (options.secure !== undefined) clearOptions.secure = options.secure;
-    if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
-    return this.cookie(name, '', clearOptions);
+    return this.cookie(name, '', clearCookieOptions(options));
   }
 
   redirect(url: string, status: number = 302): void {
     if (this.headersSent) return;
     this.statusCode = status;
-    const safeUrl = url.replace(/[\r\n]/g, '');
-    this.setHeader('Location', safeUrl);
+    this.setHeader('Location', locationHeaderValue(url));
     this.end();
   }
 
-  async sendFile(filePath: string): Promise<void> {
+  /**
+   * @internal Where sendFile() streams a file body. The Node response is the
+   * stream itself; the HTTP/2 response answers with its stream.
+   */
+  _bodyStream(): NodeJS.WritableStream {
+    return this;
+  }
+
+  async sendFile(filePath: string, options?: SendFileOptions): Promise<void> {
     if (this.headersSent) return;
 
+    // True once this call has written the file's own headers
+    let described = false;
+    // True when this call put a Cache-Control on the response (an option
+    // asked for one); a Cache-Control the handler set is not this call's.
+    let cacheSet = false;
     try {
+      // `root` confines the path; the dotfile policy comes with it
+      if (options !== undefined && (options.root !== undefined || options.dotfiles !== undefined)) {
+        const located = await locateFile(
+          filePath,
+          options.root,
+          options.dotfiles ?? (options.root !== undefined ? 'ignore' : 'allow')
+        );
+        if (located === 'forbidden') {
+          clearRepresentationHeaders(this, true);
+          this.status(403).json({ success: false, error: 'Forbidden' });
+          return;
+        }
+        if (located === 'not-found') throw new Error('not served');
+        filePath = located;
+      }
+
       const fs = await import('fs/promises');
       const path = await import('path');
       const extension = path.extname(filePath);
       const mime = await this._server.getMimeType(extension);
 
-      const stats = await fs.stat(filePath);
-      const data = await fs.readFile(filePath);
+      // One open handle for stat and read, so the Content-Length always
+      // describes the bytes that are sent.
+      const handle = await fs.open(filePath, 'r');
+      let stats;
+      try {
+        stats = await handle.stat();
+        if (!stats.isFile()) throw new Error('not a regular file');
+      } catch (error) {
+        await handle.close();
+        throw error;
+      }
 
       // Add charset for text-based files
       const contentType = this._server.addCharsetIfNeeded(mime);
@@ -663,13 +797,67 @@ export class MoroServerResponse extends http.ServerResponse {
       // Add security headers for file downloads
       this.setHeader('X-Content-Type-Options', 'nosniff');
 
-      // Add caching headers
+      // No Cache-Control unless the caller asked for one: how long a file
+      // may be cached, and by whom, is the application's to say.
       this.setHeader('Last-Modified', stats.mtime.toUTCString());
-      this.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year for static files
+      if (options !== undefined) {
+        const cacheControl = fileCacheControl(options);
+        if (cacheControl !== undefined) {
+          this.setHeader('Cache-Control', cacheControl);
+          cacheSet = true;
+        }
+      }
+      described = true;
 
-      this.end(data);
+      // A small file goes out in one write, as before.
+      if (stats.size <= SEND_FILE_INLINE_MAX_BYTES) {
+        let data: Buffer;
+        try {
+          data = await handle.readFile();
+        } finally {
+          await handle.close();
+        }
+        this.setHeader('Content-Length', data.length);
+        this.end(data);
+        return;
+      }
+
+      // A larger file is streamed. Reading it whole costs its full size in
+      // memory per in-flight request, so a few concurrent downloads of a big
+      // file - or clients that stop reading - could exhaust the process.
+      if ((this as any).req?.method === 'HEAD') {
+        await handle.close();
+        this.end();
+        return;
+      }
+      await new Promise<void>(resolve => {
+        const stream = handle.createReadStream({ start: 0, end: stats.size - 1 });
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          stream.destroy(); // closes the handle (autoClose)
+          resolve();
+        };
+        // Headers are already on the wire when a read fails mid-file: the only
+        // honest signal left is to drop the connection, not to end it cleanly.
+        stream.once('error', () => {
+          this.destroy();
+          done();
+        });
+        this.once('close', done); // client went away, or the response finished
+        stream.pipe(this._bodyStream());
+      });
     } catch {
-      this.status(404).json({ success: false, error: 'File not found' });
+      if (!this.headersSent) {
+        // The answer is now an error body, not the file: nothing that
+        // described the file may stay on it. Content-Disposition from
+        // attachment()/download() would have the browser save the error under
+        // the file's name, and a cache lifetime set above belongs to the
+        // file. A Cache-Control the handler set itself is left alone.
+        clearRepresentationHeaders(this, !(described && cacheSet));
+        this.status(404).json({ success: false, error: 'File not found' });
+      }
     }
   }
 
@@ -911,8 +1099,7 @@ export class MoroServerResponse extends http.ServerResponse {
 
   location(url: string): this {
     if (this.headersSent) return this;
-    const safe = url.replace(/[\r\n]/g, '');
-    this.setHeader('Location', safe);
+    this.setHeader('Location', locationHeaderValue(url));
     return this;
   }
 
@@ -938,8 +1125,7 @@ export class MoroServerResponse extends http.ServerResponse {
   attachment(filename?: string): this {
     if (this.headersSent) return this;
     if (filename) {
-      const safeName = filename.replace(/[\r\n"]/g, '');
-      this.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      this.setHeader('Content-Disposition', attachmentDisposition(filename));
       // Set Content-Type from extension if not already set
       if (!this.getHeader('Content-Type')) {
         // fire-and-forget mime lookup; not awaited to keep signature chainable
@@ -960,9 +1146,30 @@ export class MoroServerResponse extends http.ServerResponse {
     return this;
   }
 
-  async download(filePath: string, filename?: string): Promise<void> {
-    this.attachment(filename || filePath.split('/').pop());
-    return this.sendFile(filePath);
+  // Never rejects, like sendFile(): a handler may call it without awaiting,
+  // and a rejection nobody is waiting for would end the process.
+  async download(
+    filePath: string,
+    filename?: string | SendFileOptions,
+    options?: SendFileOptions
+  ): Promise<void> {
+    try {
+      // download(path, options): the name is the file's own
+      if (filename !== null && typeof filename === 'object') {
+        options = filename;
+        filename = undefined;
+      }
+      this.attachment(filename || filePath.split('/').pop());
+      await this.sendFile(filePath, options);
+    } catch (error) {
+      this._server?.logger.error('res.download() failed', 'Download', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!this.headersSent) {
+        clearRepresentationHeaders(this);
+        this.status(500).json({ success: false, error: 'Internal server error' });
+      }
+    }
   }
 
   format(handlers: Record<string, () => any | Promise<any>>): void {
@@ -1029,6 +1236,8 @@ export class MoroHttpServer {
   compressionMaxInlineBytes = 16384;
   /** @internal read by MoroIncomingMessage prototype methods */
   requestTrackingEnabled = true; // Generate request IDs
+  /** @internal read by the request getters: server.trustProxy, compiled (undefined = not set) */
+  proxyTrust: ProxyTrust | undefined = undefined;
   /** @internal read by MoroServerResponse prototype methods */
   logger = createFrameworkLogger('HttpServer');
   private hookManager: any;
@@ -1045,6 +1254,13 @@ export class MoroHttpServer {
   // Direct router dispatch slot - runs after global middleware without the
   // per-middleware promise machinery (set from Moro.listen via setRouterHandler)
   private routerHandler?: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>;
+
+  // The router of the app this server belongs to (set by the framework when
+  // it creates the server). Dispatch goes through routerHandler; this is for
+  // code inside a request that needs the app's own router or configuration
+  // and reaches the server through the request. Declared only: the property
+  // exists once the framework sets it, and no other field moves for it.
+  declare router?: import('../routing/unified-router.js').UnifiedRouter;
 
   // Body size limits - defaults overridden by config in constructor
   private maxBodySize: number = 10 * 1024 * 1024; // Default 10MB (overridden by server.bodySizeLimit config)
@@ -1133,7 +1349,12 @@ export class MoroHttpServer {
     // Timeouts: the previous hardcodes (keepAlive 5000, headers 6000) become
     // the documented defaults; a configured value overrides them. Socket idle
     // timeout stays 0 (disabled) unless set - a non-zero value arms a
-    // per-request timer that shows up in CPU profiles under load.
+    // per-request timer that shows up in CPU profiles under load, and it is
+    // Node's socket inactivity timeout: it also destroys a connection whose
+    // handler or stream is silent for that long. An idle connection is closed
+    // without it: by keepAliveTimeout between requests, and by headersTimeout
+    // when no request ever arrives. The request timeout reaches this server
+    // resolved (5 minutes by default, Node's own value); 0 leaves Node's.
     const t = limits?.timeouts ?? {};
     this.server.keepAliveTimeout = t.keepAlive ?? 5000;
     this.server.headersTimeout = t.headers ?? 6000;
@@ -1179,6 +1400,15 @@ export class MoroHttpServer {
   // Configure request tracking (ID generation)
   setRequestTracking(enabled: boolean): void {
     this.requestTrackingEnabled = enabled;
+  }
+
+  /**
+   * Apply server.trustProxy (compiled by compileTrustProxy). With undefined,
+   * req.ip / req.ips / req.protocol / req.hostname are derived as they were
+   * before the setting existed.
+   */
+  setTrustProxy(trust: ProxyTrust | undefined): void {
+    this.proxyTrust = trust;
   }
 
   // Register a global error handler (called from Moro.setErrorHandler)
@@ -1285,6 +1515,13 @@ export class MoroHttpServer {
       // Dynamic route - organize by segment count for faster matching
       this.dynamicRoutes.push(route);
 
+      // Trailing optional parameters or a wildcard: the request paths such a
+      // route matches have no one segment count
+      if (PathMatcher.compile(path).variableLength) {
+        this.variableRoutes.push(route);
+        return;
+      }
+
       const segmentCount = PathMatcher.countSegments(path);
 
       if (!this.routesBySegmentCount.has(segmentCount)) {
@@ -1299,7 +1536,7 @@ export class MoroHttpServer {
     // Use shared PathMatcher for consistent path compilation
     const compiled = PathMatcher.compile(path);
     return {
-      pattern: compiled.pattern || new RegExp(`^${path.replace(/\//g, '\\/')}$`),
+      pattern: compiled.pattern || literalPathPattern(path),
       paramNames: compiled.paramNames,
     };
   }
@@ -1325,6 +1562,19 @@ export class MoroHttpServer {
     } else {
       httpReq.path = urlString.substring(0, queryIndex);
       httpReq._queryString = urlString.substring(queryIndex + 1);
+    }
+
+    // Every target a route can match starts with '/'. One that does not may
+    // be in absolute-form ("GET http://host/path"), which a server has to
+    // accept (RFC 9112 3.2.2): it is routed by its path, with its host.
+    if (httpReq.path.charCodeAt(0) !== 47 /* / */) {
+      const absolute = absoluteTargetOf(httpReq.path);
+      if (absolute !== undefined) {
+        httpReq.path = absolute.path;
+        req.url =
+          queryIndex === -1 ? absolute.path : absolute.path + urlString.substring(queryIndex);
+        req.headers.host = absolute.host;
+      }
     }
 
     // Intern method string for fast reference equality comparison (50-100% faster)
@@ -1594,7 +1844,12 @@ export class MoroHttpServer {
         }
       }
 
-      if (!httpRes.headersSent) {
+      if (httpRes.headersSent) {
+        // The failure came after the response had started: there is no way
+        // left to report it, and an unfinished response would keep the client
+        // waiting for the rest of a body that is not coming.
+        destroyUnfinishedResponse(httpRes);
+      } else {
         // A malformed body is a client error: default to 400 (parity with the
         // engine transport), not the generic 500.
         const isBadRequest = (error as any)?.statusCode === 400;
@@ -1602,6 +1857,8 @@ export class MoroHttpServer {
         const defaultError = isBadRequest ? 'Invalid request body' : 'Internal server error';
         // Ensure response is properly enhanced before using custom methods
         if (typeof httpRes.status === 'function' && typeof httpRes.json === 'function') {
+          // What the handler had set described the body it meant to send
+          clearRepresentationHeaders(httpRes);
           httpRes.status(defaultStatus).json({
             success: false,
             error: defaultError,
@@ -1771,18 +2028,14 @@ export class MoroHttpServer {
 
     // Use different limits based on content type
     // Multipart (file uploads) need much larger limits than JSON/form data
-    const isMultipart = contentType.includes('multipart/form-data');
+    const isMultipart = isMultipartMediaType(contentType);
     const maxSize = isMultipart
       ? this.maxUploadSize // Configurable file upload limit (default 100MB)
       : this.maxBodySize; // Configurable body size limit (default 10MB, from server.bodySizeLimit config)
 
     // Early rejection from the declared Content-Length - nothing is read off the wire
     if (contentLength > maxSize) {
-      const error: any = new Error('Request entity too large');
-      error.statusCode = 413;
-      error.limit = maxSize;
-      error.received = contentLength;
-      return Promise.reject(error);
+      return Promise.reject(payloadTooLarge('Request entity too large', maxSize, contentLength));
     }
 
     // Buffer every body up to maxSize and parse it into its real shape. The
@@ -1801,10 +2054,7 @@ export class MoroHttpServer {
           const errorMessage = isMultipart
             ? `File upload too large. Maximum ${Math.floor(maxSize / (1024 * 1024))}MB allowed.`
             : 'Request body too large';
-          const error: any = new Error(errorMessage);
-          error.statusCode = 413;
-          error.limit = maxSize;
-          reject(error);
+          reject(payloadTooLarge(errorMessage, maxSize));
           return;
         }
         chunks.push(chunk);
@@ -1821,50 +2071,17 @@ export class MoroHttpServer {
               : Buffer.concat(chunks, totalLength);
           if (totalLength > 0) (req as MoroIncomingMessage)._rawBody = body;
 
-          if (isJsonMediaType(contentType)) {
-            // Empty JSON body -> null (parity with the engine server, and
-            // avoids JSON.parse('') throwing and 500ing an empty POST).
-            resolve(totalLength === 0 ? null : JSON.parse(body.toString()));
-          } else if (contentType.includes('application/x-www-form-urlencoded')) {
-            resolve(this.parseUrlEncoded(body.toString()));
-          } else if (contentType.includes('multipart/form-data')) {
-            resolve(this.parseMultipart(body, contentType));
-          } else {
-            // Text decodes to a string; binary (octet-stream, images, protobuf,
-            // ...) stays a Buffer - decoding it would corrupt it irreversibly.
-            resolve(bodyIsText(contentType) ? body.toString() : body);
-          }
+          // JSON, urlencoded and multipart become objects, text a string, and
+          // binary stays a Buffer. A body that cannot be parsed is thrown as
+          // a client error (400), which the request-error path answers.
+          resolve(parseBufferedBody(body, contentType, this.multipartLimits, true));
         } catch (error) {
-          // A malformed body is a client error (400), not a server error (500).
-          // Tag it so the request-error path answers 400, matching the engine
-          // transport.
-          if (error instanceof Error && (error as any).statusCode === undefined) {
-            (error as any).statusCode = 400;
-          }
           reject(error);
         }
       });
 
       req.on('error', reject);
     });
-  }
-
-  private parseMultipart(
-    buffer: Buffer,
-    contentType: string
-  ): { fields: Record<string, string>; files: Record<string, any> } {
-    // Shared implementation - the native engine server parses uploads with
-    // the exact same code so both transports agree on body/files shape
-    return parseMultipartBuffer(buffer, contentType, this.multipartLimits);
-  }
-
-  private parseUrlEncoded(body: string): Record<string, string> {
-    const params = new URLSearchParams(body);
-    const result: Record<string, string> = {};
-    for (const [key, value] of params) {
-      result[key] = value;
-    }
-    return result;
   }
 
   // Legacy methods for backward compatibility - the hot path now parses query
@@ -1883,6 +2100,8 @@ export class MoroHttpServer {
   private staticRoutes = new Map<string, RouteEntry>();
   private dynamicRoutes: RouteEntry[] = [];
   private routesBySegmentCount = new Map<number, RouteEntry[]>();
+  // Routes with trailing optional parameters or a wildcard, in the order added
+  private variableRoutes: RouteEntry[] = [];
   private pathNormalizationCache = new Map<string, string>();
 
   // CPU cache-friendly optimizations
@@ -1939,6 +2158,14 @@ export class MoroHttpServer {
         }
       }
     }
+    if (route === null && this.variableRoutes.length > 0) {
+      for (const candidateRoute of this.variableRoutes) {
+        if (candidateRoute.method === method && candidateRoute.pattern.test(normalizedPath)) {
+          route = candidateRoute;
+          break;
+        }
+      }
+    }
 
     // Cache result (limit cache size to prevent memory leaks)
     if (this.routeCache.size < 500) {
@@ -1964,97 +2191,8 @@ export class MoroHttpServer {
     req: HttpRequest,
     res: HttpResponse
   ): void | Promise<void> {
-    return this.dispatchMiddleware(middleware, req, res, 0, undefined);
-  }
-
-  private dispatchMiddleware(
-    middleware: Middleware[],
-    req: HttpRequest,
-    res: HttpResponse,
-    startIndex: number,
-    initialError: any
-  ): void | Promise<void> {
-    const len = middleware.length;
-    let activeError: any = initialError;
-    let i = startIndex;
-
-    while (i < len) {
-      if (res.headersSent) return;
-
-      const mw = middleware[i] as any;
-      i++;
-      const isErrorHandler = mw.length >= 4;
-
-      // Non-error middleware is skipped while an error is active; error middleware
-      // is skipped while no error is active. Matches Express semantics.
-      if (activeError !== undefined && !isErrorHandler) continue;
-      if (activeError === undefined && isErrorHandler) continue;
-
-      let settled = false;
-      let settledError: any = undefined;
-      let asyncResolve: ((err: any) => void) | undefined;
-
-      const next = (err?: any) => {
-        if (settled) return;
-        settled = true;
-        settledError = err;
-        if (asyncResolve) asyncResolve(err);
-      };
-
-      let result: any;
-      try {
-        result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
-      } catch (err) {
-        if (!settled) {
-          settled = true;
-          settledError = err;
-        }
-      }
-
-      const isThenable = result && typeof result.then === 'function';
-
-      if (settled) {
-        // Completed synchronously (next() called sync, or threw sync).
-        // Matches the old behavior: a still-pending returned promise no longer
-        // gates the chain once next() has been called; swallow late rejections.
-        if (isThenable) {
-          (result as Promise<void>).then(undefined, () => {});
-        }
-        activeError = settledError;
-        continue;
-      }
-
-      if (!isThenable) {
-        // Sync-looking middleware that neither called next() nor returned a
-        // promise: it will call next() later (e.g. from an event callback).
-        // Fall back to a promise for the remainder of the chain.
-        const resumeIndex = i;
-        return new Promise<any>(resolve => {
-          asyncResolve = resolve;
-        }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
-      }
-
-      // Async middleware: completion is next() OR promise settle, whichever
-      // happens first (same semantics as the previous implementation).
-      const resumeIndex = i;
-      return new Promise<any>(resolve => {
-        asyncResolve = resolve;
-        (result as Promise<void>).then(
-          () => {
-            if (!settled) next();
-          },
-          (err: any) => {
-            if (!settled) next(err);
-          }
-        );
-      }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
-    }
-
-    // If an error is still unhandled after the chain, re-throw so the top-level
-    // catch in handleRequest can invoke the registered errorHandler / default 500.
-    if (activeError !== undefined) {
-      throw activeError;
-    }
+    // A middleware that has not called next() yet is waited for
+    return dispatchMiddleware(middleware, req, res, 0, undefined, WAIT_FOR_NEXT);
   }
 
   listen(port: number, callback?: () => void): void;

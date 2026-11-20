@@ -4,16 +4,14 @@ import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import { SSECore, type SSEOptions } from './core.js';
 
 /**
- * Create SSE middleware for use in middleware chains
- * Only activates for requests with 'text/event-stream' Accept header
+ * The same helpers as `middleware.sse()`, as a standard `(req, res, next)`
+ * function: `res.sse()` opens the stream when the handler calls it, and
+ * `res.sendEvent()` / `sendComment()` / `sendRetry()` open it on first use.
+ * Nothing is sent before the handler asks.
  *
  * @example
  * ```ts
- * const sseMw = createSSEMiddleware({
- *   heartbeat: 30000,
- *   retry: 3000,
- *   cors: true
- * });
+ * const sseMw = createSSEMiddleware({ heartbeat: 30000, retry: 3000 });
  *
  * app.use(sseMw);
  * ```
@@ -22,31 +20,7 @@ export function createSSEMiddleware(options: SSEOptions = {}): StandardMiddlewar
   const sseCore = new SSECore(options);
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
-    // Only handle SSE requests
-    if (!sseCore.isSSERequest(req.headers.accept)) {
-      await next();
-      return;
-    }
-
-    // Initialize SSE connection
-    const resAny = res as any;
-    if (!resAny.headersSent) {
-      sseCore.initializeSSE(res);
-    }
-
-    // Create connection and attach methods to response
-    const reqAny = req as any;
-    const connection = sseCore.createConnection(res);
-
-    resAny.sendEvent = connection.sendEvent;
-    resAny.sendComment = connection.sendComment;
-    resAny.sendRetry = connection.sendRetry;
-
-    // Clean up on close
-    reqAny.on('close', () => {
-      connection.close();
-    });
-
+    sseCore.attach(req as any, res);
     await next();
   };
 }

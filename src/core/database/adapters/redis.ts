@@ -1,7 +1,7 @@
 // Database Redis Adapter
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
-import { resolveUserPackage } from '../../utilities/package-utils.js';
+import { importDriver, tlsSocketOptions } from './driver-support.js';
 
 interface RedisConfig {
   host?: string;
@@ -40,64 +40,60 @@ export class RedisAdapter implements DatabaseAdapter {
   }
 
   private async initialize(config: RedisConfig): Promise<void> {
-    try {
-      const ioredisPath = resolveUserPackage('ioredis');
-      const ioredis = await import(ioredisPath);
-      const Redis = ioredis.default;
+    const ioredis = await importDriver(
+      'ioredis',
+      'ioredis package is required for Redis adapter. Install it with: npm install ioredis'
+    );
+    const Redis = ioredis.default;
 
-      if (config.cluster) {
-        // Redis Cluster
-        const clusterOptions: any = {
-          enableReadyCheck: config.cluster.enableReadyCheck || false,
-          redisOptions: config.cluster.redisOptions || {},
-        };
+    if (config.cluster) {
+      // Redis Cluster
+      const clusterOptions: any = {
+        enableReadyCheck: config.cluster.enableReadyCheck || false,
+        redisOptions: config.cluster.redisOptions || {},
+      };
 
-        // Add TLS options to cluster configuration
-        if (config.tls) {
-          clusterOptions.redisOptions.tls = { ...config.tls };
-        }
-
-        this.client = new Redis.Cluster(config.cluster.nodes, clusterOptions);
-      } else {
-        // Single Redis instance
-        const redisOptions: any = {
-          host: config.host || 'localhost',
-          port: config.port || 6379,
-          password: config.password,
-          db: config.db || 0,
-          maxRetriesPerRequest: config.maxRetriesPerRequest || 3,
-          retryDelayOnFailover: config.retryDelayOnFailover || 100,
-          lazyConnect: config.lazyConnect || true,
-        };
-
-        // Add TLS options if provided
-        if (config.tls) {
-          redisOptions.tls = { ...config.tls };
-        }
-
-        this.client = new Redis(redisOptions);
+      // Add TLS options to cluster configuration
+      if (config.tls) {
+        clusterOptions.redisOptions.tls = tlsSocketOptions(config.tls);
       }
 
-      this.client.on('error', (err: Error) => {
-        this.logger.error('Redis client error', 'Redis', {
-          error: err.message,
-        });
-      });
+      this.client = new Redis.Cluster(config.cluster.nodes, clusterOptions);
+    } else {
+      // Single Redis instance
+      const redisOptions: any = {
+        host: config.host || 'localhost',
+        port: config.port || 6379,
+        password: config.password,
+        db: config.db || 0,
+        maxRetriesPerRequest: config.maxRetriesPerRequest || 3,
+        retryDelayOnFailover: config.retryDelayOnFailover || 100,
+        lazyConnect: config.lazyConnect || true,
+      };
 
-      this.client.on('connect', () => {
-        this.logger.info('Redis connected', 'Connection');
-      });
+      // Add TLS options if provided
+      if (config.tls) {
+        redisOptions.tls = tlsSocketOptions(config.tls);
+      }
 
-      this.client.on('disconnect', () => {
-        this.logger.warn('Redis disconnected', 'Connection');
-      });
-
-      this.logger.info('Redis adapter initialized', 'Redis');
-    } catch {
-      throw new Error(
-        'ioredis package is required for Redis adapter. Install it with: npm install ioredis'
-      );
+      this.client = new Redis(redisOptions);
     }
+
+    this.client.on('error', (err: Error) => {
+      this.logger.error('Redis client error', 'Redis', {
+        error: err.message,
+      });
+    });
+
+    this.client.on('connect', () => {
+      this.logger.info('Redis connected', 'Connection');
+    });
+
+    this.client.on('disconnect', () => {
+      this.logger.warn('Redis disconnected', 'Connection');
+    });
+
+    this.logger.info('Redis adapter initialized', 'Redis');
   }
 
   private prefixKey(key: string): string {

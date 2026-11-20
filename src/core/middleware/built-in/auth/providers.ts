@@ -2,6 +2,21 @@
 import { AuthProvider } from '../../../../types/auth.js';
 
 /**
+ * The options a caller gave beyond the credentials, kept on the entry under
+ * their own names. The Better Auth adapter passes an entry's fields on to the
+ * provider (see toSocialProviderOptions in core/auth/morojs-adapter): without
+ * them a scope, a tenant or a hosted-domain restriction would only exist
+ * inside the Auth.js-style `authorization` description, which it does not read.
+ */
+function given<T extends object>(options: T, keys: Array<keyof T>): Partial<T> {
+  const kept: Partial<T> = {};
+  for (const key of keys) {
+    if (options[key] !== undefined) kept[key] = options[key];
+  }
+  return kept;
+}
+
+/**
  * Popular OAuth Providers for Better Auth
  * These extend the basic providers with more options and popular services
  */
@@ -27,6 +42,7 @@ export const extendedProviders = {
     userinfo: 'https://api.github.com/user',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.id.toString(),
       name: profile.name || profile.login,
@@ -58,6 +74,7 @@ export const extendedProviders = {
     userinfo: 'https://www.googleapis.com/oauth2/v2/userinfo',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope', 'hostedDomain']),
     profile: profile => ({
       id: profile.id,
       name: profile.name,
@@ -88,6 +105,7 @@ export const extendedProviders = {
     userinfo: 'https://graph.microsoft.com/oidc/userinfo',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope', 'tenant']),
     profile: profile => ({
       id: profile.sub,
       name: profile.name,
@@ -112,6 +130,7 @@ export const extendedProviders = {
     token: 'https://appleid.apple.com/auth/token',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: (profile, _tokens) => ({
       id: profile.sub,
       name: profile.name ? `${profile.name.firstName} ${profile.name.lastName}` : null,
@@ -139,6 +158,7 @@ export const extendedProviders = {
     userinfo: 'https://api.linkedin.com/v2/me',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.id,
       name: `${profile.localizedFirstName} ${profile.localizedLastName}`,
@@ -166,6 +186,7 @@ export const extendedProviders = {
     userinfo: 'https://graph.facebook.com/me?fields=id,name,email,picture',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.id,
       name: profile.name,
@@ -211,6 +232,7 @@ export const extendedProviders = {
     userinfo: 'https://slack.com/api/users.identity',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.user.id,
       name: profile.user.name,
@@ -239,6 +261,7 @@ export const extendedProviders = {
     userinfo: `${options.domain || 'https://gitlab.com'}/api/v4/user`,
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.id.toString(),
       name: profile.name,
@@ -263,6 +286,7 @@ export const extendedProviders = {
     userinfo: 'https://api.spotify.com/v1/me',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.id,
       name: profile.display_name,
@@ -286,6 +310,7 @@ export const extendedProviders = {
     userinfo: 'https://api.twitch.tv/helix/users',
     clientId: options.clientId,
     clientSecret: options.clientSecret,
+    ...given(options, ['scope']),
     profile: profile => ({
       id: profile.data[0].id,
       name: profile.data[0].display_name,

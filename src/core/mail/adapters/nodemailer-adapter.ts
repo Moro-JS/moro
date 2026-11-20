@@ -136,11 +136,19 @@ export class NodemailerAdapter extends BaseMailAdapter {
         mailOptions.priority = options.priority;
       }
 
+      // An explicit envelope replaces the one nodemailer derives from the
+      // headers, so it has to name every recipient: To, Cc and Bcc.
       if (options.returnPath) {
         mailOptions.envelope = {
           from: options.returnPath,
           to: this.formatAddresses(options.to),
         };
+        if (options.cc) {
+          mailOptions.envelope.cc = this.formatAddresses(options.cc);
+        }
+        if (options.bcc) {
+          mailOptions.envelope.bcc = this.formatAddresses(options.bcc);
+        }
       }
 
       if (options.encoding) {
@@ -203,7 +211,10 @@ export class NodemailerAdapter extends BaseMailAdapter {
     await super.close();
   }
 
-  private formatAddress(address: any): string {
+  // A named address goes to nodemailer as { name, address }: nodemailer quotes
+  // and encodes the display name itself and never parses it back out of a
+  // string, so a name cannot add an address to the header or the envelope.
+  private formatAddress(address: any): string | { name: string; address: string } {
     if (!address) {
       return '';
     }
@@ -212,14 +223,30 @@ export class NodemailerAdapter extends BaseMailAdapter {
       return address;
     }
 
-    if (address.name) {
-      return `"${address.name}" <${address.email}>`;
+    const name = address.name ? this.cleanDisplayName(address.name) : '';
+    if (name) {
+      return { name, address: String(address.email) };
     }
 
     return address.email;
   }
 
-  private formatAddresses(addresses: any): string {
+  // A display name is one line of text: a line break becomes a space, other
+  // control characters are dropped, and surrounding whitespace is trimmed.
+  private cleanDisplayName(name: unknown): string {
+    return (
+      String(name)
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+        .replace(/\n/g, ' ')
+        .trim()
+    );
+  }
+
+  private formatAddresses(
+    addresses: any
+  ):
+    string | { name: string; address: string } | Array<string | { name: string; address: string }> {
     if (!addresses) {
       return '';
     }
@@ -229,7 +256,7 @@ export class NodemailerAdapter extends BaseMailAdapter {
     }
 
     if (Array.isArray(addresses)) {
-      return addresses.map(addr => this.formatAddress(addr)).join(', ');
+      return addresses.map(addr => this.formatAddress(addr));
     }
 
     return this.formatAddress(addresses);

@@ -39,7 +39,7 @@ Thank you for considering contributing to MoroJS! This guide will help you get s
 
 ### Prerequisites
 
-- **Node.js** 18.0.0 or higher
+- **Node.js** 20.0.0 or higher
 - **npm** 8.0.0 or higher
 - **Git**
 
@@ -58,11 +58,8 @@ git remote add upstream https://github.com/Moro-JS/moro.git
 ### Install Dependencies
 
 ```bash
-# Install dependencies
+# Install dependencies (development dependencies included)
 npm install
-
-# Install development dependencies
-npm install --dev
 ```
 
 ### Build the Project
@@ -85,7 +82,7 @@ npm test
 npm run test:watch
 
 # Run specific test files
-npm test -- --testNamePattern="validation"
+npm test -- --testPathPatterns=validation
 
 # Run tests with coverage
 npm run test:coverage
@@ -94,13 +91,8 @@ npm run test:coverage
 ### Start Development Server
 
 ```bash
-# Run example application
+# Load the library entry point (src/index.ts) with tsx and reload on change
 npm run dev
-
-# Run with specific runtime
-npm run dev:edge
-npm run dev:lambda
-npm run dev:worker
 ```
 
 ---
@@ -112,28 +104,28 @@ moro/
 ├── src/                    # Source code
 │   ├── core/              # Core framework functionality
 │   │   ├── framework.ts   # Main framework class
-│   │   ├── http/          # HTTP server and routing
-│   │   ├── validation/    # Zod validation system
+│   │   ├── http/          # HTTP servers
+│   │   ├── routing/       # Intelligent routing
+│   │   ├── validation/    # Validation system (Zod, Joi, Yup, class-validator)
 │   │   ├── middleware/    # Built-in middleware
 │   │   ├── runtime/       # Runtime adapters
 │   │   └── modules/       # Module system
 │   ├── types/             # TypeScript type definitions
-│   ├── index.ts           # Main entry point
-│   └── moro.ts           # Framework exports
+│   ├── index.ts           # Main entry point and exports
+│   └── moro.ts           # Moro application class
 ├── tests/                 # Test files
 │   ├── unit/             # Unit tests
 │   ├── integration/      # Integration tests
 │   └── e2e/              # End-to-end tests
 ├── docs/                  # Documentation
-├── examples/              # Example applications
 └── scripts/               # Build and utility scripts
 ```
 
 ### Key Files
 
 - **`src/core/framework.ts`** - Main framework class and initialization
-- **`src/core/http/router.ts`** - Intelligent routing system
-- **`src/core/validation/index.ts`** - Zod validation integration
+- **`src/core/routing/unified-router.ts`** - Intelligent routing system
+- **`src/core/validation/index.ts`** - Validation integration
 - **`src/core/runtime/`** - Runtime adapters for different environments
 - **`src/types/`** - TypeScript type definitions
 
@@ -238,7 +230,7 @@ refactor/route-builder-simplification
 // tests/unit/validation.test.ts
 import { describe, test, expect } from '@jest/globals';
 import { z } from 'zod';
-import { validate } from '../../src/core/validation';
+import { validate } from '../../src/core/validation/index.js';
 
 describe('Validation System', () => {
   test('should validate valid data', () => {
@@ -281,33 +273,32 @@ Maintain high test coverage:
 # Check coverage
 npm run test:coverage
 
-# Coverage should be above 90%
+# Must stay above the coverageThreshold floor in jest.config.mjs
+# (statements 49%, branches 66%, functions 40%, lines 49%)
 ```
 
 ### Runtime Testing
 
-Test across all supported runtimes:
+Test a runtime through the handler `getHandler()` returns:
 
 ```typescript
-// tests/runtime/cross-runtime.test.ts
-import { createApp, createAppEdge, createAppLambda, createAppWorker } from '../../src';
+// tests/unit/runtime/edge-runtime.test.ts
+import { describe, test, expect } from '@jest/globals';
+import { createAppEdge } from '../../../src/index.js';
 
-const runtimes = [
-  { name: 'node', factory: createApp },
-  { name: 'vercel-edge', factory: createAppEdge },
-  { name: 'aws-lambda', factory: createAppLambda },
-  { name: 'cloudflare-workers', factory: createAppWorker },
-];
-
-describe.each(runtimes)('$name runtime', ({ name, factory }) => {
+describe('vercel-edge runtime', () => {
   test('basic functionality works', async () => {
-    const app = factory();
+    const app = await createAppEdge();
 
-    app.get('/test', () => ({ runtime: name }));
+    app.get('/test', () => ({ runtime: 'vercel-edge' }));
 
-    const response = await request(app).get('/test');
+    const handler = app.getHandler() as (request: Request) => Promise<Response>;
+    const response = await handler(new Request('https://example.com/test'));
+
     expect(response.status).toBe(200);
-    expect(response.body.runtime).toBe(name);
+    expect(await response.json()).toEqual({ runtime: 'vercel-edge' });
+
+    await app.close();
   });
 });
 ```
@@ -320,7 +311,7 @@ describe.each(runtimes)('$name runtime', ({ name, factory }) => {
 
 1. **API Documentation** - JSDoc comments in code
 2. **User Guides** - Comprehensive guides in `/docs`
-3. **Examples** - Working examples in `/examples`
+3. **Examples** - Working examples in the [examples repository](https://github.com/Moro-JS/examples)
 4. **README** - Overview and quick start
 
 ### Writing Documentation
@@ -437,7 +428,6 @@ We are committed to providing a welcoming and inclusive environment. Please read
 Contributors are recognized in:
 
 - Release notes
-- Contributors file
 - GitHub contributors graph
 - Community Discord roles
 
@@ -448,14 +438,14 @@ Contributors are recognized in:
 ### Debugging
 
 ```typescript
-// Enable debug logging
-process.env.DEBUG = 'moro:*';
+// Debug logging is on by default outside production.
+// Set the level explicitly with LOG_LEVEL=debug (or MORO_LOG_LEVEL=debug).
 
-// Use debug module
-import debug from 'debug';
-const log = debug('moro:router');
+// Use the framework logger
+import { createFrameworkLogger } from '../logger/index.js';
+const logger = createFrameworkLogger('Router');
 
-log('Processing route: %s %s', method, path);
+logger.debug(`Processing route: ${method} ${path}`, 'Routing');
 ```
 
 ### Performance Testing
@@ -474,13 +464,13 @@ npm run profile:cpu
 ### Working with Examples
 
 ```bash
+# Examples live in their own repository
+git clone https://github.com/Moro-JS/examples.git
+
 # Run specific example
 cd examples/simple-api
 npm install
-npm start
-
-# Create new example
-npm run create-example my-new-example
+npm run dev
 ```
 
 ### Release Process
@@ -488,8 +478,14 @@ npm run create-example my-new-example
 1. **Version Bump** - Update version in package.json
 2. **Changelog** - Update CHANGELOG.md with changes
 3. **Tag Release** - Create git tag with version
-4. **Publish** - Publish to npm registry
-5. **GitHub Release** - Create GitHub release with notes
+4. **GitHub Release** - Create GitHub release with notes
+5. **Publish** - CI publishes to the npm registry when the GitHub release is published
+
+The release workflow (`.github/workflows/ci.yml`) splits the work in two. The `package` job, which also runs on every push and pull request, installs the dependencies, builds, packs one tarball, validates that tarball (`scripts/validate-dist.mjs`, `scripts/validate-package.mjs`) and uploads it; it holds no secret. The `publish` job runs in the `npm-publish` environment, checks nothing out and installs nothing: it downloads the tarball of the same run, checks its name against the release tag and its SHA-256 against the one the `package` job recorded, and runs `npm publish <tarball> --provenance --access public --ignore-scripts` through npm trusted publishing. A release tag must be `v` followed by the version in `package.json`.
+
+### Package Contents
+
+The published package holds `dist/` (compiled JavaScript, type declarations and source maps), `README.md` and `LICENSE`. The source maps name the original TypeScript files without embedding them, so running an app with `node --enable-source-maps` reports framework frames as `src/...ts` with the original line numbers while the package stays small. `scripts/validate-package.mjs` (`npm run test:package`) fails when a compiled file has no map, when a map embeds its sources or names an absolute path, or when the package exceeds its size budget (1.4 MB packed, 6 MB installed); raise the budget in that script when the code has outgrown it.
 
 ---
 

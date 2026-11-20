@@ -1,5 +1,5 @@
 // Worker Thread Manager - Offload CPU-intensive operations
-import type { Worker } from 'worker_threads';
+import type { Worker, ResourceLimits } from 'worker_threads';
 import { requireBuiltin } from '../utilities/builtin.js';
 
 // worker_threads on first use (core/utilities/builtin.ts).
@@ -15,6 +15,39 @@ import { WORKER_ENTRY } from './worker-entry.js';
 
 // Optional JWT import
 const jwtAvailable = isPackageAvailable('jsonwebtoken');
+
+// transformJSON runs caller-supplied function text, and only ever inside an
+// isolated-vm isolate
+const isolatedVMAvailable = isPackageAvailable('isolated-vm');
+
+/**
+ * Why transformJSON cannot run without isolated-vm. Shared with the worker so
+ * the refusal reads the same wherever it is raised.
+ * @internal
+ */
+export const TRANSFORM_JSON_NEEDS_ISOLATED_VM =
+  'transformJSON requires the "isolated-vm" package, which runs the transformer in a separate ' +
+  'V8 isolate. Install it with: npm install isolated-vm. Without it the transformer is not run.';
+
+/**
+ * Options of the worker pool.
+ */
+export interface WorkerPoolOptions {
+  workerCount?: number;
+  maxQueueSize?: number;
+  maxRestartAttempts?: number;
+  restartBackoffMs?: number;
+  /**
+   * V8 limits for each worker thread, passed to `new Worker()` as given
+   * (`maxOldGenerationSizeMb`, `maxYoungGenerationSizeMb`, `codeRangeSizeMb`,
+   * `stackSizeMb`). A worker that reaches a limit is terminated by Node: its
+   * running task is rejected and the worker is replaced.
+   *
+   * Not set by default: each worker then has the heap ceiling Node gives any
+   * thread of the process.
+   */
+  resourceLimits?: ResourceLimits;
+}
 
 const logger = createFrameworkLogger('WorkerManager');
 
@@ -53,6 +86,8 @@ export interface WorkerResult {
  * Active task tracking
  */
 interface ActiveTask {
+  // The task itself, kept so it can be re-queued if its worker is replaced
+  task: WorkerTask;
   resolve: CallableFunction;
   reject: CallableFunction;
   timeout: NodeJS.Timeout | null;
@@ -85,6 +120,9 @@ export class WorkerManager {
   private workers: Map<number, Worker> = new Map();
   private taskQueue: WorkerTask[] = [];
   private activeTasks: Map<string, ActiveTask> = new Map();
+  // Tasks dispatched to each live worker that have not settled yet. A worker
+  // runs one task at a time; the rest wait in taskQueue, in priority order.
+  private inFlight: Map<Worker, number> = new Map();
   private workerCount: number;
   private maxQueueSize: number;
   private isShuttingDown = false;
@@ -94,19 +132,20 @@ export class WorkerManager {
   private restartTimers = new Set<NodeJS.Timeout>();
   private handledFailures = new WeakSet<Worker>();
   private poolFailed = false;
+  private resourceLimits: ResourceLimits | undefined;
+  // A pool nobody holds (see detach()): its threads do not keep the process
+  // alive, except the one that is running a task.
+  private detached = false;
 
-  constructor(
-    options: {
-      workerCount?: number;
-      maxQueueSize?: number;
-      maxRestartAttempts?: number;
-      restartBackoffMs?: number;
-    } = {}
-  ) {
+  constructor(options: WorkerPoolOptions = {}) {
     this.workerCount = options.workerCount || Math.max(1, usableCpuCount() - 1); // Leave 1 core for main thread
     this.maxQueueSize = options.maxQueueSize || 1000;
     this.maxRestartAttempts = options.maxRestartAttempts ?? 10;
     this.restartBackoffMs = options.restartBackoffMs ?? 100;
+    this.resourceLimits =
+      options.resourceLimits && typeof options.resourceLimits === 'object'
+        ? { ...options.resourceLimits }
+        : undefined;
 
     this.initializeWorkers();
   }
@@ -137,6 +176,7 @@ export class WorkerManager {
     try {
       worker = new (wt().Worker)(WORKER_ENTRY, {
         workerData: { type: 'worker' },
+        ...(this.resourceLimits ? { resourceLimits: this.resourceLimits } : {}),
       });
     } catch (error) {
       // Spawning can fail synchronously (e.g. a missing entry file). Treat it the
@@ -151,7 +191,7 @@ export class WorkerManager {
     worker.on('message', (result: WorkerResult) => {
       // A successful message proves the pool is healthy; reset the restart budget.
       this.restartAttempts = 0;
-      this.handleWorkerResult(result);
+      this.handleWorkerResult(result, worker);
     });
 
     worker.on('error', error => {
@@ -167,7 +207,35 @@ export class WorkerManager {
     });
 
     this.workers.set(worker.threadId, worker);
+    this.inFlight.set(worker, 0);
+    if (this.detached) worker.unref();
     logger.debug(`Created worker thread ${worker.threadId}`, 'WorkerCreate');
+  }
+
+  /**
+   * Stop the pool's idle threads from keeping the process alive. For a pool
+   * that no app holds: the one getWorkerManager() starts after the previous
+   * pool was shut down with the last app that used it. A thread counts again
+   * while it runs a task, so a task that was handed in is still answered.
+   * @internal
+   */
+  detach(): void {
+    if (this.detached) return;
+    this.detached = true;
+    for (const [worker, load] of this.inFlight) {
+      if (load === 0) worker.unref();
+    }
+  }
+
+  /**
+   * The opposite of detach(): an app has taken the pool, and its threads
+   * keep the process alive until shutdown(), as those of a first pool do.
+   * @internal
+   */
+  retain(): void {
+    if (!this.detached) return;
+    this.detached = false;
+    for (const worker of this.workers.values()) worker.ref();
   }
 
   /**
@@ -181,7 +249,7 @@ export class WorkerManager {
     }
     this.handledFailures.add(worker);
 
-    this.workers.delete(worker.threadId);
+    this.removeWorker(worker);
 
     if (this.isShuttingDown) {
       return;
@@ -200,6 +268,21 @@ export class WorkerManager {
     }
 
     this.scheduleRestart();
+  }
+
+  /**
+   * Remove a worker from the pool. Looked up by identity: `worker.threadId`
+   * reads -1 once the thread has exited, so it cannot be used as the key from
+   * an 'exit' handler.
+   */
+  private removeWorker(worker: Worker): void {
+    this.inFlight.delete(worker);
+    for (const [threadId, candidate] of this.workers.entries()) {
+      if (candidate === worker) {
+        this.workers.delete(threadId);
+        return;
+      }
+    }
   }
 
   /**
@@ -232,6 +315,8 @@ export class WorkerManager {
     const timer = setTimeout(() => {
       this.restartTimers.delete(timer);
       this.createWorker();
+      // Hand any tasks that were waiting for a worker to the replacement
+      this.processQueue();
     }, delay);
 
     // Don't keep the process alive purely for a pending restart
@@ -272,6 +357,85 @@ export class WorkerManager {
   }
 
   /**
+   * Handle a task that exceeded its timeout.
+   *
+   * A task that is still waiting in the queue is simply removed. One that is
+   * already running cannot be interrupted, and rejecting the caller's promise
+   * would leave its thread occupied, so the worker it was dispatched to is
+   * terminated and replaced. Only the timed-out task is rejected.
+   */
+  private handleTaskTimeout(task: WorkerTask): void {
+    const taskInfo = this.activeTasks.get(task.id);
+    if (!taskInfo) {
+      return;
+    }
+
+    this.activeTasks.delete(task.id);
+    taskInfo.reject(new Error(`Task ${task.id} timed out`));
+
+    const worker = taskInfo.assignedWorker;
+    if (!worker) {
+      // Never dispatched: drop it from the queue so it does not run later
+      const queuedIndex = this.taskQueue.indexOf(task);
+      if (queuedIndex !== -1) {
+        this.taskQueue.splice(queuedIndex, 1);
+      }
+      return;
+    }
+
+    this.replaceWorker(worker, task.id);
+  }
+
+  /**
+   * Terminate a worker that is stuck on a timed-out task and start a
+   * replacement. This is deliberate, not a crash, so it does not consume the
+   * crash-restart budget (a run of slow tasks must not fail the whole pool).
+   */
+  private replaceWorker(worker: Worker, timedOutTaskId: string): void {
+    // Marks the worker as handled so its 'exit' event (terminate() exits with a
+    // non-zero code) is not treated as a crash.
+    if (this.handledFailures.has(worker)) {
+      return;
+    }
+    this.handledFailures.add(worker);
+
+    logger.warn(
+      `Task ${timedOutTaskId} timed out; terminating worker ${worker.threadId} and starting a replacement`,
+      'TaskTimeout'
+    );
+    this.removeWorker(worker);
+
+    // Anything else dispatched to this worker goes back to the front of the
+    // queue (normally nothing: a worker runs one task at a time). Timeouts
+    // keep running from when a task was submitted.
+    const requeued: WorkerTask[] = [];
+    for (const taskInfo of this.activeTasks.values()) {
+      if (taskInfo.assignedWorker === worker) {
+        delete taskInfo.assignedWorker;
+        requeued.push(taskInfo.task);
+      }
+    }
+    if (requeued.length > 0) {
+      this.taskQueue.unshift(...requeued);
+    }
+
+    void Promise.resolve()
+      .then(() => worker.terminate())
+      .catch(error => {
+        logger.error('Failed to terminate timed-out worker', 'TaskTimeout', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    if (this.isShuttingDown || this.poolFailed) {
+      return;
+    }
+
+    this.createWorker();
+    this.processQueue();
+  }
+
+  /**
    * Execute a task on a worker thread
    */
   async executeTask<T = any>(task: WorkerTask): Promise<T> {
@@ -284,20 +448,19 @@ export class WorkerManager {
     }
 
     return new Promise<T>((resolve, reject) => {
-      // Check queue size limit
+      // Tasks only wait here while every worker is busy; refuse to let that
+      // backlog grow past maxQueueSize
       if (this.taskQueue.length >= this.maxQueueSize) {
         reject(new Error('Worker queue is full'));
         return;
       }
 
-      // Add to queue
-      this.taskQueue.push(task);
+      this.enqueue(task);
 
       // Set up promise handlers
       const timeout = task.timeout
         ? setTimeout(() => {
-            this.activeTasks.delete(task.id);
-            reject(new Error(`Task ${task.id} timed out`));
+            this.handleTaskTimeout(task);
           }, task.timeout)
         : null;
 
@@ -306,7 +469,7 @@ export class WorkerManager {
         timeout.unref();
       }
 
-      this.activeTasks.set(task.id, { resolve, reject, timeout });
+      this.activeTasks.set(task.id, { task, resolve, reject, timeout });
 
       // Try to assign task to available worker
       this.processQueue();
@@ -314,39 +477,63 @@ export class WorkerManager {
   }
 
   /**
-   * Process the task queue
+   * Add a task to the queue: ahead of every waiting task of lower priority,
+   * behind those of the same or higher priority (first in, first out).
+   */
+  private enqueue(task: WorkerTask): void {
+    const rank = PRIORITY_ORDER[task.priority || 'normal'] ?? 0;
+    let index = this.taskQueue.length;
+    while (index > 0) {
+      const ahead = this.taskQueue[index - 1] as WorkerTask;
+      if ((PRIORITY_ORDER[ahead.priority || 'normal'] ?? 0) >= rank) break;
+      index--;
+    }
+    this.taskQueue.splice(index, 0, task);
+  }
+
+  /**
+   * Hand waiting tasks to idle workers, highest priority first. A worker runs
+   * one task at a time, so concurrent work spreads over the pool and anything
+   * beyond its capacity waits here, where priority, timeouts and maxQueueSize
+   * apply to it.
    */
   private processQueue(): void {
-    // Sort queue by priority (high first)
-    this.taskQueue.sort(
-      (a, b) =>
-        (PRIORITY_ORDER[b.priority || 'normal'] ?? 0) -
-        (PRIORITY_ORDER[a.priority || 'normal'] ?? 0)
-    );
+    while (this.taskQueue.length > 0) {
+      const worker = this.idleWorker();
+      if (!worker) break;
 
-    // Assign tasks to available workers
-    for (const [threadId, worker] of this.workers.entries()) {
-      if (this.taskQueue.length === 0) break;
+      const task = this.taskQueue.shift() as WorkerTask;
+      // Record the assignment so a crashed worker only rejects its own task.
+      const taskInfo = this.activeTasks.get(task.id);
+      if (taskInfo) {
+        taskInfo.assignedWorker = worker;
+      }
+      this.inFlight.set(worker, (this.inFlight.get(worker) ?? 0) + 1);
+      if (this.detached) worker.ref();
+      worker.postMessage(task);
+      logger.debug(`Assigned task ${task.id} to worker ${worker.threadId}`, 'TaskAssigned');
+    }
+  }
 
-      // Check if worker is available (not currently processing)
-      // For simplicity, we'll send tasks and let workers handle queuing
-      const task = this.taskQueue.shift();
-      if (task) {
-        // Record the assignment so a crashed worker only rejects its own tasks.
-        const taskInfo = this.activeTasks.get(task.id);
-        if (taskInfo) {
-          taskInfo.assignedWorker = worker;
-        }
-        worker.postMessage(task);
-        logger.debug(`Assigned task ${task.id} to worker ${threadId}`, 'TaskAssigned');
+  /**
+   * A live worker that is not running a task, if there is one.
+   */
+  private idleWorker(): Worker | undefined {
+    for (const worker of this.workers.values()) {
+      if ((this.inFlight.get(worker) ?? 0) === 0) {
+        return worker;
       }
     }
+    return undefined;
   }
 
   /**
    * Handle result from worker thread
    */
-  private handleWorkerResult(result: WorkerResult): void {
+  private handleWorkerResult(result: WorkerResult, sender?: Worker): void {
+    // Whatever the task's fate on this side, the sending thread is done with it
+    this.releaseWorkerSlot(sender);
+
     const taskInfo = this.activeTasks.get(result.taskId);
     if (!taskInfo) {
       logger.warn(`Received result for unknown task ${result.taskId}`, 'UnknownTaskResult');
@@ -372,6 +559,19 @@ export class WorkerManager {
 
     // Process next task in queue
     this.processQueue();
+  }
+
+  /**
+   * `worker` reported a result: free one of its slots. Workers that were
+   * removed from the pool have no entry and are ignored.
+   */
+  private releaseWorkerSlot(worker: Worker | undefined): void {
+    if (!worker) return;
+    const load = this.inFlight.get(worker);
+    if (load !== undefined && load > 0) {
+      this.inFlight.set(worker, load - 1);
+      if (this.detached && load === 1) worker.unref();
+    }
   }
 
   /**
@@ -406,6 +606,7 @@ export class WorkerManager {
 
     await Promise.all(shutdownPromises);
     this.workers.clear();
+    this.inFlight.clear();
     this.activeTasks.clear();
     this.taskQueue.length = 0;
 
@@ -416,8 +617,16 @@ export class WorkerManager {
    * Get worker statistics
    */
   getStats() {
+    // A worker is busy while at least one dispatched task has not settled
+    let busyWorkers = 0;
+    for (const load of this.inFlight.values()) {
+      if (load > 0) busyWorkers++;
+    }
+
     return {
       workerCount: this.workers.size,
+      busyWorkers,
+      idleWorkers: this.workers.size - busyWorkers,
       activeTasks: this.activeTasks.size,
       queuedTasks: this.taskQueue.length,
       isShuttingDown: this.isShuttingDown,
@@ -428,15 +637,36 @@ export class WorkerManager {
 // Singleton instance
 let workerManagerInstance: WorkerManager | null = null;
 
+// Pool options the app was created with (createApp({ workers })). The pool is
+// a singleton and whoever asks for it first creates it, so a bare
+// getWorkerManager() or executeOnWorker() that runs before the app's own
+// initialisation must still build the pool the app configured.
+let configuredPoolOptions: WorkerPoolOptions | undefined;
+
 /**
- * Get or create the worker manager instance
+ * Record the pool options an app was configured with. Has no effect on a pool
+ * that already exists.
+ * @internal
  */
-export function getWorkerManager(options?: {
-  workerCount?: number;
-  maxQueueSize?: number;
-}): WorkerManager {
+export function setConfiguredWorkerPoolOptions(options: WorkerPoolOptions | undefined): void {
+  configuredPoolOptions = options;
+}
+
+/**
+ * Get or create the worker manager instance.
+ *
+ * The pool is shut down with the last app that uses it. Whoever asks after
+ * that gets a new one: an app created later takes it over like the first, and
+ * until one does (a bare call from code that outlived its app) its threads
+ * do not keep the process alive.
+ */
+export function getWorkerManager(options?: WorkerPoolOptions): WorkerManager {
+  if (workerManagerInstance && workerManagerInstance.getStats().isShuttingDown) {
+    workerManagerInstance = new WorkerManager(options ?? configuredPoolOptions);
+    workerManagerInstance.detach();
+  }
   if (!workerManagerInstance) {
-    workerManagerInstance = new WorkerManager(options);
+    workerManagerInstance = new WorkerManager(options ?? configuredPoolOptions);
   }
   return workerManagerInstance;
 }
@@ -525,12 +755,22 @@ export const workerTasks = {
    */
   async decompress(
     data: Buffer | Uint8Array,
-    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+    options?: {
+      format?: 'gzip' | 'deflate' | 'brotli';
+      /** Largest decompressed size accepted, in bytes (default: 256 MiB) */
+      maxOutputLength?: number;
+    }
   ): Promise<Buffer> {
     const result = await executeOnWorker<Uint8Array>({
       id: `data-decompress-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.DATA_DECOMPRESS,
-      data: { input: data, format: options?.format ?? 'gzip' },
+      data: {
+        input: data,
+        format: options?.format ?? 'gzip',
+        ...(options?.maxOutputLength !== undefined
+          ? { maxOutputLength: options.maxOutputLength }
+          : {}),
+      },
       priority: 'normal',
       timeout: 30000,
     });
@@ -551,9 +791,16 @@ export const workerTasks = {
   },
 
   /**
-   * JSON transformation (can be CPU-intensive for large objects)
+   * JSON transformation (can be CPU-intensive for large objects).
+   *
+   * The transformer crosses to the worker as source text and runs inside an
+   * isolated-vm isolate. Without the isolated-vm package the call is rejected
+   * at once and nothing is run.
    */
   async transformJSON(data: any, transformer: (data: any) => any): Promise<any> {
+    if (!isolatedVMAvailable) {
+      throw new Error(TRANSFORM_JSON_NEEDS_ISOLATED_VM);
+    }
     return executeOnWorker({
       id: `json-transform-${Date.now()}-${++taskIdCounter}`,
       type: WORKER_TASKS.JSON_TRANSFORM,

@@ -5,7 +5,7 @@ import type { CompiledRoute } from '../core/routing/index.js';
 
 // Middleware can be a string name (resolved from built-in) or actual function
 export type ModuleMiddleware =
-  string | ((req: any, res: any, next: () => void) => void | Promise<void>);
+  string | ((req: any, res: any, next: (err?: unknown) => void) => void | Promise<void>);
 
 export interface ModuleRoute {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -13,13 +13,26 @@ export interface ModuleRoute {
   handler: (req: any, res: any) => any | Promise<any>;
   validation?: any;
   onValidationError?: ValidationErrorHandler;
-  cache?: { ttl: number; key?: string };
+  cache?: { ttl?: number; key?: string | ((req: any) => string); shared?: boolean };
   rateLimit?: { requests: number; window: number };
   middleware?: ModuleMiddleware[]; // Support both strings and functions
   auth?: {
     roles?: string[];
     permissions?: string[];
     optional?: boolean;
+    /**
+     * Sign-in is required, which it already is unless `optional` is true.
+     * With a `validator` it makes a denial of a request that has no
+     * authenticated user a 401 instead of a 403.
+     */
+    required?: boolean;
+    /**
+     * A check of this request beyond roles and permissions (for example that
+     * the signed-in user owns the record named in the path). Called with the
+     * request after the sign-in, role and permission checks; may return a
+     * promise. A falsy result or a throw denies the request.
+     */
+    validator?: (req: any) => unknown;
   };
 }
 
@@ -40,6 +53,7 @@ export interface ModuleDefinition {
     rateLimit?: { requests: number; window: number };
     database?: {
       path?: string;
+      [key: string]: any;
     };
     [key: string]: any;
   };
@@ -77,6 +91,8 @@ export interface InternalRouteDefinition {
     roles?: string[];
     permissions?: string[];
     optional?: boolean;
+    required?: boolean;
+    validator?: (req: any) => unknown;
   };
   // Allow additional properties for extensibility
   [key: string]: any;
@@ -95,13 +111,18 @@ export interface WebSocketDefinition {
 export interface ServiceDefinition {
   name: string;
   implementation: new (...args: any[]) => any;
+  /** Has no effect: a module service is one instance for the app either way. */
   singleton?: boolean;
   dependencies?: string[];
 }
 
 export interface CacheConfig {
-  ttl: number;
-  key?: string;
+  /** Seconds a stored response is served for. Left out: `modules.cache.defaultTtl`. */
+  ttl?: number;
+  /** A fixed key, or a function of the request. Used exactly as given. */
+  key?: string | ((req: any) => string);
+  /** The response is identical for every signed-in user; share one entry. */
+  shared?: boolean;
 }
 
 export interface RateLimitConfig {

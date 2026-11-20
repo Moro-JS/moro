@@ -21,6 +21,7 @@ describe('File-based auto routing', () => {
     delete process.env.MORO_ROUTING;
     delete process.env.MORO_AUTO_ROUTING;
     delete process.env.MORO_ROUTING_PATHS;
+    delete process.env.MORO_ROUTING_STRICT_MIDDLEWARE;
     resetConfig();
 
     tempDir = await mkdtemp(join(tmpdir(), 'moro-routing-test-'));
@@ -61,6 +62,86 @@ describe('File-based auto routing', () => {
       const config = loadConfig();
       expect(config.routing).toEqual({ enabled: true, paths: ['./a', './b'] });
     });
+
+    it('MORO_ROUTING_STRICT_MIDDLEWARE sets routing.strictMiddleware, beside the other two', () => {
+      process.env.MORO_ROUTING_STRICT_MIDDLEWARE = 'true';
+      expect(loadConfig().routing).toEqual({ enabled: true, strictMiddleware: true });
+
+      resetConfig();
+      process.env.MORO_ROUTING = 'false';
+      process.env.MORO_ROUTING_PATHS = './a';
+      process.env.MORO_ROUTING_STRICT_MIDDLEWARE = 'false';
+      expect(loadConfig().routing).toEqual({
+        enabled: false,
+        paths: ['./a'],
+        strictMiddleware: false,
+      });
+    });
+  });
+
+  describe('a later source that does not say `enabled`', () => {
+    it('leaves file routing off when only MORO_ROUTING_STRICT_MIDDLEWARE is set', async () => {
+      await fs.writeFile(join(tempDir, 'moro.config.js'), 'module.exports = { routing: false };\n');
+      process.env.MORO_ROUTING_STRICT_MIDDLEWARE = 'true';
+      expect(loadConfig().routing).toEqual({ enabled: false, strictMiddleware: true });
+    });
+
+    it('still switches it on when the later source says so', async () => {
+      await fs.writeFile(join(tempDir, 'moro.config.js'), 'module.exports = { routing: false };\n');
+      process.env.MORO_ROUTING = 'true';
+      expect(loadConfig().routing).toEqual({ enabled: true });
+    });
+  });
+
+  describe('createApp({ routing })', () => {
+    let app: any;
+    afterEach(async () => {
+      if (app) await closeApp(app);
+      app = undefined;
+    });
+    const routingOf = async (options: Record<string, unknown>) => {
+      resetConfig();
+      app = await createApp({ logger: { level: 'fatal' }, autoDiscover: false, ...options } as any);
+      return app.getConfig().routing;
+    };
+
+    it('takes the boolean and the object form, and leaves the default when not given', async () => {
+      expect(await routingOf({})).toBe(true);
+      await closeApp(app);
+      expect(await routingOf({ routing: false })).toBe(false);
+      await closeApp(app);
+      expect(await routingOf({ routing: { paths: ['./api-routes'] } })).toEqual({
+        enabled: true,
+        paths: ['./api-routes'],
+      });
+      await closeApp(app);
+      expect(await routingOf({ routing: { enabled: false, strictMiddleware: true } })).toEqual({
+        enabled: false,
+        strictMiddleware: true,
+      });
+    });
+
+    it('does not load route files with routing: false', async () => {
+      (globalThis as any).__moroLoaded = [];
+      try {
+        const routesDir = join(tempDir, 'src', 'routes');
+        await fs.mkdir(routesDir, { recursive: true });
+        await fs.writeFile(
+          join(routesDir, 'health.ts'),
+          `(globalThis as any).__moroLoaded.push('health'); export {};`
+        );
+        resetConfig();
+        app = await createApp({
+          logger: { level: 'fatal' },
+          autoDiscover: false,
+          routing: false,
+        } as any);
+        await new Promise<void>(resolve => app.listen(0, '127.0.0.1', () => resolve()));
+        expect((globalThis as any).__moroLoaded).toEqual([]);
+      } finally {
+        delete (globalThis as any).__moroLoaded;
+      }
+    });
   });
 
   describe('validateConfig (regression: routing must not be stripped)', () => {
@@ -79,6 +160,15 @@ describe('File-based auto routing', () => {
         enabled: true,
         paths: ['./x'],
       });
+    });
+
+    it('keeps strictMiddleware, and refuses a value that is not a boolean', () => {
+      expect(
+        validateConfig({ ...DEFAULT_CONFIG, routing: { strictMiddleware: true } }).routing
+      ).toEqual({ enabled: true, strictMiddleware: true });
+      expect(() =>
+        validateConfig({ ...DEFAULT_CONFIG, routing: { strictMiddleware: 'yes' as any } })
+      ).toThrow();
     });
 
     it('rejects an invalid routing type', () => {
@@ -125,6 +215,39 @@ describe('File-based auto routing', () => {
       await app.loadRoutes(routesDir);
 
       expect(((globalThis as any).__moroLoaded as string[]).sort()).toEqual(['health', 'users']);
+      await closeApp(app);
+    });
+
+    it('loads the files in the order of their names, whatever order the directory lists them in', async () => {
+      const routesDir = join(tempDir, 'routes');
+      await fs.mkdir(join(routesDir, 'alpha'), { recursive: true });
+      for (const [file, name] of [
+        ['zeta.ts', 'zeta'],
+        ['Admin.ts', 'Admin'],
+        ['alpha/index.ts', 'alpha'],
+        ['beta.ts', 'beta'],
+      ]) {
+        await fs.writeFile(
+          join(routesDir, file),
+          `(globalThis as any).__moroLoaded.push('${name}'); export {};`
+        );
+      }
+      // A file system that lists the directory in another order
+      const nodeFs = require('fs');
+      const original = nodeFs.readdirSync;
+      const listing = jest
+        .spyOn(nodeFs, 'readdirSync')
+        .mockImplementation((...args: any[]) => original(...args).reverse());
+
+      const app = await createApp({ logger: { level: 'error' } });
+      try {
+        await app.loadRoutes(routesDir);
+      } finally {
+        listing.mockRestore();
+      }
+
+      // By code unit: upper case first
+      expect((globalThis as any).__moroLoaded).toEqual(['Admin', 'alpha', 'beta', 'zeta']);
       await closeApp(app);
     });
 

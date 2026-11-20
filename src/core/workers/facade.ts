@@ -11,6 +11,10 @@ export interface WorkerTask {
 
 export interface WorkerStats {
   workerCount: number;
+  /** Workers with at least one dispatched task that has not settled */
+  busyWorkers: number;
+  /** Workers with no dispatched task */
+  idleWorkers: number;
   activeTasks: number;
   queuedTasks: number;
   isShuttingDown: boolean;
@@ -32,7 +36,7 @@ export interface WorkerHelpers {
   ): Promise<Buffer>;
   decompress(
     data: Buffer | Uint8Array,
-    options?: { format?: 'gzip' | 'deflate' | 'brotli' }
+    options?: { format?: 'gzip' | 'deflate' | 'brotli'; maxOutputLength?: number }
   ): Promise<Buffer>;
   heavyComputation(data: any): Promise<any>;
   transformJSON(data: any, transformer: (data: any) => any): Promise<any>;
@@ -41,7 +45,15 @@ export interface WorkerHelpers {
 export interface WorkerPoolOptions {
   workerCount?: number;
   maxQueueSize?: number;
+  /** V8 limits for each worker thread, passed to `new Worker()` as given */
+  resourceLimits?: import('worker_threads').ResourceLimits;
 }
+
+// The pool is one per process and every app's facade uses the same one. How
+// many of them have it in use, per pool: it is shut down when the last of
+// those apps is closed, not when the first is. An app that asks for it after
+// that gets a new pool (getWorkerManager), counted here from one again.
+const poolUsers = new WeakMap<WorkerAPI, number>();
 
 /**
  * Worker Threads Facade - Provides clean access to optional worker functionality
@@ -51,6 +63,13 @@ export class WorkerThreadsFacade {
   private workerTasks: WorkerHelpers | null = null;
   private executeOnWorker: ((task: WorkerTask) => Promise<any>) | null = null;
   private initialized = false;
+  // shutdown() has run: this facade no longer counts as a user of the pool
+  private released = false;
+  // The initialisation under way, shared by every call that arrives before
+  // it has finished. An app sets its pool up in the background and may be
+  // used, or closed, straight away: that must count as one user of the pool,
+  // which close() then releases.
+  private initializing: Promise<void> | null = null;
 
   /**
    * Lazy initialize worker threads.
@@ -59,12 +78,23 @@ export class WorkerThreadsFacade {
    */
   async ensureInitialized(options?: WorkerPoolOptions): Promise<void> {
     if (this.initialized) return;
+    if (this.initializing === null) this.initializing = this.initialize(options);
+    await this.initializing;
+  }
 
+  private async initialize(options?: WorkerPoolOptions): Promise<void> {
     try {
       const workers = await import('./index.js');
-      this.workerManager = workers.getWorkerManager(options);
+      const manager: WorkerAPI = workers.getWorkerManager(options);
+      this.workerManager = manager;
       this.workerTasks = workers.workerTasks;
       this.executeOnWorker = workers.executeOnWorker;
+      if (!this.released) {
+        poolUsers.set(manager, (poolUsers.get(manager) ?? 0) + 1);
+        // A pool started after the previous one was shut down belongs to
+        // nobody until an app takes it: from here on it is this app's too.
+        (manager as { retain?: () => void }).retain?.();
+      }
     } catch {
       // Workers not available - graceful degradation
       this.workerManager = null;
@@ -101,11 +131,25 @@ export class WorkerThreadsFacade {
   /**
    * Shutdown worker threads.
    * A no-op when workers were never initialized — never spin up a pool
-   * just to tear it down.
+   * just to tear it down. The pool is shared by every app in the process, so
+   * it keeps running while another app that uses it is still open, and is
+   * shut down with the last of them.
    */
   async shutdown(): Promise<void> {
-    if (!this.initialized) return;
-    await this.workerManager?.shutdown();
+    if (!this.initialized) {
+      if (this.initializing === null) return;
+      // Closed while the pool was still being set up: it is released below
+      await this.initializing;
+    }
+    const manager = this.workerManager;
+    if (!manager) return;
+    if (!this.released) {
+      this.released = true;
+      const others = (poolUsers.get(manager) ?? 1) - 1;
+      poolUsers.set(manager, others);
+      if (others > 0) return;
+    }
+    await manager.shutdown();
   }
 
   /**

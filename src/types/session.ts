@@ -44,7 +44,8 @@ export interface SessionOptions {
   };
 
   // Session configuration
-  secret?: string;
+  /** One signing key, or several for rotation (signed with the first, any one verifies). */
+  secret?: string | Array<string | undefined | null>;
   name?: string; // Session cookie name
   genid?: () => string; // Session ID generator
   rolling?: boolean; // Reset expiry on each request
@@ -53,7 +54,7 @@ export interface SessionOptions {
 
   // Cookie configuration
   cookie?: {
-    maxAge?: number; // Session timeout in ms
+    maxAge?: number | null; // Session timeout in ms; null = no Max-Age (browser-session cookie)
     expires?: Date; // Absolute expiry
     httpOnly?: boolean; // Prevent XSS access
     secure?: boolean; // HTTPS only

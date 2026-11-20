@@ -13,7 +13,11 @@ import {
 import { createFrameworkLogger } from '../logger/index.js';
 
 export class MoroEventBus implements GlobalEventBus {
-  private emitter = new EventEmitter();
+  // captureRejections: when a listener returns a promise, Node attaches a
+  // rejection handler to it and routes the error to the emitter's
+  // Symbol.for('nodejs.rejection') method (set in the constructor). A listener
+  // that returns nothing takes the same path through emit() as before.
+  private emitter = new EventEmitter({ captureRejections: true });
   private moduleBuses = new Map<string, ModuleEventBus>();
   private metrics: EventMetrics = {
     totalEvents: 0,
@@ -32,6 +36,16 @@ export class MoroEventBus implements GlobalEventBus {
 
   constructor(private options: EventBusOptions = {}) {
     this.emitter.setMaxListeners(options.maxListeners || 100);
+    // An async listener that rejects is logged here instead of surfacing as an
+    // unhandled rejection, which ends the process by Node's default.
+    (this.emitter as any)[Symbol.for('nodejs.rejection')] = (error: unknown, event: string) => {
+      this.errorCount++;
+      this.logger.error(`Async listener for ${event} rejected`, 'Listener', {
+        event,
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+      });
+    };
   }
 
   // Global event emission with full context and metrics
@@ -91,7 +105,8 @@ export class MoroEventBus implements GlobalEventBus {
   // Listeners may be async (EventHandler returns void | Promise<void>); Node's
   // EventEmitter invokes them without awaiting. We intentionally register the
   // listener by reference rather than wrapping it, so removeListener/off keep
-  // working - an async listener owns handling its own rejections.
+  // working. A rejection from an async listener is caught and logged by the
+  // emitter's rejection handler (see the constructor).
   on<T = any>(event: string, listener: EventHandler<T>): this {
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.emitter.on(event, listener);

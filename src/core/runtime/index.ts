@@ -15,7 +15,12 @@ export type {
 } from '../../types/runtime.js';
 
 // Re-export specific runtime types
-export type { LambdaEvent, LambdaContext, LambdaResponse } from './aws-lambda-adapter.js';
+export type {
+  LambdaEvent,
+  LambdaHttpApiEvent,
+  LambdaContext,
+  LambdaResponse,
+} from './aws-lambda-adapter.js';
 export type { WorkersEnv, WorkersContext } from './cloudflare-workers-adapter.js';
 
 // Runtime factory functions

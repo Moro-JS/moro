@@ -32,6 +32,14 @@ export interface CompressionOptions extends EncoderOptions {
   filter?: (req: HttpRequest, res: HttpResponse) => boolean;
 }
 
+/**
+ * True when the handler has already declared an encoding for the body (the
+ * same test the native engine applies to its own compression).
+ */
+function alreadyEncoded(res: HttpResponse): boolean {
+  return typeof res.getHeader === 'function' && res.getHeader('content-encoding') !== undefined;
+}
+
 export class CompressionCore {
   private threshold: number;
   private level: number;
@@ -85,13 +93,20 @@ export class CompressionCore {
       const encoding = filterOk ? negotiateEncoding(acceptEncoding, encodings) : null;
 
       // Skip compression when: below threshold, client accepts nothing we
-      // offer, or the content type isn't worth compressing (already-compressed
-      // binary - images, video, octet-stream). For JSON we already have the
+      // offer, the content type isn't worth compressing (already-compressed
+      // binary - images, video, octet-stream), or the response already carries
+      // a Content-Encoding (the body is encoded as declared - encoding it
+      // again would leave the client unable to decode it). For JSON we already have the
       // serialized string; ending with it here avoids re-entering res.json,
       // which would JSON.stringify the same data a second time.
-      if (byteLength < threshold || !encoding || !isCompressible(ctHeader)) {
+      if (byteLength < threshold || !encoding || !isCompressible(ctHeader) || alreadyEncoded(res)) {
         if (isJson) {
           if (res.headersSent) return;
+          // 204 and 304 carry no body, so no length is declared for one.
+          if (res.statusCode === 204 || res.statusCode === 304) {
+            res.end();
+            return;
+          }
           res.setHeader('Content-Length', byteLength);
           res.end(content);
           return;

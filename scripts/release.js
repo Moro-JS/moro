@@ -12,7 +12,7 @@
  * 6. Pushes to GitHub
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 
@@ -43,6 +43,39 @@ function exec(command, options = {}) {
     log(`❌ Command failed: ${command}`, 'red');
     log(`Error: ${error.message}`, 'red');
     process.exit(1);
+  }
+}
+
+// A release tag is `v<major>.<minor>.<patch>`, optionally followed by a
+// pre-release or build suffix.
+const RELEASE_TAG = /^v\d+\.\d+\.\d+/;
+
+// The most recent tag, or null when the repository has none. Git allows shell
+// metacharacters in tag names, so the tag is read without a shell, checked to
+// be a release tag, and only ever handed to git as a single argument.
+function getLastReleaseTag() {
+  let tag;
+  try {
+    tag = execFileSync('git', ['describe', '--tags', '--abbrev=0'], { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+  if (!RELEASE_TAG.test(tag)) {
+    throw new Error(
+      `The most recent git tag ${JSON.stringify(tag)} is not a release tag (expected vMAJOR.MINOR.PATCH)`
+    );
+  }
+  return tag;
+}
+
+// Output of `git log <tag>..HEAD <args>`, or null when there is no tag to
+// measure from or git cannot resolve the range.
+function gitLogSince(tag, args) {
+  if (tag === null) return null;
+  try {
+    return execFileSync('git', ['log', `${tag}..HEAD`, ...args], { encoding: 'utf8' });
+  } catch {
+    return null;
   }
 }
 
@@ -77,13 +110,9 @@ function updateVersion(versionType) {
 // commit messages since the last tag for conventional-commits breaking markers
 // (`type!:` or a `BREAKING CHANGE` note) and refuses a patch/minor bump.
 function assertSemverForBreakingChanges(versionType) {
-  let commits = '';
-  try {
-    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-    commits = execSync(`git log ${lastTag}..HEAD --format=%B`, { encoding: 'utf8' });
-  } catch {
-    commits = execSync('git log --format=%B', { encoding: 'utf8' });
-  }
+  const commits =
+    gitLogSince(getLastReleaseTag(), ['--format=%B']) ??
+    execSync('git log --format=%B', { encoding: 'utf8' });
   const hasBreaking = /(^|\n)\s*\w+(\([^)]*\))?!:/.test(commits) || /BREAKING CHANGE/.test(commits);
   if (hasBreaking && versionType !== 'major') {
     log('\n❌ Breaking-change commits detected since the last release, but the', 'red');
@@ -119,6 +148,29 @@ function updatePackageLockJson(newVersion) {
   fs.writeFileSync(packageLockPath, JSON.stringify(packageLock, null, 2) + '\n');
 }
 
+// The files a release changes: the version in package.json and
+// package-lock.json, and the new CHANGELOG.md entry. Everything else the steps
+// before the commit can leave in the working tree (the tarball from the
+// package check, a file a test wrote, an editor backup) is not part of a
+// release and must not be swept into its commit.
+const RELEASE_FILES = ['package.json', 'package-lock.json', 'CHANGELOG.md'];
+
+// Stage exactly the release files that exist, never the whole tree.
+function stageReleaseFiles() {
+  const files = RELEASE_FILES.filter(file => fs.existsSync(file));
+  execFileSync('git', ['add', '--', ...files], { stdio: 'inherit' });
+  return files;
+}
+
+// Paths `git status` still reports once the release files are staged.
+function filesLeftOutOfRelease() {
+  const status = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
+  return status
+    .split('\n')
+    .filter(line => line.length > 3 && line[1] !== ' ')
+    .map(line => line.slice(3));
+}
+
 // ===== Commits -> changelog =====
 //
 // Every commit message since the last tag, whole. `git log --oneline` used to
@@ -150,12 +202,9 @@ function parseCommitMessage(raw) {
 }
 
 function getCommitsSinceLastRelease() {
-  let raw;
+  let raw = gitLogSince(getLastReleaseTag(), ['--no-merges', '--format=%B%x1e']);
   let limit = Infinity;
-  try {
-    const lastTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
-    raw = execSync(`git log ${lastTag}..HEAD --no-merges --format=%B%x1e`, { encoding: 'utf8' });
-  } catch {
+  if (raw === null) {
     // No tags yet: every commit, capped as before
     raw = execSync('git log --no-merges --format=%B%x1e', { encoding: 'utf8' });
     limit = 10;
@@ -428,7 +477,19 @@ function main() {
 
   // Step 9: Commit changes
   log('\n💾 Step 9: Committing changes', 'blue');
-  exec(`git add .`);
+  try {
+    const staged = stageReleaseFiles();
+    log(`Staged: ${staged.join(', ')}`, 'cyan');
+    const leftOut = filesLeftOutOfRelease();
+    if (leftOut.length > 0) {
+      log('Not part of the release, left as they are in the working tree:', 'yellow');
+      leftOut.forEach(file => log(`   ${file}`, 'yellow'));
+    }
+  } catch (error) {
+    log('❌ Could not stage the release files', 'red');
+    log(`Error: ${error.message}`, 'red');
+    process.exit(1);
+  }
   exec(`git commit -m "chore: release v${newVersion}"`);
   log('✅ Changes committed', 'green');
 
@@ -450,7 +511,7 @@ function main() {
   log(`Version: ${newVersion}`, 'cyan');
   log(`Type: ${versionType}`, 'cyan');
   log(`Git tag: v${newVersion}`, 'cyan');
-  log(`GitHub: https://github.com/morojs/moro/releases/tag/v${newVersion}`, 'cyan');
+  log(`GitHub: https://github.com/Moro-JS/moro/releases/tag/v${newVersion}`, 'cyan');
 
   log('\n📋 Next steps:', 'yellow');
   log('1. Create a GitHub release at the URL above (Publishing a release runs', 'yellow');
@@ -469,6 +530,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export {
+  stageReleaseFiles,
+  filesLeftOutOfRelease,
   parseCommitMessage,
   getCommitsSinceLastRelease,
   categorizeCommits,

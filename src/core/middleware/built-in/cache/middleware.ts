@@ -9,7 +9,7 @@ import { sharedCacheCore, type CacheConfig } from './core.js';
  * ```ts
  * const cacheMw = createCacheMiddleware({
  *   ttl: 60,
- *   key: 'my-route',
+ *   key: 'my-route', // or a function of the request: req => `item:${req.params.id}`
  *   tags: ['api', 'users']
  * });
  *
@@ -22,32 +22,11 @@ export function createCacheMiddleware(config: CacheConfig): StandardMiddleware {
   }
 
   return async (req: any, res: any, next: () => void) => {
-    if (req.method !== 'GET') {
-      next();
+    // Same lookup, key and storing rules as route-level .cache(): a hit has
+    // answered, anything else continues down the chain.
+    if (await sharedCacheCore.tryGet(req, res, config)) {
       return;
     }
-
-    const cacheKey = config.key || `${req.method}:${req.path}:${JSON.stringify(req.query || {})}`;
-
-    const cached = sharedCacheCore.get(cacheKey);
-    if (cached !== undefined) {
-      res.setHeader('X-Cache', 'HIT');
-      res.json(cached);
-      return;
-    }
-
-    res.setHeader('X-Cache', 'MISS');
-
-    const originalJson = res.json.bind(res);
-    res.json = (data: any) => {
-      sharedCacheCore.set(cacheKey, data, config.ttl);
-
-      if (config.tags && config.tags.length > 0) {
-        res.setHeader('X-Cache-Tags', config.tags.join(','));
-      }
-
-      return originalJson(data);
-    };
 
     next();
   };

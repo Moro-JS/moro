@@ -6,6 +6,7 @@
  */
 
 import { resolveUserPackage } from '../../../utilities/package-utils.js';
+import { isPublicKeyPem, PUBLIC_KEY_NEEDS_ALGORITHMS } from '../../../utilities/public-key-pem.js';
 
 export interface JWTVerificationResult {
   success: boolean;
@@ -23,7 +24,9 @@ export interface JWTVerificationResult {
  *
  * @param token - The JWT token to verify
  * @param secret - The secret key for verification
- * @param options - Additional JWT verification options
+ * @param options - Additional JWT verification options. Verification accepts
+ *   HS256 only unless `options.algorithms` names the algorithms; a PEM public
+ *   key or certificate as `secret` requires it (for example `['RS256']`).
  * @returns JWTVerificationResult with success status and payload or error details
  */
 export async function safeVerifyJWT(
@@ -35,7 +38,11 @@ export async function safeVerifyJWT(
   let jwt: any;
   try {
     const jwtPath = resolveUserPackage('jsonwebtoken');
-    jwt = await import(jwtPath);
+    // jsonwebtoken is CommonJS and builds its exports at runtime, so under ESM
+    // `import()` yields `{ default: <the module> }` with no named `verify`.
+    // A CommonJS build of this file gets the module itself.
+    const loaded = await import(jwtPath);
+    jwt = loaded.default ?? loaded;
   } catch {
     return {
       success: false,
@@ -64,7 +71,22 @@ export async function safeVerifyJWT(
     // Pin algorithms to prevent algorithm-confusion attacks (e.g. RS→HS where an
     // attacker forges an HS256 token signed with the server's RS256 public key).
     // Callers can override by passing their own `algorithms` in options.
-    const verifyOptions = { algorithms: ['HS256'], ...options };
+    const defaultAlgorithms = ['HS256'];
+    const verifyOptions = { algorithms: defaultAlgorithms, ...options };
+
+    // Under that default a public key would be the HS256 secret, and anyone who
+    // holds the public key can sign with it: jsonwebtoken 9 refuses the key,
+    // jsonwebtoken 8 verifies the forged token. Refuse it here on every version.
+    if (verifyOptions.algorithms === defaultAlgorithms && isPublicKeyPem(secret)) {
+      return {
+        success: false,
+        error: {
+          type: 'missing_secret',
+          message: PUBLIC_KEY_NEEDS_ALGORITHMS,
+        },
+      };
+    }
+
     const payload = jwt.verify(token, secret, verifyOptions);
     return {
       success: true,
@@ -201,7 +223,7 @@ export function createAuthErrorResponse(error: JWTVerificationResult['error']) {
  *     });
  *   }
  *
- *   const result = safeVerifyJWT(token, process.env.JWT_SECRET!);
+ *   const result = await safeVerifyJWT(token, process.env.JWT_SECRET!);
  *
  *   if (!result.success) {
  *     // This provides elegant, user-friendly error messages instead of stack traces
@@ -237,7 +259,7 @@ export function createAuthErrorResponse(error: JWTVerificationResult['error']) {
  *
  * ✅ Safe approach (shows clean, user-friendly messages):
  * ```typescript
- * const result = safeVerifyJWT(token, secret);
+ * const result = await safeVerifyJWT(token, secret);
  * if (!result.success) {
  *   // This returns clean messages like:
  *   // { "error": "Token expired", "message": "Your session has expired. Please sign in again." }

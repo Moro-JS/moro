@@ -21,7 +21,7 @@ Welcome to MoroJS! This guide will help you get up and running with the high-per
 
 ### Prerequisites
 
-- Node.js 18.0.0 or higher
+- Node.js 20.0.0 or higher
 - npm or yarn package manager
 
 ### Create a New Project
@@ -113,7 +113,7 @@ app.get('/health', (req, res) => {
   };
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.listen(PORT, () => {
   console.log(`MoroJS server running on http://localhost:${PORT}`);
@@ -238,6 +238,43 @@ app
   });
 ```
 
+The same options can be passed as an object after the handler; they are applied in the same order:
+
+```typescript
+app.post('/users', async (req, res) => ({ success: true, user: req.body }), {
+  validation: { body: z.object({ name: z.string().min(2), email: z.string().email() }) },
+  rateLimit: { requests: 10, window: 60000 },
+});
+```
+
+A path can end in optional parameters or in a wildcard, which takes the rest of the path:
+
+```typescript
+// /posts and /posts/7
+app.get('/posts/:id?', (req, res) => {
+  return req.params.id === undefined ? { posts: [] } : { post: req.params.id };
+});
+
+// /files/report.pdf, /files/reports/2026/q1.pdf
+app.get('/files/*', (req, res) => {
+  return { file: req.params['*'] };
+});
+```
+
+Which route answers a URL does not depend on the order the routes were registered in; the rules are in [How request paths are matched](./API.md#how-request-paths-are-matched).
+
+Middleware for one part of the app is mounted with a path prefix. It runs for `/admin` and everything under it, and not for `/administrator`:
+
+```typescript
+app.use('/admin', (req, res, next) => {
+  if (req.headers['x-admin-token'] !== process.env.ADMIN_TOKEN) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  next();
+});
+```
+
 ### 2. Automatic Middleware Ordering
 
 MoroJS automatically executes middleware in the optimal order:
@@ -278,11 +315,11 @@ module.exports = {
   server: {
     port: 3000,
     host: 'localhost',
-    environment: 'development',
   },
   database: {
-    type: 'sqlite',
-    database: './dev.db',
+    sqlite: {
+      filename: './dev.db',
+    },
   },
   logging: {
     level: 'debug',
@@ -292,20 +329,10 @@ module.exports = {
       enabled: true,
       origin: ['http://localhost:3000', 'http://localhost:5173'],
     },
-    rateLimit: {
-      enabled: true,
-      requests: 100,
-      window: 60000,
-    },
   },
   performance: {
     compression: {
       enabled: true,
-    },
-    cache: {
-      enabled: true,
-      adapter: 'memory',
-      ttl: 300,
     },
   },
 };
@@ -313,7 +340,7 @@ module.exports = {
 
 ### Using Environment Variables
 
-Create a `.env` file for environment-specific settings:
+Create a `.env` file for environment-specific settings. MoroJS reads `process.env`; load the file with `node --env-file=.env` (or your process manager):
 
 ```bash
 # .env
@@ -322,14 +349,10 @@ PORT=3000
 HOST=localhost
 
 # Database
-DATABASE_TYPE=sqlite
-DATABASE_PATH=./dev.db
+DATABASE_URL=postgresql://user:pass@localhost:5432/mydb
 
 # Logging
 LOG_LEVEL=debug
-
-# Security
-CORS_ORIGIN=http://localhost:3000,http://localhost:5173
 ```
 
 ### Update Your Application
@@ -341,8 +364,9 @@ import { createApp } from '@morojs/moro';
 
 const app = await createApp();
 
-// Configuration is automatically loaded from moro.config.js and .env
+// Configuration is automatically loaded from moro.config.js and environment variables
 const config = app.getConfig();
+const environment = process.env.NODE_ENV || 'development';
 
 // Simple route that uses configuration
 app.get('/', (req, res) => {
@@ -350,7 +374,7 @@ app.get('/', (req, res) => {
     message: 'Hello from MoroJS!',
     timestamp: new Date().toISOString(),
     framework: 'MoroJS',
-    environment: config.server.environment,
+    environment,
     port: config.server.port,
   };
 });
@@ -362,8 +386,8 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     config: {
-      environment: config.server.environment,
-      database: config.database.type,
+      environment,
+      logLevel: config.logging.level,
     },
   };
 });
@@ -374,8 +398,8 @@ const HOST = config.server.host;
 
 app.listen(PORT, HOST, () => {
   console.log(`MoroJS server running on http://${HOST}:${PORT}`);
-  console.log(`Environment: ${config.server.environment}`);
-  console.log(`Database: ${config.database.type}`);
+  console.log(`Environment: ${environment}`);
+  console.log(`Log level: ${config.logging.level}`);
   console.log(`Health check: http://${HOST}:${PORT}/health`);
 });
 ```
@@ -390,7 +414,7 @@ const environment = process.env.NODE_ENV || 'development';
 
 const baseConfig = {
   server: {
-    port: process.env.PORT || 3000,
+    port: Number(process.env.PORT) || 3000,
     host: process.env.HOST || 'localhost',
   },
   security: {
@@ -403,13 +427,10 @@ const baseConfig = {
 const configs = {
   development: {
     ...baseConfig,
-    server: {
-      ...baseConfig.server,
-      environment: 'development',
-    },
     database: {
-      type: 'sqlite',
-      database: './dev.db',
+      sqlite: {
+        filename: './dev.db',
+      },
     },
     logging: {
       level: 'debug',
@@ -418,17 +439,14 @@ const configs = {
 
   production: {
     ...baseConfig,
-    server: {
-      ...baseConfig.server,
-      environment: 'production',
-    },
     database: {
-      type: 'postgresql',
-      host: process.env.DATABASE_HOST,
-      port: parseInt(process.env.DATABASE_PORT || '5432'),
-      username: process.env.DATABASE_USERNAME,
-      password: process.env.DATABASE_PASSWORD,
-      database: process.env.DATABASE_NAME,
+      postgresql: {
+        host: process.env.DATABASE_HOST,
+        port: parseInt(process.env.DATABASE_PORT || '5432'),
+        user: process.env.DATABASE_USERNAME,
+        password: process.env.DATABASE_PASSWORD,
+        database: process.env.DATABASE_NAME,
+      },
     },
     logging: {
       level: 'info',
@@ -720,9 +738,6 @@ export default defineModule({
       method: 'GET',
       path: '/users',
       validation: { query: PaginationSchema },
-      cache: { ttl: 60 },
-      description: 'Get users with pagination',
-      tags: ['users', 'list'],
       handler: async (req, res) => {
         // Your user fetching logic here
         return {
@@ -736,9 +751,6 @@ export default defineModule({
       method: 'POST',
       path: '/users',
       validation: { body: UserSchema },
-      rateLimit: { requests: 10, window: 60000 },
-      description: 'Create a new user',
-      tags: ['users', 'create'],
       handler: async (req, res) => {
         // Your user creation logic here
         return {
@@ -911,7 +923,7 @@ app.database(db);
 
 // Use database in routes
 app.get('/users').handler(async (req, res) => {
-  const users = await req.database.query('SELECT * FROM users');
+  const users = await db.query('SELECT * FROM users');
   return { success: true, data: users };
 });
 
@@ -919,14 +931,14 @@ app
   .post('/users')
   .body(UserSchema)
   .handler(async (req, res) => {
-    const result = await req.database.query('INSERT INTO users (name, email) VALUES (?, ?)', [
-      req.body.name,
-      req.body.email,
-    ]);
+    const user = await db.insert('users', {
+      name: req.body.name,
+      email: req.body.email,
+    });
 
     return {
       success: true,
-      data: { id: result.insertId, ...req.body },
+      data: user,
     };
   });
 ```
@@ -938,33 +950,28 @@ app
   .post('/transfer')
   .body(TransferSchema)
   .handler(async (req, res) => {
-    const transaction = await req.database.beginTransaction();
-
-    try {
+    // Commits when the callback resolves, rolls back when it throws
+    await db.transaction(async tx => {
       // Debit from source account
-      await transaction.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [
+      await tx.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [
         req.body.amount,
         req.body.fromAccount,
       ]);
 
       // Credit to destination account
-      await transaction.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [
+      await tx.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [
         req.body.amount,
         req.body.toAccount,
       ]);
 
       // Record transaction
-      await transaction.query(
+      await tx.query(
         'INSERT INTO transactions (from_account, to_account, amount) VALUES (?, ?, ?)',
         [req.body.fromAccount, req.body.toAccount, req.body.amount]
       );
+    });
 
-      await transaction.commit();
-      return { success: true, message: 'Transfer completed' };
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+    return { success: true, message: 'Transfer completed' };
   });
 ```
 
@@ -975,9 +982,22 @@ Add real-time functionality to your application:
 ```typescript
 import { createApp, z } from '@morojs/moro';
 
-const app = await createApp();
+// WebSockets are opt-in: enable them when the app is created
+const app = await createApp({ websocket: { enabled: true } });
 
-// WebSocket with validation
+const JoinRoomSchema = z.object({
+  room: z.string().min(1),
+  username: z.string().min(2),
+});
+
+const SendMessageSchema = z.object({
+  message: z.string().min(1).max(500),
+  room: z.string(),
+});
+
+// WebSocket with validation: handlers are plain functions that validate their
+// payload; a thrown error reaches the client as { success: false, error }, with
+// the error's message outside production and 'Internal server error' in production
 app.websocket('/chat', {
   // Connection event
   connection: socket => {
@@ -986,43 +1006,32 @@ app.websocket('/chat', {
   },
 
   // Join room event
-  'join-room': {
-    validation: z.object({
-      room: z.string().min(1),
-      username: z.string().min(2),
-    }),
-    handler: (socket, data) => {
-      socket.join(data.room);
-      socket.username = data.username;
-      socket.currentRoom = data.room;
+  'join-room': (socket, payload) => {
+    const data = JoinRoomSchema.parse(payload);
+    socket.join(data.room);
+    socket.username = data.username;
+    socket.currentRoom = data.room;
 
-      socket.to(data.room).emit('user-joined', {
-        username: data.username,
-        message: `${data.username} joined the room`,
-        timestamp: new Date(),
-      });
+    socket.to(data.room).emit('user-joined', {
+      username: data.username,
+      message: `${data.username} joined the room`,
+      timestamp: new Date(),
+    });
 
-      return { success: true, room: data.room };
-    },
+    return { success: true, room: data.room };
   },
 
   // Send message event
-  'send-message': {
-    validation: z.object({
-      message: z.string().min(1).max(500),
-      room: z.string(),
-    }),
-    rateLimit: { requests: 10, window: 60000 },
-    handler: (socket, data) => {
-      socket.to(data.room).emit('new-message', {
-        username: socket.username,
-        message: data.message,
-        room: data.room,
-        timestamp: new Date(),
-      });
+  'send-message': (socket, payload) => {
+    const data = SendMessageSchema.parse(payload);
+    socket.to(data.room).emit('new-message', {
+      username: socket.username,
+      message: data.message,
+      room: data.room,
+      timestamp: new Date(),
+    });
 
-      return { success: true };
-    },
+    return { success: true };
   },
 
   // Disconnect event
@@ -1117,7 +1126,7 @@ import { createApp, z } from '@morojs/moro';
 
 describe('MoroJS Application', () => {
   let app: any;
-  let server: any;
+  let server: string;
 
   beforeAll(async () => {
     app = await createApp();
@@ -1136,11 +1145,13 @@ describe('MoroJS Application', () => {
         return { success: true, user: req.body };
       });
 
-    server = app.core.listen(0); // Use random port
+    // Port 0: any free port. app.address() says which one was bound.
+    await new Promise<void>(resolve => app.listen(0, resolve));
+    server = `http://127.0.0.1:${app.address().port}`;
   });
 
-  afterAll(() => {
-    server.close();
+  afterAll(async () => {
+    await app.close();
   });
 
   it('should respond to GET /test', async () => {

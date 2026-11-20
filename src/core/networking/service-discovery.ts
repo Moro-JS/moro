@@ -20,10 +20,19 @@ export interface ServiceDiscoveryOptions {
   tags?: string[];
 }
 
+// How long one health-check request may take before it counts as failed
+const HEALTH_CHECK_TIMEOUT_MS = 5000;
+
 export class ServiceRegistry {
   private services = new Map<string, ServiceInfo[]>();
   private options: ServiceDiscoveryOptions;
   private healthCheckInterval?: NodeJS.Timeout;
+  // Consul service IDs this registry registered, by service name. Consul
+  // deregisters by ID, and the ID is not the name.
+  private consulIds = new Map<string, Set<string>>();
+  // True while a health-check sweep is in flight, so the interval never starts
+  // a second sweep on top of one that has not finished
+  private healthCheckRunning = false;
   private serviceLogger = createFrameworkLogger('SERVICE_DISCOVERY');
 
   constructor(options: ServiceDiscoveryOptions) {
@@ -122,6 +131,10 @@ export class ServiceRegistry {
       if (!response.ok) {
         throw new Error(`Consul registration failed: ${response.statusText}`);
       }
+
+      const ids = this.consulIds.get(service.name) ?? new Set<string>();
+      ids.add(consulService.ID);
+      this.consulIds.set(service.name, ids);
     } catch (error) {
       this.serviceLogger.error('Failed to register with Consul', 'SERVICE_DISCOVERY', {
         error: error instanceof Error ? error.message : String(error),
@@ -138,7 +151,7 @@ export class ServiceRegistry {
 
     try {
       const response = await fetch(
-        `${this.options.consulUrl}/v1/health/service/${serviceName}?passing=true`
+        `${this.options.consulUrl}/v1/health/service/${encodeURIComponent(serviceName)}?passing=true`
       );
 
       if (!response.ok) {
@@ -164,10 +177,19 @@ export class ServiceRegistry {
   private async deregisterFromConsul(serviceName: string): Promise<void> {
     if (!this.options.consulUrl) return;
 
+    // Deregister every instance this registry registered under the name. A
+    // name it never registered is passed through as the ID, as before.
+    const registered = this.consulIds.get(serviceName);
+    const ids = registered && registered.size > 0 ? [...registered] : [serviceName];
+    this.consulIds.delete(serviceName);
+
     try {
-      await fetch(`${this.options.consulUrl}/v1/agent/service/deregister/${serviceName}`, {
-        method: 'PUT',
-      });
+      for (const id of ids) {
+        await fetch(
+          `${this.options.consulUrl}/v1/agent/service/deregister/${encodeURIComponent(id)}`,
+          { method: 'PUT' }
+        );
+      }
     } catch (error) {
       this.serviceLogger.error('Failed to deregister from Consul', 'SERVICE_DISCOVERY', {
         error: error instanceof Error ? error.message : String(error),
@@ -221,6 +243,16 @@ export class ServiceRegistry {
   }
 
   private async performHealthChecks(): Promise<void> {
+    if (this.healthCheckRunning) return;
+    this.healthCheckRunning = true;
+    try {
+      await this.checkRegisteredServices();
+    } finally {
+      this.healthCheckRunning = false;
+    }
+  }
+
+  private async checkRegisteredServices(): Promise<void> {
     for (const [serviceName, services] of this.services.entries()) {
       for (const service of services) {
         if (service.health) {
@@ -228,8 +260,8 @@ export class ServiceRegistry {
             const response = await fetch(
               `http://${service.host}:${service.port}${service.health}`,
               {
-                timeout: 5000,
-              } as any
+                signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+              }
             );
 
             if (!response.ok) {

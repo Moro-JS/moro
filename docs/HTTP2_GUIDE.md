@@ -9,7 +9,7 @@ MoroJS now includes full native HTTP/2 support with advanced features including 
 - ✅ **Stream Prioritization** - Control resource loading order
 - ✅ **Multiplexing** - Multiple requests over single connection
 - ✅ **Header Compression** - HPACK compression built-in
-- ✅ **HTTP/1.1 Fallback** - Automatic fallback support
+- ✅ **HTTP/1.1 Fallback** - The native engine serves HTTP/1.1 clients on the same port (the Node.js HTTP/2 server answers HTTP/2 only)
 - ✅ **Auto-detect Push** - Automatically detect and push CSS/JS from HTML
 
 ## Quick Start
@@ -170,9 +170,11 @@ app.get('/', (req, res) => {
 });
 ```
 
+`app.engine.protocols` lists what the listener speaks: `['h2', 'http/1.1']` on the native engine with HTTP/2 enabled, and `['h2']` on the Node.js HTTP/2 server (`app.engine.server === 'http2'`), which answers HTTP/2 only.
+
 ## SSL Certificates
 
-HTTP/2 requires SSL/TLS. For development, generate self-signed certificates:
+Browsers speak HTTP/2 only over TLS, so serve it with a certificate. Without one, the server takes cleartext HTTP/2 from clients that use prior knowledge (for example `curl --http2-prior-knowledge`). For development, generate self-signed certificates:
 
 ```bash
 # Generate self-signed certificate
@@ -183,6 +185,31 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 \
 ```
 
 For production, use certificates from a trusted CA like Let's Encrypt.
+
+### TLS policy and client certificates
+
+Every `server.ssl` option applies to the HTTP/2 listener exactly as it applies to the HTTPS one: `ca`, `requestCert`, `rejectUnauthorized`, `minVersion`, `maxVersion`, `ciphers`, `honorCipherOrder`, `ecdhCurve`, `sigalgs`, `crl` and `passphrase` (see [`server.ssl`](./CONFIGURATION_REFERENCE.md#server-section)). Mutual TLS, for example:
+
+```typescript
+import { createApp } from '@morojs/moro';
+import { readFileSync } from 'fs';
+
+const app = await createApp({
+  server: {
+    http2: true,
+    ssl: {
+      key: readFileSync('./server-key.pem'),
+      cert: readFileSync('./server-cert.pem'),
+      ca: readFileSync('./clients-ca.pem'), // the CA that issues client certificates
+      requestCert: true,
+      rejectUnauthorized: true, // no certificate, or one this CA did not issue: handshake refused
+      minVersion: 'TLSv1.3',
+    },
+  },
+});
+```
+
+A client that presents no certificate, or one the CA did not issue, is refused during the TLS handshake and no request reaches the app. `app.reloadTLS()` keeps these settings when it replaces the certificate.
 
 ## Best Practices
 
@@ -230,6 +257,13 @@ const app = new Moro({
 });
 ```
 
+HTTP/1.1 clients are served on the same port by the native engine. The Node.js HTTP/2 server does not serve the application to them, whatever `allowHTTP1` says: check `app.engine.protocols`, and keep HTTP/1.1 clients on the native engine.
+
+What an HTTP/1.1 client gets from the Node.js HTTP/2 server depends on the port:
+
+- Over TLS, a client that offers only `http/1.1` in ALPN completes the handshake (Node accepts it while `allowHTTP1` is on, the default) and is answered `505 HTTP Version Not Supported` with `Connection: close` and a one-line plain-text body, then disconnected. No route, middleware or hook runs for it. With `allowHTTP1: false` Node refuses the connection itself.
+- Without TLS there is no negotiation: the server expects the HTTP/2 preface and an HTTP/1.1 request is a protocol error.
+
 ### 4. Monitor Server Push
 
 ```typescript
@@ -273,6 +307,10 @@ const app = new Moro({
   },
 });
 ```
+
+### Idle Connections
+
+An HTTP/2 connection with no request in progress is closed after `server.timeouts.idle` (75 seconds by default, `0` for never; on the native engine the default is applied by `@morojs/engine` releases after 1.1.21, and an older engine has no idle timeout unless one is set). A request a handler is still working on, a streamed response or an event stream is not cut: on the native engine the connection is not idle while a handler holds one of its requests, and the Node.js HTTP/2 server (`server.engine: 'node'`) tells the client to use a new connection (`GOAWAY`), lets the requests in progress finish and closes the connection after the last of them.
 
 ## Middleware Compatibility
 
@@ -379,7 +417,7 @@ app.listen(3000);
 2. Ensure SSL is configured:
 
    ```typescript
-   // HTTP/2 requires HTTPS
+   // Browsers use HTTP/2 only over HTTPS
    https: {
      key: fs.readFileSync('key.pem'),
      cert: fs.readFileSync('cert.pem'),
@@ -393,6 +431,20 @@ app.listen(3000);
    the client's choice per stream (`stream.pushAllowed`) and `res.push()`
    returns `null` when it is off. Chrome and Firefox have disabled push,
    so expect `null` from browsers and rely on `<link rel="preload">` there.
+
+### A handler written for HTTP/1.1
+
+The request and response on the Node.js HTTP/2 server carry the same helpers as on the Node.js HTTP server, with the same results (`req.get()`, `req.hostname`, `req.protocol`, `req.socket`, `req.on('close')`, `res.sendFile()`, `res.download()`, `res.set()`, `res.type()`, `res.format()`, `res.write()`, `res.locals` and the rest of [Response Helpers](./RESPONSE_HELPERS.md)), so a handler does not need to know which of the two is serving. A few things are worth knowing:
+
+- An HTTP/2 client names the host in `:authority` and sends no `Host` header. `req.headers.host` is filled from `:authority`, and `req.hostname` and `req.subdomains` follow from it.
+- `Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding` and `Upgrade` have no meaning on an HTTP/2 connection (RFC 9113 8.2.2). A handler may set them, as code written for HTTP/1.1 does for an event stream; they are left out of the response.
+- A response head that cannot be sent at all (a status outside 100-599, a header name that is not a token) is answered `500` and logged at error level.
+- `res.write()` sends the head on its first call and returns `false` when the caller should wait for `'drain'`. An event stream is a `res.writeHead()` followed by writes, exactly as on HTTP/1.1, and `req.on('close', ...)` fires when the client goes away.
+- `res.destroy()`, and a handler that fails after its response has started, reset the stream (`RST_STREAM`, `INTERNAL_ERROR`). The client sees a failed transfer, and the connection's other streams are unaffected.
+- `res.on('finish', ...)` fires once for every response that was sent in full, whatever sent it (`res.json()`, `res.send()`, `res.end()`, `res.redirect()`, `res.sendFile()`) and whether or not the request had a body, and `res.on('close', ...)` fires after it. A response that was abandoned (`res.destroy()`, a stream the client reset) gets `'close'` without `'finish'`. Request logging, metrics and a rate limit's `skipSuccessfulRequests` / `skipFailedRequests` rely on this, as on HTTP/1.1.
+- `middleware.staticFiles()` and `res.sendRange()` answer from memory here rather than streaming the file; `res.sendFile()` streams files over 64 KB.
+- `app.use()` middleware follows the same contract: `next(err)` or a throw stops the request and reaches `app.setErrorHandler()` (or the default `500`), and a four-parameter `(err, req, res, next)` middleware runs only for a request that failed. One difference remains: a three-parameter middleware that returns without having called `next()` or returned a promise is treated as finished on this server, where the Node.js HTTP server waits for its `next()`. Call `next()` before returning, or return a promise.
+- A request body that cannot be parsed is answered `400`, one over `server.bodySizeLimit` or a multipart limit `413`, as on the other servers. A body that is not JSON, a form or multipart reaches the handler as a string, and `req.rawBody` is not set on this server.
 
 ### Connection Issues
 

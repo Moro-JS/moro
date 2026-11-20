@@ -171,4 +171,90 @@ describe('MoroEventBus', () => {
       expect(metrics.totalEvents).toBe(2);
     });
   });
+
+  describe('async listeners', () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+
+    beforeEach(() => {
+      unhandled.length = 0;
+      process.on('unhandledRejection', onUnhandled);
+    });
+
+    afterEach(() => {
+      process.off('unhandledRejection', onUnhandled);
+      jest.restoreAllMocks();
+    });
+
+    it('logs a rejection from an async listener and never leaves it unhandled', async () => {
+      const logged = jest.spyOn((bus as any).logger, 'error').mockImplementation(() => {});
+      const delivered: number[] = [];
+      bus.on('job.done', async () => {
+        throw new Error('listener failed');
+      });
+      bus.on('job.done', payload => {
+        delivered.push(payload.data);
+      });
+
+      expect(await bus.emit('job.done', 1)).toBe(true);
+      await settle();
+
+      expect(unhandled).toEqual([]);
+      // The listeners registered after the failing one still ran
+      expect(delivered).toEqual([1]);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).toContain('job.done');
+      expect(logged.mock.calls[0][2]).toMatchObject({
+        event: 'job.done',
+        error: 'listener failed',
+      });
+      expect(bus.getMetrics().errorRate).toBe(100);
+    });
+
+    it('logs a rejection from a once() listener and from a module bus listener', async () => {
+      const logged = jest.spyOn((bus as any).logger, 'error').mockImplementation(() => {});
+      bus.once('first', async () => {
+        throw new Error('once failed');
+      });
+      bus.createModuleBus('orders').on('placed', () => Promise.reject(new Error('module failed')));
+
+      await bus.emit('first', null);
+      await bus.createModuleBus('orders').emit('placed', null);
+      await settle();
+
+      expect(unhandled).toEqual([]);
+      expect(logged.mock.calls.map(call => (call[2] as any).error)).toEqual([
+        'once failed',
+        'module failed',
+      ]);
+    });
+
+    it('logs nothing for an async listener that resolves or a listener that returns a value', async () => {
+      const logged = jest.spyOn((bus as any).logger, 'error').mockImplementation(() => {});
+      bus.on('fine', async () => {});
+      bus.on('fine', (() => 'a value') as any);
+
+      await bus.emit('fine', null);
+      await settle();
+
+      expect(unhandled).toEqual([]);
+      expect(logged).not.toHaveBeenCalled();
+      expect(bus.getMetrics().errorRate).toBe(0);
+    });
+
+    it('off() removes an async listener registered by reference', async () => {
+      let calls = 0;
+      const listener = async () => {
+        calls++;
+      };
+      bus.on('tick', listener);
+      bus.off('tick', listener);
+
+      expect(await bus.emit('tick', null)).toBe(false);
+      expect(calls).toBe(0);
+    });
+  });
 });

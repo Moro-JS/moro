@@ -5,9 +5,10 @@ import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import { Logger } from '../../types/logger.js';
 import fs from 'fs';
-import path from 'path';
 import os from 'os';
 import { requireBuiltin } from '../utilities/builtin.js';
+import { defaultLeaderLockPath } from './default-paths.js';
+import { redisClientFlavour, type RedisClientFlavour } from '../utilities/redis-client.js';
 
 // worker_threads on first use (core/utilities/builtin.ts). node:cluster is
 // never loaded here: a cluster worker is exactly a process with
@@ -17,12 +18,15 @@ import { requireBuiltin } from '../utilities/builtin.js';
 const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
 const isClusterWorkerProcess = () => process.env.NODE_UNIQUE_ID !== undefined;
 
+// The lock names the host, pid and (on Kubernetes) pod of the leader: owner-only
+const LOCK_FILE_MODE = 0o600;
+
 export interface LeaderElectionOptions {
   strategy: 'file' | 'redis' | 'none';
   lockPath?: string;
   lockTimeout?: number;
   heartbeatInterval?: number;
-  redisClient?: any; // Optional Redis client
+  redisClient?: any; // A connected node-redis (4+) or ioredis client, for strategy 'redis'
   forceLeader?: boolean; // Force this instance to be leader (dev/testing)
   instanceId?: string; // Custom instance ID
 }
@@ -57,6 +61,9 @@ export class LeaderElection extends EventEmitter {
   private instanceId: string;
   private leaderInfo?: LeaderInfo;
   private redisClient?: any;
+  // node-redis and ioredis take SET options and EVAL arguments in different
+  // shapes; every Redis command below is issued in the client's own form.
+  private redisFlavour: RedisClientFlavour | undefined;
   private isShuttingDown = false;
   private lockAcquireAttempts = 0;
 
@@ -91,6 +98,7 @@ return 0`;
     this.lockTimeout = options.lockTimeout ?? 30000; // 30s default
     this.heartbeatInterval = options.heartbeatInterval ?? 10000; // 10s default
     this.redisClient = options.redisClient;
+    this.redisFlavour = redisClientFlavour(options.redisClient);
 
     // Generate unique instance ID
     this.instanceId =
@@ -102,8 +110,8 @@ return 0`;
       if (options.lockPath) {
         this.lockPath = options.lockPath;
       } else {
-        const tmpDir = os.tmpdir();
-        this.lockPath = path.join(tmpDir, 'moro-jobs-leader.lock');
+        // Application-scoped name in os.tmpdir() (see default-paths.ts)
+        this.lockPath = defaultLeaderLockPath();
       }
     }
 
@@ -135,6 +143,18 @@ return 0`;
     if (!this.shouldParticipate()) {
       this.logger.info('Not participating in leader election (worker process/thread)');
       return;
+    }
+
+    // The lock is only exclusive, and only expires, when SET NX PX and the
+    // ownership scripts reach the server as written. A client of another shape
+    // could accept those calls and run something else, so it is refused here
+    // instead of being found out by two instances both leading.
+    if (this.strategy === 'redis' && this.redisClient && !this.redisFlavour) {
+      throw new Error(
+        "Leader election with strategy 'redis' needs a node-redis (4+) or ioredis client as " +
+          'redisClient; the client it was given is neither. Pass the client returned by ' +
+          "createClient() from 'redis' (connected) or an instance of Redis from 'ioredis'."
+      );
     }
 
     this.logger.info('Starting leader election...', this.loggerContext, {
@@ -233,7 +253,7 @@ return 0`;
     // Fast path: atomically create the lock file (O_EXCL). Fails with EEXIST if
     // another instance already holds the lock.
     try {
-      const handle = await fs.promises.open(this.lockPath, 'wx');
+      const handle = await fs.promises.open(this.lockPath, 'wx', LOCK_FILE_MODE);
       try {
         await handle.writeFile(serialized, 'utf-8');
       } finally {
@@ -255,9 +275,28 @@ return 0`;
     try {
       // Read existing lock and decide whether we may take it over.
       const lockData = await fs.promises.readFile(this.lockPath, 'utf-8');
-      const existingLeader: LeaderInfo = JSON.parse(lockData);
+
+      let existingLeader: LeaderInfo;
+      try {
+        existingLeader = JSON.parse(lockData);
+        if (existingLeader === null || typeof existingLeader !== 'object') {
+          throw new Error('lock file does not contain an object');
+        }
+      } catch {
+        // Unreadable content: an empty file is what an instance leaves between
+        // creating the lock and writing it (or when it dies there), and
+        // anything else is not a lock we wrote. It carries no heartbeat, so
+        // its age is the file's own modification time.
+        return await this.takeOverIfFileIsStale(serialized, lockInfo, 'unreadable');
+      }
 
       const lockAge = Date.now() - new Date(existingLeader.lastHeartbeat).getTime();
+
+      if (lockAge < 0) {
+        // A heartbeat from the future (clock skew, or a planted lock) can never
+        // expire by its own timestamp; judge it by the file's modification time.
+        return await this.takeOverIfFileIsStale(serialized, lockInfo, 'future-dated');
+      }
 
       if (lockAge < this.lockTimeout) {
         // Lock is still valid and held by another instance.
@@ -288,6 +327,42 @@ return 0`;
   }
 
   /**
+   * Decide on a lock file whose content gives no usable heartbeat (unreadable,
+   * or dated in the future). Such a lock counts as held while the file itself
+   * was modified within `lockTimeout` (a live leader rewrites it on every
+   * heartbeat) and as stale after that, when it is taken over.
+   */
+  private async takeOverIfFileIsStale(
+    serialized: string,
+    lockInfo: LeaderInfo,
+    reason: 'unreadable' | 'future-dated'
+  ): Promise<boolean> {
+    if (!this.lockPath) {
+      throw new Error('Lock path not configured');
+    }
+
+    const stats = await fs.promises.stat(this.lockPath);
+    const fileAge = Date.now() - stats.mtimeMs;
+
+    if (fileAge < this.lockTimeout) {
+      this.logger.debug(`Leader lock is ${reason} but recently written`, this.loggerContext, {
+        lockPath: this.lockPath,
+        fileAge,
+      });
+      return false;
+    }
+
+    this.logger.warn(`Leader lock is ${reason} and stale, taking over`, this.loggerContext, {
+      lockPath: this.lockPath,
+      fileAge,
+    });
+
+    await this.atomicWriteLock(serialized);
+    this.leaderInfo = lockInfo;
+    return true;
+  }
+
+  /**
    * Atomically (re)write the lock file: write to a unique temp file, then rename
    * over the target. rename() is atomic on POSIX so readers never see a partial
    * lock file.
@@ -298,7 +373,11 @@ return 0`;
     }
 
     const tempPath = `${this.lockPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-    await fs.promises.writeFile(tempPath, serialized, 'utf-8');
+    await fs.promises.writeFile(tempPath, serialized, {
+      encoding: 'utf-8',
+      mode: LOCK_FILE_MODE,
+      flag: 'wx',
+    });
     try {
       await fs.promises.rename(tempPath, this.lockPath);
     } catch (error) {
@@ -327,13 +406,19 @@ return 0`;
       };
 
       // Try to set lock with NX (only if not exists) and PX (expiration in ms)
-      const result = await this.redisClient.set(
-        lockKey,
-        JSON.stringify(lockInfo),
-        'PX',
-        this.lockTimeout,
-        'NX'
-      );
+      const result =
+        this.redisFlavour === 'node-redis'
+          ? await this.redisClient.set(lockKey, JSON.stringify(lockInfo), {
+              PX: this.lockTimeout,
+              NX: true,
+            })
+          : await this.redisClient.set(
+              lockKey,
+              JSON.stringify(lockInfo),
+              'PX',
+              this.lockTimeout,
+              'NX'
+            );
 
       if (result === 'OK') {
         this.leaderInfo = lockInfo;
@@ -351,6 +436,21 @@ return 0`;
       this.logger.error('Failed to acquire Redis lock', this.loggerContext, { error });
       return false;
     }
+  }
+
+  /**
+   * Run a script with the lock key as KEYS[1], in the form the client takes:
+   * node-redis wants `{ keys, arguments }` with string arguments, ioredis the
+   * key count followed by keys and arguments.
+   */
+  private evalOnLock(script: string, args: Array<string | number>): Promise<unknown> {
+    if (this.redisFlavour === 'node-redis') {
+      return this.redisClient.eval(script, {
+        keys: [LeaderElection.REDIS_LOCK_KEY],
+        arguments: args.map(String),
+      });
+    }
+    return this.redisClient.eval(script, 1, LeaderElection.REDIS_LOCK_KEY, ...args);
   }
 
   /**
@@ -407,12 +507,7 @@ return 0`;
         }
       } else if (this.strategy === 'redis' && this.redisClient) {
         // Compare-and-delete: only DEL if the stored lock still belongs to us.
-        await this.redisClient.eval(
-          LeaderElection.REDIS_RELEASE_SCRIPT,
-          1,
-          LeaderElection.REDIS_LOCK_KEY,
-          this.instanceId
-        );
+        await this.evalOnLock(LeaderElection.REDIS_RELEASE_SCRIPT, [this.instanceId]);
       }
     } catch (error) {
       this.logger.error('Failed to release lock during step down', this.loggerContext, { error });
@@ -486,14 +581,11 @@ return 0`;
       await this.atomicWriteLock(JSON.stringify(this.leaderInfo));
     } else if (this.strategy === 'redis' && this.redisClient) {
       // Compare-and-refresh: only rewrite + extend the TTL if we still own the lock.
-      const refreshed = await this.redisClient.eval(
-        LeaderElection.REDIS_REFRESH_SCRIPT,
-        1,
-        LeaderElection.REDIS_LOCK_KEY,
+      const refreshed = await this.evalOnLock(LeaderElection.REDIS_REFRESH_SCRIPT, [
         this.instanceId,
         JSON.stringify(this.leaderInfo),
-        this.lockTimeout
-      );
+        this.lockTimeout,
+      ]);
       if (Number(refreshed) !== 1) {
         throw new Error('Lost leadership: redis lock is no longer owned by this instance');
       }

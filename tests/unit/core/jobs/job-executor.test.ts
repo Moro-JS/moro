@@ -19,7 +19,13 @@ describe('JobExecutor', () => {
     });
   });
 
+  // Timers started inside job functions that the executor gives up on (timed
+  // out or cancelled). The executor cannot stop a job's own timer, so a
+  // referenced one would keep the Jest worker alive for seconds after the suite.
+  const abandonedJobTimers: ReturnType<typeof setTimeout>[] = [];
+
   afterEach(async () => {
+    for (const timer of abandonedJobTimers.splice(0)) clearTimeout(timer);
     await executor.shutdown(1000);
   });
 
@@ -109,13 +115,20 @@ describe('JobExecutor', () => {
         .mockRejectedValueOnce(new Error('fail'))
         .mockResolvedValue('success');
 
-      const startTime = Date.now();
-      await executor.execute('job-backoff', 'exec1', jobFn);
-      const duration = Date.now() - startTime;
+      // The middle of the ±20% jitter: the waits are 100 ms, then 200 ms.
+      // Left random, the two can add up to anything from 240 ms to 360 ms.
+      const random = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+      let duration: number;
+      try {
+        const startTime = Date.now();
+        await executor.execute('job-backoff', 'exec1', jobFn);
+        duration = Date.now() - startTime;
+      } finally {
+        random.mockRestore();
+      }
 
-      // With exponential backoff: ~100ms + ~200ms = ~300ms+ (with jitter)
-      // Use >= instead of > to handle exact timing in CI environments
-      expect(duration).toBeGreaterThanOrEqual(250);
+      // 100 ms + 200 ms; each timer may fire a millisecond early by the clock
+      expect(duration).toBeGreaterThanOrEqual(298);
       expect(duration).toBeLessThan(500);
     });
   });
@@ -125,7 +138,7 @@ describe('JobExecutor', () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
           new Promise(resolve => {
-            setTimeout(resolve, 10000); // 10 seconds
+            abandonedJobTimers.push(setTimeout(resolve, 10000)); // 10 seconds
           })
       );
 
@@ -219,6 +232,50 @@ describe('JobExecutor', () => {
 
       await testExecutor.shutdown(1000);
     });
+
+    it('runs the job again after circuitBreakerResetTimeout and closes on success', async () => {
+      const testExecutor = new JobExecutor(logger, {
+        maxRetries: 0,
+        retryDelay: 1,
+        timeout: 1000,
+        enableCircuitBreaker: true,
+        circuitBreakerThreshold: 2,
+        circuitBreakerResetTimeout: 80,
+        enableMemoryMonitoring: false,
+      });
+
+      try {
+        let healthy = false;
+        let runs = 0;
+        const job = async () => {
+          runs++;
+          if (!healthy) throw new Error('dependency down');
+          return 'ok';
+        };
+
+        await testExecutor.execute('job-recover', 'e1', job);
+        await testExecutor.execute('job-recover', 'e2', job);
+        expect(testExecutor.getCircuitBreakerStatus('job-recover')?.state).toBe('open');
+
+        // While open the job is not run
+        const blocked = await testExecutor.execute('job-recover', 'e3', job);
+        expect(blocked.success).toBe(false);
+        expect(blocked.circuitBreakerTripped).toBe(true);
+        expect(runs).toBe(2);
+
+        // The dependency recovers; after the reset timeout the job runs again
+        healthy = true;
+        await new Promise(resolve => setTimeout(resolve, 120));
+
+        const recovered = await testExecutor.execute('job-recover', 'e4', job);
+        expect(recovered.success).toBe(true);
+        expect(recovered.value).toBe('ok');
+        expect(runs).toBe(3);
+        expect(testExecutor.getCircuitBreakerStatus('job-recover')?.state).toBe('closed');
+      } finally {
+        await testExecutor.shutdown(100);
+      }
+    });
   });
 
   describe('Cancellation', () => {
@@ -233,7 +290,7 @@ describe('JobExecutor', () => {
       const jobFn = jest.fn().mockImplementation(
         () =>
           new Promise(resolve => {
-            setTimeout(resolve, 5000);
+            abandonedJobTimers.push(setTimeout(resolve, 5000));
           })
       );
 

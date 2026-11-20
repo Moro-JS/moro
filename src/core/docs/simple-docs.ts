@@ -1,44 +1,16 @@
 // Simple Documentation Generator - Fallback for when Swagger UI has issues
 // Generates clean, readable API documentation from routes
 
+import { createHash } from 'crypto';
 import { CompiledRoute, RouteSchema } from '../routing/index.js';
 import { createFrameworkLogger } from '../logger/index.js';
+import { escapeHtml } from './html-escape.js';
 
 const logger = createFrameworkLogger('SimpleDocs');
 
-export interface SimpleDocsOptions {
-  title?: string;
-  description?: string;
-  basePath?: string;
-}
-
-export class SimpleDocsGenerator {
-  private routes: CompiledRoute[] = [];
-
-  constructor(private options: SimpleDocsOptions = {}) {
-    this.options = {
-      title: 'API Documentation',
-      description: 'API documentation generated from intelligent routes',
-      basePath: '/docs',
-      ...options,
-    };
-  }
-
-  addRoutes(routes: CompiledRoute[]): void {
-    this.routes = routes;
-    logger.debug(`Added ${routes.length} routes to simple docs`, 'RouteAddition');
-  }
-
-  generateHTML(): string {
-    const routesByTag = this.groupRoutesByTag();
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${this.options.title}</title>
-  <style>
+// The page's only style sheet. The text is fixed, so the page's policy can
+// name it by digest and allow no other inline style and no script at all.
+const SIMPLE_DOCS_CSS = `
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       line-height: 1.6;
@@ -126,16 +98,70 @@ export class SimpleDocsGenerator {
       text-align: center;
       color: #6b7280;
     }
-  </style>
+  `;
+
+let simpleDocsPolicy: string | undefined;
+
+/**
+ * The Content-Security-Policy of the simple docs page: its own style sheet and
+ * the site's icon, nothing else. The page has no script, font or form.
+ */
+function simpleDocsContentSecurityPolicy(): string {
+  if (simpleDocsPolicy === undefined) {
+    const digest = createHash('sha256').update(SIMPLE_DOCS_CSS, 'utf8').digest('base64');
+    simpleDocsPolicy =
+      `default-src 'none'; style-src 'sha256-${digest}'; img-src 'self'; ` +
+      "base-uri 'none'; form-action 'none'";
+  }
+  return simpleDocsPolicy;
+}
+
+export interface SimpleDocsOptions {
+  title?: string;
+  description?: string;
+  basePath?: string;
+}
+
+export class SimpleDocsGenerator {
+  private routes: CompiledRoute[] = [];
+
+  constructor(private options: SimpleDocsOptions = {}) {
+    this.options = {
+      title: 'API Documentation',
+      description: 'API documentation generated from intelligent routes',
+      basePath: '/docs',
+      ...options,
+    };
+  }
+
+  addRoutes(routes: CompiledRoute[]): void {
+    this.routes = routes;
+    logger.debug(`Added ${routes.length} routes to simple docs`, 'RouteAddition');
+  }
+
+  generateHTML(): string {
+    const routesByTag = this.groupRoutesByTag();
+    // Everything below is written as HTML text or into a quoted attribute
+    const title = escapeHtml(this.options.title);
+    const description = escapeHtml(this.options.description);
+    const basePath = escapeHtml(this.options.basePath);
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>${SIMPLE_DOCS_CSS}</style>
 </head>
 <body>
   <div class="container">
-    <h1>${this.options.title}</h1>
-    <p>${this.options.description}</p>
+    <h1>${title}</h1>
+    <p>${description}</p>
 
     <div class="example">
-      <strong>Interactive Swagger UI:</strong> <a href="${this.options.basePath}" target="_blank">${this.options.basePath}</a><br>
-      <strong>OpenAPI JSON:</strong> <a href="${this.options.basePath}/openapi.json" target="_blank">${this.options.basePath}/openapi.json</a>
+      <strong>Interactive Swagger UI:</strong> <a href="${basePath}" target="_blank">${basePath}</a><br>
+      <strong>OpenAPI JSON:</strong> <a href="${basePath}/openapi.json" target="_blank">${basePath}/openapi.json</a>
     </div>
 
     ${this.generateRouteDocumentation(routesByTag)}
@@ -171,7 +197,7 @@ export class SimpleDocsGenerator {
     let html = '';
 
     for (const [tag, routes] of routesByTag) {
-      html += `<h2>${tag.charAt(0).toUpperCase() + tag.slice(1)}</h2>`;
+      html += `<h2>${escapeHtml(tag.charAt(0).toUpperCase() + tag.slice(1))}</h2>`;
 
       for (const route of routes) {
         html += this.generateRouteSection(route.schema);
@@ -187,13 +213,13 @@ export class SimpleDocsGenerator {
     const html = `
     <div class="endpoint">
       <div>
-        <span class="method ${route.method}">${route.method}</span>
-        <span class="path">${route.path}</span>
+        <span class="method ${escapeHtml(route.method)}">${escapeHtml(route.method)}</span>
+        <span class="path">${escapeHtml(route.path)}</span>
       </div>
 
-      ${route.description ? `<div class="description">${route.description}</div>` : ''}
+      ${route.description ? `<div class="description">${escapeHtml(route.description)}</div>` : ''}
 
-      ${route.tags ? `<div class="tags">${route.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>` : ''}
+      ${route.tags ? `<div class="tags">${route.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
 
       ${this.generateValidationInfo(route)}
       ${this.generateAuthInfo(route)}
@@ -227,7 +253,7 @@ export class SimpleDocsGenerator {
 
     return `
     <div class="auth">
-      <strong>Authentication Required:</strong> ${roles}
+      <strong>Authentication Required:</strong> ${escapeHtml(roles)}
       <br><small>Requires valid authentication token</small>
     </div>`;
   }
@@ -240,7 +266,7 @@ export class SimpleDocsGenerator {
 
     return `
     <div class="rate-limit">
-      <strong>Rate Limit:</strong> ${requests} requests per ${windowSeconds} seconds
+      <strong>Rate Limit:</strong> ${escapeHtml(requests)} requests per ${escapeHtml(windowSeconds)} seconds
       <br><small>Automatic protection against abuse</small>
     </div>`;
   }
@@ -269,7 +295,7 @@ export class SimpleDocsGenerator {
     return `
     <div class="example">
       <strong>Example:</strong><br>
-      <code>${example}</code>
+      <code>${escapeHtml(example)}</code>
     </div>`;
   }
 }
@@ -286,6 +312,7 @@ export function createSimpleDocsMiddleware(
 
   return (req: any, res: any, next: () => void) => {
     if (req.path === `${basePath}/simple` || req.path === `${basePath}/simple/`) {
+      res.setHeader('Content-Security-Policy', simpleDocsContentSecurityPolicy());
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(generator.generateHTML());
       return;

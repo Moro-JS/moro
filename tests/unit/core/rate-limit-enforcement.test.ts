@@ -2,10 +2,17 @@
 // Drives RateLimitCore and the standard middleware directly with fake req/res
 // objects. Time is driven deterministically by mocking Date.now() (RateLimitCore
 // derives its monotonic clock from Date.now()), so there are no real sleeps.
+// What a request is counted under (its route, not its URL) needs the router,
+// so that part runs real apps on the Node http server and on the native engine.
 import {
   RateLimitCore,
   createRateLimitMiddleware,
 } from '../../../src/core/middleware/built-in/rate-limit/index.js';
+import { createApp, middleware } from '../../../src/index.js';
+import { resetConfig } from '../../../src/core/config/index.js';
+import { UnifiedRouter } from '../../../src/core/routing/unified-router.js';
+import { closeApp, createTestPort } from '../../setup.js';
+import { describeEngine } from '../../integration/engine-test-utils.js';
 
 describe('rate-limit enforcement', () => {
   describe('RateLimitCore.check', () => {
@@ -63,6 +70,85 @@ describe('rate-limit enforcement', () => {
         expect(core.check('c', 'GET:/x', 2, 1000)).toBe(false); // full again
       } finally {
         nowSpy.mockRestore();
+        core.clear();
+      }
+    });
+  });
+
+  describe('the counter store', () => {
+    it('keeps a counter that is refusing requests when the store fills up', () => {
+      const core = new RateLimitCore();
+      try {
+        expect(core.check('attacker', 'POST:/login', 1, 60000)).toBe(true);
+        expect(core.check('attacker', 'POST:/login', 1, 60000)).toBe(false);
+
+        // more new keys than the store holds
+        for (let i = 0; i < 100_050; i++) core.check(`client-${i}`, 'GET:/x', 5, 60000);
+
+        expect(core.check('attacker', 'POST:/login', 1, 60000)).toBe(false);
+        expect(core.size).toBeLessThanOrEqual(100_000);
+      } finally {
+        core.clear();
+      }
+    });
+
+    it('makes room by dropping the oldest counter that is not refusing requests', () => {
+      const core = new RateLimitCore({ maxEntries: 3 });
+      try {
+        core.check('exhausted', 'GET:/x', 1, 60000); // 1 of 1: refusing from here on
+        core.check('half', 'GET:/x', 2, 60000); // 1 of 2
+        core.check('other', 'GET:/x', 2, 60000);
+
+        core.check('new', 'GET:/x', 2, 60000); // store is full: 'half' makes room
+        expect(core.size).toBe(3);
+        expect(core.check('exhausted', 'GET:/x', 1, 60000)).toBe(false);
+
+        // 'half' starts over: two more requests fit, where one would have
+        expect(core.check('half', 'GET:/x', 2, 60000)).toBe(true);
+        expect(core.check('half', 'GET:/x', 2, 60000)).toBe(true);
+        expect(core.check('half', 'GET:/x', 2, 60000)).toBe(false);
+      } finally {
+        core.clear();
+      }
+    });
+
+    it('drops an expired counter before a live one', () => {
+      const core = new RateLimitCore({ maxEntries: 2 });
+      let fakeNow = Date.now();
+      const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+      try {
+        core.check('live', 'GET:/x', 3, 60000);
+        core.check('short', 'GET:/x', 1, 1000); // exhausted, but only for a second
+        fakeNow += 1500;
+
+        core.check('new', 'GET:/x', 3, 60000);
+        expect(core.size).toBe(2);
+        // 'live' kept its count: two more fit, not three
+        expect(core.check('live', 'GET:/x', 3, 60000)).toBe(true);
+        expect(core.check('live', 'GET:/x', 3, 60000)).toBe(true);
+        expect(core.check('live', 'GET:/x', 3, 60000)).toBe(false);
+      } finally {
+        nowSpy.mockRestore();
+        core.clear();
+      }
+    });
+
+    it('lets a new key through uncounted when every counter is refusing requests', () => {
+      const core = new RateLimitCore({ maxEntries: 2 });
+      try {
+        for (const client of ['a', 'b']) {
+          core.check(client, 'POST:/login', 1, 60000);
+          expect(core.check(client, 'POST:/login', 1, 60000)).toBe(false);
+        }
+
+        // not refused (that would shut every new client out), and not stored
+        expect(core.check('c', 'POST:/login', 1, 60000)).toBe(true);
+        expect(core.check('c', 'POST:/login', 1, 60000)).toBe(true);
+        expect(core.size).toBe(2);
+        // the limits already in force stay in force
+        expect(core.check('a', 'POST:/login', 1, 60000)).toBe(false);
+        expect(core.check('b', 'POST:/login', 1, 60000)).toBe(false);
+      } finally {
         core.clear();
       }
     });
@@ -193,6 +279,31 @@ describe('rate-limit enforcement', () => {
       expect(blocked.statusCode).toBe(429);
     });
 
+    it('counts per keyGenerator result when one is given', async () => {
+      const mw = createRateLimitMiddleware({
+        requests: 1,
+        window: 60000,
+        keyGenerator: req => req.headers?.['x-api-key'] as string | undefined,
+      });
+      const send = async (ip: string, apiKey?: string) => {
+        const req = makeReq(ip, 'GET', '/mw-keyed');
+        req.headers = apiKey ? { 'x-api-key': apiKey } : {};
+        const res = makeRes();
+        await mw(req, res, (async () => {}) as () => Promise<void>);
+        return res.statusCode === 429 ? 429 : 200;
+      };
+
+      // one account behind two addresses shares a counter
+      expect(await send('10.0.0.1', 'key-A')).toBe(200);
+      expect(await send('10.0.0.2', 'key-A')).toBe(429);
+      // two accounts behind one address do not
+      expect(await send('10.0.0.1', 'key-B')).toBe(200);
+      // no key: the client address is used
+      expect(await send('10.0.0.3')).toBe(200);
+      expect(await send('10.0.0.3')).toBe(429);
+      expect(await send('10.0.0.4')).toBe(200);
+    });
+
     it('is a passthrough (always calls next) when misconfigured', async () => {
       const mw = createRateLimitMiddleware({} as any);
       let nextCalled = false;
@@ -205,3 +316,137 @@ describe('rate-limit enforcement', () => {
     });
   });
 });
+
+function countedPerRoute(engine: 'node' | 'moro') {
+  let app: any;
+  let base = '';
+  let handled = 0;
+  // Route-level counters are shared by every app in the process, so each
+  // backend gets routes of its own.
+  const at = `/${engine}`;
+
+  afterEach(async () => {
+    resetConfig();
+    if (app) {
+      await closeApp(app);
+      app = null;
+    }
+  });
+
+  const boot = async (setup: (app: any) => void | Promise<void>) => {
+    handled = 0;
+    resetConfig();
+    app = await createApp({ logger: { level: 'fatal' }, server: { engine } });
+    await setup(app);
+    const port = createTestPort();
+    await new Promise<void>(resolve => app.listen(port, () => resolve()));
+    expect(app.engine?.server).toBe(engine === 'node' ? 'node' : 'engine');
+    base = `http://127.0.0.1:${port}`;
+  };
+
+  const statuses = async (paths: string[], init?: Parameters<typeof fetch>[1]) => {
+    const seen: number[] = [];
+    for (const path of paths) seen.push((await fetch(`${base}${path}`, init)).status);
+    return seen;
+  };
+
+  it('holds every value of a path parameter to one route-level limit', async () => {
+    await boot(a => {
+      a.get(`${at}/otp/:code`)
+        .rateLimit({ requests: 3, window: 60000 })
+        .handler((req: any) => {
+          handled++;
+          return { code: req.params.code };
+        });
+    });
+
+    expect(
+      await statuses(['1', '2?try=a', '3', '4', '5?try=b', '6'].map(code => `${at}/otp/${code}`))
+    ).toEqual([200, 200, 200, 429, 429, 429]);
+    expect(handled).toBe(3);
+  });
+
+  it('names a route-level counter from the route itself, without a second lookup', async () => {
+    await boot(a => {
+      a.get(`${at}/own/:id`)
+        .rateLimit({ requests: 2, window: 60000 })
+        .handler((req: any) => ({ id: req.params.id }));
+      a.get(`${at}/own-static`)
+        .rateLimit({ requests: 1, window: 60000 })
+        .handler(() => ({ ok: true }));
+    });
+
+    const lookups = jest.spyOn(UnifiedRouter.prototype, 'matchRoute');
+    try {
+      expect(await statuses(['/own/1', '/own/2', '/own/3'].map(p => at + p))).toEqual([
+        200, 200, 429,
+      ]);
+      expect(await statuses(['/own-static', '/own-static?again=1'].map(p => at + p))).toEqual([
+        200, 429,
+      ]);
+      // The route that is running knows its own pattern
+      expect(lookups).not.toHaveBeenCalled();
+    } finally {
+      lookups.mockRestore();
+    }
+  });
+
+  it('keeps routes that share one limit object apart', async () => {
+    const limit = { requests: 1, window: 60000 };
+    await boot(a => {
+      a.get(`${at}/a/:id`)
+        .rateLimit(limit)
+        .handler(() => ({ route: 'a' }));
+      a.get(`${at}/b/:id`)
+        .rateLimit(limit)
+        .handler(() => ({ route: 'b' }));
+    });
+
+    expect(await statuses(['/a/1', '/b/1', '/a/2', '/b/2'].map(p => at + p))).toEqual([
+      200, 200, 429, 429,
+    ]);
+  });
+
+  it('holds every value of a path parameter to one global limit', async () => {
+    await boot(async a => {
+      await a.use(middleware.rateLimit({ requests: 3, window: 60000 }));
+      a.get('/items/:id', (req: any) => {
+        handled++;
+        return { id: req.params.id };
+      });
+      a.get('/health', () => ({ ok: true }));
+    });
+
+    expect(
+      await statuses(['/items/1', '/items/2?x=1', '/items/3', '/items/4', '/items/5?x=2'])
+    ).toEqual([200, 200, 200, 429, 429]);
+    expect(handled).toBe(3);
+    // another route has a counter of its own, as before
+    expect(await statuses(['/health'])).toEqual([200]);
+    // and a request that matches no route is counted under its path
+    expect(
+      await statuses(['/missing', '/missing?a=1', '/missing?a=2', '/missing?a=3', '/elsewhere'])
+    ).toEqual([404, 404, 404, 429, 404]);
+  });
+
+  it('counts per keyGenerator result on the global limiter', async () => {
+    await boot(async a => {
+      await a.use(
+        middleware.rateLimit({
+          requests: 1,
+          window: 60000,
+          keyGenerator: (req: any) => req.headers['x-api-key'],
+        })
+      );
+      a.get('/data', () => ({ ok: true }));
+    });
+
+    const as = (key: string) => statuses(['/data'], { headers: { 'x-api-key': key } });
+    expect(await as('key-A')).toEqual([200]);
+    expect(await as('key-B')).toEqual([200]);
+    expect(await as('key-A')).toEqual([429]);
+  });
+}
+
+describe('rate limit: counted per route (Node http server)', () => countedPerRoute('node'));
+describeEngine('rate limit: counted per route (native engine)', () => countedPerRoute('moro'));

@@ -11,6 +11,9 @@ function fakeRes() {
   const calls: any[] = [];
   return {
     calls,
+    setHeader(name: string, value: any) {
+      calls.push(['setHeader', name, value]);
+    },
     end(body?: any) {
       calls.push(['end', body]);
     },
@@ -45,7 +48,15 @@ describe('param(name) handlers', () => {
     });
     const res = fakeRes();
     schema.handler({ params: { id: '42' } }, res);
-    expect(res.calls).toEqual([['end', '42']]);
+    expect(res.calls).toEqual([
+      ['setHeader', 'Content-Type', 'text/plain; charset=utf-8'],
+      ['end', '42'],
+    ]);
+
+    // Nothing to reflect: an empty reply, with no content type to describe it
+    const empty = fakeRes();
+    schema.handler({ params: {} }, empty);
+    expect(empty.calls).toEqual([['end', undefined]]);
   });
 
   it('keeps the segments after the parameter as the suffix', () => {
@@ -83,7 +94,33 @@ describe('param(name) handlers', () => {
     }
     const res = fakeRes();
     findRoute('GET', '/pe-two/:a/:b').handler({ params: { a: 'x', b: 'y' } }, res);
-    expect(res.calls).toEqual([['end', 'x']]);
+    expect(res.calls).toEqual([
+      ['setHeader', 'Content-Type', 'text/plain; charset=utf-8'],
+      ['end', 'x'],
+    ]);
+  });
+
+  it('answers with an optional parameter or a named wildcard, in JavaScript', () => {
+    createRoute('GET', '/pe-opt/:id?').handler(param('id'));
+    createRoute('GET', '/pe-rest/*path').handler(param('path'));
+
+    for (const path of ['/pe-opt/:id?', '/pe-rest/*path']) {
+      expect(findRoute('GET', path).paramEcho).toBeUndefined();
+    }
+    const given = fakeRes();
+    findRoute('GET', '/pe-opt/:id?').handler({ params: { id: '42' } }, given);
+    expect(given.calls).toEqual([
+      ['setHeader', 'Content-Type', 'text/plain; charset=utf-8'],
+      ['end', '42'],
+    ]);
+    // The path left the parameter out: an empty reply
+    const leftOut = fakeRes();
+    findRoute('GET', '/pe-opt/:id?').handler({ params: {} }, leftOut);
+    expect(leftOut.calls).toEqual([['end', undefined]]);
+
+    const rest = fakeRes();
+    findRoute('GET', '/pe-rest/*path').handler({ params: { path: 'a/b.txt' } }, rest);
+    expect(rest.calls[1]).toEqual(['end', 'a/b.txt']);
   });
 
   it('rejects a parameter that is only part of a segment', () => {

@@ -1,7 +1,7 @@
 // Resend Adapter - Modern Email API
 // ESM-first module with lazy loading
 
-import { BaseMailAdapter } from '../mail-adapter.js';
+import { BaseMailAdapter, displayNameNeedsQuoting, quoteDisplayName } from '../mail-adapter.js';
 import type { MailOptions, MailResult, ResendConnection } from '../types.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 import { createFrameworkLogger } from '../../logger/index.js';
@@ -66,8 +66,9 @@ export class ResendAdapter extends BaseMailAdapter {
         emailData.bcc = this.formatAddressesArray(options.bcc);
       }
 
+      // The SDK reads `replyTo` and sends it to the API as `reply_to`
       if (options.replyTo) {
-        emailData.reply_to = this.formatAddress(options.replyTo);
+        emailData.replyTo = this.formatAddress(options.replyTo);
       }
 
       if (options.attachments) {
@@ -122,11 +123,23 @@ export class ResendAdapter extends BaseMailAdapter {
         emailData.scheduledAt = options.scheduledAt.toISOString();
       }
 
+      // The SDK does not throw when the API rejects a send: it resolves
+      // `{ data: null, error }`, and `{ data: { id }, error: null }` on success.
       const response = await this.client.emails.send(emailData);
+
+      if (response?.error) {
+        this.logger.error('Resend rejected the email', 'Mail', { error: response.error });
+
+        return {
+          success: false,
+          error: this.describeError(response.error),
+          response: JSON.stringify(response),
+        };
+      }
 
       return {
         success: true,
-        messageId: response.id,
+        messageId: response?.data?.id ?? response?.id,
         response: JSON.stringify(response),
       };
     } catch (error: any) {
@@ -155,12 +168,28 @@ export class ResendAdapter extends BaseMailAdapter {
         html: opts.html,
       }));
 
+      // Resolves `{ data: { data: [{ id }, …] }, error: null }` when the batch
+      // is accepted, one id per email in the order given, and
+      // `{ data: null, error }` when it is rejected (nothing was sent).
       const response = await this.client.batch.send(emails);
 
-      return response.data.map((res: any) => ({
+      if (response?.error) {
+        this.logger.error('Resend rejected the batch', 'Mail', { error: response.error });
+
+        const error = this.describeError(response.error);
+        return options.map(() => ({ success: false, error }));
+      }
+
+      const accepted: any[] = Array.isArray(response?.data?.data)
+        ? response.data.data
+        : Array.isArray(response?.data)
+          ? response.data
+          : [];
+
+      return options.map((_, index) => ({
         success: true,
-        messageId: res.id,
-        response: JSON.stringify(res),
+        messageId: accepted[index]?.id,
+        response: JSON.stringify(accepted[index] ?? null),
       }));
     } catch (error: any) {
       this.logger.error('Failed to send bulk emails via Resend', 'Mail', { error });
@@ -189,11 +218,21 @@ export class ResendAdapter extends BaseMailAdapter {
       return address;
     }
 
+    // Resend takes an address only as a string. A name with characters that
+    // would end it early (a quote, a comma, angle brackets, …) is sent as a
+    // quoted-string; any other name is sent as written.
     if (address.name) {
-      return `${address.name} <${address.email}>`;
+      const name = displayNameNeedsQuoting(address.name)
+        ? quoteDisplayName(address.name)
+        : address.name;
+      return `${name} <${address.email}>`;
     }
 
     return address.email;
+  }
+
+  private describeError(error: any): string {
+    return error?.message || error?.name || String(error);
   }
 
   private formatAddressesArray(addresses: any): string[] {

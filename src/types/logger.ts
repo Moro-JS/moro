@@ -32,6 +32,26 @@ export interface LoggerOptions {
   filters?: LogFilter[];
   maxEntries?: number;
   maxBufferSize?: number;
+  /**
+   * Mask the values of sensitive metadata keys (`password`, `token`, `secret`,
+   * `authorization`, `cookie`, `apiKey`, ...) with `[REDACTED]`, at any depth,
+   * before the entry reaches filters and outputs.
+   *
+   * Default: on whenever the console output prints metadata, that is with
+   * `format: 'json'` and with `format: 'pretty'` plus `enableMetadata: true`;
+   * off otherwise. `true` turns it on for every format (useful with a custom
+   * output), `false` logs metadata as it was passed, and an array turns it on
+   * and adds those exact key names to the built-in list.
+   */
+  redact?: boolean | string[];
+  /**
+   * In the `pretty` and `compact` formats, write control characters found in
+   * a message or context (CR, LF, ESC and the other C0 / C1 controls) as
+   * visible escapes such as `\n` and `\x1b`, so a logged value cannot start a
+   * new log line or send a terminal sequence. Stack frames keep their own
+   * lines. Default `true`; `false` writes messages exactly as passed.
+   */
+  escapeControlChars?: boolean;
 }
 
 export interface LogOutput {

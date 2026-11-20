@@ -93,7 +93,16 @@ export function grpcValidateHandler<TRequest = any, TResponse = any>(
         request: options.request,
         ...(options.stripUnknown !== undefined ? { stripUnknown: options.stripUnknown } : {}),
       });
-      await validator(call, callback);
+
+      // The validator rejects an invalid request by answering through the
+      // callback. Once it has, the call is over: the handler must not run.
+      let rejected = false;
+      const validationCallback: GrpcCallback<TResponse> = (error, response) => {
+        rejected = true;
+        callback(error, response);
+      };
+      await validator(call, validationCallback);
+      if (rejected) return;
     }
 
     // Wrap callback to validate response

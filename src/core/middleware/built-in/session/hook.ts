@@ -43,6 +43,9 @@ export const session = (options: SessionOptions = {}): MiddlewareInterface => ({
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
+      // Answered by a hook that ran before this one: the request is given no
+      // session (nothing is read from the store, no cookie is set)
+      if (res.headersSent) return;
 
       // Get session ID from cookie, verifying its signature when one is used
       const sessionId = sessionCore.readSessionId(req);

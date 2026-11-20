@@ -41,17 +41,58 @@ export interface HttpRequest extends IncomingMessage {
 }
 
 export interface CookieOptions {
-  maxAge?: number;
+  /**
+   * Lifetime in milliseconds, as in Express (24 hours is `24 * 60 * 60 * 1000`).
+   * Sent as whole seconds of `Max-Age`; `null` sends no `Max-Age`.
+   */
+  maxAge?: number | null;
   expires?: Date;
   httpOnly?: boolean;
+  /**
+   * Whether the cookie is `Secure`. Left out, it follows the connection: the
+   * cookie is `Secure` when the request arrived over TLS (a TLS connection to
+   * this server, or https as reported by a proxy named in `server.trustProxy`),
+   * and is not when it arrived over plain http.
+   */
   secure?: boolean;
   sameSite?: 'strict' | 'lax' | 'none';
   domain?: string;
   path?: string;
   // Security options
-  signed?: boolean; // Sign the value; needs a cookie middleware secret
+  signed?: boolean; // Sign the value; throws unless the cookie middleware has a secret
   critical?: boolean; // Mark as critical for security (throws on late set)
   throwOnLateSet?: boolean; // Force throw if headers already sent
+}
+
+/** Options of `res.sendFile()` and `res.download()`. */
+export interface SendFileOptions {
+  /**
+   * Cache lifetime in seconds (the unit `staticFiles` uses): sends
+   * `Cache-Control: public, max-age=<maxAge>`. Left unset, the helpers send
+   * no `Cache-Control` of their own.
+   */
+  maxAge?: number;
+  /** Adds `immutable` to the `Cache-Control` that `maxAge` produces. */
+  immutable?: boolean;
+  /**
+   * A string is sent as the `Cache-Control` value as it is (for example
+   * `'private, max-age=600'`). `true` sends `public, max-age=<maxAge or 0>`;
+   * `false` sends none, whatever `maxAge` says.
+   */
+  cacheControl?: boolean | string;
+  /**
+   * Directory the path is resolved against and confined to: a path that
+   * leads outside it (`../`, an absolute path, a symlink) is answered 404.
+   */
+  root?: string;
+  /**
+   * What to do with a path that has a segment starting with a dot below
+   * `root` (or, without a `root`, a file whose own name starts with one):
+   * `'ignore'` answers 404, `'deny'` 403, `'allow'` serves it. `.well-known`
+   * is never treated as hidden. Default: `'ignore'` when `root` is set,
+   * `'allow'` otherwise.
+   */
+  dotfiles?: 'allow' | 'deny' | 'ignore';
 }
 
 export interface ResponseState {
@@ -69,7 +110,12 @@ export interface MoroResponseMethods {
   cookie(name: string, value: string, options?: CookieOptions): HttpResponse;
   clearCookie(name: string, options?: CookieOptions): HttpResponse;
   redirect(url: string, status?: number): void;
-  sendFile(filePath: string): Promise<void>;
+  /**
+   * Send a file. No `Cache-Control` is sent unless `options` asks for one
+   * (`maxAge` in seconds, `immutable`, `cacheControl`); `root` confines the
+   * path to a directory. Never rejects: a missing file is answered 404.
+   */
+  sendFile(filePath: string, options?: SendFileOptions): Promise<void>;
   render?(template: string, data?: any): Promise<void>;
   /**
    * Send a file, honouring `Range` and `If-Range`. Installed on the response
@@ -81,8 +127,46 @@ export interface MoroResponseMethods {
    */
   sendRange(
     filePath: string,
-    statsOrOptions?: { isFile(): boolean } | { root?: string }
+    statsOrOptions?:
+      { isFile(): boolean } | { root?: string; dotfiles?: 'allow' | 'deny' | 'ignore' }
   ): Promise<void>;
+
+  /**
+   * HTTP/2 only (absent on the other servers). `push()` starts a server push
+   * for `path` and returns the push stream, or `null` when the client has
+   * push disabled or the response has already started. `setPriority()` sets
+   * the stream's priority.
+   */
+  push?(
+    path: string,
+    options?: { headers?: Record<string, string | number | string[]>; priority?: number }
+  ): any;
+  setPriority?(options?: { parent?: number; weight?: number; exclusive?: boolean }): HttpResponse;
+
+  /**
+   * Server-Sent Events helpers, installed on the response by
+   * `middleware.sse()` (absent without it). `sse()` opens the event stream
+   * (status 200, `Content-Type: text/event-stream`) and returns its
+   * connection; the three senders open it on first use. Nothing is sent
+   * until the handler calls one of them.
+   */
+  sse?(): {
+    sendEvent(data: any, event?: string, id?: string): void;
+    sendComment(comment: string): void;
+    sendRetry(ms: number): void;
+    close(): void;
+  };
+  sendEvent?(data: any, event?: string, id?: string): void;
+  sendComment?(comment: string): void;
+  sendRetry?(ms: number): void;
+
+  /**
+   * CDN helpers, installed on the response by `middleware.cdn()` (absent
+   * without it). `purgeCDN()` with no argument purges the current path.
+   */
+  purgeCDN?(urls?: string[]): Promise<void>;
+  prefetchCDN?(urls: string[]): Promise<void>;
+  getCDNStats?(): Promise<any>;
 
   // Per-response typed state bag (Express-compatible res.locals)
   locals: Record<string, any>;
@@ -100,7 +184,16 @@ export interface MoroResponseMethods {
   vary(field: string | string[]): HttpResponse;
   links(links: Record<string, string>): HttpResponse;
   attachment(filename?: string): HttpResponse;
-  download(filePath: string, filename?: string): Promise<void>;
+  /**
+   * `attachment()` then `sendFile()`: the display name goes into
+   * `Content-Disposition`, the `Content-Type` comes from the file itself.
+   * `options` are `sendFile()`'s, as the second or the third argument.
+   */
+  download(
+    filePath: string,
+    filename?: string | SendFileOptions,
+    options?: SendFileOptions
+  ): Promise<void>;
   format(handlers: Record<string, () => any | Promise<any>>): void;
 
   // Header management utilities
@@ -145,12 +238,12 @@ export type HttpHandler = (req: HttpRequest, res: HttpResponse) => Promise<void>
 export type Middleware = (
   req: HttpRequest,
   res: HttpResponse,
-  next: () => void
+  next: (err?: unknown) => void
 ) => Promise<void> | void;
 export type MiddlewareFunction = (
   req: HttpRequest,
   res: HttpResponse,
-  next: () => void
+  next: (err?: unknown) => void
 ) => void | Promise<void>;
 
 // Internal router types

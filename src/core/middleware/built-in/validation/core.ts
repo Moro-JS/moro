@@ -6,7 +6,7 @@ import {
   normalizeValidationError,
 } from '../../../validation/schema-interface.js';
 import { handleValidationError, normalizeErrors } from '../../../validation/error-handler.js';
-import { getGlobalConfig } from '../../../config/index.js';
+import { configForRequest } from '../../../config/config-manager.js';
 import type { ValidationErrorHandler } from '../../../../types/config.js';
 
 const logger = createFrameworkLogger('ValidationCore');
@@ -76,58 +76,42 @@ export class ValidationCore {
     try {
       // Order by likelihood and cost: params > query > body > headers
       // Params are fastest (already parsed, small) and most common in REST APIs
+      // A declared schema always runs, on an empty object too: that is where a
+      // required field is missing.
       if (config.params !== undefined && req.params !== undefined) {
-        // Skip empty params objects for better performance
-        let hasParams = false;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const key in req.params) {
-          hasParams = true;
-          break;
-        }
-        if (hasParams) {
-          let result = runSchema(config.params, req.params);
-          if (typeof (result as any).then === 'function') result = await result;
-          if ((result as SchemaRunResult).success) {
-            (req as any).validatedParams = (result as SchemaRunResult).data;
-            req.params = (req as any).validatedParams;
-          } else {
-            this.handleValidationError(
-              (result as SchemaRunResult).error,
-              'params',
-              req,
-              res,
-              config.onValidationError
-            );
-            return false;
-          }
+        let result = runSchema(config.params, req.params);
+        if (typeof (result as any).then === 'function') result = await result;
+        if ((result as SchemaRunResult).success) {
+          (req as any).validatedParams = (result as SchemaRunResult).data;
+          req.params = (req as any).validatedParams;
+        } else {
+          this.handleValidationError(
+            (result as SchemaRunResult).error,
+            'params',
+            req,
+            res,
+            config.onValidationError
+          );
+          return false;
         }
       }
 
       // Query is second (common on GET requests, already parsed)
       if (config.query !== undefined && req.query !== undefined) {
-        // Skip empty query objects for better performance
-        let hasQuery = false;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for (const key in req.query) {
-          hasQuery = true;
-          break;
-        }
-        if (hasQuery) {
-          let result = runSchema(config.query, req.query);
-          if (typeof (result as any).then === 'function') result = await result;
-          if ((result as SchemaRunResult).success) {
-            (req as any).validatedQuery = (result as SchemaRunResult).data;
-            req.query = (req as any).validatedQuery;
-          } else {
-            this.handleValidationError(
-              (result as SchemaRunResult).error,
-              'query',
-              req,
-              res,
-              config.onValidationError
-            );
-            return false;
-          }
+        let result = runSchema(config.query, req.query);
+        if (typeof (result as any).then === 'function') result = await result;
+        if ((result as SchemaRunResult).success) {
+          (req as any).validatedQuery = (result as SchemaRunResult).data;
+          req.query = (req as any).validatedQuery;
+        } else {
+          this.handleValidationError(
+            (result as SchemaRunResult).error,
+            'query',
+            req,
+            res,
+            config.onValidationError
+          );
+          return false;
         }
       }
 
@@ -197,14 +181,11 @@ export class ValidationCore {
       return;
     }
 
-    // Resolve the global handler on the error path only - the success path
+    // Resolve the app's handler (modules.validation.onError of the app that
+    // is handling this request) on the error path only - the success path
     // (the overwhelming majority of requests) never touches config
-    let globalHandler: ValidationErrorHandler | undefined;
-    try {
-      globalHandler = getGlobalConfig().modules.validation.onError;
-    } catch {
-      globalHandler = undefined;
-    }
+    const globalHandler: ValidationErrorHandler | undefined =
+      configForRequest(req)?.modules?.validation?.onError;
 
     const normalizedError = normalizeValidationError(error);
     const errors = normalizeErrors(normalizedError.issues, field);

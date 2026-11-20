@@ -275,6 +275,146 @@ describe('MemoryAdapter', () => {
     });
   });
 
+  describe('Retention of finished jobs', () => {
+    const wait = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+    const ids = (jobs: Job[]) => jobs.map(job => (job.data as { n: number }).n);
+
+    /** Add `count` jobs numbered from `from`; odd-numbered data fails when `failOdd`. */
+    async function run(
+      target: MemoryAdapter,
+      queue: string,
+      count: number,
+      options: Record<string, unknown> = {},
+      from = 0
+    ) {
+      for (let n = from; n < from + count; n++) await target.addJob(queue, { n }, options);
+      await wait();
+    }
+
+    test('keeps the last 1000 completed and the last 5000 failed jobs by default', async () => {
+      await adapter.process('done', 10000, async () => 'ok');
+      await adapter.process('broken', 10000, async () => {
+        throw new Error('boom');
+      });
+
+      await run(adapter, 'done', 1100);
+      await run(adapter, 'broken', 5100);
+
+      const completed = await adapter.getJobs('done', 'completed');
+      expect(completed).toHaveLength(1000);
+      expect(ids(completed)[0]).toBe(100);
+      expect(ids(completed)[999]).toBe(1099);
+      expect(await adapter.getJobs('done')).toHaveLength(1000);
+
+      const failed = await adapter.getJobs('broken', 'failed');
+      expect(failed).toHaveLength(5000);
+      expect(ids(failed)[0]).toBe(100);
+      expect(await adapter.getJobs('broken')).toHaveLength(5000);
+    });
+
+    test('keeps the configured number of each, per queue', async () => {
+      const bounded = new MemoryAdapter({ completed: 3, failed: 2 });
+      await bounded.initialize();
+      try {
+        for (const queue of ['a', 'b']) {
+          await bounded.process(queue, 100, async (job: JobContext) => {
+            if ((job.data as { n: number }).n % 2 === 1) throw new Error('odd');
+          });
+        }
+        await run(bounded, 'a', 20);
+        await run(bounded, 'b', 4);
+
+        expect(ids(await bounded.getJobs('a', 'completed'))).toEqual([14, 16, 18]);
+        expect(ids(await bounded.getJobs('a', 'failed'))).toEqual([17, 19]);
+        expect(ids(await bounded.getJobs('b', 'completed'))).toEqual([0, 2]);
+        expect(ids(await bounded.getJobs('b', 'failed'))).toEqual([1, 3]);
+      } finally {
+        await bounded.close();
+      }
+    });
+
+    test('never drops a job that has not finished', async () => {
+      const bounded = new MemoryAdapter({ completed: 1, failed: 1 });
+      await bounded.initialize();
+      try {
+        // No processor yet: every job waits
+        await run(bounded, 'q', 5);
+        expect(await bounded.getJobs('q', 'waiting')).toHaveLength(5);
+
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => (release = resolve));
+        await bounded.process('q', 100, async (job: JobContext) => {
+          if ((job.data as { n: number }).n === 0) await gate;
+        });
+        await wait(250);
+
+        // Job 0 is still running while four others finished after it started
+        expect(ids(await bounded.getJobs('q', 'active'))).toEqual([0]);
+        expect(await bounded.getJobs('q', 'completed')).toHaveLength(1);
+        release();
+        await wait();
+        expect(ids(await bounded.getJobs('q', 'completed'))).toEqual([0]);
+      } finally {
+        await bounded.close();
+      }
+    });
+
+    test('leaves a job with its own removeOnComplete / removeOnFail to that setting', async () => {
+      const bounded = new MemoryAdapter({ completed: 2, failed: 2 });
+      await bounded.initialize();
+      try {
+        await bounded.process('q', 100, async (job: JobContext) => {
+          if ((job.data as { n: number }).n >= 100) throw new Error('boom');
+        });
+
+        // false: kept, and not counted against the limit
+        await run(bounded, 'q', 5, { removeOnComplete: false });
+        await run(bounded, 'q', 5, { removeOnFail: false }, 100);
+        await run(bounded, 'q', 3, {}, 10);
+        expect(ids(await bounded.getJobs('q', 'completed'))).toEqual([0, 1, 2, 3, 4, 11, 12]);
+        expect(await bounded.getJobs('q', 'failed')).toHaveLength(5);
+
+        // true: removed as soon as it finishes
+        await run(bounded, 'q', 2, { removeOnComplete: true }, 20);
+        expect(ids(await bounded.getJobs('q', 'completed'))).toEqual([0, 1, 2, 3, 4, 11, 12]);
+      } finally {
+        await bounded.close();
+      }
+    });
+
+    test('counts a retried job where it ends up, and a reused id as a new job', async () => {
+      const bounded = new MemoryAdapter({ completed: 2, failed: 2 });
+      await bounded.initialize();
+      try {
+        let failing = true;
+        await bounded.process('q', 100, async () => {
+          if (failing) throw new Error('boom');
+        });
+
+        await bounded.addJob('q', { n: 1 }, { jobId: 'one' });
+        await wait();
+        expect(ids(await bounded.getJobs('q', 'failed'))).toEqual([1]);
+
+        failing = false;
+        await bounded.retryJob('q', 'one');
+        await wait();
+        expect(ids(await bounded.getJobs('q', 'failed'))).toEqual([]);
+        expect(ids(await bounded.getJobs('q', 'completed'))).toEqual([1]);
+
+        // The id of a finished job, given to a new job that is still waiting
+        // when older records are dropped
+        await bounded.pauseQueue('q');
+        await bounded.addJob('q', { n: 2 }, { jobId: 'one' });
+        await bounded.resumeQueue('q');
+        await run(bounded, 'q', 3, {}, 10);
+        await wait(200);
+        expect(ids(await bounded.getJobs('q')).sort((x, y) => x - y)).toEqual([2, 12]);
+      } finally {
+        await bounded.close();
+      }
+    });
+  });
+
   describe('Delayed Jobs', () => {
     test('should process delayed job after delay', async () => {
       const processedData: any[] = [];

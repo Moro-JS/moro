@@ -6,9 +6,13 @@
 // docs page) must not be 404'd while compression is still gzipping in the background.
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import request from 'supertest';
+import * as http from 'http';
+import * as zlib from 'zlib';
 import { createApp } from '../../src/index.js';
 import { compression } from '../../src/core/middleware/built-in/compression/index.js';
+import { resetConfig } from '../../src/core/config/index.js';
 import { createTestPort, delay, closeApp } from '../setup.js';
+import { describeEngine } from './engine-test-utils.js';
 
 describe('compression middleware', () => {
   let app: any;
@@ -185,5 +189,121 @@ describe('compression middleware', () => {
       .expect(200);
     expect(res.headers['content-encoding']).toBe('gzip');
     expect(res.text).toContain('<html><body>');
+  });
+});
+
+// A handler that sends a body it has already encoded (and says so with
+// Content-Encoding) must have it delivered as is: encoding it a second time
+// would leave the client unable to decode it. Same outcome on both servers.
+function alreadyEncodedSuite(engine: 'node' | 'moro') {
+  let app: any;
+
+  afterEach(async () => {
+    resetConfig();
+    if (app) {
+      await closeApp(app);
+      app = null;
+    }
+  });
+
+  it('does not compress a body that already carries a Content-Encoding', async () => {
+    const original = JSON.stringify({ items: Array.from({ length: 300 }, (_, i) => ({ id: i })) });
+    const precompressed = zlib.gzipSync(original);
+
+    // Configuration is cached per process: start from a clean one, or the
+    // server asked for here is not the one that boots
+    resetConfig();
+    app = await createApp({
+      logger: { level: 'fatal' },
+      server: { engine },
+      performance: { compression: { enabled: false } },
+    } as any);
+    await app.use(compression({ threshold: 100 }));
+    app.get('/precompressed', (_req: any, res: any) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Encoding', 'gzip');
+      res.send(precompressed);
+    });
+    app.get('/plain', () => ({ text: 'x'.repeat(5000) }));
+    const port = createTestPort();
+    await new Promise<void>(resolve => app.listen(port, () => resolve()));
+    expect(app.engine?.server).toBe(engine === 'node' ? 'node' : 'engine');
+
+    // Raw requests: the bytes on the wire, not what a client decodes them to
+    const get = (path: string) =>
+      new Promise<{ headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+        http
+          .get(
+            { host: '127.0.0.1', port, path, headers: { 'accept-encoding': 'br, gzip' } },
+            res => {
+              const chunks: Buffer[] = [];
+              res.on('data', chunk => chunks.push(chunk));
+              res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+            }
+          )
+          .on('error', reject);
+      });
+
+    const raw = await get('/precompressed');
+    expect(raw.headers['content-encoding']).toBe('gzip');
+    expect(raw.body.equals(precompressed)).toBe(true);
+    expect(zlib.gunzipSync(raw.body).toString()).toBe(original);
+
+    // and the middleware is active: a body without an encoding is compressed
+    expect((await get('/plain')).headers['content-encoding']).toBe('br');
+  });
+}
+
+describe('compression of an already encoded body (Node http server)', () =>
+  alreadyEncodedSuite('node'));
+describeEngine('compression of an already encoded body (native engine)', () =>
+  alreadyEncodedSuite('moro')
+);
+
+describe('compression and a 204 answered through res.json() (Node http server)', () => {
+  let app: any;
+
+  afterEach(async () => {
+    await closeApp(app);
+    resetConfig();
+    await delay(100);
+  });
+
+  it('declares no Content-Length', async () => {
+    resetConfig();
+    app = await createApp({
+      logger: { level: 'error' },
+      server: { engine: 'node' },
+      performance: { compression: { enabled: true } },
+    } as any);
+    app.delete('/item', (_req: any, res: any) => {
+      res.status(204).json({ gone: true });
+    });
+    const port = createTestPort();
+    await new Promise<void>(resolve => app.listen(port, () => resolve()));
+    await delay(100);
+
+    const seen = await new Promise<{ status: number; length: string | undefined }>(
+      (resolve, reject) => {
+        const req = http.request(
+          {
+            port,
+            path: '/item',
+            method: 'DELETE',
+            headers: { 'Accept-Encoding': 'gzip' },
+          },
+          res => {
+            res.resume();
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, length: res.headers['content-length'] })
+            );
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      }
+    );
+    expect(seen.status).toBe(204);
+    expect(seen.length).toBeUndefined();
   });
 });

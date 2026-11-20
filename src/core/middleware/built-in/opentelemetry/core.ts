@@ -12,6 +12,7 @@ import type { Attributes, Context, Histogram, Span, UpDownCounter } from '@opent
 import { resolveUserPackage } from '../../../utilities/package-utils.js';
 import { selfRequire } from '../../../utilities/self-require.js';
 import { UnifiedRouter } from '../../../routing/unified-router.js';
+import { createQueryRedactor } from '../../../logger/query-redaction.js';
 import type { HttpRequest, HttpResponse } from '../../../../types/http.js';
 
 /** The @opentelemetry/api module, loaded from the application's node_modules. */
@@ -46,6 +47,18 @@ export interface OpenTelemetryOptions {
   captureRequestHeaders?: string[];
   /** Response headers captured as http.response.header.<name> span attributes */
   captureResponseHeaders?: string[];
+  /**
+   * Query parameters whose values are replaced with `REDACTED` in the
+   * `url.query` span attribute, matched case-insensitively. Query strings carry
+   * credentials - OAuth codes, signed-URL signatures, API keys - and a trace
+   * backend keeps them. The default list is `token`, `access_token`,
+   * `refresh_token`, `id_token`, `code`, `key`, `api_key`, `apikey`,
+   * `password`, `secret`, `client_secret`, `signature`, `sig`,
+   * `AWSAccessKeyId`, `X-Amz-Signature`, `X-Amz-Security-Token` and
+   * `X-Goog-Signature`. An array replaces that list; `false` records the query
+   * string as it was received.
+   */
+  redactedQueryParams?: string[] | false;
   /** Static attributes added to every span and metric data point */
   attributes?: Record<string, string | number | boolean>;
   /**
@@ -185,6 +198,8 @@ export class OpenTelemetryCore {
   private readonly requestHeaders: string[];
   private readonly responseHeaders: string[];
   private readonly staticAttributes: Attributes | undefined;
+  // Applied to url.query; undefined when the query is recorded as received
+  private readonly redactQuery: ((query: string) => string) | undefined;
   private readonly spanName: OpenTelemetryOptions['spanName'];
   private readonly customTracer: TracerLike | undefined;
   private readonly customMeter: MeterLike | undefined;
@@ -211,6 +226,10 @@ export class OpenTelemetryCore {
       options.attributes && Object.keys(options.attributes).length > 0
         ? { ...options.attributes }
         : undefined;
+    this.redactQuery =
+      options.redactedQueryParams === false
+        ? undefined
+        : createQueryRedactor(options.redactedQueryParams);
     this.spanName = options.spanName;
     this.customTracer = options.tracer;
     this.customMeter = options.meter;
@@ -243,7 +262,10 @@ export class OpenTelemetryCore {
     const known = KNOWN_METHODS.has(upper);
     const method = known ? upper : '_OTHER';
     const path = req.path || '/';
-    const route = UnifiedRouter.getInstance().matchRoute(upper, path);
+    // The router of the app handling this request (its server holds it);
+    // without a server, the current app's.
+    const own = (req as { _server?: { router?: UnifiedRouter } })._server?.router;
+    const route = (own ?? UnifiedRouter.getInstance()).matchRoute(upper, path);
     const scheme = this.schemeOf(req);
     const protocolVersion =
       typeof req.httpVersion === 'string' && req.httpVersion ? req.httpVersion : undefined;
@@ -339,7 +361,10 @@ export class OpenTelemetryCore {
     const url = req.url;
     if (typeof url === 'string') {
       const q = url.indexOf('?');
-      if (q !== -1) extra['url.query'] = url.slice(q + 1);
+      if (q !== -1) {
+        const query = url.slice(q + 1);
+        extra['url.query'] = this.redactQuery !== undefined ? this.redactQuery(query) : query;
+      }
     }
     const host = headers.host;
     if (typeof host === 'string' && host) setServerAttributes(extra, host);

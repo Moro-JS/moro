@@ -115,10 +115,18 @@ export class CronParser {
           }
         }
 
-        for (let i = rangeStart; i <= rangeEnd; i += step) {
-          if (i >= min && i <= max) {
-            values.add(i);
-          }
+        // Only values inside [min, max] are ever kept, so bound the loop to
+        // the field instead of walking the whole requested range: an upper
+        // bound such as 99999999999 would otherwise block the event loop.
+        // The start is advanced in whole steps so the step alignment is kept.
+        let first = rangeStart;
+        if (first < min) {
+          first += Math.ceil((min - first) / step) * step;
+        }
+        const last = Math.min(rangeEnd, max);
+
+        for (let i = first; i <= last; i += step) {
+          values.add(i);
         }
       }
       // Range: 1-5
@@ -135,10 +143,12 @@ export class CronParser {
           throw new Error(`Invalid range "${part}" in ${fieldName}: start > end`);
         }
 
-        for (let i = start; i <= end; i++) {
-          if (i >= min && i <= max) {
-            values.add(i);
-          }
+        // Bound the loop to the field (see the step case above)
+        const first = Math.max(start, min);
+        const last = Math.min(end, max);
+
+        for (let i = first; i <= last; i++) {
+          values.add(i);
         }
       }
       // Single value

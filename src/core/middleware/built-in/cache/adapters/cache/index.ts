@@ -1,5 +1,5 @@
 // Cache Adapters
-export { MemoryCacheAdapter } from './memory.js';
+export { MemoryCacheAdapter, type MemoryCacheAdapterOptions } from './memory.js';
 export { RedisCacheAdapter } from './redis.js';
 export { FileCacheAdapter } from './file.js';
 
@@ -12,7 +12,7 @@ import { CacheAdapter } from '../../../../../../types/cache.js';
 export function createCacheAdapter(type: string, options: any = {}): CacheAdapter {
   switch (type.toLowerCase()) {
     case 'memory':
-      return new MemoryCacheAdapter();
+      return new MemoryCacheAdapter(options);
     case 'redis':
       return new RedisCacheAdapter(options);
     case 'file':

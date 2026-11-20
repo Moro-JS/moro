@@ -2,14 +2,21 @@
 import { CacheAdapter } from '../../../../../../types/cache.js';
 import { createFrameworkLogger } from '../../../../../logger/index.js';
 import crypto from 'crypto';
+import { keyTag } from './log-key.js';
 
 const logger = createFrameworkLogger('FileCacheAdapter');
 
 export class FileCacheAdapter implements CacheAdapter {
   private cacheDir: string;
+  /**
+   * Log a short tag in place of each key. For stores whose keys are secrets:
+   * the session middleware sets it on the store it uses.
+   */
+  redactKeys: boolean;
 
-  constructor(options: { cacheDir?: string } = {}) {
+  constructor(options: { cacheDir?: string; redactKeys?: boolean } = {}) {
     this.cacheDir = options.cacheDir || './cache';
+    this.redactKeys = options.redactKeys === true;
     void this.ensureCacheDir().catch(() => {
       // best-effort cache directory creation; write paths re-check/create
     });
@@ -55,9 +62,15 @@ export class FileCacheAdapter implements CacheAdapter {
       const data = JSON.stringify({ value, expires });
 
       await fs.writeFile(filePath, data);
-      logger.debug(`Cached item to file: ${key} (TTL: ${ttl}s)`, 'FileCache');
+      logger.debug(
+        `Cached item to file: ${this.redactKeys ? keyTag(key) : key} (TTL: ${ttl}s)`,
+        'FileCache'
+      );
     } catch (error) {
-      logger.error('File cache set error', 'FileCache', { key, error });
+      logger.error('File cache set error', 'FileCache', {
+        key: this.redactKeys ? keyTag(key) : key,
+        error,
+      });
     }
   }
 
@@ -66,7 +79,7 @@ export class FileCacheAdapter implements CacheAdapter {
       const fs = await import('fs/promises');
       const filePath = this.getFilePath(key);
       await fs.unlink(filePath);
-      logger.debug(`Deleted file cache item: ${key}`, 'FileCache');
+      logger.debug(`Deleted file cache item: ${this.redactKeys ? keyTag(key) : key}`, 'FileCache');
     } catch {
       // File might not exist, which is okay
     }

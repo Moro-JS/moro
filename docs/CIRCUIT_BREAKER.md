@@ -4,7 +4,7 @@ Complete guide to MoroJS's built-in circuit breaker pattern for fault tolerance 
 
 ## Overview
 
-The Circuit Breaker pattern prevents cascading failures in distributed systems by automatically detecting failures and preventing operations that are likely to fail. MoroJS includes built-in circuit breaker support for routes, websockets, and background jobs.
+The Circuit Breaker pattern prevents cascading failures in distributed systems by automatically detecting failures and preventing operations that are likely to fail. MoroJS wraps background jobs in circuit breakers automatically, wraps module routes and module WebSocket handlers in one each when `performance.circuitBreaker.enabled` is set, and exports the `CircuitBreaker` class for everything else.
 
 ## Table of Contents
 
@@ -29,12 +29,12 @@ A circuit breaker has three states:
 2. **OPEN** (Failing)
    - Requests fail immediately without attempting
    - Prevents cascade failures
-   - After reset timeout, moves to HALF_OPEN
+   - Once the reset timeout has passed since the last failure, the next call (or `isOpen()` check) moves it to HALF_OPEN
 
 3. **HALF_OPEN** (Testing Recovery)
-   - Allows a limited number of requests
-   - If successful, returns to CLOSED
-   - If failed, returns to OPEN
+   - Requests pass through again (there is no cap on how many)
+   - The first success returns to CLOSED
+   - The first failure returns to OPEN
 
 ### State Diagram
 
@@ -53,7 +53,7 @@ CLOSED ──[failures >= threshold]──> OPEN
 
 ## Built-in Circuit Breakers
 
-MoroJS automatically provides circuit breakers for:
+MoroJS provides circuit breakers for:
 
 ### 1. Background Jobs
 
@@ -82,30 +82,60 @@ app.job(
 );
 ```
 
-### 2. WebSocket Handlers
+### 2. Module Routes and Module WebSocket Handlers (opt-in)
 
-WebSocket event handlers have automatic circuit breaker protection:
+Handlers declared in a module (`defineModule({ routes, sockets })`) run with **no circuit breaker by default**. Enable it for all of them in the configuration:
 
 ```typescript
-const chatModule = defineModule({
-  name: 'chat',
+import { createApp } from '@morojs/moro';
+
+const app = await createApp({
+  performance: {
+    circuitBreaker: {
+      enabled: true, // default false
+      failureThreshold: 5, // failures within monitoringPeriod that open the breaker
+      resetTimeout: 60000, // ms the breaker stays open before a trial call
+      monitoringPeriod: 10000, // ms; only failures this recent are counted
+    },
+  },
+});
+```
+
+With it enabled, every module route handler and every module socket handler gets a breaker of its own, shared by all clients of that handler:
+
+- **What counts as a failure:** an error the handler throws, and for a route also a `5xx` response the handler sends. Nothing a client can cause at will counts: a `4xx` response, a request refused by validation, auth or the rate limit, and a thrown error that carries a `4xx` `status` or `statusCode` (the breaker only decides what counts: the answer to a thrown error is still `app.setErrorHandler()`'s, or `500` without one).
+- **While a route's breaker is open** the route answers `503` with a `Retry-After` header (the reset timeout in seconds) and `{ "success": false, "error": "Service temporarily unavailable" }`, and the handler is not run.
+- **While a socket handler's breaker is open** the client receives `{ success: false, error: 'Service temporarily unavailable', code: 'CIRCUIT_OPEN' }` (through the acknowledgement callback, or as an `error` event) and the handler is not run.
+- After the reset timeout the next call is let through; a success closes the breaker, a failure opens it again.
+
+```typescript
+const inventoryModule = defineModule({
+  name: 'inventory',
   version: '1.0.0',
 
-  sockets: [
+  routes: [
     {
-      event: 'message',
-      handler: async (socket, data) => {
-        // Circuit breaker protects this handler
-        await processMessage(data);
+      method: 'GET',
+      path: '/items/:id',
+      handler: async (req, res) => {
+        // A database outage makes this throw: counted
+        const item = await findItem(req.params.id);
+        if (!item) {
+          // A client error: never counted towards opening the breaker
+          return res.status(404).json({ success: false, error: 'No such item' });
+        }
+        return item;
       },
     },
   ],
 });
 ```
 
+A breaker is shared by everyone who calls the handler, so enable it when the handler's failures mean a dependency is down, not when they depend on what the caller sent.
+
 ### 3. Routes (Manual Integration)
 
-For HTTP routes, integrate circuit breakers manually:
+For routes registered on the app (`app.get(...)` and the other route methods), integrate circuit breakers manually:
 
 ```typescript
 import { CircuitBreaker } from '@morojs/moro';
@@ -113,7 +143,7 @@ import { CircuitBreaker } from '@morojs/moro';
 const externalApiBreaker = new CircuitBreaker({
   failureThreshold: 5, // Open after 5 failures
   resetTimeout: 30000, // Try again after 30 seconds
-  // monitoringPeriod is reserved and not yet used by the breaker (see note below)
+  monitoringPeriod: 60000, // Count only failures from the last 60 seconds (see note below)
 });
 
 app.get('/external-data', async (req, res) => {
@@ -232,15 +262,16 @@ app.get('/external/data', async (req, res) => {
 interface CircuitBreakerOptions {
   failureThreshold: number; // Failures before opening
   resetTimeout: number; // Ms before trying again
-  monitoringPeriod?: number; // Reserved — not yet used (see note below)
+  monitoringPeriod?: number; // Sliding window for failure counting, in ms (see note below)
 }
 ```
 
-> **Note on failure counting:** The current implementation does **not** use a
-> sliding time window. Failures accumulate across calls and the count is only
-> cleared by a successful call (which closes the breaker) or an explicit
-> `reset()`. `monitoringPeriod` is accepted for forward compatibility but is not
-> read by the breaker yet, so setting it has no effect on behaviour.
+> **Note on failure counting:** Without `monitoringPeriod`, failures accumulate
+> across calls and the count is only cleared by a successful call (which closes
+> the breaker) or an explicit `reset()`. With `monitoringPeriod` set, only the
+> failures from the last `monitoringPeriod` milliseconds count toward
+> `failureThreshold`, so isolated failures spread over time do not open the
+> breaker. A failure while the breaker is HALF_OPEN re-opens it either way.
 
 ### Configuration Examples
 
@@ -495,28 +526,34 @@ const breakers = {
 };
 
 // Bad: Single breaker for everything
-const globalBreaker = new CircuitBreaker({
-  /* ... */
-});
+const globalBreaker = new CircuitBreaker({/* ... */});
 ```
 
 ### 5. Manual Reset for Critical Issues
 
 ```typescript
-// Provide admin endpoint to manually reset
-app.post('/admin/circuit-breaker/:name/reset', (req, res) => {
-  const breaker = breakers.get(req.params.name);
+// Provide admin endpoint to manually reset.
+// .auth() is enforced by the router: 401 when not signed in, 403 without the
+// admin role. It reads req.auth, which your auth middleware must populate;
+// until one is installed the route answers 500 instead of running.
+app
+  .post('/admin/circuit-breaker/:name/reset')
+  .auth({ roles: ['admin'] })
+  .handler((req, res) => {
+    const breaker = breakers.get(req.params.name);
 
-  if (!breaker) {
-    return res.status(404).json({ error: 'Breaker not found' });
-  }
+    if (!breaker) {
+      return res.status(404).json({ error: 'Breaker not found' });
+    }
 
-  breaker.reset();
-  logger.info(`Circuit breaker ${req.params.name} manually reset`);
+    breaker.reset();
+    logger.info(`Circuit breaker ${req.params.name} manually reset`);
 
-  res.json({ reset: true });
-});
+    res.json({ reset: true });
+  });
 ```
+
+> This route changes server state: never expose it without the `.auth({ roles: ['admin'] })` guard (or an equivalent access check).
 
 ## Complete Example
 
@@ -623,17 +660,23 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Admin reset endpoint
-app.post('/admin/breaker/:name/reset', (req, res) => {
-  const breaker = breakers[req.params.name as keyof typeof breakers];
+// Admin reset endpoint. It changes server state, so it must not be exposed
+// without the .auth() guard: 401 when not signed in, 403 without the admin role.
+// .auth() reads req.auth, which your auth middleware must populate; until one
+// is installed this route answers 500 instead of running.
+app
+  .post('/admin/breaker/:name/reset')
+  .auth({ roles: ['admin'] })
+  .handler((req, res) => {
+    const breaker = breakers[req.params.name as keyof typeof breakers];
 
-  if (!breaker) {
-    return res.status(404).json({ error: 'Breaker not found' });
-  }
+    if (!breaker) {
+      return res.status(404).json({ error: 'Breaker not found' });
+    }
 
-  breaker.reset();
-  res.json({ reset: true, breaker: req.params.name });
-});
+    breaker.reset();
+    res.json({ reset: true, breaker: req.params.name });
+  });
 
 await app.listen(3000);
 console.log('Server with circuit breakers running on port 3000');
@@ -653,7 +696,8 @@ class CircuitBreaker extends EventEmitter {
   // Get current state
   getState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
-  // Check if open
+  // Whether calls are being rejected. Once resetTimeout has passed since the
+  // last failure, this moves an OPEN breaker to HALF_OPEN and returns false
   isOpen(): boolean;
 
   // Get failure count
@@ -676,7 +720,7 @@ class CircuitBreaker extends EventEmitter {
 interface CircuitBreakerOptions {
   failureThreshold: number; // Number of failures before opening
   resetTimeout: number; // Milliseconds before trying HALF_OPEN
-  monitoringPeriod?: number; // Reserved for a future sliding window — not yet used
+  monitoringPeriod?: number; // Sliding window for failure counting, in ms
 }
 ```
 

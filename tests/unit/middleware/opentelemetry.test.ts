@@ -357,6 +357,38 @@ describe('OpenTelemetry middleware', () => {
     expect(span.attributes['http.response.header.content-type']).toEqual(['application/json']);
   });
 
+  it('redacts credential-carrying query parameters in url.query', () => {
+    const query = (options: Parameters<typeof createOpenTelemetryMiddleware>[0], url: string) => {
+      exporter.reset();
+      const mw = createOpenTelemetryMiddleware(options);
+      const { res, finish } = fakeResponse(200);
+      context.with(ROOT_CONTEXT, () => {
+        mw(fakeRequest('GET', url), res, () => {});
+        finish();
+      });
+      return (finished()[0] as ReadableSpan).attributes['url.query'];
+    };
+
+    // By default: the well-known names, whatever their case; the rest untouched
+    expect(
+      query(
+        {},
+        '/users/42?code=4%2FP7q7W91&state=xyz&Access_Token=ya29.a0&page=2&X-Amz-Signature=5d67'
+      )
+    ).toBe('code=REDACTED&state=xyz&Access_Token=REDACTED&page=2&X-Amz-Signature=REDACTED');
+    expect(query({}, '/users/42?expand=orders&page=2')).toBe('expand=orders&page=2');
+
+    // An application's own list replaces the default one
+    expect(query({ redactedQueryParams: ['invite'] }, '/users/42?invite=abc&token=t-1')).toBe(
+      'invite=REDACTED&token=t-1'
+    );
+
+    // Opting out records the query string as received
+    expect(query({ redactedQueryParams: false }, '/users/42?token=t-1&page=2')).toBe(
+      'token=t-1&page=2'
+    );
+  });
+
   it('maps unknown methods to _OTHER and keeps the original', () => {
     const mw = createOpenTelemetryMiddleware();
     const { res, finish } = fakeResponse(200);

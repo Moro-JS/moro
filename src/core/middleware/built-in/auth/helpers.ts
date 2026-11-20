@@ -20,6 +20,37 @@ export interface AuthRouteOptions {
 }
 
 /**
+ * Turn a stored `roles` / `permissions` value into a list for exact matching.
+ *
+ * - an array keeps its string elements (anything else in it is dropped);
+ * - a string is split on commas and whitespace, empties dropped, so
+ *   `"admin,editor"` and `"read write"` are two entries each. When that split
+ *   produced more than one entry the whole string is kept as an entry too, so
+ *   a single name that contains a space or comma still matches itself;
+ * - anything else is an empty list.
+ *
+ * Compare against the result with strict equality (`list.includes(name)`).
+ * Calling `.includes()` on the stored value directly is a substring test when
+ * the value is a string: `"not-an-admin"` would satisfy a check for `admin`.
+ */
+export function normalizeAuthList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (typeof value[i] !== 'string') {
+        return value.filter((entry): entry is string => typeof entry === 'string');
+      }
+    }
+    return value as string[];
+  }
+  if (typeof value === 'string') {
+    const parts = value.split(/[\s,]+/).filter(part => part !== '');
+    if (parts.length > 1) parts.push(value);
+    return parts;
+  }
+  return [];
+}
+
+/**
  * Auth Guard Middleware - Protects routes with authentication and authorization
  */
 export function requireAuth(options: AuthGuardOptions = {}) {
@@ -73,7 +104,8 @@ export function requireAuth(options: AuthGuardOptions = {}) {
     // Check roles if specified
     if (options.roles && options.roles.length > 0) {
       const userRoles = user?.roles || [];
-      const hasRole = options.roles.some(role => userRoles.includes(role));
+      const roleList = normalizeAuthList(user?.roles);
+      const hasRole = options.roles.some(role => roleList.includes(role));
 
       if (!hasRole) {
         if (options.onForbidden) {
@@ -91,8 +123,9 @@ export function requireAuth(options: AuthGuardOptions = {}) {
     // Check permissions if specified
     if (options.permissions && options.permissions.length > 0) {
       const userPermissions = user?.permissions || [];
+      const permissionList = normalizeAuthList(user?.permissions);
       const hasPermission = options.permissions.every(permission =>
-        userPermissions.includes(permission)
+        permissionList.includes(permission)
       );
 
       if (!hasPermission) {
@@ -184,6 +217,22 @@ export function optionalAuth() {
   });
 }
 
+// Marks the guard factories above, so that one passed uncalled (requireAuth
+// in place of requireAuth()) is reported when the route is registered. An
+// uncalled factory would otherwise run as the middleware, build a guard it
+// never runs, and let the request through.
+const GUARD_FACTORY = Symbol.for('morojs.guard-factory');
+for (const factory of [
+  requireAuth,
+  requireRole,
+  requirePermission,
+  requireAdmin,
+  guestOnly,
+  optionalAuth,
+]) {
+  (factory as any)[GUARD_FACTORY] = true;
+}
+
 /**
  * Route-level auth decorator
  */
@@ -239,7 +288,8 @@ export const authUtils = {
     if (!user?.roles) return false;
 
     const roles = Array.isArray(role) ? role : [role];
-    return roles.some(r => user.roles.includes(r));
+    const userRoles = normalizeAuthList(user.roles);
+    return roles.some(r => userRoles.includes(r));
   },
 
   /**
@@ -250,7 +300,8 @@ export const authUtils = {
     if (!user?.permissions) return false;
 
     const permissions = Array.isArray(permission) ? permission : [permission];
-    return permissions.every(p => user.permissions.includes(p));
+    const userPermissions = normalizeAuthList(user.permissions);
+    return permissions.every(p => userPermissions.includes(p));
   },
 
   /**
@@ -387,7 +438,11 @@ export const sessionHelpers = {
    */
   async removeSessionData(req: any, key: string) {
     if (req.session && key in req.session.data) {
-      delete req.session.data[key];
+      // Through the session itself: that is what marks it changed, so that
+      // save() writes the removal to the store. Deleting from `data` behind
+      // its back left an established session stored with the field in it.
+      delete req.session[key];
+      if (key in req.session.data) delete req.session.data[key];
       await req.session.save();
     }
   },

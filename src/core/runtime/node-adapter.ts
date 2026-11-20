@@ -1,9 +1,9 @@
 // Node.js runtime adapter
 import type { IncomingMessage, ServerResponse } from 'http';
-import { BaseRuntimeAdapter } from './base-adapter.js';
+import { BaseRuntimeAdapter, handlerFailureBody } from './base-adapter.js';
 import { HttpRequest, HttpResponse } from '../../types/http.js';
 import { RuntimeHttpResponse } from '../../types/runtime.js';
-import { MoroHttpServer } from '../http/http-server.js';
+import { MoroHttpServer, MoroServerResponse } from '../http/http-server.js';
 
 export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
   readonly type = 'node' as const;
@@ -62,22 +62,19 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
 
     originalServer.on('request', (req: IncomingMessage, res: ServerResponse) => {
       void (async () => {
+        let requestId: string | undefined;
         try {
           const moroReq = await this.adaptRequest(req);
-          const moroRes = this.enhanceResponse(res);
+          requestId = moroReq.requestId;
+          const moroRes = this.enhanceResponse(res, httpServer);
 
           await handler(moroReq, moroRes);
         } catch (error) {
+          const body = handlerFailureBody(error, requestId);
           if (!res.headersSent) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(
-              JSON.stringify({
-                success: false,
-                error: 'Internal server error',
-                message: error instanceof Error ? error.message : 'Unknown error',
-              })
-            );
+            res.end(body);
           }
         }
       })();
@@ -117,7 +114,7 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
     return req.socket.remoteAddress || 'unknown';
   }
 
-  private enhanceResponse(res: ServerResponse): HttpResponse {
+  private enhanceResponse(res: ServerResponse, server: MoroHttpServer): HttpResponse {
     const enhanced = res as any;
 
     // Add MoroJS response methods if they don't exist
@@ -171,35 +168,19 @@ export class NodeRuntimeAdapter extends BaseRuntimeAdapter {
     }
 
     if (!enhanced.sendFile) {
-      enhanced.sendFile = async function (filePath: string) {
-        const fs = await import('fs');
-        const path = await import('path');
-
-        try {
-          const data = await fs.promises.readFile(filePath);
-          const ext = path.extname(filePath);
-
-          // Basic content type detection
-          const contentTypes: Record<string, string> = {
-            '.html': 'text/html',
-            '.js': 'application/javascript',
-            '.css': 'text/css',
-            '.json': 'application/json',
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.gif': 'image/gif',
-            '.svg': 'image/svg+xml',
-          };
-
-          const contentType = contentTypes[ext] || 'application/octet-stream';
-          this.setHeader('Content-Type', contentType);
-          this.end(data);
-        } catch {
-          this.statusCode = 404;
-          this.end('File not found');
-        }
-      };
+      // The Node server's own sendFile, so that a response which is not of
+      // the server's response class sends a file the same way: a large file
+      // is streamed, the options (maxAge in seconds, immutable, cacheControl,
+      // root, dotfiles) apply, and a file that cannot be served is the same
+      // 404 or 403. It asks its server for the content type and writes the
+      // body to the response itself.
+      if (enhanced._server === undefined) enhanced._server = server;
+      if (!enhanced._bodyStream) {
+        enhanced._bodyStream = function () {
+          return this;
+        };
+      }
+      enhanced.sendFile = MoroServerResponse.prototype.sendFile;
     }
 
     return enhanced;

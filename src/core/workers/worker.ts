@@ -6,11 +6,11 @@ import * as crypto from 'crypto';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
 import { resolveUserPackage, isPackageAvailable } from '../utilities/package-utils.js';
+import { isPublicKeyPem, PUBLIC_KEY_NEEDS_ALGORITHMS } from '../utilities/public-key-pem.js';
 
-// Optional isolated-vm for true V8 isolate sandboxing of JSON transforms
+// isolated-vm, the V8 isolate that JSON transforms run in (required for them)
 let isolatedVM: any = null;
 const isolatedVMAvailable = isPackageAvailable('isolated-vm');
-let jsonTransformWarningShown = false;
 
 // Optional JWT import (may not be available)
 let jwt: any = null;
@@ -23,8 +23,17 @@ const inflate = promisify(zlib.inflate);
 const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
+// Default cap on the output of a single decompress task (256 MiB).
+// Exported for direct unit testing.
+export const DEFAULT_MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024;
+
 // Import task types
-import { WorkerTask, WorkerResult, WORKER_TASKS } from './worker-manager.js';
+import {
+  WorkerTask,
+  WorkerResult,
+  WORKER_TASKS,
+  TRANSFORM_JSON_NEEDS_ISOLATED_VM,
+} from './worker-manager.js';
 
 /**
  * Execute a worker task
@@ -93,9 +102,31 @@ async function executeTask(task: WorkerTask): Promise<WorkerResult> {
 }
 
 /**
- * JWT verification handler
+ * Load `jsonwebtoken` from the application's node_modules, once per thread.
+ *
+ * jsonwebtoken is CommonJS and builds its exports at runtime, so under ESM
+ * `import()` yields `{ default: <the module> }` with no named `verify` or
+ * `sign`. A CommonJS build of this file gets the module itself.
  */
-async function handleJWTVerify(data: {
+async function loadJWT(): Promise<any> {
+  if (!jwt) {
+    const jwtPath = resolveUserPackage('jsonwebtoken');
+    const loaded = await import(jwtPath);
+    jwt = loaded.default ?? loaded;
+  }
+  return jwt;
+}
+
+/**
+ * JWT verification handler
+ *
+ * Verifies with HS256 only, unless the caller names the accepted algorithms in
+ * `options.algorithms`. A public key is refused under that default instead of
+ * being used as an HMAC secret: anyone holding the public key could sign an
+ * HS256 token with it (jsonwebtoken 8 and earlier accept such a token).
+ * Exported for direct unit testing.
+ */
+export async function handleJWTVerify(data: {
   token: string;
   secret: string;
   options?: any;
@@ -106,20 +137,24 @@ async function handleJWTVerify(data: {
     );
   }
 
-  // Lazy load JWT if needed
-  if (!jwt) {
-    const jwtPath = resolveUserPackage('jsonwebtoken');
-    jwt = await import(jwtPath);
-  }
+  const jsonwebtoken = await loadJWT();
 
   const { token, secret, options } = data;
-  return jwt.verify(token, secret, options);
+  if (options?.algorithms != null) {
+    return jsonwebtoken.verify(token, secret, options);
+  }
+
+  if (isPublicKeyPem(secret)) {
+    throw new Error(PUBLIC_KEY_NEEDS_ALGORITHMS);
+  }
+  return jsonwebtoken.verify(token, secret, { ...options, algorithms: ['HS256'] });
 }
 
 /**
  * JWT signing handler
+ * Exported for direct unit testing.
  */
-async function handleJWTSign(data: {
+export async function handleJWTSign(data: {
   payload: any;
   secret: string;
   options?: any;
@@ -130,14 +165,10 @@ async function handleJWTSign(data: {
     );
   }
 
-  // Lazy load JWT if needed
-  if (!jwt) {
-    const jwtPath = resolveUserPackage('jsonwebtoken');
-    jwt = await import(jwtPath);
-  }
+  const jsonwebtoken = await loadJWT();
 
   const { payload, secret, options } = data;
-  return jwt.sign(payload, secret, options);
+  return jsonwebtoken.sign(payload, secret, options);
 }
 
 /**
@@ -252,19 +283,38 @@ export async function handleDataCompress(data: {
 export async function handleDataDecompress(data: {
   input: Buffer | Uint8Array;
   format?: CompressionFormat;
+  /** Largest decompressed size accepted, in bytes (default: 256 MiB) */
+  maxOutputLength?: number;
 }): Promise<Buffer> {
   const { input, format = 'gzip' } = data;
   const buffer = Buffer.from(input as any);
 
-  switch (format) {
-    case 'gzip':
-      return gunzip(buffer);
-    case 'deflate':
-      return inflate(buffer);
-    case 'brotli':
-      return brotliDecompress(buffer);
-    default:
-      throw new Error(`Unknown compression format: ${format}`);
+  // Cap the output: a small compressed input can expand to gigabytes
+  const maxOutputLength =
+    typeof data.maxOutputLength === 'number' &&
+    Number.isFinite(data.maxOutputLength) &&
+    data.maxOutputLength >= 1
+      ? Math.floor(data.maxOutputLength)
+      : DEFAULT_MAX_DECOMPRESSED_BYTES;
+
+  try {
+    switch (format) {
+      case 'gzip':
+        return await gunzip(buffer, { maxOutputLength });
+      case 'deflate':
+        return await inflate(buffer, { maxOutputLength });
+      case 'brotli':
+        return await brotliDecompress(buffer, { maxOutputLength });
+      default:
+        throw new Error(`Unknown compression format: ${format}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ERR_BUFFER_TOO_LARGE') {
+      throw new Error(
+        `Decompressed data exceeds the ${maxOutputLength} byte limit (maxOutputLength)`
+      );
+    }
+    throw error;
   }
 }
 
@@ -305,135 +355,6 @@ async function handleHeavyComputation(data: any): Promise<any> {
   }
 
   return data; // Echo back if not recognized
-}
-
-/**
- * Dangerous globals that must be shadowed to prevent access from transformer code.
- * Passed as explicit undefined parameters to new Function() so they shadow the real globals.
- *
- * IMPORTANT: Shadowing alone is NOT sufficient — attackers can bypass it via the prototype
- * chain (e.g., [].constructor.constructor('return process')()). The blocklist patterns
- * below are the primary defense; shadowing is defense-in-depth.
- */
-const DANGEROUS_GLOBALS = [
-  // Node.js core
-  'process',
-  'require',
-  'global',
-  'globalThis',
-  'Buffer',
-  'module',
-  // Code execution
-  'eval',
-  'Function',
-  // File/module paths
-  '__dirname',
-  '__filename',
-  // Network/IO
-  'fetch',
-  'XMLHttpRequest',
-  'WebSocket',
-  // Dynamic import
-  'import',
-  // Timer functions (can accept string code like eval)
-  'setTimeout',
-  'setInterval',
-  'setImmediate',
-  // Reflection/proxy (can be used to bypass restrictions)
-  'Proxy',
-  'Reflect',
-  // Worker thread globals (this file runs in a worker)
-  'parentPort',
-  'workerData',
-  // Advanced APIs
-  'WebAssembly',
-  'SharedArrayBuffer',
-];
-
-/**
- * Blocklist patterns that indicate potentially malicious transformer code.
- *
- * These are checked BEFORE execution and are the primary security layer.
- * The prototype chain bypass ([].constructor.constructor) is the #1 attack vector
- * against global shadowing, so we block access to prototype chain navigation.
- */
-const DANGEROUS_IDENTIFIER_PATTERNS = DANGEROUS_GLOBALS.map(g => new RegExp(`\\b${g}\\b`));
-
-/**
- * Structural patterns that indicate prototype chain attacks or other bypass attempts.
- * These catch attacks like [].constructor.constructor('return process')().
- */
-const DANGEROUS_STRUCTURAL_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
-  // Prototype chain navigation — the #1 bypass for global shadowing
-  // [].constructor.constructor, ''.constructor, ({}).constructor, etc.
-  { pattern: /\.constructor\b/, description: 'prototype chain access (.constructor)' },
-  { pattern: /\.__proto__\b/, description: 'prototype chain access (__proto__)' },
-  { pattern: /\.prototype\b/, description: 'prototype access (.prototype)' },
-  // Object reflection methods that can navigate the prototype chain
-  { pattern: /\bgetPrototypeOf\b/, description: 'prototype chain navigation (getPrototypeOf)' },
-  { pattern: /\bdefineProperty\b/, description: 'property definition (defineProperty)' },
-  { pattern: /\bsetPrototypeOf\b/, description: 'prototype mutation (setPrototypeOf)' },
-  // Bracket notation with dangerous identifiers — catches obj['constructor'], obj["__proto__"], etc.
-  // Narrowly targeted: allows legitimate bracket access like data['first-name'] or ['a','b'] arrays
-  {
-    pattern:
-      /\[\s*['"`]\s*(constructor|__proto__|prototype|process|require|global|globalThis|eval|Function|import|module|exports|parentPort|workerData)\s*['"`]\s*\]/,
-    description: 'bracket notation access to blocked identifier',
-  },
-  // String concatenation tricks to reassemble blocked identifiers dynamically
-  { pattern: /\bString\.fromCharCode\b/, description: 'dynamic string construction' },
-  // Async patterns that could be used for deferred execution
-  { pattern: /\bawait\b/, description: 'async execution (await)' },
-  { pattern: /\bnew\s+Promise\b/, description: 'promise construction' },
-];
-
-/**
- * Validates that transformer code looks like a function expression (arrow or function keyword).
- * Rejects arbitrary statements, assignments to globals, etc.
- */
-function validateTransformerShape(code: string): void {
-  const trimmed = code.trim();
-
-  // Must look like a function expression: starts with ( for arrow/grouped, function keyword,
-  // or a single identifier followed by => (arrow shorthand like "data => data.x")
-  const isArrowShorthand = /^[a-zA-Z_$][a-zA-Z0-9_$]*\s*=>/.test(trimmed);
-  const isArrowParens = trimmed.startsWith('(');
-  const isFunctionKeyword = trimmed.startsWith('function');
-
-  if (!isArrowShorthand && !isArrowParens && !isFunctionKeyword) {
-    throw new Error(
-      'Transformer must be a function expression (arrow function or function keyword)'
-    );
-  }
-}
-
-/**
- * Checks transformer code against blocklist of dangerous identifiers and structural patterns.
- *
- * Layer 1: Block known dangerous global identifiers (process, require, etc.)
- * Layer 2: Block prototype chain navigation (.constructor, __proto__, etc.)
- * Layer 3: Block bracket notation string access (obj['constructor'] bypass)
- */
-function checkDangerousPatterns(code: string): void {
-  // Check dangerous global identifiers
-  for (let i = 0; i < DANGEROUS_IDENTIFIER_PATTERNS.length; i++) {
-    if (DANGEROUS_IDENTIFIER_PATTERNS[i]?.test(code)) {
-      throw new Error(
-        `Transformer code contains blocked identifier: "${DANGEROUS_GLOBALS[i]}". ` +
-          'Transformer functions must be pure data transforms without access to Node.js internals.'
-      );
-    }
-  }
-
-  // Check structural bypass patterns (prototype chain, bracket notation, etc.)
-  for (const { pattern, description } of DANGEROUS_STRUCTURAL_PATTERNS) {
-    if (pattern.test(code)) {
-      throw new Error(
-        `Transformer code contains blocked pattern: ${description}. ` +
-          'Transformer functions must be pure data transforms using only dot notation on the data parameter.'
-      );
-    }
-  }
 }
 
 /**
@@ -479,62 +400,24 @@ async function executeInIsolate(inputData: any, transformerCode: string): Promis
 }
 
 /**
- * Execute a transformer using the hardened new Function() path.
- * This is NOT a true sandbox — it is defense-in-depth hardening only.
- */
-function executeHardened(inputData: any, transformerCode: string): any {
-  // Layer 1: Validate the code looks like a function expression
-  validateTransformerShape(transformerCode);
-
-  // Layer 2: Check for dangerous global identifiers and structural patterns
-  checkDangerousPatterns(transformerCode);
-
-  // Layer 3: Create function with dangerous globals explicitly shadowed as undefined
-  const transformer = new Function(
-    'data',
-    ...DANGEROUS_GLOBALS,
-    `'use strict'; return (${transformerCode})(data);`
-  );
-
-  // Execute with all dangerous globals set to undefined
-  return transformer(inputData, ...DANGEROUS_GLOBALS.map(() => undefined));
-}
-
-/**
  * JSON transformation handler.
  *
- * Security model (two paths):
- *   1. If `isolated-vm` is installed: uses a true V8 isolate with memory/CPU limits.
- *      This is a real sandbox — the transformer cannot access Node.js APIs.
- *   2. Otherwise: uses a hardened new Function() with layered defenses (shape validation,
- *      blocklist, global shadowing, strict mode). This blocks common attacks but is NOT
- *      a true sandbox. Do not use this path with untrusted user-provided transformer code.
+ * The transformer arrives as source text, so it runs only inside an
+ * isolated-vm isolate, which has no access to Node.js APIs and its own memory
+ * and time limits. Without the isolated-vm package the task is refused: there
+ * is no in-process way to run that text safely.
  *
- * To enable the secure path:
- *   npm install isolated-vm
+ * Exported for direct unit testing.
  */
-async function handleJSONTransform(data: { data: any; transformer: string }): Promise<any> {
+export async function handleJSONTransform(data: { data: any; transformer: string }): Promise<any> {
   const { data: inputData, transformer: transformerCode } = data;
 
+  if (!isolatedVMAvailable) {
+    throw new Error(TRANSFORM_JSON_NEEDS_ISOLATED_VM);
+  }
+
   try {
-    if (isolatedVMAvailable) {
-      return await executeInIsolate(inputData, transformerCode);
-    }
-
-    // Hardened fallback — emit a one-time warning
-    if (!jsonTransformWarningShown) {
-      jsonTransformWarningShown = true;
-      // eslint-disable-next-line no-console -- one-time security notice in worker thread
-      console.warn(
-        '[MoroJS Security] transformJSON is using the hardened fallback (new Function). ' +
-          'This is NOT a secure sandbox for untrusted code. If the transformer or data ' +
-          'originates from user input, install isolated-vm for true V8 isolate sandboxing:\n' +
-          '  npm install isolated-vm\n' +
-          'See: https://www.npmjs.com/package/isolated-vm'
-      );
-    }
-
-    return executeHardened(inputData, transformerCode);
+    return await executeInIsolate(inputData, transformerCode);
   } catch (error) {
     throw new Error(
       `Invalid transformer function: ${error instanceof Error ? error.message : String(error)}`

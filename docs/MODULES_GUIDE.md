@@ -125,17 +125,20 @@ export class UserService {
 
 ```typescript
 // modules/user/handlers.ts
-import type { Request, Response } from '@morojs/moro';
+import { getApp } from '@morojs/moro';
+import type { HttpRequest, HttpResponse } from '@morojs/moro';
+import type { UserService } from './services';
 
-export async function listUsers(req: Request, res: Response) {
-  const userService = req.app.getContainer().resolve('userService');
-  const users = await userService.findAll();
+// Services live on the app's container (registered in app.ts below)
+const userService = () => getApp().getContainer().resolve<UserService>('userService');
+
+export async function listUsers(req: HttpRequest, res: HttpResponse) {
+  const users = await userService().findAll();
   res.json(users);
 }
 
-export async function getUser(req: Request, res: Response) {
-  const userService = req.app.getContainer().resolve('userService');
-  const user = await userService.findById(req.params.id);
+export async function getUser(req: HttpRequest, res: HttpResponse) {
+  const user = await userService().findById(req.params.id);
 
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
@@ -144,38 +147,25 @@ export async function getUser(req: Request, res: Response) {
   res.json(user);
 }
 
-export async function createUser(req: Request, res: Response) {
-  const userService = req.app.getContainer().resolve('userService');
-  const user = await userService.create(req.body);
+export async function createUser(req: HttpRequest, res: HttpResponse) {
+  const user = await userService().create(req.body);
   res.status(201).json(user);
 }
 
-export async function deleteUser(req: Request, res: Response) {
-  const userService = req.app.getContainer().resolve('userService');
-  await userService.delete(req.params.id);
-  res.status(204).send();
+export async function deleteUser(req: HttpRequest, res: HttpResponse) {
+  await userService().delete(req.params.id);
+  res.status(204).end();
 }
 ```
 
 ```typescript
 // modules/user/index.ts
-import { defineModule } from '@morojs/moro';
-import { UserService } from './services';
+import { defineModule, z } from '@morojs/moro';
 import * as handlers from './handlers';
 
 export const userModule = defineModule({
   name: 'user',
   version: '1.0.0',
-
-  // Register module services
-  services: [
-    {
-      name: 'userService',
-      implementation: UserService,
-      dependencies: ['database'],
-      singleton: true,
-    },
-  ],
 
   // Define routes
   routes: [
@@ -194,11 +184,11 @@ export const userModule = defineModule({
       path: '/users',
       handler: handlers.createUser,
       validation: {
-        body: {
-          email: { type: 'string', required: true },
-          name: { type: 'string', required: true },
-          password: { type: 'string', required: true, min: 8 },
-        },
+        body: z.object({
+          email: z.string().email(),
+          name: z.string(),
+          password: z.string().min(8),
+        }),
       },
     },
     {
@@ -211,6 +201,23 @@ export const userModule = defineModule({
     },
   ],
 });
+```
+
+```typescript
+// app.ts
+import { createApp } from '@morojs/moro';
+import { UserService } from './modules/user/services';
+import { userModule } from './modules/user';
+
+const app = await createApp();
+
+// Register the module's services on the app container. Each is built once, on first use,
+// and shared (a singleton; `true` states the default).
+// 'database' is the adapter registered with app.database(adapter).
+const container = app.getContainer();
+container.register('userService', () => new UserService(container.resolve('database')), true);
+
+await app.loadModule(userModule);
 ```
 
 ## Routes in Modules
@@ -309,16 +316,6 @@ export const productModule = defineModule({
         const products = await getProducts(page, limit);
         res.json(products);
       },
-      // Cache configuration
-      cache: {
-        ttl: 300, // 5 minutes
-        key: req => `products:${req.query.page}:${req.query.limit}`,
-      },
-      // Rate limiting
-      rateLimit: {
-        requests: 100,
-        window: 60000, // 1 minute
-      },
     },
     {
       method: 'POST',
@@ -327,13 +324,13 @@ export const productModule = defineModule({
         const product = await createProduct(req.body);
         res.status(201).json(product);
       },
-      // Validation
+      // Validation (any supported schema: body, query, params, headers)
       validation: {
-        body: {
-          name: { type: 'string', required: true },
-          price: { type: 'number', required: true, min: 0 },
-          category: { type: 'string', required: true },
-        },
+        body: z.object({
+          name: z.string(),
+          price: z.number().min(0),
+          category: z.string(),
+        }),
       },
       // Authentication & Authorization
       auth: {
@@ -341,9 +338,55 @@ export const productModule = defineModule({
         permissions: ['product:create'],
       },
     },
+    {
+      method: 'GET',
+      path: '/products/:id/price-history',
+      // At most 30 requests a minute per client; over it, 429 with Retry-After
+      rateLimit: { requests: 30, window: 60000 },
+      // The JSON reply is kept for 60 seconds (GET only)
+      cache: { ttl: 60 },
+      auth: {
+        required: true,
+        // A check of this request, after sign-in: may be async
+        validator: async req => (await getProductOwner(req.params.id)) === req.auth.user.id,
+      },
+      handler: async (req, res) => {
+        return getPriceHistory(req.params.id);
+      },
+    },
   ],
 });
 ```
+
+A module route takes `validation`, `auth`, `rateLimit`, `cache` and `middleware`. They run in a fixed order:
+
+1. the module's `middleware`, then the route's `middleware`
+2. `rateLimit`: per client, `{ requests, window }` with the window in milliseconds
+3. `auth`: sign-in (unless `optional: true`), `roles`, `permissions`, then `validator(req)`; a falsy result or a throw from the validator is a `403` (a `401` when nobody is signed in and `required: true`)
+4. `validation`
+5. `cache`: `{ ttl, key?, shared? }` with the lifetime in seconds. A stored reply is served only to a request that passed steps 1 to 4, and a signed-in user gets an entry of their own unless `shared: true`
+6. the handler
+
+An error that a middleware throws or passes to `next(err)`, or that the handler throws, goes to the handler registered with `app.setErrorHandler()`, as it does for a route registered on the app, and that handler decides the answer: a thrown error with `status: 404` is a `404` when the error handler answers it so. With no error handler, or one that leaves the error unanswered, the route answers `500` with `{ "success": false, "error": "Internal server error", "requestId": "..." }`, whatever status the error carries.
+
+### Circuit Breaker
+
+Module route handlers and module socket handlers run with **no circuit breaker by default**. Set `performance.circuitBreaker.enabled` to put each handler behind one:
+
+```typescript
+const app = await createApp({
+  performance: {
+    circuitBreaker: {
+      enabled: true,
+      failureThreshold: 5, // failures within monitoringPeriod that open it
+      resetTimeout: 60000, // ms it stays open before a trial request
+      monitoringPeriod: 10000,
+    },
+  },
+});
+```
+
+Only server-side failures count: an error the handler throws, or a `5xx` it answers with. An error that carries a `4xx` `status` / `statusCode`, a `4xx` answer and a validation failure do not, so requests a client can cause at will never open it. While a route's breaker is open the route answers `503` with `Retry-After` and the handler is not run; a socket event answers `{ success: false, code: 'CIRCUIT_OPEN' }`. See the [Circuit Breaker guide](./CIRCUIT_BREAKER.md).
 
 ### Route Middleware
 
@@ -354,7 +397,7 @@ Modules support both module-level and route-level middleware, with flexible opti
 Apply middleware to all routes in a module:
 
 ```typescript
-import { cors, helmet } from '@morojs/moro';
+import { defineModule, middleware } from '@morojs/moro';
 
 export const apiModule = defineModule({
   name: 'api',
@@ -363,8 +406,8 @@ export const apiModule = defineModule({
   // Applied to ALL routes in this module
   middleware: [
     // Built-in middleware by name (string)
-    'cors',
     'helmet',
+    'compression',
 
     // Custom middleware functions
     async (req, res, next) => {
@@ -375,8 +418,8 @@ export const apiModule = defineModule({
       next();
     },
 
-    // Mixed approach
-    cors({ origin: '*' }),
+    // Mixed approach: a built-in, configured
+    middleware.bodySize({ limit: '1mb' }),
   ],
 
   routes: [
@@ -421,7 +464,6 @@ export const apiModule = defineModule({
           next();
         },
       ],
-      rateLimit: { requests: 10, window: 60000 }, // Rate limiting via route config
       handler: async (req, res) => {
         return { data: 'secure data' };
       },
@@ -452,8 +494,8 @@ Hook-based built-ins (`auth`, `cors`, `rateLimit`, `validation`, `cache`, `csrf`
 `csp`, `session`, `sse`, `cdn`, `graphql`) install globally with `app.use(...)`
 and cannot run per-route by string name. Built-ins that require configuration
 (`staticFiles`, `template`) must be passed as configured middleware functions.
-For rate limiting, caching, auth enforcement, and validation, prefer the route's
-own config fields (`rateLimit`, `cache`, `auth`, `validation`).
+For auth enforcement, validation, rate limiting and caching, use the route's
+own config fields (`auth`, `validation`, `rateLimit`, `cache`).
 
 A name that cannot be resolved **fails the request with a 500** rather than being
 silently skipped — a declared middleware (such as an auth guard) never quietly
@@ -490,7 +532,6 @@ export const apiModule = defineModule({
       path: '/admin',
       // Route-level: runs AFTER module middleware
       middleware: ['bodySize'],
-      rateLimit: { requests: 10, window: 60000 },
       auth: { roles: ['admin'] },
       handler: async (req, res) => {
         // Both module AND route middleware have run
@@ -508,7 +549,8 @@ Middleware executes in this order:
 1. **Global middleware** (app.use())
 2. **Module-level middleware** (applied to all routes in module)
 3. **Route-level middleware** (applied to specific route)
-4. **Route handler**
+4. **Route config**: `rateLimit`, `auth`, `validation`, `cache`, in that order
+5. **Route handler**
 
 ```typescript
 // Execution flow example
@@ -526,7 +568,7 @@ export const myModule = defineModule({
       path: '/data',
       middleware: [routeValidation], // 3. Runs third
       handler: async (req, res) => {
-        // 4. Runs last
+        // 5. Runs last
         return { success: true };
       },
     },
@@ -573,7 +615,9 @@ export const myModule = defineModule({
 
 ## Module Services
 
-Services allow you to inject dependencies and share logic across your module.
+Services allow you to inject dependencies and share logic across your module. Register them on the app's container and resolve them in your handlers.
+
+A registered service is a singleton: its factory runs once, the first time the service is resolved, and every handler gets that instance. That is the container's default, with or without `true` as the third argument. For a new instance on every resolve, pass `{ lifetime: 'transient' }` instead (see the [Dependency Injection Guide](./DEPENDENCY_INJECTION.md#2-transient)).
 
 ### Service Registration
 
@@ -598,30 +642,25 @@ class NotificationService {
   }
 }
 
+// Register on the app container: one instance of each for the app
+const container = app.getContainer();
+container.register('emailService', () => new EmailService(), true);
+container.register(
+  'notificationService',
+  () => new NotificationService(container.resolve('emailService'), container.resolve('smsService')),
+  true
+);
+
 export const notificationModule = defineModule({
   name: 'notification',
   version: '1.0.0',
-
-  services: [
-    {
-      name: 'emailService',
-      implementation: EmailService,
-      singleton: true,
-    },
-    {
-      name: 'notificationService',
-      implementation: NotificationService,
-      dependencies: ['emailService', 'smsService'],
-      singleton: true,
-    },
-  ],
 
   routes: [
     {
       method: 'POST',
       path: '/notify',
       handler: async (req, res) => {
-        const notificationService = req.app.getContainer().resolve('notificationService');
+        const notificationService = container.resolve<NotificationService>('notificationService');
 
         await notificationService.notify(req.body.user, req.body.message);
         res.json({ success: true });
@@ -657,7 +696,7 @@ export const analyticsModule = defineModule({
       path: '/track',
       handler: async (req, res) => {
         // Access module config
-        const config = req.app.getModuleConfig('analytics');
+        const config = analyticsModule.config;
 
         if (!config.enabled) {
           return res.json({ tracked: false });
@@ -685,7 +724,7 @@ export const authModule = defineModule({
     tokenExpiry: isDevelopment ? '7d' : '1h',
     refreshTokenExpiry: '30d',
     bcryptRounds: isDevelopment ? 4 : 12,
-    rateLimit: {
+    attemptLimits: {
       login: isDevelopment ? 1000 : 5,
       register: isDevelopment ? 1000 : 3,
     },
@@ -707,15 +746,16 @@ Automatically discover and load modules from a directory:
 import { createApp } from '@morojs/moro';
 
 const app = await createApp({
-  modules: {
-    directory: './src/modules',
-    autoLoad: true,
+  autoDiscover: {
+    paths: ['./src/modules'],
   },
 });
 
 // Modules are automatically discovered and loaded
 await app.listen(3000);
 ```
+
+Discovered modules load in the order of their file paths below each directory in `paths`, compared one path segment at a time by character code (so `Users/` comes before `admin/`, and `a/` before `a-b/`), and, with the default `loadOrder: 'dependency'`, a module named in another's `dependencies` is moved ahead of it. The order is the same on every Node.js version, operating system and file system, with or without `CI` set; when one module's routes or set-up must come after another's, say so in `dependencies` and do not rely on the file names.
 
 ### Manual Discovery
 
@@ -730,33 +770,6 @@ for (const module of modules) {
 }
 ```
 
-### Module Registry
-
-```typescript
-import { ModuleRegistry } from '@morojs/moro';
-
-const registry = new ModuleRegistry();
-
-// Register modules
-registry.register(userModule);
-registry.register(productModule);
-
-// Check if module is loaded
-if (registry.isLoaded('user', '1.0.0')) {
-  console.log('User module is loaded');
-}
-
-// Get module
-const module = registry.getModule('user', '1.0.0');
-const latestUserModule = registry.getModule('user'); // Gets latest version
-
-// Get all modules
-const allModules = registry.getAllModules();
-
-// Get only loaded modules
-const loadedModules = registry.getLoadedModules();
-```
-
 ## Module Dependencies
 
 ### Declaring Dependencies
@@ -766,14 +779,6 @@ const loadedModules = registry.getLoadedModules();
 export const databaseModule = defineModule({
   name: 'database',
   version: '1.0.0',
-
-  services: [
-    {
-      name: 'database',
-      implementation: DatabaseService,
-      singleton: true,
-    },
-  ],
 });
 
 // Dependent module
@@ -783,16 +788,12 @@ export const userModule = defineModule({
 
   // Declare dependencies
   dependencies: ['database'],
-
-  services: [
-    {
-      name: 'userService',
-      implementation: UserService,
-      dependencies: ['database'], // Service-level dependency
-      singleton: true,
-    },
-  ],
 });
+
+// Services go on the app container; a factory resolves what it depends on
+const container = app.getContainer();
+container.register('database', () => new DatabaseService(), true);
+container.register('userService', () => new UserService(container.resolve('database')), true);
 
 // Load in correct order
 await app.loadModule(databaseModule);
@@ -802,40 +803,28 @@ await app.loadModule(userModule); // Will have access to database service
 ### Cross-Module Services
 
 ```typescript
-// Shared services module
+// Shared services, registered once on the app container
+const container = app.getContainer();
+container.register('logger', () => new LoggerService(), true);
+container.register('cache', () => new CacheService(), true);
+
 export const sharedModule = defineModule({
   name: 'shared',
   version: '1.0.0',
-
-  services: [
-    {
-      name: 'logger',
-      implementation: LoggerService,
-      singleton: true,
-    },
-    {
-      name: 'cache',
-      implementation: CacheService,
-      singleton: true,
-    },
-  ],
 });
 
 // Feature modules can use shared services
+container.register(
+  'orderService',
+  () => new OrderService(container.resolve('logger'), container.resolve('cache')),
+  true
+);
+
 export const orderModule = defineModule({
   name: 'order',
   version: '1.0.0',
 
   dependencies: ['shared'],
-
-  services: [
-    {
-      name: 'orderService',
-      implementation: OrderService,
-      dependencies: ['logger', 'cache'],
-      singleton: true,
-    },
-  ],
 });
 ```
 
@@ -908,25 +897,19 @@ class ModuleService {
 export const lifecycleModule = defineModule({
   name: 'lifecycle',
   version: '1.0.0',
-
-  services: [
-    {
-      name: 'moduleService',
-      implementation: ModuleService,
-      singleton: true,
-    },
-  ],
 });
 
 // Application setup
 const app = await createApp();
+app.getContainer().register('moduleService', () => new ModuleService(), true);
 
-app.on('moduleLoaded', moduleName => {
-  console.log(`Module ${moduleName} loaded`);
+// 'module:loaded' is emitted on the app event bus; listeners receive { context, data }
+app.events.on('module:loaded', ({ data }) => {
+  console.log(`Module ${data.moduleId} loaded`);
 
   // Initialize services
-  if (moduleName === 'lifecycle') {
-    const service = app.getContainer().resolve('moduleService');
+  if (data.moduleId === 'lifecycle') {
+    const service = app.getContainer().resolve<ModuleService>('moduleService');
     service.initialize();
   }
 });
@@ -934,10 +917,9 @@ app.on('moduleLoaded', moduleName => {
 await app.loadModule(lifecycleModule);
 
 // Cleanup on shutdown
-process.on('SIGTERM', async () => {
-  const service = app.getContainer().resolve('moduleService');
+app.onClose(async () => {
+  const service = app.getContainer().resolve<ModuleService>('moduleService');
   await service.cleanup();
-  process.exit(0);
 });
 ```
 
@@ -1022,28 +1004,10 @@ export const userModule = defineModule({
 });
 ```
 
-### 4. Lazy Load Heavy Modules
+### 4. Test Modules in Isolation
 
 ```typescript
-const app = await createApp();
-
-// Load core modules immediately
-await app.loadModule(coreModule);
-await app.loadModule(authModule);
-
-// Lazy load heavy modules
-app.get('/admin/*', async (req, res, next) => {
-  if (!app.isModuleLoaded('admin')) {
-    const { adminModule } = await import('./modules/admin');
-    await app.loadModule(adminModule);
-  }
-  next();
-});
-```
-
-### 5. Test Modules in Isolation
-
-```typescript
+import request from 'supertest';
 import { createApp } from '@morojs/moro';
 import { userModule } from './modules/user';
 
@@ -1059,16 +1023,22 @@ describe('User Module', () => {
 
     // Load module
     await app.loadModule(userModule);
+    app.listen(3456);
+  });
+
+  afterEach(async () => {
+    await app.close();
   });
 
   it('should list users', async () => {
-    const response = await request(app).get('/users');
+    // Module routes are served under {apiPrefix}/v{version}/{moduleName}
+    const response = await request('http://localhost:3456').get('/api/v1.0.0/user/users');
     expect(response.status).toBe(200);
   });
 });
 ```
 
-### 6. Module Configuration Validation
+### 5. Module Configuration Validation
 
 ```typescript
 import { z } from 'zod';
@@ -1098,24 +1068,6 @@ export const externalApiModule = defineModule({
 export const sharedModule = defineModule({
   name: 'shared',
   version: '1.0.0',
-
-  services: [
-    {
-      name: 'database',
-      implementation: DatabaseService,
-      singleton: true,
-    },
-    {
-      name: 'cache',
-      implementation: CacheService,
-      singleton: true,
-    },
-    {
-      name: 'logger',
-      implementation: LoggerService,
-      singleton: true,
-    },
-  ],
 });
 
 // modules/user/index.ts
@@ -1123,15 +1075,6 @@ export const userModule = defineModule({
   name: 'user',
   version: '1.0.0',
   dependencies: ['shared'],
-
-  services: [
-    {
-      name: 'userService',
-      implementation: UserService,
-      dependencies: ['database', 'cache'],
-      singleton: true,
-    },
-  ],
 
   routes: [
     { method: 'GET', path: '/users', handler: listUsers },
@@ -1145,15 +1088,6 @@ export const productModule = defineModule({
   version: '1.0.0',
   dependencies: ['shared'],
 
-  services: [
-    {
-      name: 'productService',
-      implementation: ProductService,
-      dependencies: ['database', 'cache'],
-      singleton: true,
-    },
-  ],
-
   routes: [
     { method: 'GET', path: '/products', handler: listProducts },
     { method: 'POST', path: '/products', handler: createProduct },
@@ -1166,15 +1100,6 @@ export const orderModule = defineModule({
   version: '1.0.0',
   dependencies: ['shared', 'user', 'product'],
 
-  services: [
-    {
-      name: 'orderService',
-      implementation: OrderService,
-      dependencies: ['database', 'userService', 'productService'],
-      singleton: true,
-    },
-  ],
-
   routes: [
     { method: 'GET', path: '/orders', handler: listOrders },
     { method: 'POST', path: '/orders', handler: createOrder },
@@ -1183,6 +1108,21 @@ export const orderModule = defineModule({
 
 // app.ts
 const app = await createApp();
+
+// Register services on the app container: one instance of each for the app
+const container = app.getContainer();
+const get = <T>(name: string) => container.resolve<T>(name);
+
+container.register('database', () => new DatabaseService(), true);
+container.register('cache', () => new CacheService(), true);
+container.register('logger', () => new LoggerService(), true);
+container.register('userService', () => new UserService(get('database'), get('cache')), true);
+container.register('productService', () => new ProductService(get('database'), get('cache')), true);
+container.register(
+  'orderService',
+  () => new OrderService(get('database'), get('userService'), get('productService')),
+  true
+);
 
 // Load modules in dependency order
 await app.loadModule(sharedModule);
@@ -1209,14 +1149,14 @@ interface ModuleDefinition {
   routes?: ModuleRoute[];
   sockets?: ModuleSocket[];
   dependencies?: string[];
+  middleware?: ModuleMiddleware[]; // functions, or names of built-ins
 }
 ```
 
 ### App Methods
 
-- `loadModule(module: ModuleConfig): Promise<void>` - Load a module
-- `isModuleLoaded(name: string): boolean` - Check if module is loaded
-- `getModuleConfig(name: string): any` - Get module configuration
+- `loadModule(module: ModuleConfig | string): Promise<this>` - Load a module (a definition, or a path to one)
+- `initModules(options?): void` - Run module auto-discovery now (`paths`, `patterns`, `maxDepth`, ...)
 
 ## See Also
 

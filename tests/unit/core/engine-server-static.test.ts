@@ -9,10 +9,16 @@
 // call is refused (false) without the capability / export / for an unindexed
 // method, and every route is re-registered on the fresh native server that
 // listen() creates after close().
+//
+// The engine holds them only while a request would meet nothing in JS before
+// its route: with global middleware or a request / response hook registered,
+// at any time, the routes are taken back and their requests are dispatched
+// like any other.
 import { describe, it, expect } from '@jest/globals';
 import { MoroEngineServer } from '../../../src/core/http/moro-engine-server.js';
 import { createFakeEngine } from '../../utils/fake-engine.js';
 import { getEngineCapabilities } from '../../../src/core/utilities/package-utils.js';
+import { HookManager } from '../../../src/core/utilities/hooks.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -166,6 +172,123 @@ describe('MoroEngineServer static routes', () => {
       expect(fixed.status).toBe(sent.status);
       expect(fixed.body).toBe(body);
     }
+  });
+
+  it('takes its static routes back from the engine when global middleware is registered', async () => {
+    const engine = createFakeEngine({ capabilities: STATIC_CAPS });
+    const server = createServer(engine);
+    const seen: string[] = [];
+    server.setRouterHandler((req, res) => {
+      seen.push(`route ${req.path}`);
+      res.end('from js');
+      return true;
+    });
+    server.setStaticRoute('GET', '/', 200, null, '');
+    server.listen(0);
+
+    // Nothing in front: the engine answers.
+    const direct = engine.simulate({ method: 'GET', path: '/' });
+    expect(engine.requests.get(direct).ops[0].type).toBe('static');
+
+    // Registered after the route, and after listen().
+    server.use((req, _res, next) => {
+      seen.push(`middleware ${req.path}`);
+      next();
+    });
+    expect(engine.staticRoutes.get(server.serverId)).toBeUndefined();
+
+    const guarded = engine.simulate({ method: 'GET', path: '/' });
+    await tick();
+    expect(seen).toEqual(['middleware /', 'route /']);
+    expect(engine.requests.get(guarded).ops.some(op => op.type === 'static')).toBe(false);
+  });
+
+  it('keeps a route registered behind global middleware away from the engine', async () => {
+    const engine = createFakeEngine({ capabilities: STATIC_CAPS });
+    const server = createServer(engine);
+    let guardCalls = 0;
+    server.setRouterHandler((_req, res) => {
+      res.end('from js');
+      return true;
+    });
+    server.use((_req, res) => {
+      guardCalls++;
+      res.status(401).json({ error: 'no' });
+    });
+
+    // Accepted, and answered in JS for as long as the middleware is there.
+    expect(server.setStaticRoute('GET', '/internal', 200, null, 'secret')).toBe(true);
+    expect(engine.staticCalls).toEqual([]);
+    server.listen(0);
+    expect(engine.staticCalls).toEqual([]);
+
+    const reqId = engine.simulate({ method: 'GET', path: '/internal' });
+    await tick();
+    expect(guardCalls).toBe(1);
+    const reply = engine.requests.get(reqId).ops.find(op => op.type === 'respond');
+    expect(reply.status).toBe(401);
+
+    // Nor is it handed to the fresh native server of a close() + listen() cycle.
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    server.listen(0);
+    expect(engine.staticCalls).toEqual([]);
+  });
+
+  it('follows request and response hooks as they are added and removed', async () => {
+    const engine = createFakeEngine({ capabilities: STATIC_CAPS });
+    const server = createServer(engine);
+    const hooks = new HookManager();
+    server.setHookManager(hooks);
+    const seen: string[] = [];
+    server.setRouterHandler((req, res) => {
+      seen.push(`route ${req.path}`);
+      res.end('from js');
+      return true;
+    });
+    server.setStaticRoute('GET', '/', 200, null, '');
+    server.listen(0);
+    expect(engine.staticRoutes.get(server.serverId)).toHaveLength(1);
+
+    // A hook registered on the running server is in front of the route too.
+    const hook = (context: any) => {
+      seen.push(`hook ${context.request.path}`);
+    };
+    hooks.before('request', hook);
+    expect(engine.staticRoutes.get(server.serverId)).toBeUndefined();
+    const hooked = engine.simulate({ method: 'GET', path: '/' });
+    await tick();
+    await tick();
+    expect(seen).toEqual(['hook /', 'route /']);
+    expect(engine.requests.get(hooked).ops.some(op => op.type === 'static')).toBe(false);
+
+    // An 'error' hook is not in front of anything: no change either way.
+    hooks.before('error', () => {});
+    hooks.removeHook('request', hook);
+    expect(engine.staticRoutes.get(server.serverId)).toHaveLength(1);
+    const direct = engine.simulate({ method: 'GET', path: '/' });
+    expect(engine.requests.get(direct).ops[0].type).toBe('static');
+
+    // A response hook, and a raw listener, count as well.
+    hooks.after('response', () => {});
+    expect(engine.staticRoutes.get(server.serverId)).toBeUndefined();
+    hooks.removeHook('response');
+    expect(engine.staticRoutes.get(server.serverId)).toHaveLength(1);
+    const listener = () => {};
+    hooks.on('request', listener);
+    expect(engine.staticRoutes.get(server.serverId)).toBeUndefined();
+    hooks.off('request', listener);
+    expect(engine.staticRoutes.get(server.serverId)).toHaveLength(1);
+  });
+
+  it('is refused by an engine that could not be asked to give the routes back', () => {
+    const noClear = createFakeEngine({
+      capabilities: STATIC_CAPS,
+      omitFunctions: ['clearStaticRoutes'],
+    });
+    const server = createServer(noClear);
+    expect(server.staticRoutesEnabled).toBe(false);
+    expect(server.setStaticRoute('GET', '/')).toBe(false);
+    expect(noClear.staticCalls).toEqual([]);
   });
 
   it('clearStaticRoutes() forgets them on the adapter and the engine', () => {

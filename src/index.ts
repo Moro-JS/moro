@@ -56,14 +56,28 @@ export {
   authResponses,
   extendedProviders,
   enterpriseProviders,
+  // JWT helpers for custom auth middleware (imported from the package root in
+  // the auth guide)
+  safeVerifyJWT,
+  extractJWTFromHeader,
+  createAuthErrorResponse,
 } from './core/middleware/built-in/auth/index.js';
 export type {
+  JWTVerificationResult,
   TwoFactorAuthOptions,
   OrganizationOptions,
   AnonymousOptions,
   AccountLinkingOptions,
   RateLimitOptions,
   BearerTokenOptions,
+  AuthFeatureOptions,
+  AuthPluginHelper,
+  TwoFactorSettings,
+  OrganizationSettings,
+  AnonymousSettings,
+  BearerTokenSettings,
+  AccountLinkingSettings,
+  RateLimitSettings,
 } from './core/middleware/built-in/auth/index.js';
 
 // Runtime system exports
@@ -89,6 +103,7 @@ export {
 // Runtime-specific types
 export type {
   LambdaEvent,
+  LambdaHttpApiEvent,
   LambdaContext,
   LambdaResponse,
 } from './core/runtime/aws-lambda-adapter.js';
@@ -146,6 +161,7 @@ export type {
   ApiErrorResponse,
   ApiResponse,
   ResponseValidationErrorDetail,
+  ContainerRegisterOptions,
 } from './core/utilities/index.js';
 
 // Event System
@@ -215,6 +231,7 @@ export type {
   WebSocketEmitter,
   WebSocketMiddleware,
   WebSocketEventHandler,
+  ClientAddressResolver,
 } from './core/networking/websocket-adapter.js';
 
 // Built-in WebSocket Adapters
@@ -382,13 +399,14 @@ export type {
   GrpcCallback,
   GrpcMetadata,
   GrpcError,
-  GrpcStatusCode,
+  GrpcStatusObject,
   GrpcCredentials,
   GrpcServer,
   GrpcClient,
   GrpcClientOptions,
   GrpcInterceptor,
   ServiceImplementation,
+  GrpcMethodHandler,
   ServiceDefinition,
   ServiceRegistration,
   MethodDefinition,
@@ -398,10 +416,14 @@ export type {
   BidirectionalStreamingHandler,
   GrpcHandler,
   GrpcStats,
-  HealthCheckStatus,
   HealthCheckResponse,
   ProtoLoadOptions,
 } from './core/grpc/types.js';
+
+// The status enums are runtime values (GrpcStatusCode.NOT_FOUND,
+// HealthCheckStatus.SERVING). Their module holds only types and enums, so
+// exporting them loads no gRPC package.
+export { GrpcStatusCode, HealthCheckStatus } from './core/grpc/types.js';
 
 export type { GrpcAdapter } from './core/grpc/grpc-adapter.js';
 export { GrpcJsAdapter } from './core/grpc/adapters/index.js';

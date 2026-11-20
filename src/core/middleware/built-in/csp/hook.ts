@@ -43,6 +43,9 @@ export const csp = (options: CSPOptions = {}): MiddlewareInterface => ({
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
+      // Answered by a hook that ran before this one: a response that has been
+      // sent takes no more headers
+      if (res.headersSent) return;
 
       const nonce = cspCore.applyCSP(res);
 

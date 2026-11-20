@@ -1,7 +1,26 @@
 // Rate Limit Hook - MiddlewareInterface for global registration
 import { MiddlewareInterface, HookContext } from '../../../../types/hooks.js';
 import { createFrameworkLogger } from '../../../logger/index.js';
-import { RateLimitCore, onResponseFinished, shouldRefund } from './core.js';
+import {
+  RateLimitCore,
+  onResponseFinished,
+  rateLimitClientId,
+  rateLimitRouteKey,
+  setRoutePatternResolver,
+  shouldRefund,
+  type RateLimitConfig,
+} from './core.js';
+// After ./core.js on purpose: the router loads the rate limit core, so the
+// core must be ready before the router module is.
+import { UnifiedRouter } from '../../../routing/unified-router.js';
+import { applyGlobalHelmet } from '../helmet/core.js';
+import { applyGlobalCORS, globalCORSAnswersPreflight } from '../cors/core.js';
+
+// Counters are kept per registered route ('/otp/:code'), not per URL: ask the
+// router which route a request will reach. A request carries its server, and
+// the server its app's router; this is the answer for a request that has no
+// server (a runtime adapter): the current app's router, resolved per request.
+setRoutePatternResolver((method, path) => UnifiedRouter.getInstance().matchRoute(method, path));
 
 const logger = createFrameworkLogger('RateLimitMiddleware');
 
@@ -20,6 +39,11 @@ export interface RateLimitHookOptions {
   skipSuccessfulRequests?: boolean;
   /** Only count requests that did complete successfully. */
   skipFailedRequests?: boolean;
+  /**
+   * Who a request is counted against. Default: the client address (`req.ip`).
+   * An empty result falls back to the client address.
+   */
+  keyGenerator?: RateLimitConfig['keyGenerator'];
 }
 
 /**
@@ -28,6 +52,12 @@ export interface RateLimitHookOptions {
  *
  * Rejected requests are answered directly with the configured status (429 by
  * default) and a `Retry-After` header — the request never reaches your routes.
+ *
+ * Each client (`req.ip`, or `keyGenerator(req)`) has one counter per route:
+ * requests are counted under the route they match as it was registered
+ * (`/users/:id`), so changing a path parameter or the query string does not
+ * start a new counter. A request that matches no registered route is counted
+ * under its path.
  *
  * @example
  * ```ts
@@ -65,8 +95,14 @@ export const rateLimit = (options: RateLimitHookOptions = {}): MiddlewareInterfa
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
-      const clientId = req.ip || req.connection?.remoteAddress || 'unknown';
-      const routeKey = `${req.method}:${req.path}`;
+      // A preflight is the application's CORS to answer: counted here, the
+      // browser's own question could use up the allowance, and a refused one
+      // would fail the request it asks about. (Any other request is counted,
+      // also one a hook ahead of this one has answered: a 401 from an auth
+      // hook is a request the limit is there to slow down.)
+      if (globalCORSAnswersPreflight(req, res)) return;
+      const clientId = rateLimitClientId(req, options.keyGenerator);
+      const routeKey = rateLimitRouteKey(req);
 
       const allowed = core.check(clientId, routeKey, max, windowMs);
 
@@ -76,6 +112,12 @@ export const rateLimit = (options: RateLimitHookOptions = {}): MiddlewareInterfa
         // ERROR log line for every request the limiter correctly rejects.
         if (res && !res.headersSent) {
           const retryAfter = core.getRetryAfter(clientId, routeKey);
+          // Answered ahead of function middleware: carry the application's
+          // helmet headers, as every other response does
+          applyGlobalHelmet(req, res);
+          // ... and its CORS headers, so that a page on an allowed origin can
+          // read the refusal
+          await applyGlobalCORS(req, res);
           res.setHeader('Retry-After', String(retryAfter));
           res.status(statusCode).json({
             success: false,

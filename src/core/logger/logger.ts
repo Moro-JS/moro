@@ -11,6 +11,51 @@ import {
   LogMetrics,
   ColorScheme,
 } from '../../types/logger.js';
+import { createMetadataRedactor, type MetadataRedactor } from './filters.js';
+
+const REDACTED = '[REDACTED]';
+
+// Characters that end a line or drive a terminal: the C0 controls except TAB,
+// DEL, the C1 controls (0x9b is CSI on an 8-bit terminal) and the Unicode line
+// and paragraph separators. One regex to find out whether a string has any -
+// almost none do, and those are written untouched - and one to replace them.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHAR = /[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]/;
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]/g;
+// What follows the line break in front of a stack frame
+const STACK_FRAME_AHEAD = /[ \t]+at /y;
+
+function visibleControlChar(char: string): string {
+  if (char === '\n') return '\\n';
+  if (char === '\r') return '\\r';
+  const code = char.charCodeAt(0);
+  return code > 0xff
+    ? `\\u${code.toString(16)}`
+    : `\\x${code < 0x10 ? '0' : ''}${code.toString(16)}`;
+}
+
+/** Write control characters in a logged value as visible escapes. */
+function escapeControlChars(text: string): string {
+  // Untyped callers pass numbers, errors and objects as the message
+  if (typeof text !== 'string') text = String(text);
+  return CONTROL_CHAR.test(text) ? text.replace(CONTROL_CHARS, visibleControlChar) : text;
+}
+
+/**
+ * The same for a stack trace, which is multi-line by design: a line break in
+ * front of a frame (`    at fn (file:1:2)`) stays, every other control
+ * character - including line breaks inside the error message - is escaped.
+ */
+function escapeStackControlChars(stack: string): string {
+  return stack.replace(CONTROL_CHARS, (char, offset: number) => {
+    if (char === '\n') {
+      STACK_FRAME_AHEAD.lastIndex = offset + 1;
+      if (STACK_FRAME_AHEAD.test(stack)) return char;
+    }
+    return visibleControlChar(char);
+  });
+}
 
 // Optional LogEntry fields are cleared to undefined when a pooled entry is
 // reused. exactOptionalPropertyTypes rejects assigning undefined straight onto
@@ -37,6 +82,25 @@ export class MoroLogger implements Logger {
   private contextPrefix?: string;
   private contextMetadata?: Record<string, any>;
   private parent?: MoroLogger; // Reference to parent logger for level inheritance
+
+  // The logger that owns the outputs, filters and live options a child()
+  // shares: itself for a logger built with `new`, the top ancestor otherwise.
+  private root: MoroLogger = this;
+  // The built-in console output, to tell "only the console" from a custom setup
+  private consoleOutput: LogOutput;
+
+  // Redaction (options.redact): the redactor built for the current setting,
+  // and this logger's own context metadata already passed through it
+  private redactor: MetadataRedactor | null = null;
+  private redactorSetting: LoggerOptions['redact'] | null = null;
+  private redactedContext: Record<string, any> | undefined;
+  private redactedContextBy: MetadataRedactor | null = null;
+
+  // One-entry caches for the context strings (see fullContext, escapeContext)
+  private lastContextArg: string | undefined;
+  private lastContextFull: string | undefined;
+  private lastEscapedContextIn: string | undefined;
+  private lastEscapedContextOut = '';
 
   // Performance optimizations
   private historyIndex = 0;
@@ -143,11 +207,12 @@ export class MoroLogger implements Logger {
     this.fatal = this.createLogMethod('fatal');
 
     // Add default console output
-    this.addOutput({
+    this.consoleOutput = {
       name: 'console',
       write: this.writeToConsole.bind(this),
       ...(this.options.format !== undefined ? { format: this.options.format } : {}),
-    });
+    };
+    this.addOutput(this.consoleOutput);
 
     // Add custom outputs
     if (this.options.outputs) {
@@ -299,6 +364,8 @@ export class MoroLogger implements Logger {
     childLogger.contextMetadata = { ...this.contextMetadata, ...metadata };
     childLogger.outputs = this.outputs;
     childLogger.filters = this.filters;
+    childLogger.root = this.root;
+    childLogger.consoleOutput = this.consoleOutput;
 
     // Keep reference to parent for level inheritance
     (childLogger as any).parent = this;
@@ -441,15 +508,18 @@ export class MoroLogger implements Logger {
       return;
     }
 
-    // Absolute minimal path for simple logs - pure speed
-    if (!metadata && !context && !this.contextPrefix && !this.contextMetadata) {
-      this.writeSimpleLog(level, message);
-      return;
-    }
-
-    // Minimal path for logs with context but no metadata
+    // Minimal path for logs without metadata - pure speed. It writes the
+    // pretty line straight to the console, so it is only taken when that is
+    // all the full pipeline would do: pretty format, the built-in console as
+    // the only output, no filters, no metrics. Otherwise the entry goes
+    // through fullLog like any other, and reaches the configured format,
+    // outputs and filters.
     if (!metadata && !this.contextMetadata) {
-      this.writeSimpleLog(level, message, context);
+      if (this.consoleOnlyPretty()) {
+        this.writeSimpleLog(level, message, this.fullContext(context));
+        return;
+      }
+      this.fullLog(level, message, context, metadata);
       return;
     }
 
@@ -480,6 +550,66 @@ export class MoroLogger implements Logger {
     this.fullLog(level, message, context, metadata);
   }
 
+  // The context an entry is written with: this logger's prefix (child loggers)
+  // joined to the context passed to the call. Call sites pass the same literal
+  // again and again, so the last joined string is kept.
+  private fullContext(context?: string): string | undefined {
+    const prefix = this.contextPrefix;
+    if (!prefix) return context;
+    if (!context) return prefix;
+    if (context !== this.lastContextArg) {
+      this.lastContextArg = context;
+      this.lastContextFull = `${prefix}:${context}`;
+    }
+    return this.lastContextFull;
+  }
+
+  // Control characters in a context, written as visible escapes. Contexts are
+  // labels that repeat, so the last one checked is remembered.
+  private escapeContext(context: string): string {
+    if (context !== this.lastEscapedContextIn) {
+      this.lastEscapedContextIn = context;
+      this.lastEscapedContextOut = escapeControlChars(context);
+    }
+    return this.lastEscapedContextOut;
+  }
+
+  // Whether a log without metadata would end up as nothing but one pretty line
+  // on the built-in console output.
+  private consoleOnlyPretty(): boolean {
+    const format = this.root.options.format;
+    return (
+      (format === undefined || format === 'pretty') &&
+      this.filters.size === 0 &&
+      !this.metricsEnabled &&
+      this.outputs.size === 1 &&
+      this.outputs.get('console') === this.consoleOutput
+    );
+  }
+
+  // The redactor to apply to metadata, or null when redaction is off. Read
+  // from the root logger's live options on each call, so configuration applied
+  // after a child logger was created still counts.
+  private activeRedactor(): MetadataRedactor | null {
+    const root = this.root;
+    const options = root.options;
+    const setting = options.redact;
+    if (setting === false) return null;
+    if (setting === undefined) {
+      // Default: on wherever the console prints metadata - always in the
+      // json format, behind enableMetadata in pretty, never in compact
+      const format = options.format;
+      if (format !== 'json' && (format === 'compact' || options.enableMetadata === false)) {
+        return null;
+      }
+    }
+    if (root.redactor === null || root.redactorSetting !== setting) {
+      root.redactor = createMetadataRedactor(Array.isArray(setting) ? setting : []);
+      root.redactorSetting = setting;
+    }
+    return root.redactor;
+  }
+
   // Full logging with all features
   private fullLog(
     level: LogLevel,
@@ -494,11 +624,7 @@ export class MoroLogger implements Logger {
     entry.timestamp = new Date(now);
     entry.level = level;
     entry.message = message;
-    (entry as ResettableLogEntry).context = this.contextPrefix
-      ? context
-        ? `${this.contextPrefix}:${context}`
-        : this.contextPrefix
-      : context;
+    (entry as ResettableLogEntry).context = this.fullContext(context);
     entry.metadata = this.createMetadata(metadata);
     (entry as ResettableLogEntry).performance = this.options.enablePerformance
       ? this.getPerformanceData(now)
@@ -541,11 +667,7 @@ export class MoroLogger implements Logger {
     entry.timestamp = new Date(now);
     entry.level = level;
     entry.message = message;
-    (entry as ResettableLogEntry).context = this.contextPrefix
-      ? context
-        ? `${this.contextPrefix}:${context}`
-        : this.contextPrefix
-      : context;
+    (entry as ResettableLogEntry).context = this.fullContext(context);
     entry.metadata = this.createMetadata(metadata);
     (entry as ResettableLogEntry).performance = this.options.enablePerformance
       ? this.getPerformanceData(now)
@@ -562,6 +684,10 @@ export class MoroLogger implements Logger {
   private writeSimpleLog(level: LogLevel, message: string, context?: string): void {
     const colors = this.options.enableColors !== false;
     const levelReset = colors ? MoroLogger.RESET : '';
+    if (this.options.escapeControlChars !== false) {
+      message = escapeControlChars(message);
+      if (context) context = this.escapeContext(context);
+    }
 
     MoroLogger.resetStringBuilder();
 
@@ -628,6 +754,19 @@ export class MoroLogger implements Logger {
     if (!metadata && !this.contextMetadata) {
       return {};
     }
+    const redactor = this.activeRedactor();
+    if (redactor !== null) {
+      const context = this.contextMetadata;
+      if (!metadata) {
+        // A child logger's own metadata never changes: redact it once
+        if (this.redactedContextBy !== redactor) {
+          this.redactedContext = redactor(context as Record<string, any>);
+          this.redactedContextBy = redactor;
+        }
+        return { ...this.redactedContext };
+      }
+      return redactor(metadata, context);
+    }
     if (!metadata) {
       return { ...this.contextMetadata };
     }
@@ -647,8 +786,11 @@ export class MoroLogger implements Logger {
   }
 
   // Circular buffer implementation for history (O(1) instead of O(n))
-  private addToHistory(entry: LogEntry): void {
+  private addToHistory(pooled: LogEntry): void {
     const maxEntries = this.options.maxEntries || 1000;
+    // The entry goes back to the pool once it has been written and is reused
+    // for the next log, so history keeps its own copy.
+    const entry: LogEntry = { ...pooled };
 
     if (this.historySize < maxEntries) {
       this.history[this.historySize] = entry;
@@ -696,14 +838,18 @@ export class MoroLogger implements Logger {
     const format = this.options.format || 'pretty';
 
     if (format === 'json') {
-      this.output(`${this.safeStringify(entry)}\n`, entry.level);
+      this.output(`${this.safeStringify(entry, 3, this.activeRedactor())}\n`, entry.level);
       return;
     }
 
     if (format === 'compact') {
+      const escape = this.options.escapeControlChars !== false;
       const level = entry.level.toUpperCase().padEnd(5);
-      const context = entry.context ? `[${entry.context}] ` : '';
-      this.output(`${level} ${context}${entry.message}\n`, entry.level);
+      const context = entry.context
+        ? `[${escape ? this.escapeContext(entry.context) : entry.context}] `
+        : '';
+      const message = escape ? escapeControlChars(entry.message) : entry.message;
+      this.output(`${level} ${context}${message}\n`, entry.level);
       return;
     }
 
@@ -714,6 +860,7 @@ export class MoroLogger implements Logger {
   private writePrettyLog(entry: LogEntry): void {
     const colors = this.options.enableColors !== false;
     const levelReset = colors ? MoroLogger.RESET : '';
+    const escape = this.options.escapeControlChars !== false;
 
     MoroLogger.resetStringBuilder();
 
@@ -743,19 +890,20 @@ export class MoroLogger implements Logger {
 
     // Context
     if (entry.context && this.options.enableContext !== false) {
+      const context = escape ? this.escapeContext(entry.context) : entry.context;
       MoroLogger.appendToBuilder(' ');
       if (colors) {
         MoroLogger.appendToBuilder(MoroLogger.COLORS.context);
-        MoroLogger.appendToBuilder(`[${entry.context}]`);
+        MoroLogger.appendToBuilder(`[${context}]`);
         MoroLogger.appendToBuilder(levelReset);
       } else {
-        MoroLogger.appendToBuilder(`[${entry.context}]`);
+        MoroLogger.appendToBuilder(`[${context}]`);
       }
     }
 
     // Message
     MoroLogger.appendToBuilder(' ');
-    MoroLogger.appendToBuilder(entry.message);
+    MoroLogger.appendToBuilder(escape ? escapeControlChars(entry.message) : entry.message);
 
     // Performance info
     if (entry.performance && this.options.enablePerformance !== false) {
@@ -805,12 +953,13 @@ export class MoroLogger implements Logger {
 
         if (hasCleanedData) {
           MoroLogger.appendToBuilder(' ');
+          const metadataText = this.safeStringify(cleanMetadata, 3, this.activeRedactor());
           if (colors) {
             MoroLogger.appendToBuilder(metaColor);
-            MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
+            MoroLogger.appendToBuilder(metadataText);
             MoroLogger.appendToBuilder(levelReset);
           } else {
-            MoroLogger.appendToBuilder(this.safeStringify(cleanMetadata));
+            MoroLogger.appendToBuilder(metadataText);
           }
         }
       }
@@ -823,7 +972,10 @@ export class MoroLogger implements Logger {
     // Stack trace for errors
     if (entry.metadata?.stack && (entry.level === 'error' || entry.level === 'fatal')) {
       const stackColor = colors ? MoroLogger.COLORS.error : '';
-      this.output(`${stackColor}${entry.metadata.stack}${levelReset}\n`, entry.level);
+      const stack = escape
+        ? escapeStackControlChars(String(entry.metadata.stack))
+        : entry.metadata.stack;
+      this.output(`${stackColor}${stack}${levelReset}\n`, entry.level);
     }
   }
 
@@ -954,33 +1106,80 @@ export class MoroLogger implements Logger {
     }
   }
 
+  // Date.prototype.toISOString() output (null for an invalid date, as in
+  // JSON). Every JSON line carries a timestamp and toISOString() costs several
+  // hundred nanoseconds, so the part that changes once a second is kept and
+  // only the milliseconds are appended.
+  private static isoSecond = NaN;
+  private static isoPrefix = '';
+
+  private static isoTimestamp(date: Date): string | null {
+    const time = date.getTime();
+    if (Number.isNaN(time)) return null;
+    // Years 1970 to 9999: four-digit years, the fixed layout sliced below
+    if (time < 0 || time > 253402300799999) return date.toISOString();
+    const second = Math.floor(time / 1000);
+    if (second !== MoroLogger.isoSecond) {
+      MoroLogger.isoSecond = second;
+      // 'YYYY-MM-DDTHH:mm:ss.'
+      MoroLogger.isoPrefix = new Date(second * 1000).toISOString().slice(0, 20);
+    }
+    const millis = time - second * 1000;
+    return `${MoroLogger.isoPrefix}${millis < 10 ? '00' : millis < 100 ? '0' : ''}${millis}Z`;
+  }
+
   // Safe stringify with circular reference detection
-  private safeStringify(obj: any, maxDepth = 3): string {
+  //
+  // With a redactor, sensitive keys are masked wherever the walk meets them -
+  // including inside class instances, which the entry-level redaction passes
+  // through untouched (an ORM entity with a password field, an HTTP client
+  // error carrying its request headers).
+  private safeStringify(obj: any, maxDepth = 3, redactor: MetadataRedactor | null = null): string {
     const seen = new WeakSet();
 
-    const stringify = (value: any, depth: number): any => {
+    // `mask` turns on below the first class instance: plain objects and arrays
+    // above it were already redacted when the entry was created.
+    const stringify = (value: any, depth: number, mask: boolean): any => {
       if (depth > maxDepth) return '[Max Depth Reached]';
-      if (value === null || typeof value !== 'object') return value;
+      if (value === null || typeof value !== 'object') {
+        // JSON has no bigint; JSON.stringify throws on one
+        return typeof value === 'bigint' ? value.toString() : value;
+      }
+      // A Date has no enumerable fields: write it the way JSON.stringify does
+      if (value instanceof Date) return MoroLogger.isoTimestamp(value);
       if (seen.has(value)) return '[Circular Reference]';
 
       seen.add(value);
 
       if (Array.isArray(value)) {
-        return value.map(item => stringify(item, depth + 1));
+        return value.map(item => stringify(item, depth + 1, mask));
       }
 
       const result: any = {};
+      if (value instanceof Error) {
+        // name, message and stack are not enumerable either
+        result.name = value.name;
+        result.message = value.message;
+        if (typeof value.stack === 'string') result.stack = value.stack;
+      }
+      if (redactor !== null && !mask) {
+        const prototype = Object.getPrototypeOf(value);
+        mask = prototype !== Object.prototype && prototype !== null;
+      }
       for (const [key, val] of Object.entries(value)) {
         if (typeof val !== 'function') {
           // Skip functions
-          result[key] = stringify(val, depth + 1);
+          result[key] =
+            mask && (redactor as MetadataRedactor).shouldMask(key, val)
+              ? REDACTED
+              : stringify(val, depth + 1, mask);
         }
       }
       return result;
     };
 
     try {
-      return JSON.stringify(stringify(obj, 0));
+      return JSON.stringify(stringify(obj, 0, false));
     } catch {
       return '[Stringify Error]';
     }
@@ -1034,7 +1233,9 @@ export class MoroLogger implements Logger {
   }
 
   private emergencyConsoleWrite(entry: LogEntry): void {
-    const message = `${entry.timestamp.toISOString()} ${entry.level.toUpperCase()} ${entry.message}`;
+    const text =
+      this.options.escapeControlChars !== false ? escapeControlChars(entry.message) : entry.message;
+    const message = `${entry.timestamp.toISOString()} ${entry.level.toUpperCase()} ${text}`;
     try {
       if (entry.level === 'error' || entry.level === 'fatal') {
         process.stderr.write(`[EMERGENCY] ${message}\n`);
@@ -1054,20 +1255,15 @@ export class MoroLogger implements Logger {
       this.flushTimeout = null;
     }
 
-    // Flush any remaining buffer
+    // Flush any remaining buffer. flushBuffer() hands every buffered line to
+    // process.stdout / process.stderr, and nothing more can be done from
+    // here: a stream write of '' moves no bytes and does not hurry the ones
+    // already queued. It is not harmless either. This method runs on
+    // 'beforeExit', and in a worker thread stdout and stderr are message
+    // ports to the main thread, so any write, even an empty one, is new
+    // asynchronous work: the event loop wakes, empties, fires 'beforeExit'
+    // again, and the thread never exits.
     this.flushBuffer();
-
-    try {
-      // Force flush streams without ending them
-      if (process.stdout.writable) {
-        process.stdout.write(''); // Force flush without ending
-      }
-      if (process.stderr.writable) {
-        process.stderr.write(''); // Force flush without ending
-      }
-    } catch {
-      // Ignore flush errors
-    }
   }
 
   // Destroy logger and clean up all resources (for testing)
@@ -1117,6 +1313,13 @@ const envPerformance = parseGlobalBoolEnv(
   process.env.LOG_PERFORMANCE ?? process.env.MORO_LOG_PERFORMANCE
 );
 
+// LOG_REDACT / LOG_ESCAPE_CONTROL_CHARS: true or false. Unset leaves the
+// defaults (redaction wherever metadata is printed; escaping on).
+const envRedact = parseGlobalBoolEnv(process.env.LOG_REDACT ?? process.env.MORO_LOG_REDACT);
+const envEscapeControlChars = parseGlobalBoolEnv(
+  process.env.LOG_ESCAPE_CONTROL_CHARS ?? process.env.MORO_LOG_ESCAPE_CONTROL_CHARS
+);
+
 export const logger = new MoroLogger({
   level: initialLogLevel as LogLevel,
   enableColors: !process.env.NO_COLOR,
@@ -1124,6 +1327,8 @@ export const logger = new MoroLogger({
   // Opt-in flags - only override defaults when env var is explicitly set.
   ...(envMetadata !== undefined ? { enableMetadata: envMetadata } : {}),
   ...(envPerformance !== undefined ? { enablePerformance: envPerformance } : {}),
+  ...(envRedact !== undefined ? { redact: envRedact } : {}),
+  ...(envEscapeControlChars !== undefined ? { escapeControlChars: envEscapeControlChars } : {}),
 });
 
 /**
@@ -1164,6 +1369,12 @@ export function configureGlobalLogger(options: Partial<LoggerOptions>): void {
   }
   if (options.format !== undefined) {
     liveOptions.format = options.format;
+  }
+  if (options.redact !== undefined) {
+    liveOptions.redact = options.redact;
+  }
+  if (options.escapeControlChars !== undefined) {
+    liveOptions.escapeControlChars = options.escapeControlChars;
   }
 }
 
@@ -1206,6 +1417,12 @@ export function applyLoggingConfiguration(
     }
     if (configLogging.enablePerformance !== undefined) {
       fromConfig.enablePerformance = configLogging.enablePerformance;
+    }
+    if (configLogging.redact !== undefined) {
+      fromConfig.redact = configLogging.redact;
+    }
+    if (configLogging.escapeControlChars !== undefined) {
+      fromConfig.escapeControlChars = configLogging.escapeControlChars;
     }
     if (Object.keys(fromConfig).length > 0) {
       configureGlobalLogger(fromConfig);

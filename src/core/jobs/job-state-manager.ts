@@ -4,8 +4,16 @@
 import { EventEmitter } from 'events';
 import { Logger } from '../../types/logger.js';
 import fs from 'fs';
-import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
+import { defaultJobStatePath } from './default-paths.js';
+
+// The state file holds job metadata and last error stacks: owner-only
+const STATE_FILE_MODE = 0o600;
+
+// A state file larger than this is not one we wrote; it is ignored on load
+// rather than read into memory.
+const MAX_STATE_FILE_BYTES = 16 * 1024 * 1024;
 
 export interface JobExecution {
   jobId: string;
@@ -104,8 +112,8 @@ export class JobStateManager extends EventEmitter {
     if (options.persistPath) {
       this.persistPath = options.persistPath;
     } else {
-      const tmpDir = os.tmpdir();
-      this.persistPath = path.join(tmpDir, 'moro-jobs-state.json');
+      // Application-scoped name in os.tmpdir() (see default-paths.ts)
+      this.persistPath = defaultJobStatePath();
     }
 
     // Start auto-persist if enabled
@@ -502,11 +510,23 @@ export class JobStateManager extends EventEmitter {
       };
 
       const json = JSON.stringify(stateData, null, 2);
-      const tempPath = `${this.persistPath}.tmp`;
 
-      // Write to temp file first, then rename (atomic operation)
-      await fs.promises.writeFile(tempPath, json, 'utf-8');
-      await fs.promises.rename(tempPath, this.persistPath);
+      // Write to a temp file first, then rename (atomic operation). The temp
+      // name is unpredictable and created exclusively ('wx' never follows or
+      // reuses an existing path), so a file or symlink planted next to the
+      // state file cannot redirect the write.
+      const tempPath = `${this.persistPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+      await fs.promises.writeFile(tempPath, json, {
+        encoding: 'utf-8',
+        mode: STATE_FILE_MODE,
+        flag: 'wx',
+      });
+      try {
+        await fs.promises.rename(tempPath, this.persistPath);
+      } catch (error) {
+        await fs.promises.unlink(tempPath).catch(() => {});
+        throw error;
+      }
 
       this.isDirty = false;
       this.logger.debug('Job state persisted', this.loggerContext, { path: this.persistPath });
@@ -528,19 +548,11 @@ export class JobStateManager extends EventEmitter {
     }
 
     try {
-      const exists = await fs.promises
-        .access(this.persistPath)
-        .then(() => true)
-        .catch(() => false);
-
-      if (!exists) {
-        this.logger.debug('No persisted state found', this.loggerContext, {
-          path: this.persistPath,
-        });
+      const json = await this.readStateFile(this.persistPath);
+      if (json === null) {
         return;
       }
 
-      const json = await fs.promises.readFile(this.persistPath, 'utf-8');
       const stateData: PersistedState = JSON.parse(json);
 
       // Restore job states
@@ -599,6 +611,58 @@ export class JobStateManager extends EventEmitter {
         path: this.persistPath,
       });
       // Don't throw - we can continue without persisted state
+    }
+  }
+
+  /**
+   * Read the persisted state file, or return null when there is nothing usable
+   * to load. Only a regular file of a plausible size is read: a symlink, a
+   * directory or an oversized file at the path is ignored with a warning.
+   */
+  private async readStateFile(filePath: string): Promise<string | null> {
+    let stats: fs.Stats;
+    try {
+      stats = await fs.promises.lstat(filePath);
+    } catch {
+      this.logger.debug('No persisted state found', this.loggerContext, { path: filePath });
+      return null;
+    }
+
+    if (!stats.isFile()) {
+      this.logger.warn('Ignoring persisted job state: not a regular file', this.loggerContext, {
+        path: filePath,
+      });
+      return null;
+    }
+
+    if (stats.size > MAX_STATE_FILE_BYTES) {
+      this.logger.warn('Ignoring persisted job state: file is too large', this.loggerContext, {
+        path: filePath,
+        size: stats.size,
+        maxSize: MAX_STATE_FILE_BYTES,
+      });
+      return null;
+    }
+
+    // Open without following a symlink (the path could be swapped after the
+    // lstat above) and re-check what was actually opened before reading it.
+    const handle = await fs.promises.open(
+      filePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+    );
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || opened.size > MAX_STATE_FILE_BYTES) {
+        this.logger.warn(
+          'Ignoring persisted job state: file changed while loading',
+          this.loggerContext,
+          { path: filePath }
+        );
+        return null;
+      }
+      return await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
     }
   }
 

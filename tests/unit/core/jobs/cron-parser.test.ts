@@ -222,4 +222,93 @@ describe('CronParser', () => {
       expect(next.getDate()).toBe(1);
     });
   });
+
+  function timed<T>(fn: () => T): { result: T; ms: number } {
+    const start = process.hrtime.bigint();
+    const result = fn();
+    return { result, ms: Number(process.hrtime.bigint() - start) / 1e6 };
+  }
+
+  const range = (from: number, to: number, step = 1): number[] => {
+    const values: number[] = [];
+    for (let i = from; i <= to; i += step) values.push(i);
+    return values;
+  };
+
+  describe('Range bounds', () => {
+    it('parses a range with a large upper bound without walking it', () => {
+      const { result, ms } = timed(() => new CronParser('0-999999999 * * * *').getSchedule());
+      expect(result.minutes).toEqual(range(0, 59));
+      expect(ms).toBeLessThan(250);
+    });
+
+    it.each([
+      '0-99999999999 * * * *',
+      '0-99999999999999999999 * * * *',
+      `0-${'9'.repeat(400)} * * * *`,
+      '* 0-99999999999999999999 * * *',
+      '* * 1-99999999999999999999 * *',
+      '0-99999999999999999999/1 * * * *',
+      '5-99999999999999999999/7 * * * *',
+      '0/1 0-99999999999999999999/2 * * *',
+    ])('validate(%j) returns promptly', expression => {
+      const { result, ms } = timed(() => CronParser.validate(expression));
+      expect(result.valid).toBe(true);
+      expect(ms).toBeLessThan(250);
+    });
+
+    it('does not hang when both bounds are far outside the field', () => {
+      const cases = [
+        '99999999999-99999999999999999999 * * * *',
+        `${'9'.repeat(400)}-${'9'.repeat(400)} * * * *`,
+        '99999999999-99999999999999999999/1 * * * *',
+      ];
+      for (const expression of cases) {
+        const { result, ms } = timed(() => CronParser.validate(expression));
+        // No value falls inside the field, which is an error
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('No valid values parsed for minute');
+        expect(ms).toBeLessThan(250);
+      }
+    });
+
+    it('keeps the values of ranges that reach past the field bounds', () => {
+      // The part of a range that lies outside the field is ignored
+      expect(new CronParser('50-70 * * * *').getSchedule().minutes).toEqual(range(50, 59));
+      expect(new CronParser('* 20-30 * * *').getSchedule().hours).toEqual(range(20, 23));
+      expect(new CronParser('* * 0-5 * *').getSchedule().daysOfMonth).toEqual(range(1, 5));
+      expect(new CronParser('* * * 0-3 *').getSchedule().months).toEqual(range(1, 3));
+      expect(new CronParser('10,50-70 * * * *').getSchedule().minutes).toEqual([
+        10,
+        ...range(50, 59),
+      ]);
+    });
+
+    it('keeps the step alignment when the start is below the field minimum', () => {
+      // Day of month starts at 1: 0-10/2 yields 2,4,6,8,10 (0 is skipped, the
+      // step still counts from 0), not 1,3,5,7,9.
+      expect(new CronParser('* * 0-10/2 * *').getSchedule().daysOfMonth).toEqual([2, 4, 6, 8, 10]);
+      expect(new CronParser('* * 0-31/5 * *').getSchedule().daysOfMonth).toEqual([
+        5, 10, 15, 20, 25, 30,
+      ]);
+      expect(new CronParser('* * * 0/4 *').getSchedule().months).toEqual([4, 8, 12]);
+    });
+
+    it('expands ordinary steps and ranges', () => {
+      expect(new CronParser('*/15 * * * *').getSchedule().minutes).toEqual([0, 15, 30, 45]);
+      expect(new CronParser('10-30/5 * * * *').getSchedule().minutes).toEqual([10, 15, 20, 25, 30]);
+      expect(new CronParser('7/20 * * * *').getSchedule().minutes).toEqual([7, 27, 47]);
+      expect(new CronParser('1-5 * * * *').getSchedule().minutes).toEqual([1, 2, 3, 4, 5]);
+      expect(new CronParser('* * * * 1-5').getSchedule().daysOfWeek).toEqual([1, 2, 3, 4, 5]);
+      expect(new CronParser('30-90/20 * * * *').getSchedule().minutes).toEqual([30, 50]);
+    });
+
+    it('rejects reversed, non-numeric, zero-step and out-of-field expressions', () => {
+      expect(CronParser.validate('5-1 * * * *').valid).toBe(false);
+      expect(CronParser.validate('a-b * * * *').valid).toBe(false);
+      expect(CronParser.validate('*/0 * * * *').valid).toBe(false);
+      expect(CronParser.validate('60 * * * *').valid).toBe(false);
+      expect(CronParser.validate('70-80 * * * *').valid).toBe(false);
+    });
+  });
 });

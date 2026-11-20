@@ -368,7 +368,6 @@ import { createTestPort, delay } from '../setup';
 
 describe('HTTP Routes Integration', () => {
   let app: any;
-  let server: any;
   let port: number;
 
   beforeEach(async () => {
@@ -377,17 +376,14 @@ describe('HTTP Routes Integration', () => {
   });
 
   afterEach(async () => {
-    if (server) {
-      server.close();
-      await delay(100);
-    }
+    await app.close();
   });
 
   describe('Basic Routes', () => {
     it('should handle GET requests', async () => {
       app.get('/test', () => ({ message: 'Hello World' }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const response = await request(`http://localhost:${port}`).get('/test').expect(200);
@@ -401,7 +397,7 @@ describe('HTTP Routes Integration', () => {
         data: req.body,
       }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const userData = { name: 'John Doe', email: 'john@example.com' };
@@ -432,7 +428,7 @@ describe('HTTP Routes Integration', () => {
           user: req.body,
         }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       // Valid data
@@ -458,7 +454,7 @@ describe('HTTP Routes Integration', () => {
           query: req.query,
         }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const response = await request(`http://localhost:${port}`)
@@ -477,7 +473,7 @@ describe('HTTP Routes Integration', () => {
         .rateLimit({ requests: 2, window: 60000 })
         .handler(() => ({ success: true }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const baseUrl = `http://localhost:${port}`;
@@ -497,7 +493,7 @@ describe('HTTP Routes Integration', () => {
         throw new Error('Test error');
       });
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const response = await request(`http://localhost:${port}`).get('/error').expect(500);
@@ -507,7 +503,7 @@ describe('HTTP Routes Integration', () => {
     });
 
     it('should handle 404 for non-existent routes', async () => {
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       await request(`http://localhost:${port}`).get('/non-existent').expect(404);
@@ -529,7 +525,7 @@ describe('HTTP Routes Integration', () => {
         middlewareCalled,
       }));
 
-      server = app.core.listen(port);
+      app.listen(port);
       await delay(100);
 
       const response = await request(`http://localhost:${port}`)
@@ -543,6 +539,59 @@ describe('HTTP Routes Integration', () => {
 });
 ```
 
+### Several Apps in One Test
+
+Every `createApp()` returns an app of its own: its routes, the rate-limit counters and cached responses of those routes, its modules, its documentation and its configuration belong to it alone. A test can therefore run the app under test next to a stand-in for a service it calls, and the apps of one test are not visible to the next.
+
+```typescript
+// tests/integration/orders.test.ts
+import { createApp } from '../../src';
+
+describe('orders API with a stand-in for the payments service', () => {
+  const apps: any[] = [];
+
+  // Listens on a port the operating system picks and returns the app's URL
+  const start = async (app: any): Promise<string> => {
+    apps.push(app);
+    await new Promise<void>(resolve => app.listen(0, '127.0.0.1', () => resolve()));
+    return `http://127.0.0.1:${app.address().port}`;
+  };
+
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.close();
+  });
+
+  it('charges through the payments service', async () => {
+    const payments = await createApp({ autoDiscover: false, routing: false });
+    payments.post('/charges', () => ({ id: 'ch_1', status: 'succeeded' }));
+    const paymentsUrl = await start(payments);
+
+    const api = await createApp({ server: { bodySizeLimit: '100kb' } });
+    api.post('/orders', async () => {
+      const charge = await fetch(`${paymentsUrl}/charges`, { method: 'POST' });
+      return { order: 1, charge: await charge.json() };
+    });
+    const apiUrl = await start(api);
+
+    const response = await fetch(`${apiUrl}/orders`, { method: 'POST' });
+    expect(await response.json()).toEqual({
+      order: 1,
+      charge: { id: 'ch_1', status: 'succeeded' },
+    });
+
+    // Each app answers its own routes only
+    expect((await fetch(`${apiUrl}/charges`, { method: 'POST' })).status).toBe(404);
+    expect((await fetch(`${paymentsUrl}/orders`, { method: 'POST' })).status).toBe(404);
+  });
+});
+```
+
+- Close every app a test creates. An app that is left listening keeps its port and goes on answering its own routes.
+- The options of a `createApp()` call apply to that app only, and each call reads the environment again, so a test can create apps with different settings one after another without resetting anything in between.
+- Register routes on the app (`app.get()`, `app.route()`). `getApp()` and the standalone builders `createRoute()` and `defineRoute()` act on the current app, which with several apps is the one created last that is still open (see [Several apps in one process](./API.md#several-apps-in-one-process)).
+- Every app loads the route files under `./src/routes` and discovers modules unless told otherwise, and a route file is evaluated once per process. Give a stand-in `routing: false` and `autoDiscover: false`, as above.
+- `app.listen(0)` with `app.address()` avoids choosing ports by hand.
+
 ### Testing Module Integration
 
 ```typescript
@@ -553,7 +602,6 @@ import { createTestPort, delay } from '../setup';
 
 describe('Module Integration', () => {
   let app: any;
-  let server: any;
   let port: number;
 
   beforeEach(async () => {
@@ -562,10 +610,7 @@ describe('Module Integration', () => {
   });
 
   afterEach(async () => {
-    if (server) {
-      server.close();
-      await delay(100);
-    }
+    await app.close();
   });
 
   it('should load and use modules', async () => {
@@ -599,7 +644,7 @@ describe('Module Integration', () => {
     });
 
     await app.loadModule(TestModule);
-    server = app.core.listen(port);
+    app.listen(port);
     await delay(100);
 
     // Test module route
@@ -641,7 +686,6 @@ import { createTestPort, delay } from '../setup';
 
 describe('End-to-End Application Tests', () => {
   let app: any;
-  let server: any;
   let port: number;
 
   beforeEach(async () => {
@@ -650,10 +694,7 @@ describe('End-to-End Application Tests', () => {
   });
 
   afterEach(async () => {
-    if (server) {
-      server.close();
-      await delay(100);
-    }
+    await app.close();
   });
 
   it('should handle complete user workflow', async () => {
@@ -689,7 +730,6 @@ describe('End-to-End Application Tests', () => {
               email: z.string().email(),
             }),
           },
-          rateLimit: { requests: 10, window: 60000 },
           handler: async (req: any) => {
             const user = {
               id: nextId++,
@@ -722,7 +762,7 @@ describe('End-to-End Application Tests', () => {
     // Add health check
     app.get('/health', () => ({ status: 'ok' }));
 
-    server = app.core.listen(port);
+    app.listen(port);
     await delay(200);
 
     const baseUrl = `http://localhost:${port}`;
@@ -801,20 +841,6 @@ describe('End-to-End Application Tests', () => {
         expect(res.body).toHaveProperty('error');
         expect(res.body).toHaveProperty('details');
       });
-
-    // 9. Test rate limiting (create multiple users quickly)
-    const promises = Array.from({ length: 12 }, (_, i) =>
-      request(baseUrl)
-        .post('/api/v1.0.0/users/users')
-        .send({ name: `User ${i}`, email: `user${i}@example.com` })
-    );
-
-    const results = await Promise.allSettled(promises);
-    const rateLimitedRequests = results.filter(
-      result => result.status === 'fulfilled' && result.value.status === 429
-    );
-
-    expect(rateLimitedRequests.length).toBeGreaterThan(0);
   });
 });
 ```
@@ -823,18 +849,19 @@ describe('End-to-End Application Tests', () => {
 
 ```typescript
 // tests/integration/websocket.test.ts
-import { createApp, z } from '../../src';
+import { createApp, SocketIOAdapter, z } from '../../src';
 import { createTestPort, delay } from '../setup';
 import { io, Socket } from 'socket.io-client';
 
 describe('WebSocket Integration', () => {
   let app: any;
-  let server: any;
   let port: number;
   let clientSocket: Socket;
 
   beforeEach(async () => {
-    app = await createApp();
+    // WebSockets are opt-in. This test drives the server with socket.io-client,
+    // so it selects the Socket.IO adapter (socket.io must be installed).
+    app = await createApp({ websocket: { adapter: new SocketIOAdapter() } });
     port = createTestPort();
   });
 
@@ -842,10 +869,7 @@ describe('WebSocket Integration', () => {
     if (clientSocket) {
       clientSocket.close();
     }
-    if (server) {
-      server.close();
-      await delay(100);
-    }
+    await app.close();
   });
 
   it('should handle WebSocket connections and events', async () => {
@@ -856,39 +880,40 @@ describe('WebSocket Integration', () => {
         socket.emit('welcome', { message: 'Welcome!' });
       },
 
-      'join-room': {
-        validation: z.object({
-          room: z.string().min(1),
-          username: z.string().min(2),
-        }),
-        handler: (socket: any, data: any) => {
-          socket.join(data.room);
-          socket.username = data.username;
-          return { success: true, room: data.room };
-        },
+      // Handlers are plain functions; validate the payload inside them
+      'join-room': (socket: any, payload: any) => {
+        const data = z
+          .object({
+            room: z.string().min(1),
+            username: z.string().min(2),
+          })
+          .parse(payload);
+        socket.join(data.room);
+        socket.username = data.username;
+        return { success: true, room: data.room };
       },
 
-      'send-message': {
-        validation: z.object({
-          room: z.string(),
-          message: z.string().min(1).max(500),
-        }),
-        handler: (socket: any, data: any) => {
-          messages.push({
-            username: socket.username,
-            message: data.message,
-            room: data.room,
-          });
-          socket.to(data.room).emit('new-message', {
-            username: socket.username,
-            message: data.message,
-          });
-          return { success: true };
-        },
+      'send-message': (socket: any, payload: any) => {
+        const data = z
+          .object({
+            room: z.string(),
+            message: z.string().min(1).max(500),
+          })
+          .parse(payload);
+        messages.push({
+          username: socket.username,
+          message: data.message,
+          room: data.room,
+        });
+        socket.to(data.room).emit('new-message', {
+          username: socket.username,
+          message: data.message,
+        });
+        return { success: true };
       },
     });
 
-    server = app.core.listen(port);
+    app.listen(port);
     await delay(100);
 
     // Connect client
@@ -942,19 +967,20 @@ describe('WebSocket Integration', () => {
 
   it('should validate WebSocket data', async () => {
     app.websocket('/chat', {
-      'test-event': {
-        validation: z.object({
-          name: z.string().min(2),
-          value: z.number(),
-        }),
-        handler: (socket: any, data: any) => ({
-          success: true,
-          data,
-        }),
+      // A thrown validation error is sent back as { success: false, error }
+      // (its message here; 'Internal server error' when NODE_ENV is 'production')
+      'test-event': (socket: any, payload: any) => {
+        const data = z
+          .object({
+            name: z.string().min(2),
+            value: z.number(),
+          })
+          .parse(payload);
+        return { success: true, data };
       },
     });
 
-    server = app.core.listen(port);
+    app.listen(port);
     await delay(100);
 
     clientSocket = io(`http://localhost:${port}/chat`);
@@ -1032,7 +1058,6 @@ class MockDatabaseAdapter {
 
 describe('Database Integration', () => {
   let app: any;
-  let server: any;
   let port: number;
   let mockDb: MockDatabaseAdapter;
 
@@ -1044,15 +1069,12 @@ describe('Database Integration', () => {
   });
 
   afterEach(async () => {
-    if (server) {
-      server.close();
-      await delay(100);
-    }
+    await app.close();
   });
 
   it('should integrate with database in routes', async () => {
     app.get('/users').handler(async (req: any) => {
-      const users = await req.database.query('SELECT * FROM users');
+      const users = await mockDb.query('SELECT * FROM users');
       return { success: true, data: users };
     });
 
@@ -1065,7 +1087,7 @@ describe('Database Integration', () => {
         })
       )
       .handler(async (req: any) => {
-        const result = await req.database.query('INSERT INTO users (name, email) VALUES (?, ?)', [
+        const result = await mockDb.query('INSERT INTO users (name, email) VALUES (?, ?)', [
           req.body.name,
           req.body.email,
         ]);
@@ -1075,7 +1097,7 @@ describe('Database Integration', () => {
         };
       });
 
-    server = app.core.listen(port);
+    app.listen(port);
     await delay(100);
 
     // Test database integration
@@ -1146,14 +1168,16 @@ describe('EmailService', () => {
 // tests/integration/users.test.ts
 import request from 'supertest';
 import { createApp } from '../../src';
+import { createTestPort, delay } from '../setup';
 
 describe('Users API with Database Stubs', () => {
   let app: any;
-  let server: any;
+  let port: number;
   let dbStub: any;
 
   beforeEach(async () => {
     app = await createApp();
+    port = createTestPort();
 
     // Create database stub
     dbStub = {
@@ -1164,18 +1188,23 @@ describe('Users API with Database Stubs', () => {
     app.database(dbStub);
   });
 
+  afterEach(async () => {
+    await app.close();
+  });
+
   it('should handle database errors gracefully', async () => {
     // Stub database to throw error
     dbStub.query.mockRejectedValue(new Error('Database connection failed'));
 
     app.get('/users', async (req: any) => {
-      const users = await req.database.query('SELECT * FROM users');
+      const users = await dbStub.query('SELECT * FROM users');
       return { success: true, data: users };
     });
 
-    server = app.core.listen(0);
+    app.listen(port);
+    await delay(100);
 
-    await request(server).get('/users').expect(500);
+    await request(`http://localhost:${port}`).get('/users').expect(500);
 
     expect(dbStub.query).toHaveBeenCalledWith('SELECT * FROM users');
   });
@@ -1190,7 +1219,7 @@ describe('Users API with Database Stubs', () => {
     dbStub.beginTransaction.mockResolvedValue(transactionMock);
 
     app.post('/transfer', async (req: any) => {
-      const transaction = await req.database.beginTransaction();
+      const transaction = await dbStub.beginTransaction();
       try {
         await transaction.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [100, 1]);
         await transaction.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [100, 2]);
@@ -1202,9 +1231,10 @@ describe('Users API with Database Stubs', () => {
       }
     });
 
-    server = app.core.listen(0);
+    app.listen(port);
+    await delay(100);
 
-    await request(server).post('/transfer').expect(200);
+    await request(`http://localhost:${port}`).post('/transfer').expect(200);
 
     expect(dbStub.beginTransaction).toHaveBeenCalled();
     expect(transactionMock.query).toHaveBeenCalledTimes(2);
@@ -1306,10 +1336,10 @@ export const waitFor = (condition: () => boolean, timeout = 5000) => {
   });
 };
 
-export const createTestApp = (options: any = {}) => {
+export const createTestApp = async (options: any = {}) => {
   const app = await createApp(options);
-  const cleanup = () => {
-    // Cleanup logic
+  const cleanup = async () => {
+    await app.close();
   };
   return { app, cleanup };
 };
@@ -1330,8 +1360,9 @@ describe('Performance Tests', () => {
     const app = await createApp();
     app.get('/test', () => ({ success: true }));
 
-    const server = app.core.listen(0);
-    const port = server.address().port;
+    const port = createTestPort();
+    app.listen(port);
+    await delay(100);
 
     const startTime = Date.now();
     const promises = Array.from({ length: 100 }, () =>
@@ -1344,7 +1375,7 @@ describe('Performance Tests', () => {
     expect(results.every(r => r.status === 200)).toBe(true);
     expect(endTime - startTime).toBeLessThan(5000); // Should complete within 5 seconds
 
-    server.close();
+    await app.close();
   });
 });
 ```

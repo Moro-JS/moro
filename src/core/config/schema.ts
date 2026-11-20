@@ -7,25 +7,31 @@ export const DEFAULT_CONFIG: AppConfig = {
   server: {
     port: 3001,
     host: 'localhost',
-    // 0 = unlimited. Historically defaulted to 1000/30000 but those values
-    // were VALIDATED-BUT-NEVER-APPLIED to any server, so the observed behavior
-    // has always been "unlimited connections, no request timeout". Now that
-    // both are actually wired through, keeping 0 preserves that behavior;
-    // enforcing the old numbers would silently break existing deployments.
-    // A user who sets either explicitly finally gets it applied.
+    // 0 = unlimited. Historically defaulted to 1000 but that value was
+    // VALIDATED-BUT-NEVER-APPLIED to any server, so the observed behavior has
+    // always been "unlimited connections". Now that it is actually wired
+    // through, keeping 0 preserves that behavior; enforcing the old number
+    // would silently break existing deployments. A user who sets it
+    // explicitly finally gets it applied.
     maxConnections: 0,
-    timeout: 0, // deprecated alias for timeouts.request; 0 = disabled
+    timeout: 0, // deprecated alias for timeouts.request; 0 = not set
     bodySizeLimit: '10mb',
     maxUploadSize: '100mb', // Separate limit for file uploads (multipart/form-data)
-    // Per-phase timeouts. keepAlive/headers were previously hardcoded in the
-    // Node server (5000/6000); they become documented, overridable defaults.
-    // idle/request default to 0 = the per-server default (engine: 120s idle /
-    // 300s request; Node: its built-in 5min requestTimeout).
+    // Per-phase timeouts. keepAlive/headers are the Node server's keep-alive
+    // and header timeouts (5000/6000).
+    // request and idle are deliberately absent, so that "not given" can be
+    // told from an explicit 0 (= disabled) once the sources are merged:
+    //  - request: validation fills it in, from the deprecated server.timeout
+    //    when that is set, otherwise DEFAULT_REQUEST_TIMEOUT_MS (5 minutes);
+    //  - idle: left unset, and each server applies its own default:
+    //    DEFAULT_IDLE_TIMEOUT_MS (75 s) on the HTTP/2 server and on a native
+    //    engine whose idle timeout spares a response still being delivered
+    //    (none on an older engine), none on the Node HTTP/1 server, where
+    //    keepAlive closes an idle connection and a socket idle timeout would
+    //    also cut a slow handler.
     timeouts: {
       keepAlive: 5000,
       headers: 6000,
-      idle: 0,
-      request: 0,
     },
     // Fine-grained limits. Only multipart carries defaults here (matching the
     // parser's previous hardcodes); header/ws/high-water limits are left unset
@@ -39,6 +45,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     // engine: left unset so resolution can tell "user chose it" from "default".
     // Unset resolves to 'moro' (Moro's native engine, Node.js fallback if it
     // can't load); set 'node' to disable it.
+    // trustProxy: left unset for the same reason. Unset keeps the handling of
+    // X-Forwarded-* headers that predates the setting; `false` trusts no proxy.
     requestTracking: {
       enabled: true, // Enable by default for debugging
     },
@@ -95,7 +103,8 @@ export const DEFAULT_CONFIG: AppConfig = {
       cookie: {
         maxAge: 86400000, // 24 hours in ms
         httpOnly: true,
-        secure: false,
+        // `secure` has no default: the session cookie is Secure when the
+        // request arrived over TLS, unless the application says otherwise
         sameSite: 'lax',
         path: '/',
       },
@@ -148,7 +157,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   security: {
     cors: {
-      enabled: false, // Opt-in for better performance
+      enabled: false,
       origin: '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
@@ -158,7 +167,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       preflightContinue: false,
     },
     helmet: {
-      enabled: false, // Opt-in for better performance
+      enabled: false,
       // Simplified options (backward compatible)
       contentSecurityPolicy: true,
       hsts: true,

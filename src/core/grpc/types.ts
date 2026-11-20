@@ -13,6 +13,8 @@ export interface GrpcCall<TRequest = any> {
   cancelled: boolean;
   getPeer(): string;
   sendMetadata(metadata: GrpcMetadata): void;
+  /** The authenticated user, set by `grpcAuth` once `verify` has accepted the token */
+  user?: any;
   write?(data: any): void;
   end?(): void;
   on?(event: string, handler: (...args: any[]) => void): void;
@@ -21,8 +23,22 @@ export interface GrpcCall<TRequest = any> {
 /**
  * gRPC callback for unary and client streaming calls
  */
-export interface GrpcCallback<TResponse = any> {
-  (error: GrpcError | null, response?: TResponse): void;
+export type GrpcCallback<TResponse = any> = {
+  // Declared through a method so parameters compare bivariantly: a callback
+  // written as `(error: GrpcError | null, response) => ...` stays assignable
+  // now that a plain status object is accepted too.
+  bivariant(error: GrpcError | GrpcStatusObject | null, response?: TResponse): void;
+}['bivariant'];
+
+/**
+ * A plain status object, the usual way to fail a call:
+ * `callback({ code: grpc.status.NOT_FOUND, message: 'User not found' })`
+ */
+export interface GrpcStatusObject {
+  code: GrpcStatusCode | number;
+  message?: string;
+  details?: string;
+  metadata?: GrpcMetadata;
 }
 
 /**
@@ -75,6 +91,18 @@ export interface GrpcCredentials {
   rootCerts?: Buffer;
   privateKey?: Buffer;
   certChain?: Buffer;
+  /**
+   * Server: require every client to present a certificate signed by
+   * `rootCerts` (mutual TLS). Default: false, so a client certificate is not
+   * asked for.
+   */
+  requireClientCert?: boolean;
+  /**
+   * Server: the earlier name of `requireClientCert`, still honoured when
+   * `requireClientCert` is not set. Despite the name it has nothing to do with
+   * checking the server's identity.
+   * @deprecated Use `requireClientCert`.
+   */
   checkServerIdentity?: boolean;
 }
 
@@ -137,8 +165,18 @@ export type MoroGrpcHandler = (req: HttpRequest, res: HttpResponse) => void | Pr
  * Maps method names to their handlers
  */
 export interface ServiceImplementation {
-  [methodName: string]: GrpcHandler | GrpcHandler[];
+  [methodName: string]: GrpcMethodHandler | GrpcMethodHandler[];
 }
+
+/**
+ * What a service method accepts: any of the handler kinds above, or a
+ * middleware. One signature (instead of the GrpcHandler union) so that an
+ * inline `async call => { ... }` gets its parameter types inferred.
+ */
+export type GrpcMethodHandler = (
+  call: GrpcCall<any>,
+  callback: GrpcCallback<any>
+) => void | Promise<void>;
 
 /**
  * Service definition from proto file
@@ -159,6 +197,14 @@ export interface MethodDefinition {
   requestType: any;
   responseType: any;
   originalName?: string;
+  /**
+   * The protobuf serialisers of the method, taken from the loaded .proto.
+   * Every definition `loadProto()` returns carries all four.
+   */
+  requestSerialize?: (value: any) => Buffer;
+  requestDeserialize?: (bytes: Buffer) => any;
+  responseSerialize?: (value: any) => Buffer;
+  responseDeserialize?: (bytes: Buffer) => any;
 }
 
 /**
@@ -176,6 +222,18 @@ export interface GrpcClientOptions {
 
 /**
  * gRPC client interface
+ *
+ * One method per RPC of the service, under its name in the .proto (`GetUser`)
+ * and its lower-camel-case form (`getUser`).
+ *
+ * - Unary: `await client.GetUser(request, metadata?, options?)` resolves to the
+ *   response and rejects with the grpc-js ServiceError (`code`, `details`,
+ *   `metadata`). With a callback as the last argument,
+ *   `client.GetUser(request, callback)`, it returns the grpc-js call instead.
+ * - Streaming methods return the grpc-js call stream, not a promise:
+ *   server streaming `client.ListUsers(request)` is readable, client streaming
+ *   `client.CreateUsers(callback)` is writable and answers through the
+ *   callback, bidirectional `client.Chat()` is both.
  */
 export interface GrpcClient {
   [methodName: string]: ((...args: any[]) => Promise<any>) | (() => void);

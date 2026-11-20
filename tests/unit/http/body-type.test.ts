@@ -1,7 +1,11 @@
 // @ts-nocheck
 // Unit - request-body text/binary classification shared by every server.
 import { describe, it, expect } from '@jest/globals';
-import { bodyIsText, isJsonMediaType } from '../../../src/core/http/utils/body-type.js';
+import {
+  bodyIsText,
+  isJsonMediaType,
+  isMultipartMediaType,
+} from '../../../src/core/http/utils/body-type.js';
 
 describe('bodyIsText', () => {
   it.each([
@@ -61,5 +65,20 @@ describe('isJsonMediaType', () => {
     'application/x-www-form-urlencoded',
   ])('%s is not', ct => {
     expect(isJsonMediaType(ct)).toBe(false);
+  });
+});
+
+describe('isMultipartMediaType', () => {
+  it('compares the media type, not a substring', () => {
+    expect(isMultipartMediaType('multipart/form-data; boundary=x')).toBe(true);
+    expect(isMultipartMediaType('Multipart/Form-Data;boundary=x')).toBe(true);
+    expect(isMultipartMediaType(' multipart/form-data ; boundary=x')).toBe(true);
+    expect(isMultipartMediaType('multipart/form-data')).toBe(true);
+    expect(isMultipartMediaType('application/json; x=multipart/form-data')).toBe(false);
+    expect(isMultipartMediaType('text/plain; note="multipart/form-data"')).toBe(false);
+    expect(isMultipartMediaType('multipart/form-datax')).toBe(false);
+    expect(isMultipartMediaType('multipart/mixed; boundary=x')).toBe(false);
+    expect(isMultipartMediaType(undefined)).toBe(false);
+    expect(isMultipartMediaType('')).toBe(false);
   });
 });

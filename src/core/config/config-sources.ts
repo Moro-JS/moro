@@ -7,13 +7,14 @@
  * Configuration Sources - Load from Environment, Files, and Options
  *
  * This module handles loading configuration from different sources with clear precedence:
- * Environment Variables > createApp Options > Config File > Schema Defaults
+ * createApp Options > Environment Variables > Config File > Schema Defaults
+ * (each source is merged over the one before it, so createApp options are applied last).
  */
 
 import { AppConfig, DeepPartial } from '../../types/config.js';
 import { MoroOptions } from '../../types/core.js';
 import { DEFAULT_CONFIG } from './schema.js';
-import { loadConfigFileSync, loadConfigFile } from './file-loader.js';
+import { loadConfigFileSync, loadConfigFile, ConfigFileLoadError } from './file-loader.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { validateConfig } from './config-validator.js';
 
@@ -37,6 +38,7 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
 
   // 1. Start with schema defaults
   let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as AppConfig;
+  applyNoColorDefault(config);
   const sourceMap = new Map<string, ConfigSourceInfo>();
 
   // Track default values
@@ -51,7 +53,8 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
       logger.debug('Config file loaded and merged');
     }
   } catch (error) {
-    logger.warn('Config file loading failed, continuing without it:', String(error));
+    if (error instanceof ConfigFileLoadError) throw error;
+    logger.warn(`Config file loading failed, continuing without it: ${String(error)}`);
   }
 
   // 3. Load and merge environment variables
@@ -59,21 +62,8 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
   config = deepMerge(config, envConfig) as AppConfig;
   trackConfigSource(envConfig, sourceMap, 'environment', 'process.env');
 
-  // 4. Load and merge createApp options (highest precedence)
-  if (createAppOptions) {
-    const normalizedOptions = normalizeCreateAppOptions(createAppOptions);
-    config = deepMerge(config, normalizedOptions) as AppConfig;
-    trackConfigSource(normalizedOptions, sourceMap, 'createApp', 'createApp()');
-    logger.debug('createApp options merged');
-  }
-
-  // 5. Validate the final configuration
-  const validatedConfig = validateConfig(config);
-
-  // Log configuration sources for debugging
-  logConfigurationSources(sourceMap);
-
-  return validatedConfig;
+  // 4. Merge createApp options (highest precedence), 5. validate
+  return applyCreateAppOptionsAndValidate(config, sourceMap, createAppOptions);
 }
 
 /**
@@ -82,7 +72,7 @@ export function loadConfigFromAllSources(createAppOptions?: MoroOptions): AppCon
  * (projects with "type":"module") are loaded correctly.
  *
  * Called by the async createApp() factory. Precedence is identical to the
- * sync version: Env Vars > createApp Options > Config File > Defaults
+ * sync version: createApp Options > Env Vars > Config File > Defaults
  */
 export async function loadConfigFromAllSourcesAsync(
   createAppOptions?: MoroOptions
@@ -91,6 +81,7 @@ export async function loadConfigFromAllSourcesAsync(
 
   // 1. Start with schema defaults
   let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as AppConfig;
+  applyNoColorDefault(config);
   const sourceMap = new Map<string, ConfigSourceInfo>();
 
   trackConfigSource(config, sourceMap, 'default', 'schema');
@@ -104,7 +95,8 @@ export async function loadConfigFromAllSourcesAsync(
       logger.debug('Config file loaded and merged (async)');
     }
   } catch (error) {
-    logger.warn('Config file loading failed, continuing without it:', String(error));
+    if (error instanceof ConfigFileLoadError) throw error;
+    logger.warn(`Config file loading failed, continuing without it: ${String(error)}`);
   }
 
   // 3. Load and merge environment variables
@@ -112,7 +104,22 @@ export async function loadConfigFromAllSourcesAsync(
   config = deepMerge(config, envConfig) as AppConfig;
   trackConfigSource(envConfig, sourceMap, 'environment', 'process.env');
 
-  // 4. Load and merge createApp options (highest precedence)
+  // 4. Merge createApp options (highest precedence), 5. validate
+  return applyCreateAppOptionsAndValidate(config, sourceMap, createAppOptions);
+}
+
+/**
+ * The last two steps of loading, shared by the sync and async loaders: merge
+ * the createApp() options over what the defaults, the config file and the
+ * environment produced, then validate the result.
+ */
+function applyCreateAppOptionsAndValidate(
+  merged: AppConfig,
+  sourceMap: Map<string, ConfigSourceInfo>,
+  createAppOptions?: MoroOptions
+): AppConfig {
+  let config = merged;
+
   if (createAppOptions) {
     const normalizedOptions = normalizeCreateAppOptions(createAppOptions);
     config = deepMerge(config, normalizedOptions) as AppConfig;
@@ -120,12 +127,52 @@ export async function loadConfigFromAllSourcesAsync(
     logger.debug('createApp options merged');
   }
 
-  // 5. Validate the final configuration
+  config = enableCorsForConfiguredOrigin(config, sourceMap);
+
   const validatedConfig = validateConfig(config);
 
+  warnUnknownKeys(config, validatedConfig, createAppOptions);
+
+  // Log configuration sources for debugging
   logConfigurationSources(sourceMap);
 
   return validatedConfig;
+}
+
+/**
+ * A CORS origin that was written down means CORS is wanted. When some source
+ * (the config file, `security.cors` or the `cors` shorthand of createApp())
+ * sets `origin` and no source sets `enabled`, CORS is switched on; an
+ * `enabled` given anywhere, `false` included, is left as it is, and so is
+ * `origin: false`, which asks for no CORS headers.
+ */
+function enableCorsForConfiguredOrigin(
+  config: AppConfig,
+  sourceMap: Map<string, ConfigSourceInfo>
+): AppConfig {
+  const origin = sourceMap.get('security.cors.origin');
+  if (!origin || origin.source === 'default') return config;
+  const enabled = sourceMap.get('security.cors.enabled');
+  if (enabled && enabled.source !== 'default' && enabled.value !== undefined) return config;
+  const cors = config.security?.cors;
+  if (!cors || cors.origin === false || cors.enabled === true) return config;
+
+  return {
+    ...config,
+    security: { ...config.security, cors: { ...cors, enabled: true } },
+  };
+}
+
+/**
+ * NO_COLOR (https://no-color.org): when present and not empty, ANSI colour is
+ * off unless the user asked for it. It replaces the schema default only, so an
+ * explicit `logging.enableColors` from the config file, LOG_COLORS /
+ * MORO_LOG_COLORS, or createApp() is merged over it and still wins.
+ */
+function applyNoColorDefault(config: AppConfig): void {
+  if (process.env.NO_COLOR) {
+    config.logging.enableColors = false;
+  }
 }
 
 /**
@@ -597,8 +644,22 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
       ...(routingPaths.length > 0 ? { paths: routingPaths } : {}),
     };
   }
+  // MORO_ROUTING_STRICT_MIDDLEWARE sets routing.strictMiddleware
+  const routingStrict = parseBoolEnv(process.env.MORO_ROUTING_STRICT_MIDDLEWARE);
+  if (routingStrict !== undefined) {
+    const routing = typeof config.routing === 'object' ? config.routing : {};
+    config.routing = { ...routing, strictMiddleware: routingStrict };
+  }
 
   return config;
+}
+
+/**
+ * What a createApp() shorthand contributes to its section: `{ enabled }` for
+ * the boolean form, the object's own keys for the object form.
+ */
+function shorthandKeys(value: boolean | object): Record<string, unknown> {
+  return typeof value === 'boolean' ? { enabled: value } : { ...value };
 }
 
 /**
@@ -632,39 +693,42 @@ function normalizeCreateAppOptions(options: MoroOptions): DeepPartial<AppConfig>
     config.modules = { ...config.modules, ...options.modules } as any;
   }
 
-  // Handle autoDiscover option (maps to modules.autoDiscovery)
-  if (options.autoDiscover !== undefined) {
-    const autoDiscoveryConfig =
-      typeof options.autoDiscover === 'boolean'
-        ? { enabled: options.autoDiscover }
-        : options.autoDiscover;
+  // Shorthands (autoDiscover, validation, modulesPath here; cors, compression
+  // and helmet below). A shorthand sets only what it names: `true` / `false`
+  // is `{ enabled }`, an object is its own keys. Everything else in the
+  // section keeps the value the config file, the environment or the schema
+  // default gave it, because this object is merged over those key by key.
+  // Within createApp() itself a shorthand is applied over the long form
+  // (`cors` over `security.cors`), key by key as well.
 
+  // autoDiscover maps to modules.autoDiscovery
+  if (options.autoDiscover !== undefined) {
     config.modules = {
       ...config.modules,
       autoDiscovery: {
-        ...DEFAULT_CONFIG.modules.autoDiscovery,
-        ...autoDiscoveryConfig,
+        ...(config.modules as any)?.autoDiscovery,
+        ...shorthandKeys(options.autoDiscover),
       },
     } as any;
   }
 
-  // Handle validation option (maps to modules.validation)
+  // validation maps to modules.validation
   if (options.validation !== undefined) {
     config.modules = {
       ...config.modules,
       validation: {
-        ...DEFAULT_CONFIG.modules.validation,
+        ...(config.modules as any)?.validation,
         ...options.validation,
       },
     } as any;
   }
 
-  // Handle legacy modulesPath option (maps to modules.autoDiscovery.paths)
+  // Legacy modulesPath maps to modules.autoDiscovery.paths and switches
+  // discovery on
   if (options.modulesPath) {
     config.modules = {
       ...config.modules,
       autoDiscovery: {
-        ...DEFAULT_CONFIG.modules.autoDiscovery,
         ...(config.modules as any)?.autoDiscovery,
         enabled: true,
         paths: [options.modulesPath],
@@ -690,35 +754,33 @@ function normalizeCreateAppOptions(options: MoroOptions): DeepPartial<AppConfig>
   if (options.jobs) {
     config.jobs = deepMerge(config.jobs || {}, options.jobs) as any;
   }
+  // routing: true / false, or { enabled, paths, strictMiddleware }
+  if (options.routing !== undefined) {
+    config.routing = options.routing as any;
+  }
 
-  // Handle shorthand boolean/object options
+  // cors, compression, helmet: see the shorthand rule above
   if (options.cors !== undefined) {
     config.security = {
       ...config.security,
-      cors:
-        typeof options.cors === 'boolean'
-          ? { ...DEFAULT_CONFIG.security.cors, enabled: options.cors }
-          : { ...DEFAULT_CONFIG.security.cors, ...options.cors },
+      cors: { ...(config.security as any)?.cors, ...shorthandKeys(options.cors) },
     } as any;
   }
 
   if (options.compression !== undefined) {
     config.performance = {
       ...config.performance,
-      compression:
-        typeof options.compression === 'boolean'
-          ? { ...DEFAULT_CONFIG.performance.compression, enabled: options.compression }
-          : { ...DEFAULT_CONFIG.performance.compression, ...options.compression },
+      compression: {
+        ...(config.performance as any)?.compression,
+        ...shorthandKeys(options.compression),
+      },
     } as any;
   }
 
   if (options.helmet !== undefined) {
     config.security = {
       ...config.security,
-      helmet:
-        typeof options.helmet === 'boolean'
-          ? { ...DEFAULT_CONFIG.security.helmet, enabled: options.helmet }
-          : { ...DEFAULT_CONFIG.security.helmet, ...options.helmet },
+      helmet: { ...(config.security as any)?.helmet, ...shorthandKeys(options.helmet) },
     } as any;
   }
 
@@ -742,6 +804,11 @@ const SENSITIVE_PATTERNS = new Set([
   'database.url',
   'redis.url',
   'mysql.password',
+  'passphrase',
+  'dsn',
+  'connectionstring',
+  'credential',
+  'pfx',
 ]);
 
 function isSensitiveField(path: string): boolean {
@@ -763,10 +830,90 @@ function isSensitiveField(path: string): boolean {
 }
 
 /**
+ * Mask the userinfo part (`user:password@`) of a URL-shaped string, keeping the
+ * scheme and host visible: `postgres://app:pw@db.internal/prod` becomes
+ * `postgres://***@db.internal/prod`. Other strings are returned unchanged.
+ *
+ * Everything between `scheme://` and the last `@` before the query string is
+ * replaced, so a password containing unencoded `@`, `/` or `#` is still fully
+ * covered.
+ */
+function maskUrlUserinfo(value: string): string {
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(value);
+  if (!scheme) return value;
+
+  const start = scheme[0].length;
+  const queryAt = value.indexOf('?', start);
+  const head = queryAt === -1 ? value : value.slice(0, queryAt);
+
+  let at = head.lastIndexOf('@');
+  if (at < start) {
+    // No '@' before the query string. A plain host[:port] has no credentials;
+    // anything else may be credentials with an unencoded '?', so fall back to
+    // the last '@' anywhere in the value.
+    const authority = head.slice(start).split(/[/#]/, 1)[0] ?? '';
+    if (/^(\[[0-9a-f:.]*\]|[^:@]*)(:\d*)?$/i.test(authority)) return value;
+    at = value.lastIndexOf('@');
+    if (at < start) return value;
+  }
+
+  return `${value.slice(0, start)}***@${value.slice(at + 1)}`;
+}
+
+/**
+ * Mask secrets inside a structured config value (arrays are logged as one
+ * leaf): sensitive keys are replaced and URL credentials are masked.
+ */
+function maskConfigValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return maskUrlUserinfo(value);
+  if (value === null || typeof value !== 'object') return value;
+  // A Buffer, a client, any class instance: named, never walked or printed.
+  if (!Array.isArray(value) && !isPlainObject(value)) {
+    return `[${(value as object).constructor?.name || 'Object'}]`;
+  }
+  if (depth >= 8) return '[Object]';
+
+  if (Array.isArray(value)) {
+    return value.map(item => maskConfigValue(item, depth + 1));
+  }
+
+  const masked: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    masked[key] = isSensitiveField(key) ? '***' : maskConfigValue(item, depth + 1);
+  }
+  return masked;
+}
+
+/**
+ * Render one configuration value for the debug dump. Values at sensitive
+ * paths are never printed, in any environment.
+ */
+function formatConfigValueForLog(path: string, value: unknown): string {
+  if (isSensitiveField(path)) return '***';
+
+  const masked = maskConfigValue(value);
+  return typeof masked === 'object' ? JSON.stringify(masked) : String(masked);
+}
+
+/**
+ * A configuration tree is made of plain objects. Anything else found in it (a
+ * Buffer, a Redis client, a class instance of any kind) is a value: it is
+ * neither merged key by key nor walked.
+ */
+function isPlainObject(value: unknown): value is Record<string, any> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** Far deeper than any configuration section; ends a walk over self-referring data. */
+const MAX_CONFIG_DEPTH = 16;
+
+/**
  * Deep merge two configuration objects
  * Later object properties override earlier ones
  */
-function deepMerge<T extends Record<string, any>>(target: T, source: DeepPartial<T>): T {
+function deepMerge<T extends Record<string, any>>(target: T, source: DeepPartial<T>, depth = 0): T {
   const result = { ...target };
 
   for (const key in source) {
@@ -775,15 +922,20 @@ function deepMerge<T extends Record<string, any>>(target: T, source: DeepPartial
     const sourceValue = source[key];
     const targetValue = result[key];
 
-    if (
-      sourceValue &&
-      typeof sourceValue === 'object' &&
-      !Array.isArray(sourceValue) &&
-      targetValue &&
-      typeof targetValue === 'object' &&
-      !Array.isArray(targetValue)
+    if (isPlainObject(sourceValue) && isPlainObject(targetValue) && depth < MAX_CONFIG_DEPTH) {
+      result[key] = deepMerge(targetValue, sourceValue as any, depth + 1);
+    } else if (
+      depth === 0 &&
+      key === 'routing' &&
+      typeof targetValue === 'boolean' &&
+      isPlainObject(sourceValue) &&
+      (sourceValue as { enabled?: unknown }).enabled === undefined
     ) {
-      result[key] = deepMerge(targetValue, sourceValue as any);
+      // routing is a boolean or an object. A later source that sets one of the
+      // object's keys without saying `enabled` (MORO_ROUTING_STRICT_MIDDLEWARE
+      // alone, for one) must not switch back on what `routing: false` in an
+      // earlier source switched off.
+      result[key] = { enabled: targetValue, ...(sourceValue as object) } as any;
     } else if (sourceValue !== undefined) {
       result[key] = sourceValue as any;
     }
@@ -801,20 +953,119 @@ function trackConfigSource(
   source: ConfigSourceInfo['source'],
   path: string
 ): void {
-  function traverse(obj: any, currentPath: string): void {
+  const ancestors = new Set<object>();
+
+  function traverse(obj: any, currentPath: string, depth: number): void {
+    ancestors.add(obj);
     for (const key in obj) {
       const value = obj[key];
       const fullPath = currentPath ? `${currentPath}.${key}` : key;
 
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        traverse(value, fullPath);
+      if (isPlainObject(value) && depth < MAX_CONFIG_DEPTH && !ancestors.has(value)) {
+        traverse(value, fullPath, depth + 1);
       } else {
         sourceMap.set(fullPath, { source, path, value });
       }
     }
+    ancestors.delete(obj);
   }
 
-  traverse(config, '');
+  traverse(config, '', 0);
+}
+
+/**
+ * Parts of the configuration whose keys are not fixed, or that are reported
+ * elsewhere. Nothing below one of these paths is called unknown.
+ */
+const OPEN_CONFIG_PATHS = new Set([
+  'server.ssl', // has its own report of keys that are not applied
+  'modules.session.storeOptions',
+  'modules.session.cookie',
+  'security.helmet.contentSecurityPolicy',
+  'security.helmet.strictTransportSecurity',
+  'security.csp.directives',
+  'performance.compression.gzip',
+  'performance.compression.brotli',
+  'logging.outputs.webhook.headers',
+  'websocket.options',
+  'queue',
+]);
+
+/**
+ * createApp() options whose own value is also read directly by the framework
+ * (not only through the validated configuration), with the section each one
+ * is copied into. A key written there is in use even when the validator does
+ * not carry it.
+ */
+const DIRECTLY_READ_OPTIONS: ReadonlyArray<readonly [option: string, section: string]> = [
+  ['logger', 'logging'],
+  ['cors', 'security.cors'],
+  ['helmet', 'security.helmet'],
+  ['compression', 'performance.compression'],
+  ['autoDiscover', 'modules.autoDiscovery'],
+  ['validation', 'modules.validation'],
+  ['http2', 'server.http2'],
+  ['https', 'server.ssl'],
+];
+
+/**
+ * Keys that were given inside a known configuration section and are missing
+ * from the validated result: the validator does not know them, so nothing
+ * that reads the configuration ever sees them (`server.prot`,
+ * `security.cors.orgin`).
+ */
+function findUnknownKeys(given: any, validated: any, open: ReadonlySet<string>): string[] {
+  const unknown: string[] = [];
+
+  const compare = (input: any, output: any, path: string, depth: number): void => {
+    for (const key of Object.keys(input)) {
+      const value = input[key];
+      if (value === undefined) continue;
+      const fullPath = `${path}.${key}`;
+      if (open.has(fullPath)) continue;
+      // Directly under `modules`, an unknown key is a module's own config.
+      if (path === 'modules' && !(key in output)) continue;
+
+      const kept = output[key];
+      if (kept === undefined) {
+        unknown.push(fullPath);
+      } else if (
+        kept !== value &&
+        isPlainObject(value) &&
+        isPlainObject(kept) &&
+        depth < MAX_CONFIG_DEPTH
+      ) {
+        // The same object on both sides was passed through whole: free-form.
+        compare(value, kept, fullPath, depth + 1);
+      }
+    }
+  };
+
+  for (const section of Object.keys(validated)) {
+    if (open.has(section)) continue;
+    if (isPlainObject(given?.[section]) && isPlainObject(validated[section])) {
+      compare(given[section], validated[section], section, 1);
+    }
+  }
+
+  return unknown;
+}
+
+function warnUnknownKeys(given: AppConfig, validated: AppConfig, options?: MoroOptions): void {
+  const open = new Set(OPEN_CONFIG_PATHS);
+  for (const [option, section] of DIRECTLY_READ_OPTIONS) {
+    const value = (options as any)?.[option];
+    if (value !== null && typeof value === 'object') open.add(section);
+  }
+
+  const unknown = findUnknownKeys(given, validated, open);
+  if (unknown.length === 0) return;
+
+  logger.warn(
+    `Unknown configuration ${unknown.length === 1 ? 'key is' : 'keys are'} ignored: ` +
+      `${unknown.join(', ')}. Nothing reads ${unknown.length === 1 ? 'it' : 'them'}; ` +
+      'check the spelling against the configuration reference.'
+  );
 }
 
 /**
@@ -824,17 +1075,15 @@ function logConfigurationSources(sourceMap: Map<string, ConfigSourceInfo>): void
   const allSources = Array.from(sourceMap.entries()).sort(([a], [b]) => a.localeCompare(b));
   const nonDefaultSources = allSources.filter(([_, info]) => info.source !== 'default');
 
+  // Sensitive values are masked in every environment: debug logging is common
+  // in staging and test, and those logs are shipped and shared like any other.
   if (process.env.NODE_ENV === 'production') {
-    // In production, only show non-default values with sensitive data obfuscated
+    // In production, only show non-default values
     if (nonDefaultSources.length > 0) {
       logger.debug(`Configuration overrides loaded (${nonDefaultSources.length} total)`);
 
       nonDefaultSources.forEach(([path, info]) => {
-        const valueStr = isSensitiveField(path)
-          ? '***'
-          : typeof info.value === 'object'
-            ? JSON.stringify(info.value)
-            : String(info.value);
+        const valueStr = formatConfigValueForLog(path, info.value);
         logger.debug(`  ${path}: ${valueStr} (from ${info.source})`);
       });
     } else {
@@ -845,8 +1094,7 @@ function logConfigurationSources(sourceMap: Map<string, ConfigSourceInfo>): void
     logger.debug(`Configuration sources loaded (${allSources.length} total)`);
 
     allSources.forEach(([path, info]) => {
-      const valueStr =
-        typeof info.value === 'object' ? JSON.stringify(info.value) : String(info.value);
+      const valueStr = formatConfigValueForLog(path, info.value);
       logger.debug(`  ${path}: ${valueStr} (from ${info.source})`);
     });
   }

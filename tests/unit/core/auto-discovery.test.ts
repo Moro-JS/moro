@@ -4,11 +4,17 @@ import {
   autoDiscoverModules,
   autoDiscoverModuleDirectories,
 } from '../../../src/core/modules/auto-discovery.js';
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { ModuleConfig } from '../../../src/types/module.js';
 import { ModuleDefaultsConfig } from '../../../src/types/config.js';
+import {
+  compareModulePaths,
+  findModuleFiles,
+  matchesModulePattern,
+} from '../../../src/core/modules/module-files.js';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import * as fsPromises from 'fs/promises';
+import { join, relative } from 'path';
 import { tmpdir } from 'os';
 import { mkdtemp, rm } from 'fs/promises';
 
@@ -143,6 +149,88 @@ describe('Enhanced Module Auto-Discovery System', () => {
         expect(modules[1].name).toBe('users');
       });
 
+      it('loads an absolute path as the directory itself, whatever the base directory is', async () => {
+        await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
+        const elsewhere = await mkdtemp(join(tmpdir(), 'moro-test-base-'));
+        try {
+          const config: ModuleDefaultsConfig['autoDiscovery'] = {
+            enabled: true,
+            paths: [join(tempDir, 'modules')],
+            patterns: ['**/index.{ts,js}'],
+            recursive: true,
+            loadingStrategy: 'eager',
+            watchForChanges: false,
+            ignorePatterns: [],
+            loadOrder: 'alphabetical',
+            failOnError: true,
+            maxDepth: 5,
+          };
+
+          const modules = await new ModuleDiscovery(elsewhere).discoverModulesAdvanced(config);
+          expect(modules.map(module => module.name)).toEqual(['users']);
+        } finally {
+          await rm(elsewhere, { recursive: true, force: true });
+        }
+      });
+
+      it('says once when the modules came from a working directory the application was not started from', async () => {
+        await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
+        const config = {
+          enabled: true,
+          paths: ['modules'],
+          patterns: ['**/index.{ts,js}'],
+          recursive: true,
+          loadingStrategy: 'eager',
+          watchForChanges: false,
+          ignorePatterns: [],
+          loadOrder: 'alphabetical',
+          failOnError: true,
+          maxDepth: 5,
+        } as ModuleDefaultsConfig['autoDiscovery'];
+        const startedIn = process.cwd();
+        const scriptStartedWith = process.argv[1] as string;
+
+        await jest.isolateModulesAsync(async () => {
+          // A discovery of its own: what it has said so far is per process
+          const isolated = await import('../../../src/core/modules/auto-discovery.js');
+          const logging = await import('../../../src/core/logger/index.js');
+          logging.logger.setLevel('debug');
+          const log = jest
+            .spyOn(logging.MoroLogger.prototype as any, 'log')
+            .mockImplementation(() => {});
+          const said = (level: string, text: string) =>
+            log.mock.calls
+              .filter(call => call[0] === level && String(call[1]).includes(text))
+              .map(call => String(call[1]));
+          try {
+            process.chdir(tempDir);
+            const modulesDir = join(process.cwd(), 'modules');
+
+            // Started the usual way: the script is inside the working directory
+            await fs.writeFile(join(process.cwd(), 'server.js'), '');
+            process.argv[1] = join(process.cwd(), 'server.js');
+            await new isolated.ModuleDiscovery().discoverModulesAdvanced(config);
+            expect(said('debug', 'Scanning for modules in')).toEqual([
+              `Scanning for modules in ${modulesDir}`,
+            ]);
+            expect(said('info', 'through the working directory')).toEqual([]);
+
+            // Started from somewhere else
+            process.argv[1] = scriptStartedWith;
+            await new isolated.ModuleDiscovery().discoverModulesAdvanced(config);
+            await new isolated.ModuleDiscovery().discoverModulesAdvanced(config);
+            const notices = said('info', 'through the working directory');
+            expect(notices).toHaveLength(1);
+            expect(notices[0]).toContain(`module directory ${modulesDir}`);
+            expect(notices[0]).toContain('modules.autoDiscovery.paths');
+          } finally {
+            process.chdir(startedIn);
+            process.argv[1] = scriptStartedWith;
+            log.mockRestore();
+          }
+        });
+      });
+
       it('should respect ignore patterns', async () => {
         // Create modules and test files
         await createTestModule(tempDir, 'users', { name: 'users', version: '1.0.0' });
@@ -194,6 +282,288 @@ describe('Enhanced Module Auto-Discovery System', () => {
         const modules = await discovery.discoverModulesAdvanced(config);
         expect(modules).toHaveLength(0);
       });
+    });
+
+    // One walk finds the files and one rule orders them, so the same modules
+    // load in the same order on every Node.js version, operating system and
+    // file system, in CI and out of it.
+    describe('Which files are found, and in what order', () => {
+      const moduleFile = (name: string) =>
+        `export default ${JSON.stringify({ name, version: '1.0.0' })};\n`;
+      const write = async (path: string, name: string) => {
+        const file = join(tempDir, 'modules', path);
+        await fs.mkdir(join(file, '..'), { recursive: true });
+        await fs.writeFile(file, moduleFile(name));
+      };
+      const config = (
+        overrides: Partial<ModuleDefaultsConfig['autoDiscovery']> = {}
+      ): ModuleDefaultsConfig['autoDiscovery'] => ({
+        enabled: true,
+        paths: ['modules'],
+        patterns: ['**/*.module.{ts,js}', '**/index.{ts,js}', '**/*.config.{ts,js}'],
+        recursive: true,
+        loadingStrategy: 'eager',
+        watchForChanges: false,
+        ignorePatterns: ['**/*.test.{ts,js}', '**/*.spec.{ts,js}', '**/node_modules/**'],
+        loadOrder: 'dependency',
+        failOnError: true,
+        maxDepth: 5,
+        ...overrides,
+      });
+      const names = async (settings = config()) =>
+        (await new ModuleDiscovery(tempDir).discoverModulesAdvanced(settings)).map(m => m.name);
+
+      // What a file system that lists a directory in another order looks like
+      const listDirectoriesBackwards = () => {
+        const nodeFs = require('fs');
+        const original = nodeFs.readdirSync;
+        return jest
+          .spyOn(nodeFs, 'readdirSync')
+          .mockImplementation((...args: any[]) => original(...args).reverse());
+      };
+
+      const savedCI = process.env.CI;
+      const savedActions = process.env.GITHUB_ACTIONS;
+      afterEach(() => {
+        jest.restoreAllMocks();
+        if (savedCI === undefined) delete process.env.CI;
+        else process.env.CI = savedCI;
+        if (savedActions === undefined) delete process.env.GITHUB_ACTIONS;
+        else process.env.GITHUB_ACTIONS = savedActions;
+      });
+
+      it('loads modules in the order of their paths, the same in CI, out of it and on a file system that lists differently', async () => {
+        await write('zeta/index.ts', 'zeta');
+        await write('leads/leads.module.ts', 'leads');
+        await write('Users/index.ts', 'users');
+        await write('admin/index.ts', 'admin');
+        await write('a-b/index.ts', 'a-b');
+        await write('a/index.ts', 'a');
+        await write('a/reports/reports.module.ts', 'reports');
+        await write('billing/billing.config.ts', 'billing');
+        await write('top.module.ts', 'top');
+        // Not module files of this application: hidden ones
+        await write('.cache/index.ts', 'hidden-directory');
+        await write('admin/.draft.module.ts', 'hidden-file');
+
+        // By path, segment by segment, upper case before lower case:
+        //   Users/index.ts, a/index.ts, a/reports/reports.module.ts,
+        //   a-b/index.ts, admin/index.ts, billing/billing.config.ts,
+        //   leads/leads.module.ts, top.module.ts, zeta/index.ts
+        const expected = [
+          'users',
+          'a',
+          'reports',
+          'a-b',
+          'admin',
+          'billing',
+          'leads',
+          'top',
+          'zeta',
+        ];
+
+        delete process.env.CI;
+        delete process.env.GITHUB_ACTIONS;
+        expect(await names()).toEqual(expected);
+
+        process.env.CI = 'true';
+        expect(await names()).toEqual(expected);
+        delete process.env.CI;
+
+        listDirectoriesBackwards();
+        expect(await names()).toEqual(expected);
+      });
+
+      it('does not depend on the order the patterns are written in', async () => {
+        await write('orders/index.ts', 'orders');
+        await write('orders/audit/audit.module.ts', 'audit');
+        await write('catalog/catalog.module.ts', 'catalog');
+
+        const expected = ['catalog', 'audit', 'orders'];
+        expect(await names(config({ patterns: ['**/index.ts', '**/*.module.ts'] }))).toEqual(
+          expected
+        );
+        expect(await names(config({ patterns: ['**/*.module.ts', '**/index.ts'] }))).toEqual(
+          expected
+        );
+      });
+
+      it('orders paths segment by segment and by code unit, with no locale', () => {
+        const paths = ['a.b/x', 'é/x', 'a-b/x', 'a/x', 'B/x', 'a', 'a/b/x', 'Z', 'a/B'];
+        expect([...paths].sort(compareModulePaths)).toEqual([
+          'B/x',
+          'Z',
+          'a',
+          'a/B',
+          'a/b/x',
+          'a/x',
+          'a-b/x',
+          'a.b/x',
+          'é/x',
+        ]);
+      });
+
+      it('tells upper case from lower case on every file system', async () => {
+        await write('gamma/Index.ts', 'capital-index');
+        await write('gamma/thing.MODULE.ts', 'capital-module');
+        await write('delta/index.ts', 'delta');
+
+        expect(await names()).toEqual(['delta']);
+        // A pattern that spells the name another way does not find it either
+        expect(findModuleFiles(join(tempDir, 'modules'), ['gamma/index.ts'])).toEqual([]);
+        expect(findModuleFiles(join(tempDir, 'modules'), ['gamma/Index.ts'])).toEqual([
+          'gamma/Index.ts',
+        ]);
+      });
+
+      it('matches a name that starts with a dot only when the pattern says so', async () => {
+        await write('.cache/index.ts', 'hidden-directory');
+        await write('visible/.draft.module.ts', 'hidden-file');
+        await write('visible/index.ts', 'visible');
+        const root = join(tempDir, 'modules');
+
+        expect(findModuleFiles(root, ['**/*.ts'])).toEqual(['visible/index.ts']);
+        expect(findModuleFiles(root, ['**/*'])).toEqual(['visible/index.ts']);
+        expect(findModuleFiles(root, ['.cache/*.ts'])).toEqual(['.cache/index.ts']);
+        expect(findModuleFiles(root, ['**/.*.ts'])).toEqual(['visible/.draft.module.ts']);
+      });
+
+      it('takes a linked file as a file, and enters a linked directory only when the pattern names it', async () => {
+        await write('real/index.ts', 'real');
+        const outside = join(tempDir, 'outside');
+        await fs.mkdir(join(outside, 'shared'), { recursive: true });
+        await fs.writeFile(join(outside, 'shared', 'index.ts'), moduleFile('shared'));
+        await fs.writeFile(join(outside, 'linked.module.ts'), moduleFile('linked'));
+        const root = join(tempDir, 'modules');
+        await fs.symlink(join(outside, 'linked.module.ts'), join(root, 'linked.module.ts'));
+        await fs.symlink(join(outside, 'shared'), join(root, 'shared'), 'dir');
+
+        expect(await names()).toEqual(['linked', 'real']);
+        expect(findModuleFiles(root, ['*/index.ts'])).toEqual(['real/index.ts']);
+        expect(findModuleFiles(root, ['shared/index.ts', 'shared/**/*.ts'])).toEqual([
+          'shared/index.ts',
+        ]);
+      });
+
+      it('counts maxDepth in directories below the path: 0 is the files directly in it', async () => {
+        await write('top.module.ts', 'top');
+        await write('one/index.ts', 'one');
+        await write('one/two/index.ts', 'two');
+        await write('one/two/three/index.ts', 'three');
+
+        expect(await names(config({ maxDepth: 0 }))).toEqual(['top']);
+        expect(await names(config({ maxDepth: 1 }))).toEqual(['one', 'top']);
+        expect(await names(config({ maxDepth: 2 }))).toEqual(['one', 'two', 'top']);
+        expect(await names(config({ maxDepth: 5 }))).toEqual(['one', 'two', 'three', 'top']);
+      });
+
+      it('reads the pattern forms: *, ?, [set], {a,b} and **', async () => {
+        for (const path of [
+          'index.ts',
+          'alpha/index.ts',
+          'alpha/alpha.module.ts',
+          'alpha/deep/down/x.module.ts',
+          'beta/index.js',
+          'a-b/index.ts',
+          'a.b/index.ts',
+          'zeta/helper.ts',
+        ]) {
+          await write(path, path);
+        }
+        const root = join(tempDir, 'modules');
+        const found = (...patterns: string[]) => findModuleFiles(root, patterns);
+
+        expect(found('*/index.ts')).toEqual(['a-b/index.ts', 'a.b/index.ts', 'alpha/index.ts']);
+        expect(found('**/index.{ts,js}')).toEqual([
+          'a-b/index.ts',
+          'a.b/index.ts',
+          'alpha/index.ts',
+          'beta/index.js',
+          'index.ts',
+        ]);
+        expect(found('a?b/index.ts')).toEqual(['a-b/index.ts', 'a.b/index.ts']);
+        expect(found('[ab]*/index.*')).toEqual([
+          'a-b/index.ts',
+          'a.b/index.ts',
+          'alpha/index.ts',
+          'beta/index.js',
+        ]);
+        expect(found('[!a]*/*.ts')).toEqual(['zeta/helper.ts']);
+        expect(found('{alpha,{beta,zeta}}/*.{ts,js}')).toEqual([
+          'alpha/alpha.module.ts',
+          'alpha/index.ts',
+          'beta/index.js',
+          'zeta/helper.ts',
+        ]);
+        expect(found('alpha/**')).toEqual([
+          'alpha/alpha.module.ts',
+          'alpha/deep/down/x.module.ts',
+          'alpha/index.ts',
+        ]);
+        expect(found('./alpha/**/*.module.ts', 'alpha/*.module.ts')).toEqual([
+          'alpha/alpha.module.ts',
+          'alpha/deep/down/x.module.ts',
+        ]);
+        // No file: a pattern for directories, and one for a directory that is not there
+        expect(found('alpha/', 'missing/**/*.ts')).toEqual([]);
+
+        // A changed file's name is tested by the same rules
+        const patterns = ['**/*.module.{ts,js}', '**/index.{ts,js}'];
+        expect(matchesModulePattern('alpha/deep/down/x.module.ts', patterns)).toBe(true);
+        expect(matchesModulePattern('index.js', patterns)).toBe(true);
+        expect(matchesModulePattern('alpha\\index.ts', patterns)).toBe(true);
+        expect(matchesModulePattern('alpha/Index.ts', patterns)).toBe(false);
+        expect(matchesModulePattern('.cache/index.ts', patterns)).toBe(false);
+        expect(matchesModulePattern('alpha/helper.ts', patterns)).toBe(false);
+      });
+
+      // Node.js 22 and later have a glob of their own, which discovery used
+      // there. What it found for the documented patterns is what is found now.
+      const nodeGlob = (fsPromises as any).glob;
+      (typeof nodeGlob === 'function' ? it : it.skip)(
+        'finds the files the Node.js glob finds for the documented patterns',
+        async () => {
+          for (const path of [
+            'index.ts',
+            'users/index.ts',
+            'users/users.module.ts',
+            'users/users.config.ts',
+            'users/helper.ts',
+            'orders/index.js',
+            'orders/items/items.module.js',
+            'orders/items/deeper/still/there.module.ts',
+            'with space/index.ts',
+            '.hidden/index.ts',
+            'users/.draft.module.ts',
+          ]) {
+            await write(path, path);
+          }
+          const root = join(tempDir, 'modules');
+          const viaNode = async (pattern: string) => {
+            const files: string[] = [];
+            for await (const file of nodeGlob(join(root, pattern))) {
+              files.push(relative(root, file).split('\\').join('/'));
+            }
+            return files.sort(compareModulePaths);
+          };
+
+          for (const pattern of [
+            '**/*.module.{ts,js}',
+            '**/index.{ts,js}',
+            '**/*.config.{ts,js}',
+            '**/*.module.js',
+            '**/modules/*.{ts,js}',
+            '*/index.ts',
+            'users/*.ts',
+            '**/items/**/*.module.{ts,js}',
+          ]) {
+            expect({ pattern, files: findModuleFiles(root, [pattern]) }).toEqual({
+              pattern,
+              files: await viaNode(pattern),
+            });
+          }
+        }
+      );
     });
 
     describe('Dependency Resolution', () => {

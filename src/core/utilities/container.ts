@@ -1,5 +1,8 @@
 // Enhanced Functional Dependency Injection Container
 import { EventEmitter } from 'events';
+import { createFrameworkLogger } from '../logger/index.js';
+
+const logger = createFrameworkLogger('Container');
 
 // Service lifecycle states
 export enum ServiceLifecycle {
@@ -50,7 +53,8 @@ export type ServiceFactory<T> = (
 ) => T | Promise<T>;
 
 // Service interceptor for AOP patterns
-// Interceptor can return either a wrapped factory or call next()
+// Interceptor can return either a wrapped factory or call next(). Which of the
+// two an interceptor is, is read from what it does (see applyInterceptors).
 export type ServiceInterceptor =
   // Pattern 1: Return a wrapped factory (as shown in docs)
   | ((
@@ -88,6 +92,51 @@ interface ServiceInstance<T = any> {
   context?: ServiceContext;
 }
 
+// How a service came to be asked for while another one was being created
+const EDGE_EXPLICIT = 0; // a resolve() call made by a factory, interceptor, decorator or init hook
+const EDGE_REQUIRED = 1; // listed in dependsOn()
+const EDGE_OPTIONAL = 2; // listed in optionalDependsOn()
+type DependencyEdge = typeof EDGE_EXPLICIT | typeof EDGE_REQUIRED | typeof EDGE_OPTIONAL;
+
+// One creation in progress. `parent` is the creation that asked for it, so the
+// chain of parents is the path of services being built on top of each other.
+interface PendingCreation {
+  name: string;
+  scopeKey: string;
+  parent: PendingCreation | undefined;
+  edge: DependencyEdge;
+  // A failure of this creation does not reach its parent: fallback() replaces it
+  recovers: boolean;
+  // Listed in its scope, where concurrent first callers find it
+  listed: boolean;
+  next: PendingCreation | undefined;
+  // The creation this one is waiting on for a declared dependency
+  waitingFor: PendingCreation | undefined;
+  // Concurrent first callers of the same scoped instance
+  waiters: PendingWaiter[] | undefined;
+}
+
+interface PendingWaiter {
+  resolve: (instance: ServiceInstance) => void;
+  reject: (error: unknown) => void;
+}
+
+// The instances of one scope (the container, one request, one module) and the
+// creations of singleton, request- and module-scoped instances that have not
+// stored theirs yet. Concurrent first callers wait on the listed creation
+// instead of running the factory again.
+class ScopeInstances extends Map<string, ServiceInstance> {
+  pending: PendingCreation | undefined = undefined;
+}
+
+// Calling convention of each interceptor seen so far: true when it takes
+// (name, factory, deps, context) and returns a factory, false when it takes
+// (name, deps, context, next) and returns the instance.
+const interceptorWrapsFactory = new WeakMap<ServiceInterceptor, boolean>();
+
+// Upper bound on the entries one withCaching() factory keeps
+const WITH_CACHING_MAX_ENTRIES = 1000;
+
 // Higher-order functions for service composition
 export const withLogging =
   <T>(logger: any) =>
@@ -103,17 +152,41 @@ export const withLogging =
 export const withCaching =
   <T>(ttl = 300000) =>
   (factory: ServiceFactory<T>): ServiceFactory<T> => {
-    const cache = new Map<string, { value: T; expires: number }>();
+    const cache = new Map<string, { value: T; expires: number; used: boolean }>();
     return async (deps, ctx) => {
       // Use stable key without JSON.stringify
       const depsKeys = Object.keys(deps).sort();
       const key = `${ctx?.requestId || 'global'}_${depsKeys.join('_')}`;
       const cached = cache.get(key);
-      if (cached && cached.expires > Date.now()) {
-        return cached.value;
+      if (cached) {
+        if (cached.expires > Date.now()) {
+          cached.used = true;
+          return cached.value;
+        }
+        cache.delete(key);
       }
       const result = await factory(deps, ctx);
-      cache.set(key, { value: result, expires: Date.now() + ttl });
+      const now = Date.now();
+      // Re-insert rather than overwrite, so the map stays ordered oldest first
+      cache.delete(key);
+      cache.set(key, { value: result, expires: now + ttl, used: false });
+      // Every entry has the same ttl, so the oldest entries are the ones that
+      // expire first: drop the expired ones from the front, then hold the map
+      // to its bound. An entry read since it was stored is moved to the back
+      // once instead of being dropped.
+      for (const [oldestKey, oldest] of cache) {
+        if (oldest.expires <= now) {
+          cache.delete(oldestKey);
+        } else if (cache.size <= WITH_CACHING_MAX_ENTRIES) {
+          break;
+        } else {
+          cache.delete(oldestKey);
+          if (oldest.used) {
+            oldest.used = false;
+            cache.set(oldestKey, oldest);
+          }
+        }
+      }
       return result;
     };
   };
@@ -140,15 +213,20 @@ export const withTimeout =
   <T>(timeoutMs = 5000) =>
   (factory: ServiceFactory<T>): ServiceFactory<T> =>
   async (deps, ctx) => {
-    return Promise.race([
-      factory(deps, ctx),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Service creation timeout after ${timeoutMs}ms`)),
-          timeoutMs
-        )
-      ),
-    ]);
+    const creation = factory(deps, ctx);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Service creation timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+    });
+    try {
+      return await Promise.race([creation, timeout]);
+    } finally {
+      // The factory settled (or the timeout fired): nothing is left to time
+      clearTimeout(timer);
+    }
   };
 
 // Typed service reference - holds the service name and type information
@@ -177,11 +255,35 @@ export class TypedServiceReference<T> {
 // Enhanced Functional Container
 export class FunctionalContainer extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
-  private instances = new Map<string, ServiceInstance>();
-  private requestScopes = new Map<string, Map<string, ServiceInstance>>();
-  private moduleScopes = new Map<string, Map<string, ServiceInstance>>();
+  private instances = new ScopeInstances();
+  private requestScopes = new Map<string, ScopeInstances>();
+  private moduleScopes = new Map<string, ScopeInstances>();
   private globalInterceptors: ServiceInterceptor[] = [];
   private cleanupInterval?: NodeJS.Timeout | undefined;
+
+  // The creation whose dependencies or own code (factory, interceptors,
+  // decorators, init hook) are running synchronously right now, and how the
+  // next resolve call relates to it. Set only for the duration of such a call.
+  private activeCreation: PendingCreation | undefined = undefined;
+  private activeEdge: DependencyEdge = EDGE_EXPLICIT;
+  // What has been warned about once: request-scoped services resolved without
+  // a request id, and dependency cycles that are left to run
+  private warnedSharedRequestScope = new Set<string>();
+  private warnedCycles = new Set<string>();
+  // Changes whenever a name is registered again or the container is destroyed
+  private registrationEpoch = 0;
+
+  /**
+   * @internal Called when stored instances stop being current: with a name
+   * when that name is registered again, without one after dispose() and
+   * destroy(). Container uses it to drop what it has cached.
+   */
+  _onInstancesDropped: ((name?: string) => void) | undefined = undefined;
+
+  /** @internal The scope a name is registered with; undefined when it is not registered. */
+  _scopeOf(name: string): ServiceScope | undefined {
+    return this.services.get(name)?.metadata.scope;
+  }
 
   constructor() {
     super();
@@ -235,7 +337,7 @@ export class FunctionalContainer extends EventEmitter {
     let instance = instanceMap.get(scopeKey);
 
     if (!instance || this.shouldRecreate(instance, service.metadata)) {
-      instance = await this.createInstance(name, service, context, instanceMap, scopeKey);
+      instance = await this.acquireInstance(name, service, context, instanceMap, scopeKey);
     }
 
     instance.lastAccessed = Date.now();
@@ -266,15 +368,27 @@ export class FunctionalContainer extends EventEmitter {
     let instance = instanceMap.get(scopeKey);
 
     if (!instance || this.shouldRecreate(instance, service.metadata)) {
+      if (service.metadata.scope === ServiceScope.REQUEST && !context?.requestId) {
+        this.warnSharedRequestScope(name);
+      }
       const result = this.createInstanceSync(name, service, context);
-      instance = {
-        value: result,
-        metadata: service.metadata,
-        lifecycle: ServiceLifecycle.INITIALIZED,
-        lastAccessed: Date.now(),
-        accessCount: 1,
-        ...(context !== undefined ? { context } : {}),
-      };
+      instance =
+        context !== undefined
+          ? {
+              value: result,
+              metadata: service.metadata,
+              lifecycle: ServiceLifecycle.INITIALIZED,
+              lastAccessed: Date.now(),
+              accessCount: 1,
+              context,
+            }
+          : {
+              value: result,
+              metadata: service.metadata,
+              lifecycle: ServiceLifecycle.INITIALIZED,
+              lastAccessed: Date.now(),
+              accessCount: 1,
+            };
       instanceMap.set(scopeKey, instance);
     }
 
@@ -383,68 +497,318 @@ export class FunctionalContainer extends EventEmitter {
     this.instances.clear();
     this.requestScopes.clear();
     this.moduleScopes.clear();
+    this._onInstancesDropped?.();
   }
 
   // Internal implementation methods
+
+  // Get the instance for a scope key that has none stored: wait for the
+  // creation another caller already started, or start one.
+  private acquireInstance<T>(
+    name: string,
+    service: ServiceDefinition<T>,
+    context: ServiceContext | undefined,
+    instanceMap: ScopeInstances,
+    scopeKey: string
+  ): Promise<ServiceInstance<T>> {
+    const metadata = service.metadata;
+    const requester = this.activeCreation;
+    const edge = requester !== undefined ? this.activeEdge : EDGE_EXPLICIT;
+    const hasDependencies = metadata.dependencies.length > 0 || metadata.optional.length > 0;
+
+    if (requester !== undefined && edge !== EDGE_EXPLICIT && hasDependencies) {
+      this.checkDependencyCycle(name, requester, edge);
+    }
+    if (metadata.scope === ServiceScope.REQUEST && !context?.requestId) {
+      this.warnSharedRequestScope(name);
+    }
+
+    const shared = metadata.scope !== ServiceScope.TRANSIENT;
+    if (!shared && !hasDependencies) {
+      // Nothing can wait on it and it cannot be part of a cycle: no bookkeeping
+      return this.createInstance(name, service, context, instanceMap, scopeKey, undefined);
+    }
+
+    let listed = shared;
+    if (shared) {
+      let pending = instanceMap.pending;
+      while (pending !== undefined && pending.scopeKey !== scopeKey) pending = pending.next;
+      if (pending !== undefined) {
+        if (this.canWaitFor(pending, requester)) {
+          if (requester !== undefined && edge !== EDGE_EXPLICIT) {
+            requester.waitingFor = pending;
+          }
+          const waiters = (pending.waiters ??= []);
+          return new Promise<ServiceInstance<T>>((resolve, reject) => {
+            waiters.push({ resolve, reject });
+          });
+        }
+        // The creation in progress is the one asking (a service resolving
+        // itself while it is being built) or already waits on the one asking:
+        // waiting for it would never end, so build separately.
+        listed = false;
+      }
+    }
+
+    const creation: PendingCreation = {
+      name,
+      scopeKey,
+      parent: requester,
+      edge,
+      recovers: metadata.fallback !== undefined,
+      listed,
+      next: listed ? instanceMap.pending : undefined,
+      waitingFor: undefined,
+      waiters: undefined,
+    };
+    if (listed) {
+      instanceMap.pending = creation;
+    }
+    if (requester !== undefined && edge !== EDGE_EXPLICIT) {
+      requester.waitingFor = creation;
+    }
+    return this.createInstance(name, service, context, instanceMap, scopeKey, creation);
+  }
+
+  // Whether `requester` can wait for `pending` to finish. It cannot when
+  // `pending` is one of the creations `requester` is nested in, or is itself
+  // waiting (through declared dependencies) on one of them.
+  private canWaitFor(pending: PendingCreation, requester: PendingCreation | undefined): boolean {
+    if (requester === undefined) return true;
+    for (let waited: PendingCreation | undefined = pending; waited; waited = waited.waitingFor) {
+      for (let nested: PendingCreation | undefined = requester; nested; nested = nested.parent) {
+        if (nested === waited) return false;
+      }
+    }
+    return true;
+  }
+
+  // Release the callers waiting on a creation and take it off its scope's list
+  private settleCreation(
+    creation: PendingCreation,
+    instanceMap: ScopeInstances,
+    failed: boolean,
+    outcome: unknown
+  ): void {
+    if (creation.listed) {
+      this.unlistCreation(creation, instanceMap);
+    }
+    const waiters = creation.waiters;
+    if (waiters === undefined) return;
+    creation.waiters = undefined;
+    for (const waiter of waiters) {
+      if (failed) waiter.reject(outcome);
+      else waiter.resolve(outcome as ServiceInstance);
+    }
+  }
+
+  private unlistCreation(creation: PendingCreation, instanceMap: ScopeInstances): void {
+    creation.listed = false;
+    if (instanceMap.pending === creation) {
+      instanceMap.pending = creation.next;
+    } else {
+      for (let pending = instanceMap.pending; pending !== undefined; pending = pending.next) {
+        if (pending.next === creation) {
+          pending.next = creation.next;
+          break;
+        }
+      }
+    }
+    creation.next = undefined;
+  }
+
+  // `requester` is about to resolve `name` as a declared dependency. When
+  // `name` is already being created further up the same chain of declared
+  // dependencies, the chain can never complete.
+  private checkDependencyCycle(
+    name: string,
+    requester: PendingCreation,
+    edge: DependencyEdge
+  ): void {
+    // A cycle that passes through an optional dependency, or through a
+    // service with a fallback (async resolution), does not end in an error
+    let recovers = edge === EDGE_OPTIONAL;
+    let start: PendingCreation | undefined = requester;
+    for (; start; start = start.parent) {
+      if (start.recovers) recovers = true;
+      if (start.name === name) break;
+      if (start.edge === EDGE_EXPLICIT) return;
+      if (start.edge === EDGE_OPTIONAL) recovers = true;
+    }
+    if (start === undefined) return;
+
+    // The services from `name` down to the one asking for it again
+    const members: string[] = [];
+    for (
+      let creation = requester;
+      creation !== start;
+      creation = creation.parent as PendingCreation
+    ) {
+      members.push(creation.name);
+    }
+    members.push(name);
+    members.reverse();
+    const cycle = `${members.join(' -> ')} -> ${name}`;
+    if (!recovers) {
+      throw new Error(`Circular dependency detected: ${cycle}`);
+    }
+
+    const key = members.sort().join(' ');
+    if (this.warnedCycles.has(key)) return;
+    this.warnedCycles.add(key);
+    logger.warn(
+      `Services depend on each other in a cycle (${cycle}) that passes through an optional ` +
+        `dependency or a service with a fallback. Resolving it constructs each service ` +
+        `repeatedly until the call stack runs out. Remove one of the dependencies to break ` +
+        `the cycle.`,
+      'Container'
+    );
+  }
+
+  private warnSharedRequestScope(name: string): void {
+    if (this.warnedSharedRequestScope.has(name)) return;
+    this.warnedSharedRequestScope.add(name);
+    logger.warn(
+      `Request-scoped service '${name}' was resolved without a request id in its context, ` +
+        `so the instance is shared by every caller that omits one. Pass ` +
+        `{ context: { requestId, ... } } to resolve() to get one instance per request.`,
+      'Container'
+    );
+  }
+
+  // Run a factory, interceptor, decorator or init hook of `creation`: resolve
+  // calls it makes before its first await are known to come from `creation`.
+  private runFor<R>(creation: PendingCreation | undefined, fn: () => R): R {
+    if (creation === undefined) return fn();
+    const outerCreation = this.activeCreation;
+    const outerEdge = this.activeEdge;
+    this.activeCreation = creation;
+    this.activeEdge = EDGE_EXPLICIT;
+    try {
+      return fn();
+    } finally {
+      this.activeCreation = outerCreation;
+      this.activeEdge = outerEdge;
+    }
+  }
+
   private async createInstance<T>(
     name: string,
     service: ServiceDefinition<T>,
-    context?: ServiceContext,
-    instanceMap?: Map<string, ServiceInstance>,
-    scopeKey?: string
+    context: ServiceContext | undefined,
+    instanceMap: ScopeInstances,
+    scopeKey: string,
+    creation: PendingCreation | undefined
   ): Promise<ServiceInstance<T>> {
-    const instance: ServiceInstance<T> = {
-      value: undefined as any,
-      metadata: service.metadata,
-      lifecycle: ServiceLifecycle.INITIALIZING,
-      lastAccessed: Date.now(),
-      accessCount: 0,
-      ...(context !== undefined ? { context } : {}),
-    };
+    // Code of this service runs on behalf of its own creation, or, when it
+    // has none, of the creation that asked for it
+    const owner = creation ?? this.activeCreation;
+    const epoch = this.registrationEpoch;
+    const instance: ServiceInstance<T> =
+      context !== undefined
+        ? {
+            value: undefined as any,
+            metadata: service.metadata,
+            lifecycle: ServiceLifecycle.INITIALIZING,
+            lastAccessed: Date.now(),
+            accessCount: 0,
+            context,
+          }
+        : {
+            value: undefined as any,
+            metadata: service.metadata,
+            lifecycle: ServiceLifecycle.INITIALIZING,
+            lastAccessed: Date.now(),
+            accessCount: 0,
+          };
 
     try {
       // Resolve dependencies
-      const dependencies = await this.resolveDependencies(service.metadata, context);
+      const dependencies = await this.resolveDependencies(service.metadata, context, creation);
 
-      // Apply interceptors (global + service-specific)
-      const interceptedFactory = this.applyInterceptors(
-        name,
-        service.factory,
-        service.interceptors || [],
-        dependencies,
-        context
-      );
-
-      // Create instance by calling the intercepted factory (no params needed, already bound)
-      instance.value = await interceptedFactory();
+      // Apply interceptors (global + service-specific) and create the instance
+      // by calling the intercepted factory (no params needed, already bound).
+      // Resolve calls made by that code before its first await come from `owner`.
+      let created: any;
+      if (owner === undefined) {
+        created = this.applyInterceptors(
+          name,
+          service.factory,
+          service.interceptors || [],
+          dependencies,
+          context
+        )();
+      } else {
+        const outerCreation = this.activeCreation;
+        const outerEdge = this.activeEdge;
+        this.activeCreation = owner;
+        this.activeEdge = EDGE_EXPLICIT;
+        try {
+          created = this.applyInterceptors(
+            name,
+            service.factory,
+            service.interceptors || [],
+            dependencies,
+            context
+          )();
+        } finally {
+          this.activeCreation = outerCreation;
+          this.activeEdge = outerEdge;
+        }
+      }
+      instance.value = await created;
 
       // Apply decorators
-      instance.value = await this.applyDecorators(instance.value, service.decorators, context);
+      instance.value = await this.applyDecorators(
+        instance.value,
+        service.decorators,
+        context,
+        owner
+      );
 
       // Mark as initialized and store in map BEFORE running lifecycle hooks
       // This prevents infinite loops when init callbacks resolve the same service
       instance.lifecycle = ServiceLifecycle.INITIALIZED;
 
-      if (instanceMap && scopeKey) {
+      // A name registered again while this was being built keeps its new
+      // registration: only the caller that asked for this instance gets it
+      if (epoch === this.registrationEpoch || this.services.get(name) === service) {
         instanceMap.set(scopeKey, instance);
+      }
+      // The instance is available from here on, as it is to any later caller
+      if (creation !== undefined) {
+        this.settleCreation(creation, instanceMap, false, instance);
       }
 
       // Run initialization lifecycle
-      if (service.metadata.lifecycle?.init) {
-        await service.metadata.lifecycle.init();
+      const lifecycle = service.metadata.lifecycle;
+      if (lifecycle?.init) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        await this.runFor(owner, () => lifecycle.init!());
       }
 
       this.emit('serviceCreated', { name, instance });
     } catch (error) {
       instance.lifecycle = ServiceLifecycle.ERROR;
-      this.emit('serviceError', { name, error });
+      try {
+        this.emit('serviceError', { name, error });
 
-      // Try fallback if available
-      if (service.metadata.fallback) {
-        instance.value = service.metadata.fallback();
-        instance.lifecycle = ServiceLifecycle.INITIALIZED;
-      } else {
-        throw error;
+        // Try fallback if available
+        if (service.metadata.fallback) {
+          instance.value = service.metadata.fallback();
+          instance.lifecycle = ServiceLifecycle.INITIALIZED;
+        } else {
+          throw error;
+        }
+      } catch (failure) {
+        // Not stored: the next resolve runs the factory again
+        if (creation !== undefined) {
+          this.settleCreation(creation, instanceMap, true, failure);
+        }
+        throw failure;
+      }
+      if (creation !== undefined) {
+        this.settleCreation(creation, instanceMap, false, instance);
       }
     }
 
@@ -456,69 +820,137 @@ export class FunctionalContainer extends EventEmitter {
     service: ServiceDefinition<T>,
     context?: ServiceContext
   ): T {
-    // Resolve dependencies synchronously
-    const dependencies = this.resolveDependenciesSync(service.metadata, context);
+    const metadata = service.metadata;
+    const requester = this.activeCreation;
+    const outerEdge = this.activeEdge;
+    let owner = requester;
 
-    // Apply interceptors (global + service-specific)
-    const interceptedFactory = this.applyInterceptors(
-      name,
-      service.factory,
-      service.interceptors || [],
-      dependencies,
-      context
-    );
-
-    // Create instance (note: interceptors must be sync or this will fail)
-    let instance = interceptedFactory() as T;
-
-    // Apply decorators synchronously
-    for (const decorator of service.decorators) {
-      const result = decorator(instance, context || this.createDefaultContext());
-      // If decorator returns a promise, we can't handle it in sync mode
-      if (result && typeof (result as any).then === 'function') {
-        throw new Error(
-          `Cannot use async decorator with synchronous resolution for service '${name}'`
-        );
+    if (metadata.dependencies.length > 0 || metadata.optional.length > 0) {
+      const edge = requester !== undefined ? outerEdge : EDGE_EXPLICIT;
+      if (requester !== undefined && edge !== EDGE_EXPLICIT) {
+        this.checkDependencyCycle(name, requester, edge);
       }
-      instance = result as T;
+      // Synchronous creation has no fallback and nothing waits on it
+      owner = {
+        name,
+        scopeKey: name,
+        parent: requester,
+        edge,
+        recovers: false,
+        listed: false,
+        next: undefined,
+        waitingFor: undefined,
+        waiters: undefined,
+      };
     }
 
-    return instance;
+    try {
+      // Resolve dependencies synchronously
+      const dependencies = this.resolveDependenciesSync(metadata, context, owner);
+
+      // Code of this service runs on behalf of its own creation, or, when it
+      // has none, of the creation that asked for it
+      this.activeCreation = owner;
+      this.activeEdge = EDGE_EXPLICIT;
+
+      // Apply interceptors (global + service-specific)
+      const interceptedFactory = this.applyInterceptors(
+        name,
+        service.factory,
+        service.interceptors || [],
+        dependencies,
+        context
+      );
+
+      // Create instance (note: interceptors must be sync or this will fail)
+      let instance = interceptedFactory() as T;
+
+      // Apply decorators synchronously
+      for (const decorator of service.decorators) {
+        const result = decorator(instance, context || this.createDefaultContext());
+        // If decorator returns a promise, we can't handle it in sync mode
+        if (result && typeof (result as any).then === 'function') {
+          throw new Error(
+            `Cannot use async decorator with synchronous resolution for service '${name}'`
+          );
+        }
+        instance = result as T;
+      }
+
+      return instance;
+    } finally {
+      this.activeCreation = requester;
+      this.activeEdge = outerEdge;
+    }
+  }
+
+  // Resolve one declared dependency of `creation`
+  private requestDependency(
+    creation: PendingCreation | undefined,
+    edge: DependencyEdge,
+    name: string,
+    context: ServiceContext | undefined
+  ): Promise<any> {
+    const outerCreation = this.activeCreation;
+    const outerEdge = this.activeEdge;
+    if (creation !== undefined) creation.waitingFor = undefined;
+    this.activeCreation = creation;
+    this.activeEdge = edge;
+    try {
+      return this.resolve(name, context);
+    } finally {
+      this.activeCreation = outerCreation;
+      this.activeEdge = outerEdge;
+    }
   }
 
   private async resolveDependencies(
     metadata: ServiceMetadata,
-    context?: ServiceContext
+    context: ServiceContext | undefined,
+    creation: PendingCreation | undefined
   ): Promise<Record<string, any>> {
     const dependencies: Record<string, any> = {};
 
     for (const dep of metadata.dependencies) {
-      dependencies[dep] = await this.resolve(dep, context);
+      dependencies[dep] = await this.requestDependency(creation, EDGE_REQUIRED, dep, context);
     }
 
     for (const optDep of metadata.optional) {
       try {
-        dependencies[optDep] = await this.resolve(optDep, context);
+        dependencies[optDep] = await this.requestDependency(
+          creation,
+          EDGE_OPTIONAL,
+          optDep,
+          context
+        );
       } catch {
         // Optional dependency - continue without it
       }
     }
+
+    // No longer waiting on any of them
+    if (creation !== undefined) creation.waitingFor = undefined;
 
     return dependencies;
   }
 
   private resolveDependenciesSync(
     metadata: ServiceMetadata,
-    context?: ServiceContext
+    context: ServiceContext | undefined,
+    creation: PendingCreation | undefined
   ): Record<string, any> {
     const dependencies: Record<string, any> = {};
 
     for (const dep of metadata.dependencies) {
+      this.activeCreation = creation;
+      this.activeEdge = EDGE_REQUIRED;
       dependencies[dep] = this.resolveSync(dep, context);
     }
 
     for (const optDep of metadata.optional) {
       try {
+        this.activeCreation = creation;
+        this.activeEdge = EDGE_OPTIONAL;
         dependencies[optDep] = this.resolveSync(optDep, context);
       } catch {
         // Optional dependency - continue without it
@@ -535,31 +967,20 @@ export class FunctionalContainer extends EventEmitter {
     dependencies: Record<string, any>,
     context?: ServiceContext
   ): () => any | Promise<any> {
+    // Create a parameterless factory by binding deps and context
+    const boundFactory = () => factory(dependencies, context);
+    if (this.globalInterceptors.length === 0 && serviceInterceptors.length === 0) {
+      return boundFactory;
+    }
+
     // Combine global interceptors with service-specific interceptors
     const allInterceptors = [...this.globalInterceptors, ...serviceInterceptors];
 
-    // Create a parameterless factory by binding deps and context
-    const boundFactory = () => factory(dependencies, context);
-
     // Apply interceptors in order, each wrapping the previous factory
     return allInterceptors.reduce((wrappedFactory: () => any, interceptor: ServiceInterceptor) => {
-      // Check the number of parameters to determine pattern
-      // Pattern 1: (name, factory, deps, context) - 4 params, expects factory returned
-      // Pattern 2: (name, deps, context, next) - 4 params, calls next and returns result
-      // We check if the 2nd parameter name suggests it's a factory or not
-      const paramNames =
-        interceptor
-          .toString()
-          .match(/\(([^)]*)\)/)?.[1]
-          ?.split(',')
-          .map(p => p.trim()) || [];
-      const secondParam = paramNames[1];
-      const isFactoryPattern =
-        paramNames.length >= 2 &&
-        secondParam !== undefined &&
-        (secondParam.includes('factory') || secondParam.includes('fn') || secondParam === 'f');
+      const wrapsFactory = interceptorWrapsFactory.get(interceptor);
 
-      if (isFactoryPattern || paramNames.length !== 4) {
+      if (wrapsFactory === true) {
         // Pattern 1: (name, factory, deps, context) => wrappedFactory
         return (interceptor as any)(
           name,
@@ -567,7 +988,7 @@ export class FunctionalContainer extends EventEmitter {
           dependencies,
           context || this.createDefaultContext()
         );
-      } else {
+      } else if (wrapsFactory === false) {
         // Pattern 2: (name, deps, context, next) => result (middleware-style)
         return () =>
           (interceptor as any)(
@@ -577,17 +998,90 @@ export class FunctionalContainer extends EventEmitter {
             wrappedFactory
           );
       }
+      // Not seen before: find out which pattern it follows when it runs
+      return () =>
+        this.runUnclassifiedInterceptor(
+          interceptor,
+          name,
+          wrappedFactory,
+          dependencies,
+          context || this.createDefaultContext()
+        );
     }, boundFactory);
+  }
+
+  // Both patterns take four arguments, so which one an interceptor follows is
+  // read from what it does, never from how its parameters are named. It is
+  // called as pattern 2 first, the only order in which a pattern 2 interceptor
+  // (which does its work during the call) runs once and with the right
+  // arguments:
+  // - it calls next(), or returns something that is not a function: pattern 2;
+  // - it returns a function (or its second argument unchanged) without
+  //   calling next(), or throws before calling it: it took the arguments for
+  //   (name, factory, deps, context), so it is called again that way and the
+  //   function it returns is the factory.
+  private runUnclassifiedInterceptor(
+    interceptor: ServiceInterceptor,
+    name: string,
+    wrappedFactory: () => any,
+    dependencies: Record<string, any>,
+    context: ServiceContext
+  ): any {
+    let nextCalled = false;
+    const next = () => {
+      nextCalled = true;
+      return wrappedFactory();
+    };
+
+    let result: any;
+    let threw = false;
+    let failure: unknown;
+    try {
+      result = (interceptor as any)(name, dependencies, context, next);
+    } catch (error) {
+      if (nextCalled) {
+        interceptorWrapsFactory.set(interceptor, false);
+        throw error;
+      }
+      threw = true;
+      failure = error;
+    }
+
+    if (nextCalled || (!threw && typeof result !== 'function' && result !== dependencies)) {
+      interceptorWrapsFactory.set(interceptor, false);
+      return result;
+    }
+
+    let factory: any;
+    try {
+      factory = (interceptor as any)(name, wrappedFactory, dependencies, context);
+    } catch (error) {
+      // Failed both ways: report what it threw when called as pattern 2 if it
+      // did, since that call had not been ruled out
+      throw threw ? failure : error;
+    }
+    if (typeof factory !== 'function') {
+      // Not a factory wrapper after all
+      if (threw) throw failure;
+      interceptorWrapsFactory.set(interceptor, false);
+      return result;
+    }
+    interceptorWrapsFactory.set(interceptor, true);
+    return factory();
   }
 
   private async applyDecorators<T>(
     instance: T,
     decorators: ServiceDecorator<T>[],
-    context?: ServiceContext
+    context: ServiceContext | undefined,
+    owner: PendingCreation | undefined
   ): Promise<T> {
     let result = instance;
     for (const decorator of decorators) {
-      result = await decorator(result, context || this.createDefaultContext());
+      const current = result;
+      result = await this.runFor(owner, () =>
+        decorator(current, context || this.createDefaultContext())
+      );
     }
     return result;
   }
@@ -603,27 +1097,26 @@ export class FunctionalContainer extends EventEmitter {
     }
   }
 
-  private getInstanceMap(
-    scope: ServiceScope,
-    context?: ServiceContext
-  ): Map<string, ServiceInstance> {
+  private getInstanceMap(scope: ServiceScope, context?: ServiceContext): ScopeInstances {
     switch (scope) {
       case ServiceScope.REQUEST: {
         const requestId = context?.requestId || 'default-request';
-        if (!this.requestScopes.has(requestId)) {
-          this.requestScopes.set(requestId, new Map());
+        let requestScope = this.requestScopes.get(requestId);
+        if (requestScope === undefined) {
+          requestScope = new ScopeInstances();
+          this.requestScopes.set(requestId, requestScope);
         }
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        return this.requestScopes.get(requestId)!;
+        return requestScope;
       }
 
       case ServiceScope.MODULE: {
         const moduleId = context?.moduleId || 'default-module';
-        if (!this.moduleScopes.has(moduleId)) {
-          this.moduleScopes.set(moduleId, new Map());
+        let moduleScope = this.moduleScopes.get(moduleId);
+        if (moduleScope === undefined) {
+          moduleScope = new ScopeInstances();
+          this.moduleScopes.set(moduleId, moduleScope);
         }
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        return this.moduleScopes.get(moduleId)!;
+        return moduleScope;
       }
 
       default:
@@ -682,15 +1175,48 @@ export class FunctionalContainer extends EventEmitter {
     this.moduleScopes.clear();
     this.instances.clear();
     this.services.clear();
+    this.registrationEpoch++;
+    this._onInstancesDropped?.();
 
     this.emit('containerDestroyed');
   }
 
   // Internal registration method
   _registerService<T>(name: string, definition: ServiceDefinition<T>): this {
+    const previous = this.services.get(name);
     this.services.set(name, definition);
+    if (previous !== undefined) {
+      // Registered again: what the previous registration built is no longer
+      // what this name resolves to
+      this.registrationEpoch++;
+      this.dropInstances(name, previous.metadata.scope);
+    }
     this.emit('serviceRegistered', { name, metadata: definition.metadata });
     return this;
+  }
+
+  private dropInstances(name: string, scope: ServiceScope): void {
+    if (scope === ServiceScope.REQUEST || scope === ServiceScope.MODULE) {
+      const scopes = scope === ServiceScope.REQUEST ? this.requestScopes : this.moduleScopes;
+      for (const [scopeId, instances] of scopes) {
+        this.dropInstance(instances, `${name}:${scopeId}`);
+      }
+    } else {
+      this.dropInstance(this.instances, name);
+    }
+    this._onInstancesDropped?.(name);
+  }
+
+  private dropInstance(instances: ScopeInstances, scopeKey: string): void {
+    instances.delete(scopeKey);
+    // A creation still in progress belongs to the previous registration: later
+    // callers must not wait on it
+    for (let pending = instances.pending; pending !== undefined; pending = pending.next) {
+      if (pending.scopeKey === scopeKey) {
+        this.unlistCreation(pending, instances);
+        break;
+      }
+    }
   }
 
   // Check if service exists
@@ -853,29 +1379,84 @@ export class ServiceRegistrationBuilder<T> {
   }
 }
 
+// What Container.register() takes as its third argument in place of a boolean
+export interface ContainerRegisterOptions {
+  /**
+   * `'singleton'` (the default): the factory runs once and every resolve
+   * returns that instance. `'transient'`: the factory runs on every resolve.
+   */
+  lifetime?: 'singleton' | 'transient' | ServiceScope.SINGLETON | ServiceScope.TRANSIENT;
+}
+
 // Standard Container class
 export class Container {
   private functionalContainer = new FunctionalContainer();
+  // What resolve() returned for each name whose instance is kept (every scope
+  // but transient). It holds at most one entry per registered name.
   private resolutionCache = new Map<string, any>();
+  private warnedFalseLifetime = false;
 
-  register<T>(name: string, factory: () => T, singleton = false): void {
+  constructor() {
+    // A name registered again, or instances disposed: resolve them afresh
+    this.functionalContainer._onInstancesDropped = name => {
+      if (name === undefined) this.resolutionCache.clear();
+      else this.resolutionCache.delete(name);
+    };
+  }
+
+  /**
+   * Register a service. It is a singleton: the factory runs once, on the first
+   * resolve, and every later resolve returns that instance. Pass
+   * `{ lifetime: 'transient' }` to run the factory on every resolve instead.
+   *
+   * The third argument may also be the boolean of earlier versions. `true`
+   * registers a singleton, and so does `false`: a boolean never makes a
+   * service transient.
+   */
+  register<T>(
+    name: string,
+    factory: () => T,
+    singletonOrOptions?: boolean | ContainerRegisterOptions
+  ): void {
+    let transient = false;
+    if (typeof singletonOrOptions === 'object' && singletonOrOptions !== null) {
+      const lifetime = singletonOrOptions.lifetime;
+      if (lifetime === ServiceScope.TRANSIENT) {
+        transient = true;
+      } else if (lifetime !== undefined && lifetime !== ServiceScope.SINGLETON) {
+        throw new Error(
+          `Unknown lifetime '${String(lifetime)}' for service '${name}': use 'singleton' or 'transient'`
+        );
+      }
+    } else if (singletonOrOptions === false && !this.warnedFalseLifetime) {
+      this.warnedFalseLifetime = true;
+      logger.warn(
+        `Service '${name}' is registered with false as its third argument. It is built once ` +
+          `and shared, like a service registered without that argument. Pass ` +
+          `{ lifetime: 'transient' } to build a new instance on every resolve, or leave the ` +
+          `argument out.`,
+        'Container'
+      );
+    }
+
     this.functionalContainer
       .register<T>(name)
       .factory(() => factory())
-      [singleton ? 'singleton' : 'transient']()
+      [transient ? 'transient' : 'singleton']()
       .build();
   }
 
   resolve<T>(name: string): T {
-    // Fast path for cached resolutions
+    // Fast path: a name resolved before whose instance is still the current one
     if (this.resolutionCache.has(name)) {
       return this.resolutionCache.get(name);
     }
 
     const resolved = this.functionalContainer.resolveSync<T>(name);
 
-    // Cache result (limit cache size)
-    if (this.resolutionCache.size < 50) {
+    // A transient service is built on every resolve, so it is never kept
+    const scope = this.functionalContainer._scopeOf(name);
+    if (scope !== undefined && scope !== ServiceScope.TRANSIENT) {
       this.resolutionCache.set(name, resolved);
     }
 

@@ -11,7 +11,8 @@ export function registerHttp2Hooks(hookManager: any, options: Http2PushOptions =
   hookManager.on('request', async (context: any) => {
     const { request, response } = context;
 
-    if (!request || !response) {
+    // A request that has already been answered is finished
+    if (!request || !response || response.headersSent) {
       return;
     }
 

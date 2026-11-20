@@ -78,6 +78,30 @@ describe('Public pooling exports', () => {
   });
 });
 
+describe('Buffer pool', () => {
+  it('hands out zero-filled buffers, including one that another caller used', () => {
+    const manager = ObjectPoolManager.getInstance();
+
+    for (const size of [64, 1000, 4096, 16384]) {
+      const first = manager.acquireBuffer(size);
+      first.fill(0x41);
+      first.write('token=previous-caller');
+      manager.releaseBuffer(first);
+
+      // The pool hands the same memory to the next caller
+      const second = manager.acquireBuffer(size - 10);
+      expect(second.length).toBeGreaterThanOrEqual(size);
+      expect(second.equals(Buffer.alloc(second.length))).toBe(true);
+      manager.releaseBuffer(second);
+    }
+
+    // Larger than any pool: allocated directly, and zero-filled as well
+    const large = manager.acquireBuffer(20000);
+    expect(large.length).toBe(20000);
+    expect(large.equals(Buffer.alloc(20000))).toBe(true);
+  });
+});
+
 describe('Public worker exports', () => {
   // Worker entry is stubbed under jest (no real thread spawning here);
   // real spawning is covered by the dist smoke script.

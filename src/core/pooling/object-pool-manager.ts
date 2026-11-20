@@ -101,7 +101,15 @@ export class ObjectPoolManager {
       if (size === undefined) continue;
       this.bufferPools.set(
         size,
-        new ObjectPool<Buffer>(() => Buffer.allocUnsafe(size), this.getOptimalPoolSize(size))
+        // A pooled buffer is zero-filled when created and again when it comes
+        // back, so no caller is handed what an earlier caller wrote
+        new ObjectPool<Buffer>(
+          () => Buffer.alloc(size),
+          this.getOptimalPoolSize(size),
+          buffer => {
+            buffer.fill(0);
+          }
+        )
       );
     }
 
@@ -277,6 +285,11 @@ export class ObjectPoolManager {
 
   // Buffer Pool
 
+  /**
+   * A zero-filled buffer of at least `size` bytes: the smallest pooled size
+   * (64, 256, 1024, 4096 or 16384) that fits, so `length` can exceed `size`.
+   * A larger request is allocated outside the pools.
+   */
   acquireBuffer(size: number): Buffer {
     this.performanceStats.totalAcquisitions++;
 
@@ -308,9 +321,13 @@ export class ObjectPoolManager {
 
     // No pool available for this size, allocate directly
     this.performanceStats.poolMisses++;
-    return Buffer.allocUnsafe(size);
+    return Buffer.alloc(size);
   }
 
+  /**
+   * Return a buffer from acquireBuffer(). It is zero-filled before it is
+   * pooled; do not use it after releasing it.
+   */
   releaseBuffer(buffer: Buffer): void {
     this.performanceStats.totalReleases++;
     const size = buffer.length;

@@ -5,6 +5,8 @@ import {
   buildEmfRecord,
   createCloudWatchMiddleware,
 } from '../../../src/core/middleware/built-in/cloudwatch/middleware.js';
+import { createErrorTrackerMiddleware } from '../../../src/core/middleware/built-in/error-tracker/middleware.js';
+import { logger } from '../../../src/core/logger/index.js';
 
 type FinishListener = () => void;
 
@@ -131,5 +133,64 @@ describe('CloudWatch EMF middleware', () => {
     expect(parsed._aws.CloudWatchMetrics[0].Namespace).toBe('TestNS');
     expect(parsed.Status).toBe('201');
     expect(parsed.Path).toBe('/orders');
+  });
+});
+
+describe('Error tracker middleware', () => {
+  // What the tracker logged for one failing request: the metadata of its
+  // 'Request error' entry, read through an output added to the logger.
+  function trackedContext(
+    options: Parameters<typeof createErrorTrackerMiddleware>[0],
+    url: string
+  ): { metadata: Record<string, any>; passedOn: unknown } {
+    const entries: Array<Record<string, any>> = [];
+    logger.addOutput({
+      name: 'error-tracker-capture',
+      write: (entry: any) => {
+        if (entry.message === 'Request error') entries.push({ ...entry.metadata });
+      },
+    });
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const error = new Error('handler failed');
+    let passedOn: unknown;
+    try {
+      createErrorTrackerMiddleware(options)(
+        error,
+        { url, method: 'GET' } as any,
+        {} as any,
+        err => {
+          passedOn = err;
+        }
+      );
+      logger.flush();
+    } finally {
+      logger.removeOutput('error-tracker-capture');
+      stderr.mockRestore();
+    }
+    expect(entries).toHaveLength(1);
+    return { metadata: entries[0] as Record<string, any>, passedOn };
+  }
+
+  it('logs the request URL with credential-carrying query parameters redacted', () => {
+    const { metadata, passedOn } = trackedContext(
+      undefined,
+      '/reset?email=ada%40example.com&token=9f8e7d&Signature=abc123#form'
+    );
+
+    expect(metadata.url).toBe(
+      '/reset?email=ada%40example.com&token=REDACTED&Signature=REDACTED#form'
+    );
+    expect(metadata).toMatchObject({ error: 'handler failed', method: 'GET' });
+    // the error still reaches the framework's error handling
+    expect((passedOn as Error).message).toBe('handler failed');
+  });
+
+  it('takes its own list of parameter names, or false to log the URL as received', () => {
+    expect(
+      trackedContext({ redactedQueryParams: ['invite'] }, '/join?invite=abc&token=t-1').metadata.url
+    ).toBe('/join?invite=REDACTED&token=t-1');
+    expect(
+      trackedContext({ redactedQueryParams: false }, '/join?invite=abc&token=t-1').metadata.url
+    ).toBe('/join?invite=abc&token=t-1');
   });
 });

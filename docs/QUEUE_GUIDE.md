@@ -7,10 +7,10 @@ Complete guide to the message queue system in MoroJS.
 - [Overview](#overview)
 - [Getting Started](#getting-started)
 - [Queue Adapters](#queue-adapters)
+- [Retention of Finished Jobs](#retention-of-finished-jobs)
 - [Job Management](#job-management)
 - [Queue Configuration](#queue-configuration)
 - [Job Processing](#job-processing)
-- [Middleware](#middleware)
 - [Monitoring](#monitoring)
 - [Error Handling](#error-handling)
 - [Advanced Usage](#advanced-usage)
@@ -29,7 +29,7 @@ MoroJS includes a production-ready message queue system with support for multipl
 - **Dead Letter Queue** - Failed job handling and recovery
 - **Priority Queues** - Job prioritization
 - **Bulk Operations** - Add and process multiple jobs
-- **Monitoring** - Built-in metrics and health checks
+- **Monitoring** - Built-in metrics and events
 
 ### Supported Adapters
 
@@ -50,8 +50,8 @@ MoroJS includes a production-ready message queue system with support for multipl
 Install the adapter you need:
 
 ```bash
-# Bull (Redis-based)
-npm install bull
+# Bull (Redis-based): the 'bull' adapter runs on BullMQ
+npm install bullmq ioredis
 
 # RabbitMQ
 npm install amqplib
@@ -82,7 +82,6 @@ app.queueInit('emails', {
   concurrency: 5,
   defaultJobOptions: {
     removeOnComplete: true,
-    removeOnFail: false,
     attempts: 3,
     backoff: {
       type: 'exponential',
@@ -111,38 +110,28 @@ app.post('/send-email').handler(async (req, res) => {
 app.listen(3000);
 ```
 
-### Low-Level API (Advanced)
+`queueInit()` returns at once and registers the queue in the background: an
+adapter that talks to a broker (Bull, RabbitMQ, Kafka, SQS) has to connect
+first. `processQueue()`, `addToQueue()` and `addBulkToQueue()` wait for that
+registration, so the calls above can follow `queueInit()` directly.
 
-For more control, you can use the `QueueManager` directly:
+If the registration fails (the adapter's package is not installed, the
+adapter name is unknown, the adapter cannot initialise), the error is logged, the
+queue is not listed by `app.hasQueue()` / `app.getQueueNames()`, and every
+call that uses the queue rejects with that original error:
 
 ```typescript
-import { QueueManager } from '@morojs/moro';
+app.queueInit('emails', { adapter: 'bull', connection: { host: 'localhost', port: 6379 } });
 
-const queueManager = new QueueManager();
-
-// Register a queue
-await queueManager.registerQueue('emails', {
-  adapter: 'memory',
-  concurrency: 5,
-  defaultJobOptions: {
-    removeOnComplete: true,
-    removeOnFail: false,
-  },
-});
-
-// Add a job
-await queueManager.addToQueue('emails', {
-  to: 'user@example.com',
-  subject: 'Welcome',
-  body: 'Welcome to our platform!',
-});
-
-// Process jobs
-await queueManager.process('emails', async job => {
-  await sendEmail(job.data);
-  return { sent: true };
-});
+try {
+  await app.processQueue('emails', async job => ({ sent: true }));
+} catch (error) {
+  // e.g. "BullMQ is not installed. Install it with: npm install bullmq ioredis"
+  app.hasQueue('emails'); // false
+}
 ```
+
+Calling `queueInit()` again for that name starts a new registration.
 
 ---
 
@@ -153,7 +142,7 @@ await queueManager.process('emails', async job => {
 In-memory queue for development and testing.
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'memory',
   concurrency: 5,
 });
@@ -170,7 +159,7 @@ await queueManager.registerQueue('tasks', {
 Redis-based queue with persistence and advanced features.
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'bull',
   connection: {
     host: 'localhost',
@@ -180,6 +169,27 @@ await queueManager.registerQueue('tasks', {
   concurrency: 10,
 });
 ```
+
+The connection also takes `username` (a Redis ACL user), `database` (the Redis database number) and
+`tls` (the TLS options ioredis passes to Node: `{ ca }`, or `{}` for a server with a publicly
+trusted certificate):
+
+```typescript
+import fs from 'node:fs';
+
+app.queueInit('tasks', {
+  adapter: 'bull',
+  connection: {
+    host: 'redis.internal',
+    port: 6380,
+    username: 'worker',
+    password: process.env.REDIS_PASSWORD,
+    tls: { ca: fs.readFileSync('/etc/ssl/redis-ca.pem', 'utf8') },
+  },
+});
+```
+
+Set `username` and `tls` only for a Redis that expects them: they are sent as given.
 
 **Characteristics:**
 
@@ -194,7 +204,7 @@ await queueManager.registerQueue('tasks', {
 AMQP-based message broker.
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'rabbitmq',
   connection: {
     host: 'localhost',
@@ -205,6 +215,27 @@ await queueManager.registerQueue('tasks', {
   concurrency: 20,
 });
 ```
+
+The connection also takes `vhost` (the virtual host to open; the broker's default when not set),
+`amqps: true` (connect over TLS; the default port becomes 5671) and `tls` (TLS options for the
+socket, as Node's `tls.connect()` takes them; giving them selects `amqps` as well):
+
+```typescript
+import fs from 'node:fs';
+
+app.queueInit('tasks', {
+  adapter: 'rabbitmq',
+  connection: {
+    host: 'mq.internal',
+    username: 'worker',
+    password: process.env.RABBITMQ_PASSWORD,
+    vhost: 'orders',
+    tls: { ca: fs.readFileSync('/etc/ssl/mq-ca.pem', 'utf8') },
+  },
+});
+```
+
+Without `amqps` or `tls` the connection is plain `amqp://`, as before.
 
 **Characteristics:**
 
@@ -219,13 +250,29 @@ await queueManager.registerQueue('tasks', {
 Amazon Simple Queue Service.
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'sqs',
   connection: {
     region: 'us-east-1',
     queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue',
   },
   concurrency: 10,
+});
+```
+
+Credentials come from the AWS SDK's default chain unless `credentials` is set (an object with
+`accessKeyId`, `secretAccessKey` and optionally `sessionToken`, or a provider function). `endpoint`
+points the client at another SQS-compatible service (LocalStack, ElasticMQ, a VPC endpoint);
+without a `queueUrl`, queue URLs are then built as `<endpoint>/<accountId>/<queue name>`:
+
+```typescript
+app.queueInit('tasks', {
+  adapter: 'sqs',
+  connection: {
+    region: 'us-east-1',
+    endpoint: 'http://localhost:4566',
+    credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+  },
 });
 ```
 
@@ -242,7 +289,7 @@ await queueManager.registerQueue('tasks', {
 Distributed event streaming platform.
 
 ```typescript
-await queueManager.registerQueue('events', {
+app.queueInit('events', {
   adapter: 'kafka',
   connection: {
     brokers: ['localhost:9092'],
@@ -251,6 +298,41 @@ await queueManager.registerQueue('events', {
   concurrency: 50,
 });
 ```
+
+The Kafka consumer starts from new messages: a job produced before the consumer group first
+subscribed to the topic is not delivered to it.
+
+`ssl`, `sasl` and `clientId` are passed to kafkajs as given: `ssl: true` for TLS with the system
+CAs or an object of TLS options, and `sasl` with a `mechanism` (`'plain'`, `'scram-sha-256'`,
+`'scram-sha-512'`, ...) and what that mechanism needs. Without them the connection is plaintext
+with no authentication, and the client id is `morojs-queue`.
+
+```typescript
+app.queueInit('events', {
+  adapter: 'kafka',
+  connection: {
+    brokers: ['kafka-1.internal:9093'],
+    clientId: 'billing-api',
+    ssl: true,
+    sasl: {
+      mechanism: 'scram-sha-256',
+      username: 'billing',
+      password: process.env.KAFKA_PASSWORD,
+    },
+  },
+});
+```
+
+#### Connection options each adapter reads
+
+| Adapter    | Read from `connection`                                          |
+| ---------- | --------------------------------------------------------------- |
+| `bull`     | `host`, `port`, `username`, `password`, `database`, `tls`       |
+| `rabbitmq` | `host`, `port`, `username`, `password`, `vhost`, `amqps`, `tls` |
+| `kafka`    | `brokers`, `groupId`, `clientId`, `ssl`, `sasl`                 |
+| `sqs`      | `region`, `queueUrl`, `accountId`, `endpoint`, `credentials`    |
+
+Other keys are ignored.
 
 **Characteristics:**
 
@@ -262,65 +344,87 @@ await queueManager.registerQueue('events', {
 
 ---
 
+## Retention of Finished Jobs
+
+A queue keeps a bounded number of finished jobs, so a long-running process does not accumulate
+them:
+
+| Kept per queue                                     | Default | `retention` key |
+| -------------------------------------------------- | ------- | --------------- |
+| Completed jobs                                     | 1000    | `completed`     |
+| Failed jobs (after their last attempt)             | 5000    | `failed`        |
+| Jobs added by this process and not yet seen to end | 10000   | `unfinished`    |
+
+When a job finishes and the count is over the limit, the oldest job of that outcome is removed.
+
+```typescript
+app.queueInit('emails', {
+  adapter: 'bull',
+  connection: { host: 'localhost', port: 6379 },
+  retention: {
+    completed: 200, // keep the last 200 completed jobs
+    failed: 2000, // keep the last 2000 failed jobs
+  },
+});
+```
+
+- `0` keeps none; `Infinity` keeps every job (memory or Redis then grows with every job).
+- **`bull`**: the numbers are passed to BullMQ as each job's `removeOnComplete` / `removeOnFail`
+  keep count, so the jobs are removed from Redis. `unfinished` does not apply.
+- **`memory`**: the jobs are held in the process. Waiting, delayed and running jobs are never
+  removed by retention; `unfinished` does not apply.
+- **`rabbitmq`, `kafka`, `sqs`**: the broker holds the job; the adapter keeps a record per job in
+  the process for `getJob()`, `getJobs()` and the metrics. `unfinished` bounds the records of jobs
+  this process added and has not seen finish (in a process that only adds jobs, that is all of
+  them). A job whose record was dropped still runs when it is delivered; `getJob()` returns `null`
+  for it until then.
+
+A job's own `removeOnComplete` / `removeOnFail` (set on the job or through `defaultJobOptions`)
+takes the place of the queue's retention for that job:
+
+| Value    | `bull`                                 | Other adapters                             |
+| -------- | -------------------------------------- | ------------------------------------------ |
+| not set  | the queue's `retention` applies        | the queue's `retention` applies            |
+| `true`   | removed as soon as it finishes         | removed as soon as it finishes             |
+| `false`  | kept until you remove it (not counted) | kept until you remove it (not counted)     |
+| a number | BullMQ keeps the last _n_ jobs         | removed _n_ milliseconds after it finishes |
+
+`app.cleanQueue()` removes finished jobs by age whatever the retention is.
+
+---
+
 ## Job Management
 
 ### Adding Jobs
 
 #### Single Job
 
-**Using MoroJS Integration:**
-
 ```typescript
 // Add a job to the queue
-const jobId = await app.addToQueue('emails', {
+const job = await app.addToQueue('emails', {
   to: 'user@example.com',
   template: 'welcome',
 });
 
-console.log('Job queued:', jobId);
-```
-
-**Using Low-Level API:**
-
-```typescript
-const job = await queueManager.addToQueue('emails', {
-  to: 'user@example.com',
-  template: 'welcome',
-});
-
-console.log(`Job added: ${job.id}`);
+console.log('Job queued:', job.id);
 ```
 
 #### Bulk Jobs
 
-**Using MoroJS Integration:**
-
 ```typescript
-const jobIds = await app.addBulkToQueue('notifications', [
+const jobs = await app.addBulkToQueue('notifications', [
   { data: { userId: 1, message: 'Update available' }, options: { priority: 10 } },
   { data: { userId: 2, message: 'New features' }, options: { priority: 5 } },
   { data: { userId: 3, message: 'Maintenance scheduled' }, options: { delay: 60000 } },
 ]);
 
-console.log(`${jobIds.length} jobs queued`);
-```
-
-**Using Low-Level API:**
-
-```typescript
-const jobs = await queueManager.addBulk('notifications', [
-  { userId: 1, message: 'Update available' },
-  { userId: 2, message: 'New features' },
-  { userId: 3, message: 'Maintenance scheduled' },
-]);
-
-console.log(`${jobs.length} jobs added`);
+console.log(`${jobs.length} jobs queued`);
 ```
 
 #### Job Options
 
 ```typescript
-await queueManager.addToQueue(
+await app.addToQueue(
   'reports',
   { reportId: 123, format: 'pdf' },
   {
@@ -331,8 +435,7 @@ await queueManager.addToQueue(
       type: 'exponential',
       delay: 5000,
     },
-    removeOnComplete: true,
-    removeOnFail: false,
+    removeOnComplete: true, // Remove the job as soon as it completes
     timeout: 30000, // 30 second timeout
   }
 );
@@ -342,29 +445,26 @@ await queueManager.addToQueue(
 
 ```typescript
 // Get job by ID
-const job = await queueManager.getJob('emails', 'job-id-123');
+const job = await app.getJob('emails', 'job-id-123');
 
 if (job) {
-  console.log(`Status: ${job.status}`);
   console.log(`Progress: ${job.progress}%`);
-  console.log(`Attempts: ${job.attempts}`);
+  console.log(`Attempts: ${job.attemptsMade}`);
+  console.log(`Failed: ${job.failedReason ?? 'no'}`);
 }
+
+// Or list jobs by status: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'paused'
+const failed = await app.getJobs('emails', 'failed');
 ```
 
 ### Job Control
 
 ```typescript
-// Pause a job
-await queueManager.pauseJob('emails', 'job-id-123');
-
-// Resume a job
-await queueManager.resumeJob('emails', 'job-id-123');
-
 // Remove a job
-await queueManager.removeJob('emails', 'job-id-123');
+await app.removeJob('emails', 'job-id-123');
 
 // Retry a failed job
-await queueManager.retryJob('emails', 'job-id-123');
+await app.retryJob('emails', 'job-id-123');
 ```
 
 ---
@@ -374,7 +474,7 @@ await queueManager.retryJob('emails', 'job-id-123');
 ### Retry Configuration
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'bull',
   defaultJobOptions: {
     attempts: 5,
@@ -392,33 +492,6 @@ await queueManager.registerQueue('tasks', {
 - `exponential` - Doubles delay each retry (2s, 4s, 8s, 16s...)
 - `linear` - Increases delay linearly (2s, 4s, 6s, 8s...)
 
-### Dead Letter Queue
-
-```typescript
-await queueManager.registerQueue('payments', {
-  adapter: 'rabbitmq',
-  deadLetterQueue: {
-    enabled: true,
-    queueName: 'payments-failed',
-    maxRetries: 3,
-  },
-});
-```
-
-Failed jobs after max retries move to dead letter queue for manual inspection.
-
-### Rate Limiting
-
-```typescript
-await queueManager.registerQueue('api-calls', {
-  adapter: 'bull',
-  rateLimiter: {
-    max: 100, // 100 jobs
-    duration: 60000, // per minute
-  },
-});
-```
-
 ---
 
 ## Job Processing
@@ -426,7 +499,7 @@ await queueManager.registerQueue('api-calls', {
 ### Basic Processor
 
 ```typescript
-await queueManager.process('emails', async job => {
+await app.processQueue('emails', async job => {
   const { to, subject, body } = job.data;
 
   await sendEmail(to, subject, body);
@@ -438,7 +511,7 @@ await queueManager.process('emails', async job => {
 ### Progress Tracking
 
 ```typescript
-await queueManager.process('video-encoding', async job => {
+await app.processQueue('video-encoding', async job => {
   const { videoId, format } = job.data;
 
   // Report progress
@@ -460,7 +533,7 @@ await queueManager.process('video-encoding', async job => {
 ### Error Handling
 
 ```typescript
-await queueManager.process('tasks', async job => {
+await app.processQueue('tasks', async job => {
   try {
     const result = await processTask(job.data);
     return result;
@@ -477,67 +550,15 @@ await queueManager.process('tasks', async job => {
 ### Job Context
 
 ```typescript
-await queueManager.process('notifications', async (job, context) => {
-  console.log(`Worker: ${context.workerId}`);
-  console.log(`Queue: ${context.queueName}`);
-  console.log(`Attempt: ${job.attempts}`);
+// The handler receives the job itself: its fields plus updateProgress() and log()
+await app.processQueue('notifications', async job => {
+  console.log(`Job: ${job.id}`);
+  console.log(`Attempt: ${job.attemptsMade}`);
+  job.log('Sending notification');
 
   await sendNotification(job.data);
 
   return { sent: true };
-});
-```
-
----
-
-## Middleware
-
-### Rate Limit Middleware
-
-```typescript
-import { createRateLimitMiddleware } from '@morojs/moro';
-
-const rateLimiter = createRateLimitMiddleware({
-  max: 100,
-  window: 60000,
-  keyGenerator: job => job.data.userId,
-});
-
-await queueManager.process('api-calls', rateLimiter, async job => {
-  return await callAPI(job.data);
-});
-```
-
-### Priority Middleware
-
-```typescript
-import { createPriorityMiddleware } from '@morojs/moro';
-
-const prioritizer = createPriorityMiddleware({
-  levels: 10,
-  default: 5,
-});
-
-await queueManager.process('tasks', prioritizer, async job => {
-  return await processTask(job.data);
-});
-```
-
-### Monitoring Middleware
-
-```typescript
-import { createMonitoringMiddleware } from '@morojs/moro';
-
-const monitor = createMonitoringMiddleware({
-  collectMetrics: true,
-  slowJobThreshold: 5000, // 5 seconds
-  onSlowJob: (job, duration) => {
-    console.warn(`Slow job detected: ${job.id} took ${duration}ms`);
-  },
-});
-
-await queueManager.process('reports', monitor, async job => {
-  return await generateReport(job.data);
 });
 ```
 
@@ -548,7 +569,7 @@ await queueManager.process('reports', monitor, async job => {
 ### Queue Metrics
 
 ```typescript
-const metrics = await queueManager.getMetrics('emails');
+const { metrics } = await app.getQueueStatus('emails');
 
 console.log(`Waiting: ${metrics.waiting}`);
 console.log(`Active: ${metrics.active}`);
@@ -560,39 +581,27 @@ console.log(`Delayed: ${metrics.delayed}`);
 ### Queue Status
 
 ```typescript
-const status = await queueManager.getStatus('emails');
+const status = await app.getQueueStatus('emails');
 
+console.log(`Adapter: ${status.adapter}`);
 console.log(`Paused: ${status.isPaused}`);
-console.log(`Workers: ${status.activeWorkers}`);
-console.log(`Processing Rate: ${status.processingRate}/min`);
-```
-
-### Health Check
-
-```typescript
-const health = await queueManager.healthCheck('emails');
-
-if (health.healthy) {
-  console.log('Queue is healthy');
-} else {
-  console.error('Queue issues:', health.issues);
-}
+console.log(`Workers: ${status.workers}`);
 ```
 
 ### Event Monitoring
 
 ```typescript
-// Listen to queue events
-queueManager.on('queue:job:completed', event => {
-  console.log(`Job ${event.jobId} completed`);
+// Queue events arrive on the app event bus as { context, data }
+app.events.on('queue:job:completed', ({ data }) => {
+  console.log(`Job ${data.jobId} completed`);
 });
 
-queueManager.on('queue:job:failed', event => {
-  console.error(`Job ${event.jobId} failed:`, event.error);
+app.events.on('queue:job:failed', ({ data }) => {
+  console.error(`Job ${data.jobId} failed:`, data.error);
 });
 
-queueManager.on('queue:job:progress', event => {
-  console.log(`Job ${event.jobId} progress: ${event.progress}%`);
+app.events.on('queue:job:progress', ({ data }) => {
+  console.log(`Job ${data.jobId} progress: ${data.progress}%`);
 });
 ```
 
@@ -603,7 +612,7 @@ queueManager.on('queue:job:progress', event => {
 ### Retry Strategies
 
 ```typescript
-await queueManager.registerQueue('tasks', {
+app.queueInit('tasks', {
   adapter: 'bull',
   defaultJobOptions: {
     attempts: 5,
@@ -618,8 +627,8 @@ await queueManager.registerQueue('tasks', {
 ### Failed Job Handler
 
 ```typescript
-queueManager.on('queue:job:failed', async event => {
-  const { queueName, jobId, error, job } = event;
+app.events.on('queue:job:failed', async ({ data }) => {
+  const { queueName, jobId, error, job } = data;
 
   // Log to monitoring service
   await logError({
@@ -627,30 +636,29 @@ queueManager.on('queue:job:failed', async event => {
     jobId,
     error: error.message,
     data: job.data,
-    attempts: job.attempts,
+    attempts: job.attemptsMade,
   });
 
   // Send alert if max attempts reached
-  if (job.attempts >= 5) {
+  if (job.attemptsMade >= 5) {
     await sendAlert(`Job ${jobId} permanently failed`);
   }
 });
 ```
 
-### Dead Letter Queue Processing
+### Inspecting Failed Jobs
 
 ```typescript
-// Process failed jobs from DLQ
-await queueManager.process('emails-failed', async job => {
-  console.log(`Handling failed job: ${job.id}`);
+// Review failed jobs and retry the ones worth retrying
+const failedJobs = await app.getJobs('emails', 'failed');
+
+for (const job of failedJobs) {
+  console.log(`Failed job: ${job.id}`);
   console.log(`Original error: ${job.failedReason}`);
-  console.log(`Attempts: ${job.attempts}`);
+  console.log(`Attempts: ${job.attemptsMade}`);
 
-  // Manual intervention or special handling
-  await manuallyProcessJob(job.data);
-
-  return { recovered: true };
-});
+  await app.retryJob('emails', job.id);
+}
 ```
 
 ---
@@ -661,19 +669,19 @@ await queueManager.process('emails-failed', async job => {
 
 ```typescript
 // High-priority queue
-await queueManager.registerQueue('critical', {
+app.queueInit('critical', {
   adapter: 'bull',
   concurrency: 20,
 });
 
 // Normal queue
-await queueManager.registerQueue('standard', {
+app.queueInit('standard', {
   adapter: 'bull',
   concurrency: 10,
 });
 
 // Background queue
-await queueManager.registerQueue('background', {
+app.queueInit('background', {
   adapter: 'bull',
   concurrency: 5,
 });
@@ -683,14 +691,14 @@ await queueManager.registerQueue('background', {
 
 ```typescript
 // Run job in 1 hour
-await queueManager.addToQueue(
+await app.addToQueue(
   'reminders',
   { userId: 123, message: 'Meeting in 10 minutes' },
   { delay: 3600000 }
 );
 
 // Recurring jobs using cron-like syntax
-await queueManager.addToQueue(
+await app.addToQueue(
   'daily-report',
   { reportType: 'sales' },
   {
@@ -705,33 +713,30 @@ await queueManager.addToQueue(
 
 ```typescript
 // High priority
-await queueManager.addToQueue(
+await app.addToQueue(
   'orders',
   { orderId: 123 },
   { priority: 1 } // Lower number = higher priority
 );
 
 // Low priority
-await queueManager.addToQueue('analytics', { eventData: {} }, { priority: 10 });
+await app.addToQueue('analytics', { eventData: {} }, { priority: 10 });
 ```
 
 ### Queue Lifecycle
 
 ```typescript
 // Pause queue
-await queueManager.pauseQueue('emails');
+await app.pauseQueue('emails');
 
 // Resume queue
-await queueManager.resumeQueue('emails');
+await app.resumeQueue('emails');
 
-// Drain queue (wait for active jobs to complete)
-await queueManager.drainQueue('emails');
+// Clean completed jobs older than 24 hours
+await app.cleanQueue('emails', 86400000, 'completed');
 
-// Clean completed jobs
-await queueManager.cleanQueue('emails', 'completed', 86400000); // 24 hours
-
-// Shutdown gracefully
-await queueManager.shutdown();
+// Shutdown gracefully: closing the app shuts its queues down
+await app.close();
 ```
 
 ---
@@ -744,16 +749,15 @@ await queueManager.shutdown();
 import { createApp } from '@morojs/moro';
 
 const app = await createApp();
-const queueManager = new QueueManager();
 
-await queueManager.registerQueue('emails', {
+app.queueInit('emails', {
   adapter: 'bull',
   connection: { host: 'localhost', port: 6379 },
 });
 
 // Add jobs from route handler
 app.post('/api/send-email', async (req, res) => {
-  const job = await queueManager.addToQueue('emails', req.body);
+  const job = await app.addToQueue('emails', req.body);
 
   return {
     jobId: job.id,
@@ -763,7 +767,7 @@ app.post('/api/send-email', async (req, res) => {
 
 // Check job status
 app.get('/api/jobs/:id', async (req, res) => {
-  const job = await queueManager.getJob('emails', req.params.id);
+  const job = await app.getJob('emails', req.params.id);
 
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
@@ -771,9 +775,10 @@ app.get('/api/jobs/:id', async (req, res) => {
 
   return {
     id: job.id,
-    status: job.status,
     progress: job.progress,
-    result: job.result,
+    attemptsMade: job.attemptsMade,
+    result: job.returnvalue,
+    failedReason: job.failedReason,
   };
 });
 
@@ -787,10 +792,11 @@ import { createApp } from '@morojs/moro';
 
 const app = await createApp();
 
-app.on('user:registered', async event => {
-  await queueManager.addToQueue('welcome-emails', {
-    userId: event.userId,
-    email: event.email,
+// Listeners on the app event bus receive { context, data }
+app.events.on('user:registered', async ({ data }) => {
+  await app.addToQueue('welcome-emails', {
+    userId: data.userId,
+    email: data.email,
   });
 });
 ```
@@ -810,13 +816,13 @@ app.on('user:registered', async event => {
 
 ```typescript
 // CPU-bound tasks: lower concurrency
-await queueManager.registerQueue('video-encoding', {
+app.queueInit('video-encoding', {
   adapter: 'bull',
   concurrency: 2, // Based on CPU cores
 });
 
 // I/O-bound tasks: higher concurrency
-await queueManager.registerQueue('api-calls', {
+app.queueInit('api-calls', {
   adapter: 'bull',
   concurrency: 50, // Many concurrent I/O operations
 });
@@ -825,7 +831,7 @@ await queueManager.registerQueue('api-calls', {
 ### 3. Configure Retries Properly
 
 ```typescript
-await queueManager.registerQueue('payments', {
+app.queueInit('payments', {
   adapter: 'bull',
   defaultJobOptions: {
     attempts: 3, // Limited retries for critical operations
@@ -837,28 +843,15 @@ await queueManager.registerQueue('payments', {
 });
 ```
 
-### 4. Use Dead Letter Queues
+### 4. Monitor Queue Health
 
 ```typescript
-await queueManager.registerQueue('orders', {
-  adapter: 'rabbitmq',
-  deadLetterQueue: {
-    enabled: true,
-    queueName: 'orders-failed',
-    maxRetries: 5,
-  },
-});
-```
-
-### 5. Monitor Queue Health
-
-```typescript
-// Regular health checks
+// Regular checks on the queue's own metrics
 setInterval(async () => {
-  const health = await queueManager.healthCheck('critical');
+  const { metrics, isPaused } = await app.getQueueStatus('critical');
 
-  if (!health.healthy) {
-    await alertOps('Queue health check failed', health.issues);
+  if (isPaused || metrics.failed > 100) {
+    await alertOps('Queue needs attention', metrics);
   }
 }, 60000);
 ```
@@ -876,8 +869,9 @@ setInterval(async () => {
 
 ### High Memory Usage
 
-1. Enable `removeOnComplete: true`
-2. Clean old jobs regularly
+1. Lower the queue's `retention` (default: the last 1000 completed and 5000 failed jobs), or set
+   `removeOnComplete: true`
+2. Do not set `removeOnComplete: false` / `removeOnFail: false` unless you remove those jobs yourself
 3. Reduce concurrency
 4. Check for job data size
 
@@ -913,10 +907,11 @@ Configure a queue (synchronous, lazy initialization).
   - `defaultJobOptions` (object) - Default options for all jobs
     - `attempts` (number) - Max retry attempts
     - `backoff` (object) - Retry backoff strategy
-    - `priority` (number) - Job priority
-    - `delay` (number) - Delay before processing (ms)
-    - `removeOnComplete` (boolean) - Remove job when done
-    - `removeOnFail` (boolean) - Remove job on failure
+    - `removeOnComplete` (boolean | number) - `true` removes a job when it completes; see
+      [Retention of Finished Jobs](#retention-of-finished-jobs)
+    - `removeOnFail` (boolean | number) - the same for a job that failed its last attempt
+  - `retention` (object) - Finished jobs kept per queue: `completed` (default 1000), `failed`
+    (default 5000), `unfinished` (default 10000; RabbitMQ, Kafka and SQS)
 
 **Returns:** `this` (chainable)
 
@@ -956,12 +951,12 @@ Add a job to a queue.
   - `backoff` (object) - Retry backoff strategy
   - `jobId` (string) - Custom job ID
 
-**Returns:** `Promise<string>` - Job ID
+**Returns:** `Promise<Job>` - The queued job (`id`, `data`, `progress`, `attemptsMade`, ...)
 
 **Example:**
 
 ```typescript
-const jobId = await app.addToQueue(
+const job = await app.addToQueue(
   'emails',
   {
     to: 'user@example.com',
@@ -986,12 +981,12 @@ Add multiple jobs to a queue.
   - `data` (any) - Job data
   - `options` (object, optional) - Job options
 
-**Returns:** `Promise<string[]>` - Array of job IDs
+**Returns:** `Promise<Job[]>` - The queued jobs
 
 **Example:**
 
 ```typescript
-const jobIds = await app.addBulkToQueue('notifications', [
+const jobs = await app.addBulkToQueue('notifications', [
   {
     data: { userId: 1, message: 'Update 1' },
     options: { priority: 10 },
@@ -1012,7 +1007,7 @@ Register a processor for a queue.
 - `queueName` (string) - Queue name
 - `concurrencyOrHandler` (number | function) - Concurrency or handler function
 - `handler` (function, optional) - Job handler (if concurrency provided)
-  - `job` - Job object with `data`, `id`, `progress()`, etc.
+  - `job` - Job object with `data`, `id`, `updateProgress()`, `log()`, etc.
   - Returns `Promise<any>` - Job result
 
 **Returns:** `Promise<void>`
@@ -1029,33 +1024,38 @@ await app.processQueue('emails', async job => {
 // With concurrency
 await app.processQueue('images', 5, async job => {
   await processImage(job.data);
-  job.progress(100);
+  await job.updateProgress(100);
   return { processed: true };
 });
 ```
 
-### `app.getQueueStats(queueName)`
+### `app.getQueueStatus(queueName)`
 
-Get queue statistics.
+Get queue status and statistics.
 
 **Parameters:**
 
 - `queueName` (string) - Queue name
 
-**Returns:** `Promise<object>` - Queue stats
+**Returns:** `Promise<object>` - Queue status
 
-- `waiting` (number) - Jobs waiting
-- `active` (number) - Jobs in progress
-- `completed` (number) - Completed jobs
-- `failed` (number) - Failed jobs
-- `delayed` (number) - Delayed jobs
-- `paused` (boolean) - Queue paused status
+- `name` (string) - Queue name
+- `adapter` (string) - Adapter in use
+- `isPaused` (boolean) - Queue paused status
+- `workers` (number) - Registered workers
+- `metrics` (object) - Job counts
+  - `waiting` (number) - Jobs waiting
+  - `active` (number) - Jobs in progress
+  - `completed` (number) - Completed jobs
+  - `failed` (number) - Failed jobs
+  - `delayed` (number) - Delayed jobs
+  - `paused` (number) - Paused jobs
 
 **Example:**
 
 ```typescript
-const stats = await app.getQueueStats('emails');
-console.log(`Waiting: ${stats.waiting}, Active: ${stats.active}`);
+const { metrics } = await app.getQueueStatus('emails');
+console.log(`Waiting: ${metrics.waiting}, Active: ${metrics.active}`);
 ```
 
 ### `app.pauseQueue(queueName)`
@@ -1078,9 +1078,9 @@ Clean old jobs from a queue.
 
 - `queueName` (string) - Queue name
 - `grace` (number) - Grace period in ms
-- `status` (string) - Job status ('completed', 'failed', 'delayed', 'active', 'wait')
+- `status` (string, optional) - Job status ('waiting', 'active', 'completed', 'failed', 'delayed', 'paused')
 
-**Returns:** `Promise<number>` - Number of jobs removed
+**Returns:** `Promise<void>`
 
 **Example:**
 

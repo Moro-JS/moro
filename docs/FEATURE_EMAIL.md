@@ -107,6 +107,51 @@ app.mailInit({
 });
 ```
 
+### Sending Through a Queue
+
+`queue.enabled` routes mail through the app's queue system. `queue.name`
+(default `'emails'`) is the queue; `attempts` (default 3), `priority` and
+`delay` are applied to each queued email. What happens on the first send
+depends on the queues the app has by then:
+
+| The app has                                  | Mail is                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| registered the named queue                   | queued there, with that queue's adapter and `concurrency`; the framework attaches the processor that delivers |
+| other queues, but not the named one          | queued in an in-memory queue the framework registers under that name (3 emails in parallel)                   |
+| no queue system (`queueInit()` never called) | sent directly, not queued; a warning says so once                                                             |
+
+Register the queue yourself to choose where mail waits and how many emails
+are sent in parallel. Do it before the first `sendMail()`:
+
+```typescript
+import { createApp } from '@morojs/moro';
+
+const app = await createApp();
+
+app.queueInit('emails', {
+  adapter: 'bull', // or 'memory' for a single process
+  connection: { host: 'localhost', port: 6379 },
+  concurrency: 10,
+});
+
+app.mailInit({
+  adapter: 'sendgrid',
+  from: 'noreply@myapp.com',
+  connection: { apiKey: process.env.SENDGRID_API_KEY },
+  queue: { enabled: true, name: 'emails' },
+});
+
+// Resolves once the email is queued: { success: true, messageId: <job id> }
+await app.sendMail({ to: 'user@example.com', subject: 'Welcome', text: 'Hello!' });
+```
+
+A queued email is rendered (template, `from`) before it is queued and
+delivered by the processor later. A delivery the adapter reports as failed
+fails the job, so the queue retries it up to `attempts` times. If you attach
+your own processor to the mail queue with `app.processQueue()` before the
+first send, the framework attaches none and delivery is up to that processor.
+If registering the queue failed, `sendMail()` rejects with that error.
+
 ### Sending Emails
 
 ```typescript
@@ -150,11 +195,79 @@ await app.sendBulkMail([
 ]);
 ```
 
-### Template System
+`sendMail()` resolves `{ success, messageId?, error? }` and does not reject
+when the provider refuses the email: check `success`. `sendBulkMail()`
+resolves one such result per email, in the order given.
 
 ```typescript
-// Built-in Moro template syntax.
-// Values are HTML-escaped by default; use {{{var}}} for raw output.
+const result = await app.sendMail({ to: 'user@example.com', subject: 'Welcome', text: 'Hi!' });
+if (!result.success) {
+  console.error('Email was not sent:', result.error);
+}
+```
+
+### Addresses and Display Names
+
+`from`, `to`, `cc`, `bcc`, `replyTo` and `sender` take an address string or
+`{ name, email }`. Use the object form whenever the name comes from a user: the
+name is then carried as a name, whatever characters it contains, and cannot
+add a recipient or change the sender.
+
+```typescript
+await app.sendMail({
+  from: { name: 'My App', email: 'noreply@myapp.com' },
+  to: [{ name: 'Smith, Bob', email: 'bob@example.com' }, { email: 'ann@example.com' }],
+  replyTo: { name: 'Support', email: 'support@myapp.com' },
+  subject: 'Welcome',
+  text: 'Hi!',
+});
+```
+
+- Nodemailer receives the name and the address separately and writes the
+  header itself (quoting, or encoding a non-ASCII name). A line break in a name
+  becomes a space and surrounding whitespace is trimmed.
+- Resend and SES take an address only as text, so the adapter writes
+  `"name" <email>` with `"` and `\` escaped in the name. For Resend a name
+  without special characters is sent unquoted (`My App <noreply@myapp.com>`).
+  SES carries the name of the sender and of `replyTo`; recipients are sent as
+  bare addresses.
+- A string is passed to the provider as written. For Nodemailer a string may
+  hold several addresses (`'a@example.com, b@example.com'`).
+
+With Nodemailer, `returnPath` sets the envelope sender (where bounces go). The
+`cc` and `bcc` recipients stay in the envelope.
+
+### Template System
+
+A template is the file `<templates.path>/<name>.html`, whichever engine renders
+it. The name may include subdirectories (`'orders/shipped'`). A name that
+resolves outside `templates.path` (`'../other/file'`, an absolute path) is
+refused: `sendMail()` rejects with `Template name "…" is outside the template
+directory` and nothing is read.
+
+The built-in engine (`engine: 'moro'`, the default) understands:
+
+| Tag                            | Renders                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{name}}`, `{{user.name}}`    | the value, HTML-escaped; nothing when it is `undefined` or `null`                                                                     |
+| `{{{name}}}`                   | the value exactly as given, not escaped                                                                                               |
+| `{{#if key}}…{{else}}…{{/if}}` | one branch, by the truthiness of `data.key`; `{{else}}` is optional                                                                   |
+| `{{#each items}}…{{/each}}`    | the body once per array item: `{{key}}` for a field of an object item, `{{this}}` for any other item, and any other tag from the data |
+| `{{> footer}}`                 | the partial `footer.html` from the `templates.partials` directory                                                                     |
+
+Blocks do not nest inside a block of the same kind.
+
+`{{value}}` is HTML-escaped: `&`, `<`, `>`, `"` and `'` are written as
+`&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`, so text that comes from users is
+shown as text and cannot add markup or leave the attribute it is written into.
+Use `{{{value}}}` for a value that is HTML on purpose (a fragment you rendered
+yourself, a link you built), and never for user input. The same holds inside
+`{{#each}}`: `{{{key}}}` and `{{{this}}}` are the unescaped forms.
+
+Either way a value is never read as template syntax: a value containing
+`{{secret}}` is shown as that text.
+
+```typescript
 // emails/welcome.html
 `
 <h1>Welcome {{name}}!</h1>
@@ -167,20 +280,50 @@ await app.sendBulkMail([
 {{#each features}}
   <li>{{name}}: {{description}}</li>
 {{/each}}
+
+<!-- HTML built by the application, inserted as it is -->
+{{{signatureHtml}}}
 `;
 
 // Use template
 await app.sendMail({
   to: user.email,
+  subject: 'Welcome',
   template: 'welcome',
   data: {
     name: user.name,
     appName: 'My App',
     isPremium: user.plan === 'premium',
     features: user.features,
+    signatureHtml: '<p>The <strong>My App</strong> team</p>',
   },
 });
 ```
+
+#### Handlebars and EJS
+
+Set `templates.engine` to `'handlebars'` or `'ejs'` and install that package
+(`npm install handlebars` or `npm install ejs`). Templates are still
+`<templates.path>/<name>.html` and are compiled once when `cache` is on (the
+default).
+
+```typescript
+app.mailInit({
+  adapter: 'nodemailer',
+  from: 'noreply@myapp.com',
+  connection: { host: 'smtp.example.com', port: 587 },
+  templates: {
+    path: './emails',
+    engine: 'handlebars',
+    partials: './emails/partials', // footer.html is {{> footer}}
+    helpers: { upper: (value: string) => value.toUpperCase() }, // {{upper name}}
+  },
+});
+```
+
+`templates.partials` works with the built-in engine and with Handlebars.
+`templates.helpers` are Handlebars helpers; the built-in engine and EJS have
+none. `templates.layouts` is not applied by any engine.
 
 ---
 
@@ -191,12 +334,12 @@ await app.sendMail({
 ```json
 {
   "peerDependencies": {
-    "nodemailer": "^6.9.0",
-    "@sendgrid/mail": "^8.0.0",
-    "@aws-sdk/client-ses": "^3.0.0",
-    "resend": "^3.0.0",
-    "handlebars": "^4.7.0",
-    "ejs": "^3.1.0"
+    "nodemailer": ">=10.1.4",
+    "@sendgrid/mail": ">=8.1.6",
+    "@aws-sdk/client-ses": ">=3.974.0",
+    "resend": ">=6.12.3",
+    "handlebars": ">=4.7.10",
+    "ejs": ">=3.1.10"
   },
   "peerDependenciesMeta": {
     "nodemailer": { "optional": true },
@@ -248,9 +391,9 @@ async function loadNodemailer() {
 - ✅ Variable interpolation
 - ✅ Conditionals (if/else)
 - ✅ Loops (each)
-- ✅ Partials/layouts
+- ✅ Partials
 - ✅ Template caching
-- ✅ Custom helpers
+- ✅ Custom helpers (Handlebars engine)
 
 ### Async Processing
 
@@ -291,6 +434,7 @@ app
     // Send welcome email (queued)
     await app.sendMail({
       to: user.email,
+      subject: 'Welcome',
       template: 'welcome',
       data: {
         name: user.name,
@@ -314,6 +458,7 @@ app
 
     await app.sendMail({
       to: user.email,
+      subject: 'Password Reset',
       template: 'password-reset',
       data: {
         name: user.name,
@@ -332,6 +477,7 @@ app
 // Order confirmation
 await app.sendMail({
   to: order.customerEmail,
+  subject: 'Order Confirmation',
   template: 'order-confirmation',
   data: {
     orderNumber: order.id,
@@ -397,7 +543,11 @@ for (const batch of chunk(subscribers, 100)) {
 - Modern REST API
 - Simple authentication
 - Domain verification
-- Batch sending
+- Batch sending: `sendBulkMail()` makes one batch request. The batch is
+  accepted or rejected as a whole, and each result carries the id Resend gave
+  that email. A batch email carries `from`, `to`, `subject`, `text` and `html`;
+  send an email that needs `cc`, `bcc`, `replyTo`, headers or attachments with
+  `sendMail()`.
 
 ---
 
@@ -447,6 +597,7 @@ describe('Email System', () => {
   test('sends welcome email', async () => {
     const result = await app.sendMail({
       to: 'test@example.com',
+      subject: 'Welcome',
       template: 'welcome',
       data: { name: 'Test User' },
     });

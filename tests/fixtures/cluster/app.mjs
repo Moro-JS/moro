@@ -3,8 +3,17 @@
 // loader in the way. tests/integration/cluster-threads.test.ts spawns this
 // one for the worker-thread path (it needs `npm run build` first) and app.ts
 // through tsx for the TypeScript-entry fallback path.
+// MORO_TEST_DIST names a built framework other than ../../../dist (a build
+// kept outside the repository).
 import { isMainThread, threadId } from 'node:worker_threads';
-import { createApp } from '../../../dist/index.js';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const { createApp } = await import(
+  process.env.MORO_TEST_DIST
+    ? pathToFileURL(join(process.env.MORO_TEST_DIST, 'index.js')).href
+    : '../../../dist/index.js'
+);
 
 const port = parseInt(process.env.PORT || '0', 10);
 

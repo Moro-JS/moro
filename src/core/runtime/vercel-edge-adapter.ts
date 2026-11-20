@@ -1,10 +1,25 @@
 // Vercel Edge runtime adapter
-import { BaseRuntimeAdapter } from './base-adapter.js';
+import {
+  BaseRuntimeAdapter,
+  InvalidRequestBodyError,
+  finishResponse,
+  handlerFailureBody,
+  invalidBodyResponse,
+  parseCookieHeader,
+  readJsonBody,
+  toWebResponse,
+} from './base-adapter.js';
 import { HttpRequest, HttpResponse } from '../../types/http.js';
 import { RuntimeHttpResponse } from '../../types/runtime.js';
 
 export class VercelEdgeAdapter extends BaseRuntimeAdapter {
   readonly type = 'vercel-edge' as const;
+
+  // The URL the platform hands over carries the scheme the client used
+  protected override requestOverTls(request: HttpRequest): boolean {
+    const url = request.url;
+    return typeof url === 'string' && url.startsWith('https://');
+  }
 
   async adaptRequest(request: Request): Promise<HttpRequest> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -16,11 +31,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
     if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
       const contentType = request.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
-        try {
-          body = await request.json();
-        } catch {
-          body = await request.text();
-        }
+        body = await readJsonBody(request);
       } else {
         body = await request.text();
       }
@@ -42,7 +53,7 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
       ip: this.getClientIP(headers),
       params: {},
       requestId: '',
-      cookies: {},
+      cookies: parseCookieHeader(headers.cookie || ''),
       files: {},
     } as Partial<HttpRequest>;
 
@@ -50,68 +61,31 @@ export class VercelEdgeAdapter extends BaseRuntimeAdapter {
   }
 
   async adaptResponse(moroResponse: HttpResponse | RuntimeHttpResponse): Promise<Response> {
-    const runtimeResponse = moroResponse as RuntimeHttpResponse;
-
-    // Handle different response states
-    let body = runtimeResponse.body;
-    let status = runtimeResponse.statusCode || 200;
-    const headers = runtimeResponse.headers || {};
-
-    // If it's a real HttpResponse, we need to extract the data differently
-    if ('statusCode' in moroResponse && typeof moroResponse.statusCode === 'number') {
-      status = moroResponse.statusCode;
-    }
-
-    // Convert headers to Headers object - Avoid Object.entries
-    const responseHeaders = new Headers();
-    for (const key in headers) {
-      if (Object.prototype.hasOwnProperty.call(headers, key)) {
-        const value = headers[key];
-        if (value === undefined) continue;
-        if (Array.isArray(value)) {
-          for (let i = 0; i < value.length; i++) {
-            responseHeaders.append(key, value[i]);
-          }
-        } else {
-          responseHeaders.set(key, value);
-        }
-      }
-    }
-
-    // Handle different body types
-    if (typeof body === 'object' && body !== null) {
-      body = JSON.stringify(body);
-      responseHeaders.set('Content-Type', 'application/json');
-    }
-
-    return new Response(body, {
-      status,
-      headers: responseHeaders,
-    });
+    return toWebResponse(moroResponse);
   }
 
   createServer(handler: (req: HttpRequest, res: HttpResponse) => Promise<void>) {
     // Return a Vercel Edge-compatible handler function
     return async (request: Request) => {
+      let requestId: string | undefined;
       try {
         const moroReq = await this.adaptRequest(request);
-        const moroRes = this.createMockResponse();
+        requestId = moroReq.requestId;
+        const moroRes = this.createMockResponse(moroReq);
 
         await handler(moroReq, moroRes as any);
+        finishResponse(moroRes);
 
         return await this.adaptResponse(moroRes);
       } catch (error) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: 'Internal server error',
-            message: error instanceof Error ? error.message : 'Unknown error',
-          }),
-          {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        // A body that does not parse is the client's error, answered as on the Node server
+        if (error instanceof InvalidRequestBodyError) {
+          return invalidBodyResponse(this.generateUUID());
+        }
+        return new Response(handlerFailureBody(error, requestId), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
     };
   }

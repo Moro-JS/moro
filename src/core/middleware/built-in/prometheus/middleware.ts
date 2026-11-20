@@ -12,16 +12,53 @@ import { PrometheusCore, PrometheusOptions } from './core.js';
  * import { middleware } from '@morojs/moro';
  *
  * app.use(middleware.prometheus({ endpoint: '/metrics' }));
+ *
+ * // Restrict who may scrape it
+ * app.use(
+ *   middleware.prometheus({
+ *     authorize: req => req.headers.authorization === `Bearer ${process.env.METRICS_TOKEN}`,
+ *   })
+ * );
  * ```
  */
 export function createPrometheusMiddleware(options: PrometheusOptions = {}): Middleware {
   const core = new PrometheusCore(options);
   const endpoint = options.endpoint ?? '/metrics';
+  const authorize = options.authorize;
+
+  const serve = (res: any) => {
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.end(core.render());
+  };
+  const deny = (res: any) => {
+    res.statusCode = 403;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.end('Forbidden\n');
+  };
 
   return (req, res, next) => {
     if (req.path === endpoint && req.method === 'GET') {
-      res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-      (res as any).end(core.render());
+      if (authorize === undefined) {
+        serve(res);
+        return;
+      }
+      // Fails closed: only an explicit true opens the endpoint
+      let verdict: boolean | Promise<boolean>;
+      try {
+        verdict = authorize(req);
+      } catch {
+        deny(res);
+        return;
+      }
+      if (verdict !== null && typeof verdict === 'object' && typeof verdict.then === 'function') {
+        void verdict.then(
+          allowed => (allowed === true ? serve(res) : deny(res)),
+          () => deny(res)
+        );
+        return;
+      }
+      if (verdict === true) serve(res);
+      else deny(res);
       return;
     }
 

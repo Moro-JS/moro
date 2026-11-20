@@ -1,7 +1,7 @@
 // CORS Middleware
 import { Middleware } from '../../../../types/http.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import { CORSCore, type CORSOptions } from './core.js';
+import { CORSCore, tagCORSMiddleware, type CORSOptions } from './core.js';
 
 /**
  * Create CORS middleware for use in middleware chains
@@ -19,7 +19,7 @@ import { CORSCore, type CORSOptions } from './core.js';
 export function createCORSMiddleware(options: CORSOptions = {}): Middleware {
   const corsCore = new CORSCore(options);
 
-  return async (req: HttpRequest, res: HttpResponse, next: () => void) => {
+  const corsMiddleware = async (req: HttpRequest, res: HttpResponse, next: () => void) => {
     // Apply CORS headers to all requests (now async to support origin functions)
     const isAllowed = await corsCore.applyCORS(res, req);
 
@@ -37,4 +37,8 @@ export function createCORSMiddleware(options: CORSOptions = {}): Middleware {
 
     next();
   };
+
+  // Tagged with its core: a response answered before function middleware
+  // runs (a configured rate limit's 429) is given this CORS's headers
+  return tagCORSMiddleware(corsMiddleware, corsCore);
 }

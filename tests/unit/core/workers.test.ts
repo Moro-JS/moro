@@ -1,12 +1,6 @@
-// Worker subsystem: pure, thread-free logic only.
-//
-// NOTE ON COVERAGE: worker.ts holds the JSON-transform sandbox defenses
-// (validateTransformerShape / checkDangerousPatterns / executeHardened). Those
-// functions are module-private (nothing is exported from worker.ts), so they
-// cannot be exercised without spawning a real worker thread — which is flaky and
-// explicitly out of scope. They are therefore not covered here; see the report
-// note recommending they be exported for unit testing. What we CAN test without
-// spawning threads is the task registry and the optional-dependency guards.
+// Worker subsystem: pure, thread-free logic only (the task registry and the
+// optional-dependency guards). The pool itself is covered in
+// worker-pool.test.ts.
 import { WORKER_TASKS, workerTasks } from '../../../src/core/workers/worker-manager.js';
 import { isPackageAvailable } from '../../../src/core/utilities/package-utils.js';
 

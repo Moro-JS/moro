@@ -120,6 +120,7 @@ export class JobScheduler extends EventEmitter {
       // Handle leader election events
       this.leaderElection.on('leader:elected', () => {
         this.logger.info('Became leader, starting job scheduling', this.loggerContext);
+        this.skipSlotsOfPreviousLeader();
         this.scheduleAllJobs();
       });
 
@@ -343,6 +344,22 @@ export class JobScheduler extends EventEmitter {
     }
 
     return undefined;
+  }
+
+  /**
+   * On taking leadership: a recurring job whose next run time passed while
+   * another instance led has a stale time, not a missed run - that slot was
+   * the other leader's. Start such a job from its next slot instead of running
+   * it at once. One-time jobs keep their time.
+   */
+  private skipSlotsOfPreviousLeader(): void {
+    const now = Date.now();
+    for (const job of this.jobs.values()) {
+      if (job.schedule.type === 'oneTime' || !job.nextRun) continue;
+      if (job.nextRun.getTime() <= now) {
+        job.nextRun = this.calculateNextRun(job);
+      }
+    }
   }
 
   /**

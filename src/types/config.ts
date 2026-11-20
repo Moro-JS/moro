@@ -6,7 +6,13 @@
 export type OriginFunction = (
   origin: string | undefined,
   req: any
-) => string | string[] | boolean | Promise<string | string[] | boolean>;
+) =>
+  | string
+  | string[]
+  | boolean
+  | null
+  | undefined
+  | Promise<string | string[] | boolean | null | undefined>;
 
 /**
  * Deep partial type that makes all properties and nested properties optional
@@ -35,8 +41,29 @@ export interface SSLConfig {
   ca?: string | Buffer | Array<string | Buffer>;
   passphrase?: string;
   minVersion?: 'TLSv1.2' | 'TLSv1.3';
+  /** Ask the client for a certificate (mutual TLS). */
   requestCert?: boolean;
+  /** Refuse a client whose certificate does not verify against `ca`. */
   rejectUnauthorized?: boolean;
+  /**
+   * Handshake policy. Each key means what it means to Node's
+   * `tls.createSecureContext()` and is applied by the Node.js HTTPS server
+   * and the HTTP/2 server as written. The native engine applies `ciphers`
+   * and `ecdhCurve`; `maxVersion`, `honorCipherOrder`, `sigalgs` and `crl`
+   * have no engine equivalent and are named in a start-up warning when set
+   * on it.
+   */
+  maxVersion?: 'TLSv1.2' | 'TLSv1.3';
+  /** Cipher list; names starting with `TLS_` select the TLS 1.3 suites. */
+  ciphers?: string;
+  /** Prefer the server's cipher order over the client's. */
+  honorCipherOrder?: boolean;
+  /** Key-exchange groups, e.g. `'X25519:P-256'`. */
+  ecdhCurve?: string;
+  /** Signature algorithms, colon-separated. */
+  sigalgs?: string;
+  /** Certificate revocation list(s), PEM. */
+  crl?: string | Buffer | Array<string | Buffer>;
   /**
    * Which TLS library the native engine terminates TLS with. Default: 'auto'.
    *
@@ -61,11 +88,27 @@ export interface SSLConfig {
   watch?: boolean | { debounceMs?: number };
 }
 
-/** Per-phase receive timeouts. 0 = use the per-server default / disabled. */
+/** Per-phase receive timeouts (ms). An explicit 0 disables that timeout. */
 export interface ServerTimeoutsConfig {
-  /** Full-request receive budget (ms); does NOT reset on activity. */
+  /**
+   * How long a client may take to deliver one complete request, headers and
+   * body, from its first byte (ms); does NOT reset on activity. It bounds
+   * receiving the request, not the handler that answers it. Default 300000
+   * (5 minutes). On the Node.js server 0 leaves Node's own 300 s in place.
+   */
   request?: number;
-  /** Socket inactivity timeout (ms). */
+  /**
+   * How long a connection may stay open with nothing arriving (ms). Unset:
+   * 75000 on the HTTP/2 server and on a native engine that leaves a
+   * connection alone while a response is still being delivered to it
+   * (`@morojs/engine` after 1.1.21), where a connection with a request in
+   * progress is not idle; no idle timeout on an older engine, which would
+   * also close a slow client in the middle of a response written in one
+   * piece; no socket idle timeout on the Node.js HTTP/1 server, where
+   * `keepAlive` closes an idle connection and a value here also cuts a
+   * handler or stream that is silent for that long. A value set here is
+   * applied as given on every server.
+   */
   idle?: number;
   /** Node keep-alive socket timeout (ms). Default 5000. */
   keepAlive?: number;
@@ -95,6 +138,15 @@ export interface ServerLimitsConfig {
   writeHighWaterMark?: number | string;
   /** Per-connection not-yet-parsed backlog cap (engine maxPendingBytes). */
   maxPendingBytes?: number | string;
+  /**
+   * How many bytes of responses one connection may have queued and not yet
+   * sent before the native engine closes it (engine
+   * responseBackpressureLimit). A response written in one piece is queued
+   * whole while the client reads it, so this must be larger than the largest
+   * such response. Unset or 0: no limit; a queue that makes no progress for
+   * 300 s is closed by the engine either way. Native engine only.
+   */
+  responseBackpressureLimit?: number | string;
 }
 
 export interface Http2SettingsConfig {
@@ -113,10 +165,26 @@ export interface ServerConfig {
   port: number;
   host: string;
   maxConnections: number;
-  /** @deprecated Use timeouts.request. Kept as an alias; still honored. */
+  /**
+   * @deprecated Use timeouts.request. A value above 0 is applied as the
+   * request timeout when timeouts.request is not given, with a start-up
+   * warning that names the new key.
+   */
   timeout: number;
-  bodySizeLimit: string;
-  maxUploadSize: string; // Maximum size for file uploads (multipart/form-data)
+  /** Largest request body: a size string ('10mb', '512kb') or a number of bytes. */
+  bodySizeLimit: string | number;
+  /** Largest multipart/form-data upload: a size string or a number of bytes. */
+  maxUploadSize: string | number;
+  /**
+   * Drain in-flight work and close on SIGINT/SIGTERM. Default: true. Set false
+   * when the host application owns the process signals.
+   */
+  gracefulShutdown?: boolean;
+  /**
+   * Also drain and exit(1) on an uncaught exception or unhandled rejection.
+   * Default: false.
+   */
+  handleUncaught?: boolean;
   /** Per-phase receive timeouts (finally applied to every runtime). */
   timeouts?: ServerTimeoutsConfig;
   /** Fine-grained size/count limits, passed through to whichever runtime serves. */
@@ -155,6 +223,27 @@ export interface ServerConfig {
   /** Unified SSL/TLS config; flows to whichever runtime serves. */
   ssl?: SSLConfig;
   /**
+   * Which proxies in front of the app are trusted to say who the client is
+   * (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`). Same
+   * meaning as Express's `trust proxy`:
+   *
+   * - `false`: none. `req.ip` is the connected peer, `req.ips` is empty,
+   *   `req.protocol` / `req.secure` describe the connection itself and
+   *   `req.hostname` comes from `Host`.
+   * - `true`: every hop. `req.ip` is the left-most `X-Forwarded-For` entry.
+   *   Only safe when the proxy replaces that header instead of appending.
+   * - a number: that many hops, counted from this server (`1` = the proxy
+   *   connected to the app).
+   * - an address, a CIDR range, `'loopback'`, `'linklocal'`,
+   *   `'uniquelocal'`, or a list of them (an array or one comma-separated
+   *   string): a hop is trusted when its address is in the list.
+   *
+   * Not set (the default): as before this setting existed. `req.ip` is the
+   * connected peer, while `req.ips`, `req.protocol` and `req.secure` read
+   * `X-Forwarded-For` / `X-Forwarded-Proto` from any client.
+   */
+  trustProxy?: boolean | number | string | string[];
+  /**
    * Lend binary request bodies instead of handing them over. Default: false.
    *
    * A body the framework does not parse (anything that is not JSON, a form,
@@ -164,7 +253,11 @@ export interface ServerConfig {
    * been sent. After that it is empty (length 0). Meant for services that
    * relay, hash, store or echo a body while answering and keep none of it;
    * a handler that keeps the body for later must copy it
-   * (`Buffer.from(req.body)`) before responding.
+   * (`Buffer.from(req.body)`) before responding. The same applies to an
+   * asynchronous write of the body that may still be running when the
+   * response is sent (`fs.write`, a socket or stream write): Node reads the
+   * bytes when the write happens, and by then they can be the next
+   * request's body. Wait for such a write before responding, or copy first.
    *
    * Parsed bodies (JSON, forms, text, multipart) and `req.rawBody` for them
    * are not affected. Honoured by the native engine (@morojs/engine 1.1.19+);
@@ -337,6 +430,13 @@ export interface LoggingConfig {
   // Opt-in: collects and renders per-log performance data such as memory usage (e.g. "(210MB)").
   // Disabling skips the process.memoryUsage() call on every log line.
   enablePerformance: boolean;
+  // Mask values under sensitive keys in logged metadata. Unset: on wherever the
+  // console prints metadata ('json', and 'pretty' with enableMetadata). true /
+  // false force it; an array turns it on and adds key names.
+  redact?: boolean | string[];
+  // Print control characters in logged values as visible escapes in the
+  // 'pretty' and 'compact' formats. Default: true.
+  escapeControlChars?: boolean;
   outputs: {
     console: boolean;
     file: {
@@ -482,6 +582,11 @@ export interface WebSocketConfig {
    *  native engine serves WebSockets itself. 'uws' (uWebSockets.js, removed in
    *  1.8.24) is still accepted and means the same as unset. */
   adapter?: string | 'socket.io' | 'ws';
+  /** `true`: permessage-deflate with every client that offers it, on every
+   *  adapter. What such a client sends is inflated, a message of 1024 bytes
+   *  or more sent to it is compressed, and the adapter's message limit also
+   *  bounds a message once inflated. Unset or `false`: messages are sent
+   *  uncompressed. Read when the app is created. */
   compression?: boolean;
   customIdGenerator?: () => string;
   options?: {
@@ -491,6 +596,19 @@ export interface WebSocketConfig {
     };
     path?: string;
     maxPayloadLength?: number;
+    /**
+     * Socket.IO and native engine adapters: whether a handshake whose Origin
+     * is not allowed by `cors.origin`, or that `verifyClient` rejects, is
+     * refused. On by default whenever one of the two is configured. `false`
+     * turns the refusal into a logged warning: the handshake is reported and
+     * let through.
+     */
+    enforceHandshakeChecks?: boolean;
+    /**
+     * Decides whether a handshake may proceed: a falsy verdict, a throw or a
+     * rejection refuses it. Returns its verdict or a promise of it.
+     */
+    verifyClient?: (...args: any[]) => any;
     idleTimeout?: number;
     ssl?: {
       key_file_name?: string;
@@ -510,6 +628,13 @@ export interface JobsConfig {
     lockPath?: string;
     lockTimeout?: number;
     heartbeatInterval?: number;
+    /**
+     * The connected Redis client the 'redis' strategy takes its lock with
+     * (ioredis, or a node-redis client). Required for that strategy: without
+     * it no instance can become leader and no scheduled job runs. Only
+     * createApp() can carry it; a config file should not open connections.
+     */
+    redisClient?: any;
   };
   executor?: {
     maxRetries?: number;
@@ -541,6 +666,17 @@ export interface RoutingConfig {
   // Directories scanned via loadRoutes(). Defaults to ./src/routes in
   // development and ./dist/(src/)routes in production when omitted.
   paths?: string[];
+  /**
+   * The strict contract for route and module middleware. Off by default: a
+   * route's middleware is done when it returns (or the promise it returns
+   * settles), and the request goes on to the handler whether or not it
+   * called next(). When true, a middleware declared with three parameters,
+   * (req, res, next), passes the request on only by calling next(); one that
+   * finishes without calling it and without answering gets the request a 500
+   * and a line in the error log. Two-parameter middleware and app.use()
+   * middleware are not affected.
+   */
+  strictMiddleware?: boolean;
 }
 
 // Main configuration interface

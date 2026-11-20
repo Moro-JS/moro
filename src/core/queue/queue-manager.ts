@@ -369,19 +369,19 @@ export class QueueManager implements IQueueManager {
   private createAdapter(options: QueueOptions): IQueueAdapter {
     switch (options.adapter) {
       case 'memory':
-        return new MemoryAdapter();
+        return new MemoryAdapter(options.retention);
 
       case 'bull':
-        return new BullAdapter(options.connection);
+        return new BullAdapter(options.connection, options.retention);
 
       case 'rabbitmq':
-        return new RabbitMQAdapter(options.connection);
+        return new RabbitMQAdapter(options.connection, options.retention);
 
       case 'sqs':
-        return new SQSAdapter(options.connection);
+        return new SQSAdapter(options.connection, options.retention);
 
       case 'kafka':
-        return new KafkaAdapter(options.connection);
+        return new KafkaAdapter(options.connection, options.retention);
 
       default:
         throw new Error(`Unknown queue adapter: ${options.adapter}`);

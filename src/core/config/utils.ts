@@ -112,7 +112,9 @@ export function createModuleConfig<T>(
   try {
     return schema.parse(mergedConfig);
   } catch (error) {
-    logger.error(`Module configuration validation failed for prefix ${envPrefix}:`, String(error));
+    logger.error(
+      `Module configuration validation failed for prefix ${envPrefix}: ${String(error)}`
+    );
     throw error;
   }
 }
@@ -131,7 +133,7 @@ export function getEnvVar<T>(key: string, defaultValue: T, converter?: (value: s
     try {
       return converter(value);
     } catch (error) {
-      logger.warn(`Failed to convert environment variable ${key}:`, String(error));
+      logger.warn(`Failed to convert environment variable ${key}: ${String(error)}`);
       return defaultValue;
     }
   }
@@ -178,7 +180,7 @@ export function getEnvJson<T>(key: string, defaultValue: T): T {
   try {
     return JSON.parse(value);
   } catch (error) {
-    logger.warn(`Failed to parse JSON environment variable ${key}:`, String(error));
+    logger.warn(`Failed to parse JSON environment variable ${key}: ${String(error)}`);
     return defaultValue;
   }
 }

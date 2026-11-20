@@ -1,9 +1,16 @@
 // File Upload Middleware
 import { Middleware } from '../../../../types/http.js';
 import { UploadCore, UploadOptions } from './core.js';
+import { isMultipartMediaType } from '../../../http/utils/body-type.js';
 
 /**
  * Create file upload middleware
+ *
+ * Validates the files of a `multipart/form-data` request and puts them on
+ * `req.files`. With `dest`, a file is stored when the handler asks for it
+ * (`file.path`, or `await file.save()`): nothing is written for a request
+ * that never reaches a handler, and what a request stored is removed again
+ * when it is answered with an error.
  *
  * @example
  * ```typescript
@@ -14,6 +21,7 @@ import { UploadCore, UploadOptions } from './core.js';
  *   maxFileSize: 5 * 1024 * 1024, // 5MB
  *   maxFiles: 10,
  *   allowedTypes: ['image/jpeg', 'image/png', 'image/gif'],
+ *   verifyContent: true, // the bytes must be what the file says it is
  * }));
  * ```
  */
@@ -21,9 +29,9 @@ export function createUploadMiddleware(options: UploadOptions = {}): Middleware 
   const core = new UploadCore(options);
 
   return async (req, res, next) => {
-    const contentType = req.headers['content-type'] || '';
-
-    if (!contentType.includes('multipart/form-data')) {
+    // The media type itself, not a substring: `application/json;
+    // x=multipart/form-data` is a JSON request
+    if (!isMultipartMediaType(req.headers['content-type'])) {
       next();
       return;
     }
@@ -42,18 +50,9 @@ export function createUploadMiddleware(options: UploadOptions = {}): Middleware 
         return;
       }
 
-      // Only touches disk when a dest was configured
-      try {
-        await core.persistFiles(req.files);
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          error: `Failed to store uploaded files: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        });
-        return;
-      }
+      // Only touches disk when a dest was configured, and then only once
+      // the handler asks for the file
+      core.deferPersistence(req.files, res);
     }
 
     next();

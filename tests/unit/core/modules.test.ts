@@ -2,6 +2,8 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { defineModule, defineRoute, z } from '../../../src/index.js';
 import type { ModuleDefinition } from '../../../src/index.js';
+import { MoroLogger, logger as globalLogger } from '../../../src/core/logger/index.js';
+import { WebSocketManager } from '../../../src/core/networking/websocket-manager.js';
 
 describe('Module System', () => {
   describe('defineModule', () => {
@@ -153,6 +155,70 @@ describe('Module System', () => {
       });
     });
 
+    describe('keys it does not read', () => {
+      // warn() is an instance property (a noop when the level disables it), so
+      // the calls are read from the shared log(level, message, context) sink.
+      function captureWarnings() {
+        globalLogger.setLevel('warn');
+        const logSpy = jest.spyOn(MoroLogger.prototype as any, 'log').mockImplementation(() => {});
+        return () => logSpy.mock.calls.filter(c => c[0] === 'warn').map(c => String(c[1]));
+      }
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+        globalLogger.setLevel('fatal');
+      });
+
+      it('names services and unknown keys once, and leaves them out', () => {
+        const warnings = captureWarnings();
+        class UserService {}
+        const definition = {
+          name: 'ignored-keys',
+          version: '1.0.0',
+          services: [{ name: 'userService', implementation: UserService }],
+          description: 'not a module key',
+          routes: [{ method: 'GET', path: '/', handler: () => ({}) }],
+        } as unknown as ModuleDefinition;
+
+        const module = defineModule(definition);
+        expect(module.services).toBeUndefined();
+        expect((module as any).description).toBeUndefined();
+        expect(module.routes).toHaveLength(1);
+
+        const mine = () => warnings().filter(m => m.includes("defineModule('ignored-keys')"));
+        expect(mine()).toHaveLength(1);
+        expect(mine()[0]).toContain("'services', 'description' are not read");
+        expect(mine()[0]).toContain('app.getContainer().register');
+
+        // The same definition again (a module imported twice) does not repeat it
+        defineModule(definition);
+        expect(mine()).toHaveLength(1);
+      });
+
+      it('says nothing for a definition that only uses the keys it reads', () => {
+        const warnings = captureWarnings();
+        defineModule({
+          name: 'all-read',
+          version: '1.0.0',
+          config: { cache: { ttl: 60 }, anything: true },
+          dependencies: ['users@1.0.0'],
+          middleware: [],
+          routes: [{ method: 'GET', path: '/', handler: () => ({}) }],
+          sockets: [{ event: 'ping', handler: () => 'pong' }],
+        });
+        expect(warnings().filter(m => m.includes('defineModule('))).toEqual([]);
+      });
+
+      it('keeps config, which conditional loading reads', () => {
+        const module = defineModule({
+          name: 'with-config',
+          version: '1.0.0',
+          config: { conditions: { environment: 'production' } },
+        });
+        expect(module.config).toEqual({ conditions: { environment: 'production' } });
+      });
+    });
+
     it('should accept CompiledRoute (defineRoute) in routes array', () => {
       const handler = async () => ({ success: true });
 
@@ -290,6 +356,93 @@ describe('Module System', () => {
       expect(module.config).toEqual({
         features: { pagination: true, search: true },
       });
+    });
+  });
+
+  describe('module WebSocket handlers', () => {
+    // One connected socket on a namespace, with the handler's replies collected.
+    async function connect(
+      handler: (socket: any, data: any) => any,
+      breaker?: Record<string, unknown>
+    ) {
+      const adapter = { getAdapterName: () => 'fake' } as any;
+      const container = { resolve: () => ({ onMessage: handler }) } as any;
+      const manager = new WebSocketManager(adapter, container);
+      if (breaker) manager.setCircuitBreakerOptions(breaker);
+
+      let onConnection: (socket: any) => void = () => {};
+      const namespace = { on: (_event: string, cb: any) => (onConnection = cb) } as any;
+      await manager.registerHandler(
+        namespace,
+        { event: 'message', handler: 'onMessage' },
+        { name: 'chat', version: '1.0.0' }
+      );
+
+      const listeners: Record<string, (data: any, callback?: any) => void> = {};
+      const socket = {
+        id: 's1',
+        data: {} as Record<string, unknown>,
+        connected: true,
+        on: (event: string, cb: any) => (listeners[event] = cb),
+        emit: () => {},
+        join: () => {},
+        broadcast: { emit: () => {} },
+      };
+      onConnection(socket);
+
+      const send = (data: unknown) =>
+        new Promise<any>(resolve => (listeners.message as any)(data, resolve));
+      return { send };
+    }
+
+    it('have no circuit breaker by default: failing messages never switch the event off', async () => {
+      let handled = 0;
+      const { send } = await connect((_socket, data) => {
+        if (data.fail) throw new Error('boom');
+        handled++;
+        return { echo: data.text };
+      });
+
+      for (let i = 0; i < 8; i++) {
+        expect(await send({ fail: true })).toMatchObject({ success: false, code: 'HANDLER_ERROR' });
+      }
+      expect(await send({ text: 'hi' })).toEqual({ success: true, data: { echo: 'hi' } });
+      expect(handled).toBe(1);
+    });
+
+    it('open on handler failures once the breaker is enabled', async () => {
+      let calls = 0;
+      const { send } = await connect(
+        () => {
+          calls++;
+          throw new Error('database unreachable');
+        },
+        { enabled: true, failureThreshold: 3, resetTimeout: 60000, monitoringPeriod: 10000 }
+      );
+
+      for (let i = 0; i < 3; i++) {
+        expect(await send({})).toMatchObject({ success: false, code: 'HANDLER_ERROR' });
+      }
+      expect(await send({})).toMatchObject({ success: false, code: 'CIRCUIT_OPEN' });
+      expect(calls).toBe(3);
+    });
+
+    it('do not count an error that carries a 4xx status towards opening it', async () => {
+      let handled = 0;
+      const { send } = await connect(
+        (_socket, data) => {
+          if (data.bad) throw Object.assign(new Error('unknown room'), { status: 404 });
+          handled++;
+          return { ok: true };
+        },
+        { enabled: true, failureThreshold: 3, resetTimeout: 60000, monitoringPeriod: 10000 }
+      );
+
+      for (let i = 0; i < 6; i++) {
+        expect(await send({ bad: true })).toMatchObject({ success: false, code: 'HANDLER_ERROR' });
+      }
+      expect(await send({})).toEqual({ success: true, data: { ok: true } });
+      expect(handled).toBe(1);
     });
   });
 });

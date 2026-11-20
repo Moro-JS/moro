@@ -72,7 +72,23 @@ export class MiddlewareManager extends EventEmitter {
 
     // Initialize middleware
     if (middleware.install) {
-      void middleware.install(this.hooks, options);
+      // install() may be async and is not awaited here. A failure is logged
+      // with the middleware's name, so it is on record even when the process
+      // has its own unhandledRejection listener, and then left to reject as it
+      // always has: a middleware that could not install stays a start-up
+      // failure, never a server quietly running without it.
+      const installed: unknown = middleware.install(this.hooks, options);
+      if (installed && typeof (installed as PromiseLike<unknown>).then === 'function') {
+        void (installed as PromiseLike<unknown>).then(undefined, (error: unknown) => {
+          this.logger.error(
+            `Middleware '${name}' failed to install: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            'Installation'
+          );
+          throw error;
+        });
+      }
     }
 
     this.emit('installed', { name, middleware, options });

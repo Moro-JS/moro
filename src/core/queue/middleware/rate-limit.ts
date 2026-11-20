@@ -68,6 +68,14 @@ class TokenBucket {
     const tokensNeeded = 1 - this.tokens;
     return (tokensNeeded / this.refillRate) * 1000;
   }
+
+  /**
+   * Whether waiting can bring a whole token back: the bucket holds at least
+   * one, and it refills
+   */
+  refills(): boolean {
+    return this.max >= 1 && this.refillRate > 0;
+  }
 }
 
 /**
@@ -93,9 +101,17 @@ export function createRateLimitMiddleware<T = any, R = any>(
 
       await new Promise(resolve => setTimeout(resolve, waitTime));
 
-      // Try again after waiting
-      if (!bucket.consume()) {
-        throw new Error('Rate limit still exceeded after waiting');
+      // Take it. One wait is not always enough: a timer can fire up to a
+      // millisecond before the delay it was given has passed on the clock the
+      // bucket reads, the refill is floating-point arithmetic (0.08 + 0.92 of
+      // a token is 0.9999999999999999), and when several jobs wait for the
+      // same token another one gets there first. Each leaves a remainder to
+      // wait for; only a bucket that can never hold a token gives up.
+      while (!bucket.consume()) {
+        if (!bucket.refills()) {
+          throw new Error('Rate limit still exceeded after waiting');
+        }
+        await new Promise(resolve => setTimeout(resolve, bucket.getWaitTime()));
       }
     }
 

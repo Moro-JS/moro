@@ -16,6 +16,11 @@ import { RangeCore, RangeOptions } from './core.js';
  * the path is resolved against that directory: `../`, an absolute path or a
  * symlink that leads outside it gets a 404.
  *
+ * The response carries the file's own `Content-Type` (unless the handler set
+ * one) and `X-Content-Type-Options: nosniff`. A hidden path (a segment that
+ * starts with a dot, `.well-known` aside) gets a 404 unless `dotfiles` says
+ * otherwise: `'ignore'` (default), `'deny'` (403) or `'allow'`.
+ *
  * @example
  * ```typescript
  * import { middleware } from '@morojs/moro';

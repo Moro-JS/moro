@@ -1,6 +1,8 @@
 // Unit Tests - WebSocket config merge (moro.config.ts + createApp() options)
 import { describe, it, expect } from '@jest/globals';
 import { mergeWebSocketConfig } from '../../../src/core/networking/websocket-adapter.js';
+import { validateConfig } from '../../../src/core/config/config-validator.js';
+import { loadConfig, resetConfig } from '../../../src/core/config/index.js';
 
 describe('mergeWebSocketConfig', () => {
   it('returns config when options are empty', () => {
@@ -63,5 +65,35 @@ describe('mergeWebSocketConfig', () => {
   it('handles both sides nullish', () => {
     expect(mergeWebSocketConfig(undefined, undefined)).toEqual({ options: { cors: {} } });
     expect(mergeWebSocketConfig(null, null)).toEqual({ options: { cors: {} } });
+  });
+});
+
+describe('websocket.options through config validation', () => {
+  it('keeps the handshake checks a config file sets', () => {
+    resetConfig();
+    const base: any = loadConfig();
+    const verifyClient = () => true;
+    const validated: any = validateConfig({
+      ...base,
+      websocket: {
+        enabled: true,
+        options: { path: '/ws/', enforceHandshakeChecks: true, verifyClient },
+      },
+    });
+
+    expect(validated.websocket.options.path).toBe('/ws/');
+    expect(validated.websocket.options.enforceHandshakeChecks).toBe(true);
+    expect(validated.websocket.options.verifyClient).toBe(verifyClient);
+  });
+
+  it('rejects values of the wrong type for them', () => {
+    resetConfig();
+    const base: any = loadConfig();
+    const withOptions = (options: any) => ({ ...base, websocket: { enabled: true, options } });
+
+    expect(() => validateConfig(withOptions({ enforceHandshakeChecks: 'yes' }))).toThrow();
+    expect(() => validateConfig(withOptions({ verifyClient: 'not a function' }))).toThrow(
+      /verifyClient must be a function/
+    );
   });
 });

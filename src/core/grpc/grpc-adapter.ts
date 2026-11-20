@@ -79,3 +79,33 @@ export interface GrpcAdapter {
    */
   isAvailable(): Promise<boolean>;
 }
+
+/**
+ * A service's name with its proto package: `acme.inventory.v1.Inventory`.
+ */
+export function qualifiedServiceName(service: ServiceDefinition): string {
+  return service.packageName
+    ? `${service.packageName}.${service.serviceName}`
+    : service.serviceName;
+}
+
+/**
+ * Find a service among those a proto file defines, by its name (`Inventory`)
+ * or its package-qualified name (`acme.inventory.v1.Inventory`). When several
+ * packages of the file define a service of that name, `packageName` picks one;
+ * without it the first is taken.
+ */
+export function findServiceDefinition(
+  services: ServiceDefinition[],
+  serviceName: string,
+  packageName?: string
+): ServiceDefinition | undefined {
+  const matches = services.filter(
+    service => service.serviceName === serviceName || qualifiedServiceName(service) === serviceName
+  );
+  if (packageName && matches.length > 1) {
+    const inPackage = matches.find(service => service.packageName === packageName);
+    if (inPackage) return inPackage;
+  }
+  return matches[0];
+}

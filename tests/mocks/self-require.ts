@@ -7,3 +7,6 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 export const selfRequire = createRequire(join(process.cwd(), 'package.json'));
+
+// Where the real module is, in this repository
+export const selfPath = join(__dirname, '..', '..', 'src', 'core', 'utilities', 'self-require.ts');

@@ -1,7 +1,7 @@
 // Database MySQL Adapter
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
-import { resolveUserPackage } from '../../utilities/package-utils.js';
+import { importDriver, tlsSocketOptions } from './driver-support.js';
 import {
   quoteIdentifierMySQL as qi,
   quoteColumns,
@@ -31,6 +31,17 @@ interface MySQLConfig {
     | boolean;
 }
 
+/**
+ * mysql2 takes an options object (or the name of a built-in profile) for
+ * `ssl` and throws on a boolean. `true` asks for an encrypted connection to a
+ * server whose certificate verifies against the trusted CAs.
+ */
+function mysqlSslOptions(ssl: MySQLConfig['ssl']): unknown {
+  if (typeof ssl === 'object' && ssl !== null) return tlsSocketOptions(ssl);
+  if (ssl === true) return { rejectUnauthorized: true };
+  return ssl || false;
+}
+
 export class MySQLAdapter implements DatabaseAdapter {
   private pool: any;
   private logger = createFrameworkLogger('MySQL');
@@ -43,34 +54,30 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   private async initialize(config: MySQLConfig): Promise<void> {
-    try {
-      const mysqlPath = resolveUserPackage('mysql2/promise');
-      const mysql = await import(mysqlPath);
-      this.pool = mysql.default.createPool({
-        host: config.host || 'localhost',
-        port: config.port || 3306,
-        user: config.user || 'root',
-        password: config.password || '',
-        database: config.database || 'moro_app',
-        waitForConnections: true,
-        connectionLimit: config.connectionLimit || 10,
-        queueLimit: 0,
-        ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
-      });
+    const mysql = await importDriver(
+      'mysql2/promise',
+      'mysql2 package is required for MySQL adapter. Install it with: npm install mysql2'
+    );
+    this.pool = mysql.default.createPool({
+      host: config.host || 'localhost',
+      port: config.port || 3306,
+      user: config.user || 'root',
+      password: config.password || '',
+      database: config.database || 'moro_app',
+      waitForConnections: true,
+      connectionLimit: config.connectionLimit || 10,
+      queueLimit: 0,
+      ssl: mysqlSslOptions(config.ssl),
+    });
 
-      // The mysql2 pool is an EventEmitter; without an 'error' listener an idle
-      // connection error (e.g. after a server restart) would crash the process.
-      this.pool.on('error', (err: Error) => {
-        this.isConnected = false;
-        this.logger.error('MySQL pool error', 'Pool', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+    // The mysql2 pool is an EventEmitter; without an 'error' listener an idle
+    // connection error (e.g. after a server restart) would crash the process.
+    this.pool.on('error', (err: Error) => {
+      this.isConnected = false;
+      this.logger.error('MySQL pool error', 'Pool', {
+        error: err instanceof Error ? err.message : String(err),
       });
-    } catch {
-      throw new Error(
-        'mysql2 package is required for MySQL adapter. Install it with: npm install mysql2'
-      );
-    }
+    });
   }
 
   async connect(): Promise<void> {

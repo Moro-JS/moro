@@ -18,7 +18,7 @@
 
 ## Why MoroJS?
 
-Build high-performance APIs with intelligent routing: declare what a route needs and MoroJS runs it in the optimal, security-first order every time — rate limiting sheds floods before auth, auth gates the cache. Middleware ordering stops being something you can get wrong. Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
+Build high-performance APIs with intelligent routing: declare what a route needs and MoroJS runs it in the optimal, security-first order every time — rate limiting sheds floods before auth, auth gates the cache. The order of a route's own checks stops being something you can get wrong; global `app.use()` middleware still runs in the order you register it, after hook-based middleware (see [Defaults and what they mean](./docs/SECURITY_DEFAULTS.md)). Deploy anywhere: Node.js, Vercel Edge, AWS Lambda, or Cloudflare Workers - same code, zero configuration.
 
 **Key Features:**
 
@@ -29,7 +29,7 @@ Build high-performance APIs with intelligent routing: declare what a route needs
 - **Message Queues** - Production-ready queues (Bull, RabbitMQ, SQS, Kafka)
 - **gRPC Support** - Native gRPC for high-performance microservices
 - **Multi-Runtime** - Deploy to Node.js, Edge, Lambda, or Workers
-- **Powerful CLI** - Scaffold projects, generate modules, deploy with one command
+- **Powerful CLI** - Scaffold projects, generate modules, generate deployment configs with one command
 - **Zero third-party dependencies** - lightweight core (just Moro's own native engine) with optional integrations
 
 ## Performance
@@ -48,7 +48,7 @@ cd my-api
 npm run dev
 ```
 
-`init` asks what you want (runtime, database, auth, WebSockets, docs); pass `--fast` to skip the prompts, or name the choices up front:
+`init` asks what you want (database, template, auth, WebSockets, docs) and targets the Node.js runtime unless you pass `--runtime`; pass `--fast` to skip the prompts, or name the choices up front:
 
 ```bash
 npx @morojs/cli init my-api --runtime=node --database=postgresql --features=auth,websocket,docs
@@ -86,9 +86,11 @@ import { createApp, param, z } from '@morojs/moro';
       return { success: true, data: req.body };
     });
 
-  // A literal body is the whole handler: on Moro's native engine it is
-  // answered without entering JS at all - and so is param('id'), which
-  // echoes that path parameter as the body
+  // A literal body is the whole handler, and so is param('id'), which echoes
+  // that path parameter as the body. Moro's native engine answers both
+  // without entering JS at all while the app has no global middleware and
+  // no request hooks (request logging, on outside production, is one);
+  // with either, they run first and the route answers behind them
   app.get('/health').handler('ok');
   app.get('/user/:id').handler(param('id'));
 
@@ -129,9 +131,11 @@ createApp({ server: { engine: 'moro', ssl: { keyFile: './key.pem', certFile: './
 
 #### HTTP/2
 
-`http2: true` serves ALPN h2 + http/1.1. When `engine: 'moro'` and the engine
-build supports h2 it is served natively; otherwise Moro uses its dedicated
-HTTP/2 server. Requires TLS.
+`http2: true` serves ALPN h2 + http/1.1. When the engine build supports h2 it
+is served natively; when it does not, Moro uses its dedicated HTTP/2 server,
+unless `engine: 'moro'` is set explicitly, which keeps the engine on HTTP/1.1
+and logs a warning. Browsers speak HTTP/2 only over TLS; without `server.ssl`
+the server takes cleartext HTTP/2 from clients that use prior knowledge.
 
 ```typescript
 createApp({ server: { engine: 'moro', http2: true, ssl: { key, cert } } });
@@ -147,7 +151,7 @@ createApp({
   server: {
     bodySizeLimit: '10mb', // maxUploadSize: '100mb' for multipart
     maxConnections: 0, // 0 = unlimited
-    timeouts: { request: 30000, idle: 0, keepAlive: 5000, headers: 6000 },
+    timeouts: { request: 300000, idle: 75000 }, // ms; 0 disables
     limits: {
       maxHeaderSize: '64kb',
       maxHeaders: 100,
@@ -169,16 +173,16 @@ defaults table.
 Same code, multiple platforms:
 
 ```typescript
-// Node.js
+// Node.js - createApp()
 app.listen(3000);
 
-// Vercel Edge
+// Vercel Edge - createAppEdge()
 export default app.getHandler();
 
-// AWS Lambda
+// AWS Lambda - createAppLambda()
 export const handler = app.getHandler();
 
-// Cloudflare Workers
+// Cloudflare Workers - createAppWorker()
 export default { fetch: app.getHandler() };
 ```
 
@@ -207,7 +211,7 @@ Check out [working examples](https://github.com/Moro-JS/examples) for:
 
 ## Why Choose MoroJS?
 
-**vs Express** - Intelligent security-first middleware pipeline eliminates ordering bugs and configuration complexity
+**vs Express** - A route's rate limit, auth, validation and cache always run in the same security-first order, however you declare them
 
 **vs Fastify** - 3.3× the throughput on HttpArena and 3.8× on The Benchmarker (Moro's native engine), plus multi-runtime deployment without adapters
 

@@ -14,10 +14,13 @@ import type {
   BulkJobData,
   QueueConnectionConfig,
   JobContext,
+  QueueRetentionOptions,
 } from '../types.js';
+import { JobRetention } from './retention.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../../logger/index.js';
+import { decodeJobMessage } from './job-message.js';
 
 const logger = createFrameworkLogger('KafkaQueue');
 
@@ -59,9 +62,29 @@ export class KafkaAdapter extends QueueAdapter {
   private processors: Map<string, JobHandler<any, any>> = new Map();
   private jobStore: Map<string, Map<string, StoredJob>> = new Map();
 
-  constructor(connectionConfig: QueueConnectionConfig = {}) {
+  private retention: JobRetention;
+
+  constructor(connectionConfig: QueueConnectionConfig = {}, retention?: QueueRetentionOptions) {
     super();
     this.connectionConfig = connectionConfig;
+    this.retention = new JobRetention(retention);
+  }
+
+  /** Count a stored record among the jobs of this queue that have not finished. */
+  private trackJob(queueName: string, jobId: string): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.track(queueName, jobId, store);
+  }
+
+  /** A job finished for good: keep its record among the most recent ones. */
+  private retainFinished(
+    queueName: string,
+    jobId: string,
+    outcome: 'completed' | 'failed',
+    ownSetting: unknown
+  ): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.finished(queueName, jobId, outcome, ownSetting, store);
   }
 
   /**
@@ -82,10 +105,15 @@ export class KafkaAdapter extends QueueAdapter {
       const kafkaModule = await import(kafkaPath);
       this.Kafka = kafkaModule.Kafka;
 
-      // Create Kafka instance
+      // Create Kafka instance. `ssl` and `sasl` are kafkajs's own options and
+      // are passed on only when set, so a connection configured without them
+      // is opened exactly as before.
+      const { clientId, ssl, sasl } = this.connectionConfig;
       this.kafka = new this.Kafka({
-        clientId: 'morojs-queue',
+        clientId: clientId || 'morojs-queue',
         brokers: this.connectionConfig.brokers || ['localhost:9092'],
+        ...(ssl !== undefined && { ssl }),
+        ...(sasl !== undefined && { sasl }),
       });
 
       // Create producer
@@ -130,6 +158,7 @@ export class KafkaAdapter extends QueueAdapter {
     // Store job metadata
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.jobStore.get(queueName)!.set(jobId, job);
+    this.trackJob(queueName, jobId);
 
     // Prepare message
     const message = {
@@ -191,6 +220,7 @@ export class KafkaAdapter extends QueueAdapter {
 
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       this.jobStore.get(queueName)!.set(jobId, job);
+      this.trackJob(queueName, jobId);
 
       const message = {
         jobId,
@@ -254,107 +284,194 @@ export class KafkaAdapter extends QueueAdapter {
     // Start consuming
     await consumer.run({
       partitionsConsumedConcurrently: concurrency,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      eachMessage: async ({ topic, partition, message }: any) => {
+      eachMessage: async ({ message }: any) => {
+        // Never reject: a rejected eachMessage makes the consumer re-fetch the
+        // same offset, so one bad message would be redelivered forever.
         try {
-          const messageData = JSON.parse(message.value.toString());
-          const { jobId, data, options } = messageData;
-
-          const storedJob = this.jobStore.get(queueName)?.get(jobId);
-          if (!storedJob) {
-            // Job not found, skip
-            return;
-          }
-
-          storedJob.processedOn = Date.now();
-
-          // Create job context
-          const jobContext: JobContext<T> = {
-            id: jobId,
-            name: queueName,
-            data,
-            progress: storedJob.progress,
-            attemptsMade: storedJob.attemptsMade,
-            timestamp: storedJob.timestamp,
-            processedOn: storedJob.processedOn,
-            finishedOn: storedJob.finishedOn,
-            failedReason: storedJob.failedReason,
-            opts: options,
-            updateProgress: async (progress: number) => {
-              storedJob.progress = progress;
-            },
-            log: (message: string) => {
-              logger.debug(`[Job ${jobId}] ${message}`);
-            },
-          };
-
-          // Execute handler
-          await handler(jobContext);
-
-          // Mark as completed
-          storedJob.finishedOn = Date.now();
-          storedJob.progress = 100;
-
-          // Auto-remove if configured
-          if (options.removeOnComplete) {
-            setTimeout(
-              () => {
-                this.jobStore.get(queueName)?.delete(jobId);
-              },
-              typeof options.removeOnComplete === 'number' ? options.removeOnComplete : 0
-            );
-          }
+          await this.handleMessage(queueName, message, handler);
         } catch (error) {
-          const messageData = JSON.parse(message.value.toString());
-          const { jobId, options } = messageData;
-
-          const storedJob = this.jobStore.get(queueName)?.get(jobId);
-          if (storedJob) {
-            storedJob.attemptsMade++;
-            storedJob.failedReason = error instanceof Error ? error.message : String(error);
-            storedJob.finishedOn = Date.now();
-
-            // Kafka doesn't have built-in retry, so we re-send if needed
-            const maxAttempts = options.attempts || 1;
-            if (storedJob.attemptsMade < maxAttempts) {
-              // Reset and re-send
-              storedJob.failedReason = undefined;
-              storedJob.processedOn = undefined;
-              storedJob.finishedOn = undefined;
-
-              // Calculate backoff delay
-              let delay = 0;
-              if (options.backoff) {
-                const baseDelay = options.backoff.delay;
-                if (options.backoff.type === 'exponential') {
-                  delay = baseDelay * Math.pow(2, storedJob.attemptsMade - 1);
-                } else if (options.backoff.type === 'linear') {
-                  delay = baseDelay * storedJob.attemptsMade;
-                } else {
-                  delay = baseDelay;
-                }
-              }
-
-              setTimeout(() => {
-                void this.addJob(queueName, storedJob.data, storedJob.options);
-              }, delay);
-            } else {
-              // Auto-remove if configured
-              if (options.removeOnFail) {
-                setTimeout(
-                  () => {
-                    this.jobStore.get(queueName)?.delete(jobId);
-                  },
-                  typeof options.removeOnFail === 'number' ? options.removeOnFail : 0
-                );
-              }
-            }
-          }
+          logger.error(
+            `Unexpected error handling a message on topic ${queueName}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
         }
       },
     });
 
     this.consumers.set(queueName, consumer);
+  }
+
+  /**
+   * Handle one consumed message: decode it, run the handler, and settle the
+   * job (completed, re-sent for another attempt, or failed).
+   */
+  private async handleMessage<T>(
+    queueName: string,
+    message: any,
+    handler: JobHandler<T, any>
+  ): Promise<void> {
+    // Decode once. A tombstone (null value), a non-JSON payload or a payload
+    // that is not a job object cannot be processed: log it and return, which
+    // lets the offset advance.
+    const decoded = decodeJobMessage(message?.value, message?.key?.toString());
+    if (!decoded) {
+      logger.error(
+        `Skipping malformed message on topic ${queueName} (offset ${String(message?.offset)}): not a JSON job message`
+      );
+      return;
+    }
+
+    const { jobId, data, options } = decoded;
+
+    // The message is the source of truth for the job. A job produced by
+    // another process, or before this consumer restarted, is not in the
+    // in-memory store: rebuild the record from the message instead of
+    // dropping it unprocessed.
+    this.ensureJobStore(queueName);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const store = this.jobStore.get(queueName)!;
+    let storedJob = store.get(jobId);
+    if (!storedJob) {
+      storedJob = {
+        id: jobId,
+        name: queueName,
+        data,
+        options,
+        attemptsMade: decoded.attemptsMade,
+        timestamp: decoded.timestamp,
+        progress: 0,
+      };
+      store.set(jobId, storedJob);
+      this.trackJob(queueName, jobId);
+    } else if (decoded.attemptsMade > storedJob.attemptsMade) {
+      // The attempt count travels with the message (see sendRetry)
+      storedJob.attemptsMade = decoded.attemptsMade;
+    }
+    const job = storedJob;
+
+    try {
+      job.processedOn = Date.now();
+
+      // Create job context
+      const jobContext: JobContext<T> = {
+        id: jobId,
+        name: queueName,
+        data,
+        progress: job.progress,
+        attemptsMade: job.attemptsMade,
+        timestamp: job.timestamp,
+        processedOn: job.processedOn,
+        finishedOn: job.finishedOn,
+        failedReason: job.failedReason,
+        opts: options,
+        updateProgress: async (progress: number) => {
+          job.progress = progress;
+        },
+        log: (message: string) => {
+          logger.debug(`[Job ${jobId}] ${message}`);
+        },
+      };
+
+      // Execute handler
+      await handler(jobContext);
+
+      // Mark as completed
+      job.finishedOn = Date.now();
+      job.progress = 100;
+
+      // Auto-remove if configured
+      if (options.removeOnComplete) {
+        setTimeout(
+          () => {
+            this.jobStore.get(queueName)?.delete(jobId);
+          },
+          typeof options.removeOnComplete === 'number' ? options.removeOnComplete : 0
+        );
+      }
+      this.retainFinished(queueName, jobId, 'completed', options.removeOnComplete);
+    } catch (error) {
+      job.attemptsMade++;
+      job.failedReason = error instanceof Error ? error.message : String(error);
+      job.finishedOn = Date.now();
+
+      // Kafka doesn't have built-in retry, so we re-send if needed
+      const maxAttempts = options.attempts || 1;
+      if (job.attemptsMade < maxAttempts) {
+        // Reset and re-send
+        job.failedReason = undefined;
+        job.processedOn = undefined;
+        job.finishedOn = undefined;
+
+        // Calculate backoff delay
+        let delay = 0;
+        if (options.backoff) {
+          const baseDelay = options.backoff.delay;
+          if (options.backoff.type === 'exponential') {
+            delay = baseDelay * Math.pow(2, job.attemptsMade - 1);
+          } else if (options.backoff.type === 'linear') {
+            delay = baseDelay * job.attemptsMade;
+          } else {
+            delay = baseDelay;
+          }
+        }
+
+        // Re-send the same job with its attempt count. Going through addJob()
+        // would start a fresh job at attempt 0 and never reach maxAttempts.
+        const attemptsMade = job.attemptsMade;
+        setTimeout(() => {
+          void this.sendRetry(queueName, job, attemptsMade);
+        }, delay);
+      } else {
+        // Auto-remove if configured
+        if (options.removeOnFail) {
+          setTimeout(
+            () => {
+              this.jobStore.get(queueName)?.delete(jobId);
+            },
+            typeof options.removeOnFail === 'number' ? options.removeOnFail : 0
+          );
+        }
+        this.retainFinished(queueName, jobId, 'failed', options.removeOnFail);
+      }
+    }
+  }
+
+  /**
+   * Re-send a failed job for another attempt, carrying the number of attempts
+   * already made so the limit holds across re-sends and across processes.
+   */
+  private async sendRetry(queueName: string, job: StoredJob, attemptsMade: number): Promise<void> {
+    try {
+      if (!this.producer) {
+        throw new Error('producer is closed');
+      }
+
+      await this.producer.send({
+        topic: queueName,
+        messages: [
+          {
+            key: job.id,
+            value: JSON.stringify({
+              jobId: job.id,
+              data: job.data,
+              options: job.options,
+              timestamp: job.timestamp,
+              attemptsMade,
+            }),
+            headers: {
+              jobId: job.id,
+              priority: String(job.options.priority || 0),
+            },
+          },
+        ],
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      job.failedReason = `Retry could not be sent: ${reason}`;
+      job.finishedOn = Date.now();
+      logger.error(`Failed to re-send job ${job.id} on topic ${queueName}: ${reason}`);
+    }
   }
 
   /**
@@ -420,6 +537,7 @@ export class KafkaAdapter extends QueueAdapter {
   async removeJob(queueName: string, jobId: string): Promise<void> {
     this.ensureReady();
     this.jobStore.get(queueName)?.delete(jobId);
+    this.retention.forget(queueName, jobId);
   }
 
   /**
@@ -438,6 +556,7 @@ export class KafkaAdapter extends QueueAdapter {
     storedJob.processedOn = undefined;
     storedJob.finishedOn = undefined;
     storedJob.progress = 0;
+    this.trackJob(queueName, jobId);
 
     // Re-add to queue
     await this.addJob(queueName, storedJob.data, storedJob.options);
@@ -519,6 +638,7 @@ export class KafkaAdapter extends QueueAdapter {
 
     for (const jobId of jobsToRemove) {
       jobs.delete(jobId);
+      this.retention.forget(queueName, jobId);
     }
   }
 
@@ -539,6 +659,7 @@ export class KafkaAdapter extends QueueAdapter {
     // To delete the topic, use Kafka admin tools
 
     this.jobStore.delete(queueName);
+    this.retention.clear(queueName);
     this.processors.delete(queueName);
   }
 
@@ -559,6 +680,7 @@ export class KafkaAdapter extends QueueAdapter {
     }
 
     this.jobStore.clear();
+    this.retention.clear();
     this.processors.clear();
     this.kafka = null;
     this.isReady = false;

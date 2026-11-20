@@ -3,9 +3,10 @@
  * Tests for queue system integration with Moro framework
  */
 
-import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { createApp } from '../../src/moro.js';
 import type { Moro } from '../../src/moro.js';
+import { MemoryAdapter } from '../../src/core/queue/adapters/memory-adapter.js';
 
 describe('Queue Integration with Moro', () => {
   let app: Moro;
@@ -50,6 +51,80 @@ describe('Queue Integration with Moro', () => {
 
     test('should return empty array when no queues registered', () => {
       expect(app.getQueueNames()).toEqual([]);
+    });
+  });
+
+  describe('Registration that finishes later', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    // Stands in for an adapter that connects to a broker while it initialises
+    function slowAdapter(ms: number) {
+      const initialize = MemoryAdapter.prototype.initialize;
+      jest.spyOn(MemoryAdapter.prototype, 'initialize').mockImplementation(async function (
+        this: MemoryAdapter
+      ) {
+        await new Promise(resolve => setTimeout(resolve, ms));
+        return initialize.call(this);
+      });
+    }
+
+    test('processQueue() and addToQueue() right after queueInit() wait for the registration', async () => {
+      slowAdapter(50);
+      const processed: any[] = [];
+
+      app.queueInit('emails', { adapter: 'memory', concurrency: 5 });
+      await app.processQueue('emails', async job => {
+        processed.push(job.data);
+      });
+      await app.addToQueue('emails', { to: 'user@example.com' });
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(processed).toEqual([{ to: 'user@example.com' }]);
+    });
+
+    test('addBulkToQueue() right after queueInit() waits for the registration', async () => {
+      slowAdapter(50);
+
+      app.queueInit('emails', { adapter: 'memory' });
+      const jobs = await app.addBulkToQueue('emails', [{ data: { n: 1 } }, { data: { n: 2 } }]);
+
+      expect(jobs).toHaveLength(2);
+    });
+
+    test('a queue whose registration failed is forgotten and its error is reported on use', async () => {
+      app.queueInit('working', { adapter: 'memory' });
+      app.queueInit('broken', { adapter: 'no-such-adapter' });
+
+      await expect(app.addToQueue('broken', { n: 1 })).rejects.toThrow(
+        'Unknown queue adapter: no-such-adapter'
+      );
+      expect(app.hasQueue('broken')).toBe(false);
+      expect(app.getQueueNames()).toEqual(['working']);
+      // The reason stays available to every later use of that queue
+      await expect(app.processQueue('broken', async () => {})).rejects.toThrow(
+        'Unknown queue adapter: no-such-adapter'
+      );
+
+      // Registering it again with working options clears the failure
+      app.queueInit('broken', { adapter: 'memory' });
+      await expect(app.addToQueue('broken', { n: 1 })).resolves.toBeDefined();
+      expect(app.hasQueue('broken')).toBe(true);
+
+      // A registration that fails only because the name is already taken
+      // leaves the registered queue in place
+      app.queueInit('working', { adapter: 'memory' });
+      await expect(app.addToQueue('working', { n: 2 })).resolves.toBeDefined();
+      expect(app.hasQueue('working')).toBe(true);
+    });
+
+    test('queueInit() registers a queue after the deprecated queue() started the system', async () => {
+      await app.queue('first', { adapter: 'memory' });
+
+      app.queueInit('second', { adapter: 'memory' });
+
+      await expect(app.addToQueue('second', { n: 1 })).resolves.toBeDefined();
     });
   });
 

@@ -20,6 +20,7 @@ export type {
   JobOptions,
   DefaultJobOptions,
   QueueOptions,
+  QueueRetentionOptions,
   Job,
   JobContext,
   JobHandler,

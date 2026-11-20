@@ -1,7 +1,7 @@
 // Core Framework Types
 import { RuntimeConfig } from './runtime.js';
 import { LoggerOptions } from './logger.js';
-import { AppConfig, ValidationErrorHandler } from './config.js';
+import { AppConfig, DeepPartial, RoutingConfig, ValidationErrorHandler } from './config.js';
 
 export interface MoroOptions {
   autoDiscover?:
@@ -68,6 +68,16 @@ export interface MoroOptions {
     enabled?: boolean;
     count?: number;
     maxQueueSize?: number;
+    /**
+     * V8 limits for each worker thread of the pool, passed to `new Worker()`
+     * as given. Not set by default.
+     */
+    resourceLimits?: {
+      maxOldGenerationSizeMb?: number;
+      maxYoungGenerationSizeMb?: number;
+      codeRangeSizeMb?: number;
+      stackSizeMb?: number;
+    };
   };
 
   // Validation configuration (top-level for convenience, maps to modules.validation)
@@ -79,13 +89,20 @@ export interface MoroOptions {
     onError?: ValidationErrorHandler;
   };
 
-  // Direct config overrides (partial)
-  server?: Partial<AppConfig['server']>;
-  database?: Partial<AppConfig['database']>;
-  modules?: Partial<AppConfig['modules']>;
-  logging?: Partial<AppConfig['logging']>;
-  security?: Partial<AppConfig['security']>;
-  external?: Partial<AppConfig['external']>;
-  performance?: Partial<AppConfig['performance']>;
-  jobs?: Partial<AppConfig['jobs']>;
+  // Direct config overrides. Each section is merged into the defaults at every
+  // depth, so a nested object may name only the keys it changes.
+  server?: DeepPartial<AppConfig['server']>;
+  database?: DeepPartial<AppConfig['database']>;
+  modules?: DeepPartial<AppConfig['modules']>;
+  logging?: DeepPartial<AppConfig['logging']>;
+  security?: DeepPartial<AppConfig['security']>;
+  external?: DeepPartial<AppConfig['external']>;
+  performance?: DeepPartial<AppConfig['performance']>;
+  jobs?: DeepPartial<AppConfig['jobs']>;
+  /**
+   * File-based routing and route middleware: `false` turns the loading of
+   * route files off, an object sets `enabled`, the `paths` to load them from
+   * and `strictMiddleware`.
+   */
+  routing?: boolean | DeepPartial<RoutingConfig>;
 }

@@ -1,15 +1,17 @@
 // Upload Hook Integration
 import { UploadCore, UploadOptions } from './core.js';
+import { isMultipartMediaType } from '../../../http/utils/body-type.js';
 
 export function registerUploadHooks(hookManager: any, options: UploadOptions = {}): void {
   const core = new UploadCore(options);
 
   hookManager.on('request', async (context: any) => {
     const { request, response } = context;
-    if (!request || !response) return;
+    // A request that has already been answered is finished
+    if (!request || !response || response.headersSent) return;
 
-    const contentType = request.headers['content-type'] || '';
-    if (!contentType.includes('multipart/form-data')) {
+    // The media type itself, not a substring
+    if (!isMultipartMediaType(request.headers?.['content-type'])) {
       return;
     }
 

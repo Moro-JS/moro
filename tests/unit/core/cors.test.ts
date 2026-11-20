@@ -96,20 +96,23 @@ describe('CORS Middleware', () => {
       expect(mockContext.response.headersSent).toBe(false);
     });
 
-    it('should handle multiple origins', async () => {
+    it('should send only the matching origin when several are allowed', async () => {
       const corsMiddleware = cors({
         origin: ['https://example.com', 'https://app.example.com'],
       });
 
       await corsMiddleware.install(mockHooks, {});
 
+      mockContext.request.headers.origin = 'https://app.example.com';
+
       const hookHandler = mockHooks.before.mock.calls[0][1];
       await hookHandler(mockContext);
 
       expect(mockContext.response.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
-        'https://example.com,https://app.example.com'
+        'https://app.example.com'
       );
+      expect(mockContext.response.setHeader).toHaveBeenCalledWith('Vary', 'Origin');
     });
 
     it('should apply custom methods and headers', async () => {
@@ -269,9 +272,10 @@ describe('CORS Middleware', () => {
       const hookHandler = mockHooks.before.mock.calls[0][1];
       await hookHandler(mockContext);
 
+      // One origin per header: the request's own, since it is in the list
       expect(mockContext.response.setHeader).toHaveBeenCalledWith(
         'Access-Control-Allow-Origin',
-        'https://example.com,https://app.example.com'
+        'https://example.com'
       );
     });
   });
@@ -491,32 +495,197 @@ describe('CORS Middleware', () => {
       expect(mockNext).not.toHaveBeenCalled();
     });
 
-    it('should allow comma-separated origins when credentials is false', async () => {
-      const mockRequest = {
-        method: 'GET',
-        path: '/api',
-        headers: {},
-      };
-      const mockResponse = {
-        setHeader: jest.fn(),
-        status: jest.fn().mockReturnThis(),
-        end: jest.fn(),
-      };
-      const mockNext = jest.fn();
+    describe('several allowed origins without credentials', () => {
+      const allowed = ['https://example.com', 'https://app.example.com'];
 
-      const middleware = createCORSMiddleware({
-        origin: ['https://example.com', 'https://app.example.com'],
-        credentials: false,
+      const run = async (origin?: string) => {
+        const mockRequest = {
+          method: 'GET',
+          path: '/api',
+          headers: origin ? { origin } : {},
+        };
+        const headers: Record<string, string> = {};
+        const mockResponse = {
+          setHeader: jest.fn((name: string, value: string) => {
+            headers[name] = value;
+          }),
+          status: jest.fn().mockReturnThis(),
+          end: jest.fn(),
+        };
+        const mockNext = jest.fn();
+
+        const middleware = createCORSMiddleware({ origin: allowed, credentials: false });
+        await middleware(mockRequest as any, mockResponse as any, mockNext);
+
+        return { headers, mockResponse, mockNext };
+      };
+
+      it('should send only the origin that made the request', async () => {
+        const { headers, mockNext } = await run('https://app.example.com');
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('https://app.example.com');
+        expect(mockNext).toHaveBeenCalled();
       });
 
-      await middleware(mockRequest as any, mockResponse as any, mockNext);
+      it('should never send a comma-separated list', async () => {
+        for (const origin of [undefined, 'https://example.com', 'https://evil.example']) {
+          const { headers } = await run(origin);
+          expect(headers['Access-Control-Allow-Origin'] ?? '').not.toContain(',');
+        }
+      });
 
-      // Without credentials, should join with comma (though not ideal)
-      expect(mockResponse.setHeader).toHaveBeenCalledWith(
-        'Access-Control-Allow-Origin',
-        'https://example.com,https://app.example.com'
-      );
-      expect(mockNext).toHaveBeenCalled();
+      it('should name no origin for a request from outside the list, and should not refuse it', async () => {
+        const { headers, mockResponse, mockNext } = await run('https://evil.example');
+
+        expect(headers).not.toHaveProperty('Access-Control-Allow-Origin');
+        expect(headers.Vary).toBe('Origin');
+        expect(mockResponse.status).not.toHaveBeenCalled();
+        expect(mockNext).toHaveBeenCalled();
+      });
+
+      it('should name no origin for a request that sends no Origin', async () => {
+        const { headers, mockNext } = await run(undefined);
+
+        expect(headers).not.toHaveProperty('Access-Control-Allow-Origin');
+        expect(headers.Vary).toBe('Origin');
+        expect(mockNext).toHaveBeenCalled();
+      });
+
+      it('should match a list of one origin the same way', async () => {
+        const single = async (origin?: string) => {
+          const headers: Record<string, string> = {};
+          const res = {
+            setHeader: (name: string, value: string) => {
+              headers[name] = value;
+            },
+            status: jest.fn().mockReturnThis(),
+            end: jest.fn(),
+          };
+          const req = { method: 'GET', path: '/api', headers: origin ? { origin } : {} };
+          await createCORSMiddleware({ origin: ['https://example.com'] })(
+            req as any,
+            res as any,
+            jest.fn()
+          );
+          return headers;
+        };
+
+        expect((await single('https://example.com'))['Access-Control-Allow-Origin']).toBe(
+          'https://example.com'
+        );
+        const other = await single('https://evil.example');
+        expect(other).not.toHaveProperty('Access-Control-Allow-Origin');
+        expect(other.Vary).toBe('Origin');
+      });
+    });
+
+    describe('Vary: Origin', () => {
+      const run = async (options: any, origin?: string, existingVary?: string | string[]) => {
+        const headers: Record<string, any> = {};
+        if (existingVary !== undefined) headers.Vary = existingVary;
+        const mockResponse = {
+          setHeader: jest.fn((name: string, value: any) => {
+            headers[name] = value;
+          }),
+          getHeader: (name: string) => headers[name],
+          status: jest.fn().mockReturnThis(),
+          end: jest.fn(),
+        };
+        const mockRequest = { method: 'GET', path: '/api', headers: origin ? { origin } : {} };
+
+        await createCORSMiddleware(options)(mockRequest as any, mockResponse as any, jest.fn());
+        return headers;
+      };
+
+      it('should be sent when the allowed origin is chosen from a list', async () => {
+        const headers = await run(
+          { origin: ['https://example.com', 'https://app.example.com'] },
+          'https://example.com'
+        );
+        expect(headers.Vary).toBe('Origin');
+      });
+
+      it('should be sent when a list is matched for a credentialed response', async () => {
+        const headers = await run(
+          { origin: ['https://example.com'], credentials: true },
+          'https://example.com'
+        );
+        expect(headers.Vary).toBe('Origin');
+      });
+
+      it('should be sent when the allowed origin comes from a function', async () => {
+        const headers = await run(
+          { origin: (origin: string | undefined) => origin || false },
+          'https://example.com'
+        );
+        expect(headers['Access-Control-Allow-Origin']).toBe('https://example.com');
+        expect(headers.Vary).toBe('Origin');
+      });
+
+      it('should not be sent with a wildcard answer, even when a function produced it', async () => {
+        // No Origin on the request: the function answers '*', which is the
+        // same for every origin, so there is nothing for a cache to key on.
+        const options = { origin: (origin: string | undefined) => origin || '*' };
+
+        const anonymous = await run(options);
+        expect(anonymous['Access-Control-Allow-Origin']).toBe('*');
+        expect(anonymous.Vary).toBeUndefined();
+
+        const named = await run(options, 'https://example.com');
+        expect(named['Access-Control-Allow-Origin']).toBe('https://example.com');
+        expect(named.Vary).toBe('Origin');
+      });
+
+      it('should send no CORS headers when the origin function answers with nothing', async () => {
+        // A function that echoes the Origin answers undefined for a request
+        // that sent none: the request goes on, and no header says "undefined".
+        const echo = { origin: (origin: string | undefined) => origin };
+
+        const sameOrigin = await run(echo);
+        expect(sameOrigin['Access-Control-Allow-Origin']).toBeUndefined();
+        expect(sameOrigin['Access-Control-Allow-Methods']).toBeUndefined();
+        expect(sameOrigin.Vary).toBeUndefined();
+
+        const crossOrigin = await run(echo, 'https://example.com');
+        expect(crossOrigin['Access-Control-Allow-Origin']).toBe('https://example.com');
+      });
+
+      it('should not be sent on a refusal, which carries no allowed origin', async () => {
+        const fromFunction = await run({ origin: () => false }, 'https://evil.example');
+        expect(fromFunction['Access-Control-Allow-Origin']).toBeUndefined();
+        expect(fromFunction.Vary).toBeUndefined();
+
+        const fromList = await run(
+          { origin: ['https://example.com'], credentials: true },
+          'https://evil.example'
+        );
+        expect(fromList['Access-Control-Allow-Origin']).toBeUndefined();
+        expect(fromList.Vary).toBeUndefined();
+      });
+
+      it('should be appended to a Vary header that is already set', async () => {
+        const options = { origin: ['https://example.com', 'https://app.example.com'] };
+
+        expect((await run(options, 'https://example.com', 'Accept-Encoding')).Vary).toBe(
+          'Accept-Encoding, Origin'
+        );
+        expect((await run(options, 'https://example.com', ['Accept', 'Cookie'])).Vary).toBe(
+          'Accept, Cookie, Origin'
+        );
+        // already there, or already "varies on everything": left as it is
+        expect((await run(options, 'https://example.com', 'Accept, origin')).Vary).toBe(
+          'Accept, origin'
+        );
+        expect((await run(options, 'https://example.com', '*')).Vary).toBe('*');
+      });
+
+      it('should not be sent when the allowed origin is the same for every request', async () => {
+        expect((await run({}, 'https://example.com')).Vary).toBeUndefined();
+        expect(
+          (await run({ origin: 'https://example.com' }, 'https://x.example')).Vary
+        ).toBeUndefined();
+        expect((await run({ origin: true }, 'https://x.example')).Vary).toBeUndefined();
+      });
     });
 
     it('should support allowedHeaders config property (alias for headers)', async () => {
@@ -667,15 +836,12 @@ describe('CORS Middleware', () => {
 
       await middleware(mockRequest as any, mockResponse as any, mockNext);
 
-      // Should use first origin in list for same-origin requests
-      expect(mockResponse.setHeader).toHaveBeenCalledWith(
-        'Access-Control-Allow-Origin',
-        'https://example.com'
-      );
-      expect(mockResponse.setHeader).toHaveBeenCalledWith(
-        'Access-Control-Allow-Credentials',
-        'true'
-      );
+      // Not a cross-origin request: it is let through, and no origin from the
+      // list is named for it
+      const sent = mockResponse.setHeader.mock.calls.map((call: any[]) => call[0]);
+      expect(sent).not.toContain('Access-Control-Allow-Origin');
+      expect(sent).not.toContain('Access-Control-Allow-Credentials');
+      expect(mockResponse.status).not.toHaveBeenCalled();
       expect(mockNext).toHaveBeenCalled();
     });
   });

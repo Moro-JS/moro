@@ -38,6 +38,11 @@ export class HookManager extends EventEmitter {
   // check is a single Set probe instead of Set + listenerCount lookups
   private hotEvents = new Set<string>();
 
+  // Told whenever a hook or a raw listener is added or removed, so a decision
+  // taken from hasHooks() outside the request path (which routes the native
+  // engine may answer by itself) can be taken again.
+  private registrationListeners: Array<() => void> = [];
+
   constructor() {
     super();
     // Initialize hook arrays
@@ -57,11 +62,32 @@ export class HookManager extends EventEmitter {
     // removals so hotEvents stays the exact union ('newListener' fires just
     // before the listener lands, 'removeListener' just after removal)
     this.on('newListener', (event: string | symbol) => {
-      if (typeof event === 'string') this.hotEvents.add(event);
+      if (typeof event === 'string') {
+        this.hotEvents.add(event);
+        this.notifyRegistrationChange();
+      }
     });
     this.on('removeListener', (event: string | symbol) => {
-      if (typeof event === 'string') this.refreshHotEvent(event);
+      if (typeof event === 'string') {
+        this.refreshHotEvent(event);
+        this.notifyRegistrationChange();
+      }
     });
+  }
+
+  /**
+   * Call `listener` after every change to what is registered: a hook added or
+   * removed, or a raw listener attached or detached. hasHooks() already
+   * reflects the change when it runs.
+   */
+  onRegistrationChange(listener: () => void): this {
+    this.registrationListeners.push(listener);
+    return this;
+  }
+
+  private notifyRegistrationChange(): void {
+    const listeners = this.registrationListeners;
+    for (let i = 0; i < listeners.length; i++) (listeners[i] as () => void)();
   }
 
   // Update cached execute function for an event
@@ -76,122 +102,53 @@ export class HookManager extends EventEmitter {
       this.hookSyncStatus.set(event, true); // Mark as sync (noop)
       this.activeEvents.delete(event);
       this.refreshHotEvent(event);
+      this.notifyRegistrationChange();
       return;
     }
 
     this.activeEvents.add(event);
     this.hotEvents.add(event);
+    this.notifyRegistrationChange();
 
     // Detect if all hooks are synchronous
     const allSync = this.areHooksSynchronous(beforeHooks, hooks, afterHooks);
     this.hookSyncStatus.set(event, allSync);
 
     if (allSync) {
-      // FAST PATH: Create synchronous version (no Promise overhead)
+      // FAST PATH: synchronous version (no Promise overhead). Hooks run in
+      // before -> main -> after order; the list is rebuilt on every
+      // registration, so a snapshot is safe.
+      const ordered: HookFunction[] = [...beforeHooks, ...hooks, ...afterHooks];
+      const orderedLen = ordered.length;
       // Cast to Promise return type to satisfy interface
       this.executeCache.set(event, ((context: HookContext) => {
-        // Execute before hooks synchronously
-        const beforeLen = beforeHooks.length;
-        for (let i = 0; i < beforeLen; i++) {
+        for (let i = 0; i < orderedLen; i++) {
+          const hook = ordered[i];
+          if (hook === undefined) continue;
+          let result: unknown;
           try {
-            const hook = beforeHooks[i];
-            if (hook !== undefined) {
-              hook(context);
-            }
+            result = hook(context);
           } catch (error) {
-            // Check if this is a known/expected error that should not halt execution
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            const isHeadersError =
-              errorMessage.includes('headersSent') && errorMessage.includes('getter');
-
-            if (isHeadersError) {
-              // This is an expected error when trying to set read-only headersSent property
-              // Log as debug instead of error, and don't re-throw
-              this.logger.debug(
-                'Hook attempted to set read-only headersSent property',
-                'HookExecution',
-                {
-                  error: errorMessage,
-                  context: context.request?.method || 'unknown',
-                }
-              );
-              continue;
-            }
-
+            if (this.isReadOnlyHeadersSentError(error, context)) continue;
             this.logger.error('Hook execution error', 'HookExecution', {
-              error: errorMessage,
+              error: error instanceof Error ? error.message : String(error),
             });
             throw error;
           }
-        }
-
-        // Execute main hooks synchronously
-        const hooksLen = hooks.length;
-        for (let i = 0; i < hooksLen; i++) {
-          try {
-            const hook = hooks[i];
-            if (hook !== undefined) {
-              hook(context);
-            }
-          } catch (error) {
-            // Check if this is a known/expected error that should not halt execution
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            const isHeadersError =
-              errorMessage.includes('headersSent') && errorMessage.includes('getter');
-
-            if (isHeadersError) {
-              // This is an expected error when trying to set read-only headersSent property
-              // Log as debug instead of error, and don't re-throw
-              this.logger.debug(
-                'Hook attempted to set read-only headersSent property',
-                'HookExecution',
-                {
-                  error: errorMessage,
-                  context: context.request?.method || 'unknown',
-                }
-              );
-              continue;
-            }
-
-            this.logger.error('Hook execution error', 'HookExecution', {
-              error: errorMessage,
-            });
-            throw error;
-          }
-        }
-
-        // Execute after hooks synchronously
-        const afterLen = afterHooks.length;
-        for (let i = 0; i < afterLen; i++) {
-          try {
-            const hook = afterHooks[i];
-            if (hook !== undefined) {
-              hook(context);
-            }
-          } catch (error) {
-            // Check if this is a known/expected error that should not halt execution
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            const isHeadersError =
-              errorMessage.includes('headersSent') && errorMessage.includes('getter');
-
-            if (isHeadersError) {
-              // This is an expected error when trying to set read-only headersSent property
-              // Log as debug instead of error, and don't re-throw
-              this.logger.debug(
-                'Hook attempted to set read-only headersSent property',
-                'HookExecution',
-                {
-                  error: errorMessage,
-                  context: context.request?.method || 'unknown',
-                }
-              );
-              continue;
-            }
-
-            this.logger.error('Hook execution error', 'HookExecution', {
-              error: errorMessage,
-            });
-            throw error;
+          // A hook that returns a promise without being declared `async`
+          // (an arrow returning a promise, a wrapped or down-levelled
+          // function) is still asynchronous: await it before anything else
+          // runs, and finish the remaining hooks behind it. Dropping the
+          // promise let the request continue before the hook had decided and
+          // turned a rejection into an unhandled one.
+          if (result && typeof (result as any).then === 'function') {
+            return this.resumeHooksAsync(
+              result as PromiseLike<unknown>,
+              ordered,
+              i + 1,
+              event,
+              context
+            );
           }
         }
 
@@ -323,28 +280,63 @@ export class HookManager extends EventEmitter {
     try {
       await hook(context);
     } catch (error) {
-      // Check if this is a known/expected error that should not halt execution
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const isHeadersError =
-        errorMessage.includes('headersSent') && errorMessage.includes('getter');
-
-      if (isHeadersError) {
-        // This is an expected error when trying to set read-only headersSent property
-        // Log as debug instead of error, and don't re-throw
-        this.logger.debug('Hook attempted to set read-only headersSent property', 'HookExecution', {
-          error: errorMessage,
-          context: context.request?.method || 'unknown',
-        });
-        return;
-      }
+      if (this.isReadOnlyHeadersSentError(error, context)) return;
 
       // For other errors, log and re-throw as before
       this.logger.error('Hook execution error', 'HookExecution', {
-        error: errorMessage,
+        error: error instanceof Error ? error.message : String(error),
         context: context.request?.method || 'unknown',
       });
       throw error;
     }
+  }
+
+  // Continuation of the synchronous fast path once a hook turned out to be
+  // asynchronous: settle that hook, then run the rest in order.
+  private async resumeHooksAsync(
+    pending: PromiseLike<unknown>,
+    ordered: HookFunction[],
+    nextIndex: number,
+    event: string,
+    context: HookContext
+  ): Promise<HookContext> {
+    try {
+      await pending;
+    } catch (error) {
+      if (!this.isReadOnlyHeadersSentError(error, context)) {
+        this.logger.error('Hook execution error', 'HookExecution', {
+          error: error instanceof Error ? error.message : String(error),
+          context: context.request?.method || 'unknown',
+        });
+        throw error;
+      }
+    }
+
+    for (let i = nextIndex; i < ordered.length; i++) {
+      const hook = ordered[i];
+      if (hook !== undefined) {
+        await this.executeHook(hook, context);
+      }
+    }
+
+    this.emit(event, context);
+    return context;
+  }
+
+  // The one hook error that is expected and must not halt execution: a hook
+  // assigning to the response's read-only `headersSent` (the runtime raises a
+  // TypeError naming the property and its getter). Matching is restricted to
+  // TypeError so that an error a hook throws on purpose - a denial whose
+  // message happens to contain those words - is never swallowed.
+  private isReadOnlyHeadersSentError(error: unknown, context: HookContext): boolean {
+    if (!(error instanceof TypeError)) return false;
+    const message = error.message;
+    if (!message.includes('headersSent') || !message.includes('getter')) return false;
+    this.logger.debug('Hook attempted to set read-only headersSent property', 'HookExecution', {
+      error: message,
+      context: context.request?.method || 'unknown',
+    });
+    return true;
   }
 
   // Remove hooks

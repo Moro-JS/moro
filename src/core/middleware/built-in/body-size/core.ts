@@ -1,8 +1,37 @@
 // Body Size Limit Core Logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
+import { isMultipartMediaType } from '../../../http/utils/body-type.js';
 
 export interface BodySizeOptions {
   limit?: string | number;
+}
+
+/**
+ * The size of a request's body, in bytes. A request with Content-Length is
+ * judged by the header and nothing more. One without it (chunked) declares
+ * nothing, so it is measured by what was received: the retained raw bytes
+ * when the server kept them, else the body itself when it is still a string
+ * or a Buffer, else (a parsed object with no raw bytes behind it) its
+ * serialized length - the closest measure left. 0 when there is no body.
+ */
+export function requestBodyBytes(req: HttpRequest): number {
+  const declared = req.headers['content-length'];
+  if (declared !== undefined) return parseInt(declared || '0');
+
+  const body = req.body;
+  if (body === undefined || body === null) return 0;
+  const raw = req.rawBody;
+  if (Buffer.isBuffer(raw)) return raw.length;
+  if (typeof body === 'string') return Buffer.byteLength(body);
+  if (Buffer.isBuffer(body)) return body.length;
+  if (typeof body === 'object') {
+    try {
+      return Buffer.byteLength(JSON.stringify(body) ?? '');
+    } catch {
+      return 0; // not serializable: nothing to measure
+    }
+  }
+  return 0;
 }
 
 export class BodySizeCore {
@@ -34,15 +63,15 @@ export class BodySizeCore {
   }
 
   checkBodySize(req: HttpRequest, res: HttpResponse): boolean {
-    const contentType = req.headers['content-type'] || '';
-
     // Skip body size check for multipart/form-data (file uploads)
-    // Those are handled by maxUploadSize in the HTTP server's parseBody method
-    if (contentType.includes('multipart/form-data')) {
+    // Those are handled by maxUploadSize in the HTTP server's parseBody method.
+    // The media type itself decides, not a substring: `application/json;
+    // x=multipart/form-data` is a JSON request and is checked like one.
+    if (isMultipartMediaType(req.headers['content-type'])) {
       return true; // Allow, will be checked by parseBody with maxUploadSize limit
     }
 
-    const contentLength = parseInt(req.headers['content-length'] || '0');
+    const contentLength = requestBodyBytes(req);
 
     if (contentLength > this.limitBytes) {
       res.status(413).json({

@@ -1,12 +1,45 @@
 // Memory Cache Adapter
 import { CacheAdapter } from '../../../../../../types/cache.js';
 import { createFrameworkLogger } from '../../../../../logger/index.js';
+import { keyTag } from './log-key.js';
 
 const logger = createFrameworkLogger('MemoryCacheAdapter');
 
+export interface MemoryCacheAdapterOptions {
+  /**
+   * Most entries kept at once. Past it, the least recently used entry leaves
+   * to make room. Unbounded when omitted: the adapter also backs stores whose
+   * entries must not be dropped early (sessions), so the cap is opt-in here
+   * and `middleware.cache()` passes its own (10,000 by default).
+   */
+  maxEntries?: number;
+  /**
+   * Log a short tag in place of each key. For stores whose keys are secrets:
+   * the session middleware sets it on the store it uses, because a session id
+   * in a log line is a session anyone reading the log can take over.
+   */
+  redactKeys?: boolean;
+}
+
 export class MemoryCacheAdapter implements CacheAdapter {
+  // Insertion order doubles as recency order: a read or a write moves the key
+  // to the end, so the first key is always the least recently used one.
   private cache = new Map<string, { value: any; expires: number }>();
   private timers = new Map<string, NodeJS.Timeout>();
+  private readonly maxEntries: number;
+  /** Log a tag in place of each key (see MemoryCacheAdapterOptions.redactKeys) */
+  redactKeys: boolean;
+
+  constructor(options: MemoryCacheAdapterOptions = {}) {
+    const max = options?.maxEntries;
+    this.maxEntries = typeof max === 'number' && max > 0 ? Math.floor(max) : Infinity;
+    this.redactKeys = options?.redactKeys === true;
+  }
+
+  /** Entries currently held (expired ones included until they are read or timed out). */
+  get size(): number {
+    return this.cache.size;
+  }
 
   async get(key: string): Promise<any> {
     const item = this.cache.get(key);
@@ -15,6 +48,12 @@ export class MemoryCacheAdapter implements CacheAdapter {
     if (Date.now() > item.expires) {
       await this.del(key);
       return null;
+    }
+
+    // Mark as recently used (only worth doing when there is a cap to evict by)
+    if (this.maxEntries !== Infinity) {
+      this.cache.delete(key);
+      this.cache.set(key, item);
     }
 
     return item.value;
@@ -29,7 +68,8 @@ export class MemoryCacheAdapter implements CacheAdapter {
       clearTimeout(existingTimer);
     }
 
-    // Set new value
+    // Set new value (re-inserted, so it counts as the most recently used)
+    this.cache.delete(key);
     this.cache.set(key, { value, expires });
 
     // Set expiration timer. unref() so eviction housekeeping never holds the
@@ -43,7 +83,23 @@ export class MemoryCacheAdapter implements CacheAdapter {
     timer.unref?.();
 
     this.timers.set(key, timer);
-    logger.debug(`Cached item: ${key} (TTL: ${ttl}s)`, 'MemoryCache');
+
+    // Over the cap: the least recently used entries make room
+    while (this.cache.size > this.maxEntries) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest === undefined || oldest === key) break;
+      this.cache.delete(oldest);
+      const oldTimer = this.timers.get(oldest);
+      if (oldTimer) {
+        clearTimeout(oldTimer);
+        this.timers.delete(oldest);
+      }
+    }
+
+    logger.debug(
+      `Cached item: ${this.redactKeys ? keyTag(key) : key} (TTL: ${ttl}s)`,
+      'MemoryCache'
+    );
   }
 
   async del(key: string): Promise<void> {
@@ -53,7 +109,7 @@ export class MemoryCacheAdapter implements CacheAdapter {
       clearTimeout(timer);
       this.timers.delete(key);
     }
-    logger.debug(`Deleted cache item: ${key}`, 'MemoryCache');
+    logger.debug(`Deleted cache item: ${this.redactKeys ? keyTag(key) : key}`, 'MemoryCache');
   }
 
   async clear(): Promise<void> {

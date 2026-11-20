@@ -1,124 +1,119 @@
 // Auth Hook - MiddlewareInterface for global registration
 import { MiddlewareInterface, HookContext } from '../../../../types/hooks.js';
 import { createFrameworkLogger } from '../../../logger/index.js';
-import { AuthCore } from './core.js';
-import { AuthOptions } from '../../../../types/auth.js';
+import { AuthCore, type AuthMiddlewareOptions } from './core.js';
 
 const logger = createFrameworkLogger('AuthMiddleware');
 
+// app.use() calls the function stored under this key, when a middleware has
+// one, with the app: the request hooks alone cannot serve routes after the
+// application's global middleware (CORS, security headers).
+const APP_INSTALL = Symbol.for('morojs.middleware.appInstall');
+
 /**
- * Auth hook for global usage
- * Registers with the hooks system for application-wide Better Auth authentication
+ * Authentication for the whole app: `app.use(auth(options))`.
+ *
+ * Sets `req.auth` on every request, which is what the guards
+ * (`requireAuth()`, `requireRole()`, ...) and a route's `.auth()` read.
+ *
+ * - **Bearer tokens.** `Authorization: Bearer <jwt>` is verified (HS256 unless
+ *   `jwt.algorithms` says otherwise; `jwt.audience` / `jwt.issuer` when set)
+ *   with the first of `jwt.secret`, `secret`, `JWT_SECRET`, `NEXTAUTH_SECRET`,
+ *   `AUTH_SECRET`. A valid token authenticates the request as the user in its
+ *   claims. Needs the `jsonwebtoken` package.
+ * - **Sign-in.** With `providers` (or `betterAuth`) and the `better-auth`
+ *   package installed, sign-in, callback, session and sign-out are served
+ *   under `basePath` (default `/api/auth`) by the same Better Auth adapter
+ *   `createAuthMiddleware()` uses, and its session authenticates the request.
+ *   Without the package there are no sign-in routes, and start-up says so.
+ * - **Feature helpers.** `plugins: [twoFactor(), organization(), anonymous(),
+ *   bearerToken()]`, `accountLinking: accountLinking()` and
+ *   `rateLimit: rateLimit()` turn on the Better Auth feature each one stands
+ *   for; its routes are served under `basePath` with the sign-in routes. See
+ *   each helper for its options and what it stores.
  *
  * @example
  * ```ts
- * import { auth, providers } from '@/middleware/built-in/auth';
+ * import { auth, providers, requireAuth } from '@morojs/moro';
  *
- * app.use(auth({
- *   secret: process.env.AUTH_SECRET,
- *   providers: [
- *     providers.google({
- *       clientId: process.env.GOOGLE_CLIENT_ID,
- *       clientSecret: process.env.GOOGLE_CLIENT_SECRET
- *     }),
- *     providers.github({
- *       clientId: process.env.GITHUB_CLIENT_ID,
- *       clientSecret: process.env.GITHUB_CLIENT_SECRET
- *     })
- *   ],
- *   session: {
- *     strategy: 'jwt',
- *     maxAge: 30 * 24 * 60 * 60
- *   }
- * }));
+ * await app.use(
+ *   auth({
+ *     secret: process.env.AUTH_SECRET,
+ *     baseURL: 'https://app.example.com',
+ *     providers: [
+ *       providers.github({
+ *         clientId: process.env.GITHUB_CLIENT_ID,
+ *         clientSecret: process.env.GITHUB_CLIENT_SECRET,
+ *       }),
+ *     ],
+ *   })
+ * );
+ *
+ * app.get('/me').before(requireAuth()).handler(req => req.auth.user);
  * ```
  */
-export const auth = (options: AuthOptions): MiddlewareInterface => ({
-  name: 'auth',
-  version: '2.0.0',
-  metadata: {
+export const auth = (options: AuthMiddlewareOptions = {}): MiddlewareInterface => {
+  let authCore: AuthCore | undefined;
+  let ready: Promise<void> | undefined;
+
+  const middleware: MiddlewareInterface = {
     name: 'auth',
     version: '2.0.0',
-    description: 'Better Auth authentication middleware with OAuth, JWT, and session support',
-    author: 'MoroJS Team',
-    dependencies: [],
-    tags: ['authentication', 'oauth', 'jwt', 'security', 'better-auth'],
-  },
+    metadata: {
+      name: 'auth',
+      version: '2.0.0',
+      description: 'Better Auth authentication middleware with OAuth, JWT, and session support',
+      author: 'MoroJS Team',
+      dependencies: [],
+      tags: ['authentication', 'oauth', 'jwt', 'security', 'better-auth'],
+    },
 
-  install: async (hooks: any, middlewareOptions: Partial<AuthOptions> = {}) => {
-    logger.debug('Installing Better Auth middleware', 'Installation', {
-      options: middlewareOptions,
-    });
+    install: (hooks: any, middlewareOptions: Partial<AuthMiddlewareOptions> = {}) => {
+      logger.debug('Installing auth middleware', 'Installation');
 
-    const config = { ...options, ...middlewareOptions };
-    const authCore = new AuthCore(config);
+      const core = new AuthCore({ ...options, ...middlewareOptions });
+      authCore = core;
 
-    // Initialize Better Auth
-    await authCore.initialize();
+      // Loading Better Auth takes a moment. The hook is registered now and
+      // waits for it, so no request is served without req.auth meanwhile.
+      const initializing = core.initialize();
+      ready = initializing;
 
-    // Register hooks for request processing
-    hooks.before('request', async (context: HookContext) => {
-      const req = context.request as any;
-      const res = context.response as any;
+      hooks.before('request', async (context: HookContext) => {
+        await initializing;
+        const req = context.request as any;
+        const res = context.response as any;
+        // Answered by a hook that ran before this one: nothing left to do
+        if (res && res.headersSent) return;
 
-      // Handle Better Auth API routes first
-      if (authCore.isAuthRoute(req.url)) {
-        try {
-          const response = await authCore.handleAuthRoute(req, res);
-          if (response) {
-            return response;
-          }
-        } catch (error) {
-          logger.error('Better Auth handler error', 'HandlerError', { error });
-          throw error;
+        if (core.isAuthRoute(req)) {
+          // Mounted on an app, the sign-in routes are answered further on, in
+          // its middleware chain. Installed straight into a MiddlewareManager
+          // there is no chain to join: they are answered here.
+          if (!core.isMountedOnApp()) await core.handleAuthRoute(req, res);
+          return;
         }
-      }
 
-      // Extract and verify JWT token
-      const {
-        token,
-        session: tokenSession,
-        error,
-      } = await authCore.verifyToken(req.headers?.authorization);
+        // Bearer token or session: sets req.auth, or answers 401 itself
+        await core.authenticate(req, res);
+      });
 
-      // Handle JWT errors for API requests
-      if (error) {
-        const errorResponse = authCore.handleJWTError(error, req, res);
-        if (errorResponse) {
-          return errorResponse;
-        }
-      }
+      return initializing.then(() => {
+        logger.info(
+          `Auth middleware installed with ${core.getProviderCount()} providers` +
+            (core.hasSignInRoutes() ? ', sign-in routes served by Better Auth' : ''),
+          'Installation'
+        );
+      });
+    },
+  };
 
-      // Get session from cookie if no token session
-      let session = tokenSession;
-      if (!session) {
-        session = await authCore.getSession(req);
-      }
+  (middleware as any)[APP_INSTALL] = (app: unknown) => {
+    if (authCore) authCore.installedOn(app);
+    // Takes the routes' place in the app's middleware chain at once; they
+    // start answering when Better Auth has loaded.
+    if (authCore && ready && authCore.hasSignInRoutes()) authCore.mountRoutes(app, ready);
+  };
 
-      // Create and attach auth request object
-      const authRequest = authCore.createAuthRequest(session, token || undefined);
-      req.auth = authRequest;
-
-      if (authRequest.isAuthenticated) {
-        logger.debug('User authenticated', 'Authentication', {
-          userId: authRequest.user?.id,
-          provider: authRequest.user?.provider || 'unknown',
-        });
-      }
-    });
-
-    // Response processing hook
-    hooks.after('response', async (context: HookContext) => {
-      const req = context.request as any;
-
-      if (req.auth?.session) {
-        await authCore.updateSession(req.auth.session);
-      }
-    });
-
-    logger.info(
-      `Better Auth middleware installed with ${authCore.getProviderCount()} providers`,
-      'Installation'
-    );
-  },
-});
+  return middleware;
+};

@@ -12,7 +12,9 @@ import type {
   QueueMetrics,
   BulkJobData,
   JobContext,
+  QueueRetentionOptions,
 } from '../types.js';
+import { JobRetention } from './retention.js';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../../logger/index.js';
 
@@ -45,6 +47,12 @@ export class MemoryAdapter extends QueueAdapter {
   public name = 'memory';
   private queues: Map<string, QueueState> = new Map();
   private processingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private retention: JobRetention;
+
+  constructor(retention?: QueueRetentionOptions) {
+    super();
+    this.retention = new JobRetention(retention);
+  }
 
   /**
    * Initialize the memory adapter
@@ -83,6 +91,8 @@ export class MemoryAdapter extends QueueAdapter {
       job.timeoutId.unref();
     }
 
+    // An id given a second time names a new job, not the finished one
+    this.retention.forget(queueName, jobId);
     queue.jobs.set(jobId, job);
 
     // Process immediately if not delayed
@@ -189,6 +199,7 @@ export class MemoryAdapter extends QueueAdapter {
     }
 
     queue.jobs.delete(jobId);
+    this.retention.forget(queueName, jobId);
   }
 
   /**
@@ -212,6 +223,7 @@ export class MemoryAdapter extends QueueAdapter {
     job.stacktrace = undefined;
     job.processedOn = undefined;
     job.finishedOn = undefined;
+    this.retention.forget(queueName, jobId);
 
     // Process the job again
     await this.processJob(queueName, jobId);
@@ -337,6 +349,7 @@ export class MemoryAdapter extends QueueAdapter {
       }
 
       this.queues.delete(queueName);
+      this.retention.clear(queueName);
     }
   }
 
@@ -360,6 +373,7 @@ export class MemoryAdapter extends QueueAdapter {
     }
 
     this.queues.clear();
+    this.retention.clear();
     this.isReady = false;
   }
 
@@ -452,6 +466,9 @@ export class MemoryAdapter extends QueueAdapter {
           typeof job.opts.removeOnComplete === 'number' ? job.opts.removeOnComplete : 0
         );
       }
+      // Without a setting of its own the job is kept among the most recent
+      // completed jobs of its queue
+      this.retention.finished(queueName, jobId, 'completed', job.opts.removeOnComplete, queue.jobs);
     } catch (error) {
       // Mark as failed
       job.failedReason = error instanceof Error ? error.message : String(error);
@@ -493,6 +510,7 @@ export class MemoryAdapter extends QueueAdapter {
             typeof job.opts.removeOnFail === 'number' ? job.opts.removeOnFail : 0
           );
         }
+        this.retention.finished(queueName, jobId, 'failed', job.opts.removeOnFail, queue.jobs);
       }
     } finally {
       queue.activeJobs--;

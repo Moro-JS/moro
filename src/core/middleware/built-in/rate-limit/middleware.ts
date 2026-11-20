@@ -3,6 +3,8 @@ import { StandardMiddleware } from '../../../../types/hooks.js';
 import {
   sharedRateLimitCore,
   onResponseFinished,
+  rateLimitClientId,
+  rateLimitRouteKey,
   shouldRefund,
   type RateLimitConfig,
 } from './core.js';
@@ -26,8 +28,8 @@ export function createRateLimitMiddleware(config: RateLimitConfig): StandardMidd
   }
 
   return async (req: any, res: any, next: () => void) => {
-    const clientId = req.ip || req.connection?.remoteAddress || 'unknown';
-    const routeKey = `${req.method}:${req.path}`;
+    const clientId = rateLimitClientId(req, config.keyGenerator);
+    const routeKey = rateLimitRouteKey(req);
 
     const allowed = sharedRateLimitCore.check(clientId, routeKey, config.requests, config.window);
 

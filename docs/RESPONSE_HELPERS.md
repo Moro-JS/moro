@@ -21,11 +21,11 @@ Complete reference for standardized API response helpers in MoroJS.
 
 MoroJS provides three layers of response helpers:
 
-| Layer | Sets HTTP Status? | Sends Response? | Import |
-| --- | --- | --- | --- |
-| `res.*` methods | Yes | Yes | Available on every `res` object |
-| Standalone functions | No | No | `import { response } from '@morojs/moro'` |
-| `ResponseBuilder` | No | No | `import { ResponseBuilder } from '@morojs/moro'` |
+| Layer                | Sets HTTP Status? | Sends Response? | Import                                           |
+| -------------------- | ----------------- | --------------- | ------------------------------------------------ |
+| `res.*` methods      | Yes               | Yes             | Available on every `res` object                  |
+| Standalone functions | No                | No              | `import { response } from '@morojs/moro'`        |
+| `ResponseBuilder`    | No                | No              | `import { ResponseBuilder } from '@morojs/moro'` |
 
 All responses follow a consistent shape:
 
@@ -86,13 +86,14 @@ type Middleware = (req: HttpRequest, res: HttpResponse, next: () => void) => Pro
 
 ```typescript
 interface CookieOptions {
-  maxAge?: number;
+  maxAge?: number | null; // lifetime in milliseconds; sent as whole seconds of Max-Age
   expires?: Date;
   httpOnly?: boolean;
   secure?: boolean;
   sameSite?: 'strict' | 'lax' | 'none';
   domain?: string;
   path?: string;
+  signed?: boolean; // sign the value; needs middleware.cookie({ secret })
   critical?: boolean;
   throwOnLateSet?: boolean;
 }
@@ -114,7 +115,7 @@ interface ResponseState {
 
 ## HttpResponse Methods
 
-Every `res` object has the following methods. They are all part of the `MoroResponseMethods` interface merged onto Node's `ServerResponse`.
+Every `res` object has the following methods. They are all part of the `MoroResponseMethods` interface merged onto Node's `ServerResponse`, and are available on every server: the native engine, the Node.js HTTP server and the Node.js HTTP/2 server.
 
 ### Core Methods
 
@@ -125,8 +126,10 @@ Serializes `data` as JSON and sends it. Sets `Content-Type: application/json`.
 ```typescript
 handler: (req, res) => {
   res.json({ hello: 'world' });
-}
+};
 ```
+
+`res.json(undefined)` sends an empty body with the JSON content type and the status that was set. With status `204` nothing is sent after the head, and the head carries no `Content-Length`.
 
 ---
 
@@ -137,7 +140,7 @@ Sets the HTTP status code. Returns `res` for chaining.
 ```typescript
 handler: (req, res) => {
   res.status(201).json({ success: true, data: newUser });
-}
+};
 ```
 
 ---
@@ -149,7 +152,7 @@ Sends a string or Buffer response.
 ```typescript
 handler: (req, res) => {
   res.send('Hello, world');
-}
+};
 ```
 
 ---
@@ -158,18 +161,54 @@ handler: (req, res) => {
 
 Sets a cookie on the response. Returns `res` for chaining.
 
-| Parameter | Type |
-| --- | --- |
-| `name` | `string` |
-| `value` | `string` |
+| Parameter | Type                       |
+| --------- | -------------------------- |
+| `name`    | `string`                   |
+| `value`   | `string`                   |
 | `options` | `CookieOptions` (optional) |
 
 ```typescript
 handler: (req, res) => {
-  res.cookie('session', token, { httpOnly: true, secure: true, sameSite: 'strict' })
-     .json({ success: true });
-}
+  res
+    .cookie('session', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours, in milliseconds
+    })
+    .json({ success: true });
+};
+// Set-Cookie: session=...; Max-Age=86400; HttpOnly; Secure; SameSite=strict; Path=/
 ```
+
+- `maxAge` is the cookie's lifetime in **milliseconds**, as in Express. It is sent as whole seconds
+  of `Max-Age` (`maxAge: 1500` becomes `Max-Age=1`); `maxAge: 0` expires the cookie at once and
+  `maxAge: null` sends no `Max-Age`. No `Expires` is derived from it: pass `expires` when you want
+  that attribute as well. A lifetime written in seconds (`maxAge: 3600`) is read as 3.6 seconds, so
+  check values carried over from code written for earlier versions, where the number was sent as
+  `Max-Age` unchanged.
+- `Path` defaults to `/`.
+- The same call sends the same `Set-Cookie` value on every server (the native engine, the Node.js
+  HTTP/1 and HTTP/2 servers, the serverless runtimes) and through the cookie middleware: the
+  attributes come in one order (`Max-Age`, `Expires`, `HttpOnly`, `Secure`, `SameSite`, `Domain`,
+  `Path`), and `res.clearCookie(name, options)` sends `Max-Age=0` and an `Expires` in the past with
+  the `path`, `domain`, `httpOnly`, `secure` and `sameSite` you pass. `expires` is a `Date`.
+- `secure` left out follows the connection: the cookie is `Secure` when the request arrived over
+  TLS, and is not when it arrived over plain HTTP. "Over TLS" is a TLS connection to this server
+  (`server.ssl`), or `X-Forwarded-Proto: https` from a proxy named in `server.trustProxy`; a
+  forwarded header from anyone else does not count, so behind a proxy that terminates TLS either
+  set `server.trustProxy` or pass `secure: true`. `secure: true` and `secure: false` are taken as
+  written. `res.clearCookie()` follows the same rule. `sameSite: 'none'` on a cookie that is not
+  `Secure` logs one warning, because browsers drop such a cookie.
+- The value is URL-encoded. The name and the attribute values are checked instead, because they are
+  written into the header as given: a name that is not a valid cookie name (letters, digits and
+  ``!#$%&'*+-.^_`|~``), a `domain` that is not a host name, a `path` holding `;` or a control
+  character, or a `sameSite` other than `'strict'`, `'lax'` or `'none'` throws a `TypeError` at the
+  call.
+- `signed: true` needs the cookie middleware, which holds the secret:
+  `app.use(middleware.cookie({ secret }))`. Without it the call throws instead of sending the value
+  unsigned. (On AWS Lambda, Vercel Edge and Cloudflare Workers cookies are not signed and the call
+  warns once; sign the value yourself there.)
 
 ---
 
@@ -180,8 +219,11 @@ Clears a cookie. Returns `res` for chaining.
 ```typescript
 handler: (req, res) => {
   res.clearCookie('session').json({ success: true });
-}
+};
 ```
+
+Pass the `path` and `domain` the cookie was set with; a browser only removes a cookie whose path
+and domain match.
 
 ---
 
@@ -194,20 +236,95 @@ handler: (req, res) => {
   res.redirect('/login');
   // or with a specific status
   res.redirect('/new-location', 301);
-}
+};
 ```
+
+The URL is written to the `Location` header, and a printable ASCII URL is sent exactly as given. Line breaks are removed from it, any other control character (a NUL from decoded user input, for example) is percent-encoded (`%00`), and a URL with characters outside Latin-1 has its non-ASCII characters percent-encoded as UTF-8, so `res.redirect('/日本')` sends `Location: /%E6%97%A5%E6%9C%AC`. `res.location(url)` sets the same header without ending the response.
 
 ---
 
-#### res.sendFile(filePath)
+#### res.sendFile(filePath, options?)
 
 Streams a file as the response. Returns a `Promise<void>`.
 
 ```typescript
 handler: async (req, res) => {
   await res.sendFile('/uploads/report.pdf');
-}
+};
 ```
+
+The response carries the file's `Content-Type` (from its extension), `Content-Length`, `Last-Modified` and `X-Content-Type-Options: nosniff`. A path that is missing or not a regular file is answered `404` with a JSON body. The promise never rejects.
+
+No `Cache-Control` is sent unless you ask for one: how long a file may be cached, and whether a shared cache may keep it, depends on what the file is and who may see it. A `Cache-Control` the handler set before the call is left as it is.
+
+| Option         | Type                            | What it does                                                                                                                                                                             |
+| -------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxAge`       | `number` (**seconds**)          | Sends `Cache-Control: public, max-age=<maxAge>`. The unit is seconds, as for `staticFiles` (cookie `maxAge` is a different option with its own unit).                                    |
+| `immutable`    | `boolean`                       | Adds `immutable` to the header `maxAge` produces. Has no effect without `maxAge`.                                                                                                        |
+| `cacheControl` | `string \| boolean`             | A string is sent as the header value as written, for example `'private, max-age=600'`. `true` sends `public, max-age=<maxAge or 0>`; `false` sends none, whatever `maxAge` says.         |
+| `root`         | `string`                        | Directory the path is resolved against and confined to. A path that leads outside it (`../`, an absolute path, a symlink pointing out) is answered `404`.                                |
+| `dotfiles`     | `'ignore' \| 'deny' \| 'allow'` | What to do with a hidden path: `'ignore'` answers `404`, `'deny'` `403`, `'allow'` serves it. Default `'ignore'` when `root` is set, `'allow'` otherwise. `.well-known` is never hidden. |
+
+```typescript
+handler: async (req, res) => {
+  // A fingerprinted asset: cache for a year
+  await res.sendFile('./public/app.3f9a1c.js', { maxAge: 31536000, immutable: true });
+};
+```
+
+```typescript
+handler: async (req, res) => {
+  // A per-user file: the browser may keep it, a shared cache may not.
+  // `root` keeps a path built from a route parameter inside the directory
+  // (route params arrive percent-decoded, so `..%2F` is `../` in the handler).
+  await res.sendFile(`${req.params.name}.pdf`, {
+    root: './invoices',
+    cacheControl: 'private, max-age=600',
+  });
+};
+```
+
+With `root`, the dotfile policy covers every segment of the path below the root, in the path as given and in the path it resolves to, as it does for `staticFiles`. Without `root`, `sendFile()` serves the path exactly as given, so confine it yourself or pass `root`.
+
+Files up to 64 KB are sent in one write; larger files are streamed, so memory use does not grow with the size of the file.
+
+---
+
+#### res.attachment(filename?)
+
+Sets `Content-Disposition: attachment`, with the file name when one is given, so the browser saves the response instead of displaying it. Returns `res` for chaining.
+
+```typescript
+handler: (req, res) => {
+  res.attachment('report.csv').type('text/csv').send('id,total\n1,42\n');
+};
+```
+
+An ASCII or Latin-1 name is sent as `filename="report.csv"`. Any other name is sent twice (RFC 6266): an ASCII stand-in for old clients and the real name, UTF-8 percent-encoded, which current browsers use. `res.attachment('报告.pdf')` sends `attachment; filename="__.pdf"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf`.
+
+---
+
+#### res.download(filePath, filename?, options?)
+
+`res.attachment()` followed by `res.sendFile()`: sends the file as a download named `filename`, or after the file itself when no name is given. Returns a `Promise<void>` that never rejects.
+
+```typescript
+handler: async (req, res) => {
+  await res.download('/uploads/2026-q3.pdf', 'Quarterly report.pdf');
+};
+```
+
+The download name only goes into `Content-Disposition`. The `Content-Type` is the file's own, taken from the path that is sent: `res.download('export.json', 'report.pdf')` is sent as `application/json`. (On the native engine a `Content-Type` the handler set before the call is kept; the Node.js servers always send the file's.)
+
+`options` are the ones `res.sendFile()` takes (`maxAge` in seconds, `immutable`, `cacheControl`, `root`, `dotfiles`), as the third argument or in place of the name. Like `sendFile()`, `download()` sends no `Cache-Control` unless asked.
+
+```typescript
+handler: async (req, res) => {
+  await res.download(`${req.params.id}.zip`, 'export.zip', { root: './exports' });
+};
+```
+
+A missing file is answered `404` with a JSON body and no `Content-Disposition`, so the browser shows the error instead of saving it under the file's name.
 
 ---
 
@@ -218,7 +335,7 @@ Renders a template (if a template engine is configured). Returns a `Promise<void
 ```typescript
 handler: async (req, res) => {
   await res.render('dashboard', { user: req.user });
-}
+};
 ```
 
 ---
@@ -232,19 +349,20 @@ These methods set the HTTP status code and send the response in a single call. A
 Sends a `200 OK` response with the provided data.
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const users = await getUsers();
   res.success(users);
-}
+};
 
 // With message
-handler: (req, res) => {
+handler: async (req, res) => {
   const user = await createUser(req.body);
   res.success(user, 'User created successfully');
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": true,
@@ -260,13 +378,14 @@ handler: (req, res) => {
 Sends a `201 Created` response. Optionally sets the `Location` header.
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const user = await createUser(req.body);
   res.created(user, `/api/users/${user.id}`);
-}
+};
 ```
 
 **Response body:**
+
 ```json
 { "success": true, "data": { "id": 1, "name": "Alice" } }
 ```
@@ -280,10 +399,10 @@ handler: (req, res) => {
 Sends a `204 No Content` response with an empty body.
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   await deleteUser(req.params.id);
   res.noContent();
-}
+};
 ```
 
 ---
@@ -292,19 +411,20 @@ handler: (req, res) => {
 
 Sends a `200 OK` response with pagination metadata automatically calculated.
 
-| Parameter | Type |
-| --- | --- |
-| `data` | `T[]` |
+| Parameter    | Type                                             |
+| ------------ | ------------------------------------------------ |
+| `data`       | `T[]`                                            |
 | `pagination` | `{ page: number; limit: number; total: number }` |
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const { users, total } = await getUsers({ page: 1, limit: 20 });
   res.paginated(users, { page: 1, limit: 20, total });
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": true,
@@ -335,7 +455,7 @@ handler: (req, res) => {
   res.status(500).json({ success: false, error: 'Something went wrong' });
   // or
   res.error('Something went wrong', 'CUSTOM_ERROR', 'Additional details');
-}
+};
 ```
 
 ---
@@ -344,8 +464,8 @@ handler: (req, res) => {
 
 Sends a `400 Bad Request` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter | Type     | Default             |
+| --------- | -------- | ------------------- |
 | `message` | `string` | `'Invalid request'` |
 
 ```typescript
@@ -354,10 +474,11 @@ handler: (req, res) => {
     res.badRequest('Email is required');
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -373,8 +494,8 @@ handler: (req, res) => {
 
 Sends a `401 Unauthorized` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter | Type     | Default                     |
+| --------- | -------- | --------------------------- |
 | `message` | `string` | `'Authentication required'` |
 
 ```typescript
@@ -383,10 +504,11 @@ handler: (req, res) => {
     res.unauthorized();
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -402,8 +524,8 @@ handler: (req, res) => {
 
 Sends a `403 Forbidden` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter | Type     | Default                      |
+| --------- | -------- | ---------------------------- |
 | `message` | `string` | `'Insufficient permissions'` |
 
 ```typescript
@@ -412,10 +534,11 @@ handler: (req, res) => {
     res.forbidden('Admin access required');
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -431,21 +554,22 @@ handler: (req, res) => {
 
 Sends a `404 Not Found` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter  | Type     | Default      |
+| ---------- | -------- | ------------ |
 | `resource` | `string` | `'Resource'` |
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const user = await getUser(req.params.id);
   if (!user) {
     res.notFound('User');
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -461,21 +585,22 @@ handler: (req, res) => {
 
 Sends a `409 Conflict` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `message` | `string` | *(required)* |
+| Parameter | Type     | Default      |
+| --------- | -------- | ------------ |
+| `message` | `string` | _(required)_ |
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const existing = await getUserByEmail(req.body.email);
   if (existing) {
     res.conflict('Email already in use');
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -491,9 +616,9 @@ handler: (req, res) => {
 
 Sends a `422 Unprocessable Entity` response with field-level error details.
 
-| Parameter | Type |
-| --- | --- |
-| `errors` | `Array<{ field: string; message: string; code?: string }>` |
+| Parameter | Type                                                       |
+| --------- | ---------------------------------------------------------- |
+| `errors`  | `Array<{ field: string; message: string; code?: string }>` |
 
 ```typescript
 handler: (req, res) => {
@@ -505,10 +630,11 @@ handler: (req, res) => {
     ]);
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -527,21 +653,22 @@ handler: (req, res) => {
 
 Sends a `429 Too Many Requests` response. When `retryAfter` is provided, the `Retry-After` header is set automatically.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter    | Type               | Default     |
+| ------------ | ------------------ | ----------- |
 | `retryAfter` | `number` (seconds) | `undefined` |
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const limited = await checkRateLimit(req.ip);
   if (limited) {
     res.rateLimited(60);
     return;
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -560,22 +687,23 @@ handler: (req, res) => {
 
 Sends a `500 Internal Server Error` response.
 
-| Parameter | Type | Default |
-| --- | --- | --- |
+| Parameter | Type     | Default                   |
+| --------- | -------- | ------------------------- |
 | `message` | `string` | `'Internal server error'` |
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   try {
     const data = await fetchExternalService();
     res.success(data);
   } catch (err) {
     res.internalError('Failed to fetch data from external service');
   }
-}
+};
 ```
 
 **Response body:**
+
 ```json
 {
   "success": false,
@@ -606,11 +734,13 @@ if (!res.hasHeader('X-Request-Id')) {
 Sets multiple headers at once. Returns `res` for chaining.
 
 ```typescript
-res.setBulkHeaders({
-  'X-Request-Id': req.requestId,
-  'X-Response-Time': 42,
-  'Cache-Control': 'no-store',
-}).json(data);
+res
+  .setBulkHeaders({
+    'X-Request-Id': req.requestId,
+    'X-Response-Time': 42,
+    'Cache-Control': 'no-store',
+  })
+  .json(data);
 ```
 
 ---
@@ -620,8 +750,7 @@ res.setBulkHeaders({
 Appends a value to an existing header (or creates it). Returns `res` for chaining.
 
 ```typescript
-res.appendHeader('Set-Cookie', 'a=1')
-   .appendHeader('Set-Cookie', 'b=2');
+res.appendHeader('Set-Cookie', 'a=1').appendHeader('Set-Cookie', 'b=2');
 ```
 
 ---
@@ -659,18 +788,18 @@ import { response } from '@morojs/moro';
 
 ### Quick Reference
 
-| Function | Returns |
-| --- | --- |
-| `response.success(data, message?)` | `{ success: true, data, message? }` |
-| `response.error(error, code?, message?)` | `{ success: false, error, code?, message? }` |
-| `response.validationError(details, message?)` | `{ success: false, error: 'Validation failed', ... }` |
-| `response.unauthorized(message?)` | `{ success: false, error: 'Unauthorized', ... }` |
-| `response.forbidden(message?)` | `{ success: false, error: 'Forbidden', ... }` |
-| `response.notFound(resource?)` | `{ success: false, error: 'Not Found', ... }` |
-| `response.conflict(message)` | `{ success: false, error: 'Conflict', ... }` |
-| `response.badRequest(message?)` | `{ success: false, error: 'Bad Request', ... }` |
-| `response.internalError(message?)` | `{ success: false, error: 'Internal Server Error', ... }` |
-| `response.rateLimited(retryAfter?)` | `{ success: false, error: 'Too Many Requests', ... }` |
+| Function                                      | Returns                                                   |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `response.success(data, message?)`            | `{ success: true, data, message? }`                       |
+| `response.error(error, code?, message?)`      | `{ success: false, error, code?, message? }`              |
+| `response.validationError(details, message?)` | `{ success: false, error: 'Validation failed', ... }`     |
+| `response.unauthorized(message?)`             | `{ success: false, error: 'Unauthorized', ... }`          |
+| `response.forbidden(message?)`                | `{ success: false, error: 'Forbidden', ... }`             |
+| `response.notFound(resource?)`                | `{ success: false, error: 'Not Found', ... }`             |
+| `response.conflict(message)`                  | `{ success: false, error: 'Conflict', ... }`              |
+| `response.badRequest(message?)`               | `{ success: false, error: 'Bad Request', ... }`           |
+| `response.internalError(message?)`            | `{ success: false, error: 'Internal Server Error', ... }` |
+| `response.rateLimited(retryAfter?)`           | `{ success: false, error: 'Too Many Requests', ... }`     |
 
 ### Usage
 
@@ -678,19 +807,19 @@ import { response } from '@morojs/moro';
 import { response } from '@morojs/moro';
 
 // Return directly (sends 200 with body)
-handler: (req, res) => {
+handler: async (req, res) => {
   const users = await getUsers();
   return response.success(users);
-}
+};
 
 // Pair with res.status() for proper HTTP codes
-handler: (req, res) => {
+handler: async (req, res) => {
   const user = await getUser(req.params.id);
   if (!user) {
     return res.status(404).json(response.notFound('User'));
   }
   return response.success(user);
-}
+};
 ```
 
 ---
@@ -705,24 +834,22 @@ import { ResponseBuilder } from '@morojs/moro';
 
 ### Methods
 
-| Method | Description |
-| --- | --- |
-| `ResponseBuilder.success(data)` | Start a success response |
-| `ResponseBuilder.error(error, code?)` | Start an error response |
-| `.message(msg)` | Add a message |
-| `.details(details)` | Add details (error responses) |
-| `.code(code)` | Add an error code |
-| `.build()` | Return the final response object |
+| Method                                | Description                      |
+| ------------------------------------- | -------------------------------- |
+| `ResponseBuilder.success(data)`       | Start a success response         |
+| `ResponseBuilder.error(error, code?)` | Start an error response          |
+| `.message(msg)`                       | Add a message                    |
+| `.details(details)`                   | Add details (error responses)    |
+| `.code(code)`                         | Add an error code                |
+| `.build()`                            | Return the final response object |
 
 ### Usage
 
 ```typescript
-handler: (req, res) => {
+handler: async (req, res) => {
   const users = await getUsers();
-  return ResponseBuilder.success(users)
-    .message('Retrieved all active users')
-    .build();
-}
+  return ResponseBuilder.success(users).message('Retrieved all active users').build();
+};
 
 handler: (req, res) => {
   return res.status(404).json(
@@ -730,7 +857,7 @@ handler: (req, res) => {
       .details({ id: req.params.id, searched: ['db', 'cache'] })
       .build()
   );
-}
+};
 ```
 
 ---
@@ -743,7 +870,7 @@ When a handler returns a plain object, the framework serializes it as JSON with 
 // THIS SENDS HTTP 200 -- the "status" field is just data in the JSON body
 handler: (req, res) => {
   return { error: 'Forbidden', status: 403 };
-}
+};
 ```
 
 To send an actual HTTP 403, use one of these approaches:
@@ -753,17 +880,17 @@ To send an actual HTTP 403, use one of these approaches:
 handler: (req, res) => {
   res.forbidden('You do not have access');
   return;
-}
+};
 
 // Option 2: res.status().json() with standalone helper
 handler: (req, res) => {
   return res.status(403).json(response.forbidden('You do not have access'));
-}
+};
 
 // Option 3: res.status().json() manually
 handler: (req, res) => {
   return res.status(403).json({ success: false, error: 'Forbidden' });
-}
+};
 ```
 
 **Rule of thumb:** If you need an HTTP status other than 200, always use a `res.*` method or `res.status()` explicitly.

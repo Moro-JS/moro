@@ -1,7 +1,7 @@
 // Cookie Middleware - Standard (req, res, next) middleware function
 import { StandardMiddleware } from '../../../../types/hooks.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import { CookieCore, type CookieOptions } from './core.js';
+import { CookieCore, type CookieOptions, type CookieSecret } from './core.js';
 
 /**
  * Create cookie middleware for use in middleware chains
@@ -18,7 +18,7 @@ import { CookieCore, type CookieOptions } from './core.js';
  * res.clearCookie('user')
  * ```
  */
-export function createCookieMiddleware(secret?: string): StandardMiddleware {
+export function createCookieMiddleware(secret?: CookieSecret): StandardMiddleware {
   const cookieCore = new CookieCore(secret);
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
@@ -26,18 +26,18 @@ export function createCookieMiddleware(secret?: string): StandardMiddleware {
     const resAny = res as any;
 
     // Parse cookies from request; signed values are verified and kept apart
-    const split = cookieCore.splitSignedCookies(cookieCore.parseCookies(req.headers.cookie));
+    const split = cookieCore.readCookies(req.headers.cookie);
     reqAny.cookies = split.cookies;
     reqAny.signedCookies = split.signedCookies;
 
     // Add cookie methods to response
     resAny.cookie = (name: string, value: string, options: CookieOptions = {}) => {
-      cookieCore.setCookie(res, name, value, options);
+      cookieCore.setCookie(res, name, value, options, req);
       return res;
     };
 
     resAny.clearCookie = (name: string, options: CookieOptions = {}) => {
-      cookieCore.clearCookie(res, name, options);
+      cookieCore.clearCookie(res, name, options, req);
       return res;
     };
 

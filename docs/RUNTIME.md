@@ -10,6 +10,7 @@ Complete guide to MoroJS multi-runtime deployment across Node.js, Vercel Edge, A
 - [Vercel Edge Runtime](#vercel-edge-runtime)
 - [AWS Lambda Runtime](#aws-lambda-runtime)
 - [Cloudflare Workers Runtime](#cloudflare-workers-runtime)
+- [Requests and Responses on Serverless Runtimes](#requests-and-responses-on-serverless-runtimes)
 - [Cross-Runtime Compatibility](#cross-runtime-compatibility)
 - [Deployment Strategies](#deployment-strategies)
 - [Configuration](#configuration)
@@ -118,29 +119,20 @@ app.listen(3000, () => {
 ### Cluster Mode
 
 ```typescript
-import cluster from 'cluster';
-import os from 'os';
 import { createApp } from '@morojs/moro';
 
-if (cluster.isMaster) {
-  const numCPUs = os.cpus().length;
+// Clustering is built in: the primary starts the workers (threads or processes) and starts
+// one that dies again, after a delay that grows from 200 ms to 5 s
+const app = await createApp({
+  performance: {
+    clustering: {
+      enabled: true,
+      workers: 'auto', // or a number
+    },
+  },
+});
 
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork();
-  }
-
-  cluster.on('exit', worker => {
-    console.log(`Worker ${worker.process.pid} died`);
-    cluster.fork();
-  });
-} else {
-  const app = await createApp({
-    cluster: true,
-    workerId: cluster.worker.id,
-  });
-
-  app.listen(3000);
-}
+app.listen(3000);
 ```
 
 ### Docker Deployment
@@ -216,20 +208,12 @@ export default app.getHandler();
 ### Edge-Optimized Configuration
 
 ```typescript
-const app = await createAppEdge({
-  // Enable streaming for large responses
-  streaming: true,
+const app = await createAppEdge();
 
-  // Cache configuration
-  cache: {
-    edge: true,
-    maxAge: 3600,
-    staleWhileRevalidate: 86400,
-  },
+export default app.getHandler();
 
-  // Deploy to specific regions
-  regions: ['iad1', 'sfo1', 'cdg1'],
-});
+// Regions are chosen in the platform's own route config, not in the app
+export const config = { runtime: 'edge', regions: ['iad1', 'sfo1', 'cdg1'] };
 ```
 
 ### Geo-Location Features
@@ -248,21 +232,19 @@ app.get('/api/geo', (req, res) => {
 ### Edge Caching
 
 ```typescript
-// Route-level cache config is { ttl, key?, tags? }
+// Route-level cache config is { ttl, key?, tags? }.
+// The response differs per country, so the country is part of the key:
+// without it every country would be served the first cached response.
 app
   .get('/api/content/:id')
-  .cache({ ttl: 3600, tags: ['content'] })
+  .cache({
+    ttl: 3600,
+    tags: ['content'],
+    key: req => `content:${req.params.id}:${req.headers['x-vercel-ip-country']}`,
+  })
   .handler((req, res) => {
     return { content: getLocalizedContent(req.params.id, req.headers['x-vercel-ip-country']) };
   });
-
-// To vary cached entries by header, configure it on the cache middleware:
-app.use(
-  middleware.cache({
-    defaultTtl: 3600,
-    vary: ['x-vercel-ip-country'], // Cache per country
-  })
-);
 ```
 
 ### Vercel Configuration
@@ -291,18 +273,15 @@ AWS Lambda provides event-driven, auto-scaling serverless compute.
 // handler.ts
 import { createAppLambda } from '@morojs/moro';
 
-const app = await createAppLambda({
-  // Lambda-specific configuration
-  memorySize: 1024,
-  timeout: 30,
-  runtime: 'nodejs18.x',
-});
+// Memory, timeout and Node.js version are set on the Lambda function itself
+// (see the deployment config below), not in the app
+const app = await createAppLambda();
 
 app.get('/api/users/:id', (req, res) => {
   return {
     userId: req.params.id,
     lambda: true,
-    requestId: req.context.awsRequestId,
+    requestId: req.requestId, // the invocation's awsRequestId
   };
 });
 
@@ -319,6 +298,46 @@ export const handler = app.getHandler();
 - ❌ WebSockets (use API Gateway WebSocket API separately)
 - ❌ Long-running processes
 - ❌ File system (except /tmp)
+
+### Event Sources
+
+The same handler serves every HTTP event source. The event's shape is recognised per invocation and the response is returned in the shape that source reads:
+
+| Event source                                                    | Recognised by        | Response                                                                                                     |
+| --------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| API Gateway REST API, HTTP API on payload format 1.0            | `httpMethod`, `path` | `headers`; when more than one cookie is set, `multiValueHeaders['Set-Cookie']`                               |
+| API Gateway HTTP API on payload format 2.0, Lambda Function URL | `version: '2.0'`     | `headers`; cookies in `cookies`                                                                              |
+| Application Load Balancer                                       | `requestContext.elb` | `headers`; with multi-value headers enabled on the target group, every header in `multiValueHeaders` as well |
+
+What a handler sees is the same for all of them:
+
+- `req.method`, `req.path`, `req.query` and `req.params` come from the event. A parameter that is repeated in the query string has its last value.
+- `req.query` holds decoded names and values on every event source. A REST API (and payload format 1.0) delivers them decoded, and the raw query string of an HTTP API on payload format 2.0 or a Function URL is parsed by the parser the Node.js server uses (so is the URL a Vercel Edge or Cloudflare Workers function receives). A load balancer delivers them as the client sent them, still percent-encoded, and they are decoded by the parser the Node.js server uses, so `req.query` is what that server gives for the same request line: `%20` and `+` are a space, an escape that cannot be decoded stays as it was sent, and a parameter with no value is `''`. Do not decode `req.query` values again: a value that contains a literal `%` would be decoded twice.
+- `req.url` is the path with its query string on every event source, as on the Node.js server: `/items?tag=a&tag=b`, or the bare path when there is no query. HTTP APIs with payload format 2.0 and Function URLs deliver the query string as it was sent. A REST API (and payload format 1.0) and a load balancer deliver the path and the parameters apart, and `req.url` is put together from them, every value of a repeated parameter included (from `multiValueQueryStringParameters` when the event has it); parameters of one name end up next to each other. API Gateway hands names and values over decoded, so they are percent-encoded again in `req.url`. A load balancer hands them over as the client sent them, still percent-encoded: they are written into `req.url` unchanged. Use `req.path` where the query string is not wanted.
+- `req.headers` can be read with lower-case names on every event source. HTTP APIs with payload format 2.0, Function URLs and load balancers send lower-case names. A REST API (and payload format 1.0) hands header names over in the client's casing; those names stay, and each is readable in lower case too, so `req.headers.authorization` is set whether the client sent `Authorization` or `authorization`. The lower-case names are added the first time a handler reads `req.headers`.
+- `req.cookies` is parsed from the `Cookie` header (REST API, load balancer) or from the event's `cookies` list (payload format 2.0). On REST API events the header is found under the names `cookie`, `Cookie` and `COOKIE`. Values are URL-decoded, as on Node.js.
+- `req.ip` is the source address API Gateway or the Function URL reports. A load balancer with multi-value headers enabled reports it in `X-Forwarded-For`, and `req.ip` is the address the load balancer itself appended (the last one). For a load balancer without multi-value headers `req.ip` is `'unknown'`: read `X-Forwarded-For` yourself.
+- The path is routed as the event gives it. On payload format 2.0 a named stage is part of the path (`/prod/users`); the `$default` stage and Function URLs have no prefix.
+
+A load balancer without multi-value headers can carry one `Set-Cookie` per response (the last cookie set is the one sent). Enable multi-value headers on the target group to set several.
+
+### Binary Responses
+
+A `Buffer`, a typed array or an `ArrayBuffer` passed to `res.send()` / `res.end()` is returned base64-encoded with `isBase64Encoded: true`, under the `Content-Type` the handler set (`application/octet-stream` when it set none):
+
+```typescript
+import { readFileSync } from 'node:fs';
+
+// Read once, at cold start
+const logo = readFileSync(new URL('./logo.png', import.meta.url));
+
+app.get('/logo.png', (req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.send(logo);
+});
+```
+
+HTTP APIs, Function URLs and load balancers decode the body by themselves. A REST API decodes it only for the media types listed in the API's `binaryMediaTypes` setting (`*/*` covers all of them).
 
 ### Lambda Context Access
 
@@ -362,7 +381,7 @@ service: moro-api
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   memorySize: 1024
   timeout: 30
   environment:
@@ -391,7 +410,7 @@ Resources:
     Properties:
       CodeUri: src/
       Handler: handler.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       MemorySize: 1024
       Timeout: 30
       Events:
@@ -414,12 +433,9 @@ Cloudflare Workers run in V8 isolates at the edge with instant cold starts.
 // worker.ts
 import { createAppWorker } from '@morojs/moro';
 
-const app = await createAppWorker({
-  kv: {
-    enabled: true,
-    namespace: 'API_CACHE',
-  },
-});
+// KV namespaces, Durable Objects and other bindings are declared in
+// wrangler.toml (below) and reach handlers on req.env
+const app = await createAppWorker();
 
 app.get('/api/geo', (req, res) => {
   return {
@@ -451,7 +467,9 @@ export default {
 ### KV Storage Integration
 
 ```typescript
-app.get('/api/cache/:key').handler(async (req, res, env) => {
+app.get('/api/cache/:key').handler(async (req, res) => {
+  const env = req.env; // the Worker's bindings
+
   // Read from KV
   const value = await env.API_CACHE.get(req.params.key);
 
@@ -474,9 +492,10 @@ app.get('/api/cache/:key').handler(async (req, res, env) => {
 ```typescript
 // Define Durable Object
 export class Counter {
-  constructor(state: DurableObjectState, env: any) {
-    this.state = state;
-  }
+  constructor(
+    private state: DurableObjectState,
+    env: any
+  ) {}
 
   async fetch(request: Request) {
     const count = (await this.state.storage.get('count')) || 0;
@@ -486,10 +505,11 @@ export class Counter {
 }
 
 // Use in Worker
-app.post('/api/increment/:id').handler(async (req, res, env) => {
+app.post('/api/increment/:id').handler(async (req, res) => {
+  const env = req.env; // the Worker's bindings
   const id = env.COUNTER.idFromName(req.params.id);
   const stub = env.COUNTER.get(id);
-  const response = await stub.fetch(req);
+  const response = await stub.fetch(req.url, { method: 'POST' });
   const data = await response.json();
 
   return { success: true, data };
@@ -515,6 +535,97 @@ id = "your-kv-namespace-id"
 name = "COUNTER"
 class_name = "Counter"
 ```
+
+---
+
+## Requests and Responses on Serverless Runtimes
+
+On AWS Lambda, Vercel Edge and Cloudflare Workers a handler receives the same `req` and `res` as on Node.js, backed by the platform's event or `Request`. The differences that matter:
+
+### Global Middleware and Hooks
+
+The function `app.getHandler()` returns runs a request through the same steps as the Node.js servers, in the same order:
+
+1. `request` hooks (`app.hooks.before('request', ...)` and hook-based middleware such as `middleware.session()`).
+2. The global middleware chain: the config-driven middleware (helmet, CORS, compression, request logging) and then every function registered with `app.use(fn)` or `app.use('/prefix', fn)`, in registration order. Middleware registered after `getHandler()` was called is part of the chain too.
+3. The documentation routes, then the router: the route's own phases (`.before()`, `.rateLimit()`, `.auth()`, validation, ...) and its handler.
+4. `response` hooks, awaited before the function returns (the platform may freeze the function right after).
+
+A middleware that answers the request ends it there, so a guard registered with `app.use()` protects every route:
+
+```typescript
+const app = await createAppLambda();
+
+app.use((req, res, next) => {
+  if (req.headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return; // no next(): the request ends here
+  }
+  next();
+});
+
+app.get('/reports', () => ({ reports: [] })); // only reached with the token
+
+export const handler = app.getHandler();
+```
+
+Errors follow the standard contract: `next(err)`, a throw or a rejected promise skips to the next error middleware (a function declared with four parameters, `(err, req, res, next)`). An error no error middleware handled goes to the handler set with `app.setErrorHandler()`, and otherwise the request is answered `500` with `{ "success": false, "error": "Internal server error", "requestId": "..." }`. `error` hooks observe it first.
+
+The response is buffered: it is handed to the platform as a whole when the request has been handled. What follows from that:
+
+- `res.on('finish', ...)` and `res.on('close', ...)` fire once the request has been handled, just before the response is returned to the platform. Request logging (`server.requestLogging`, on by default outside production) logs then.
+- There is no `res.write()` or `res.writeHead()`. Middleware that streams its response fails on these runtimes exactly as it does when attached to a single route.
+- Config-driven helmet and CORS behave as on Node.js: headers are set on every response, a CORS preflight is answered `204` and a disallowed origin `403`. That includes the responses a request hook answers before the global middleware runs: the `429` of a rate limit and the `403` of a CSRF check carry the helmet and CORS headers here too.
+- Compression is left to the platform. With `performance.compression` enabled, or `app.use(middleware.compression())`, the body is returned as the handler produced it and API Gateway, CloudFront, Vercel or Cloudflare negotiates the encoding with the client. A `filter` passed to `middleware.compression()` is not consulted on these runtimes, since nothing is compressed inside the function.
+- A middleware that answers from a callback and never calls `next()` (the callback style of an asynchronous check) completes the request: the function returns as soon as the response is answered.
+
+### Cookies
+
+Every cookie is sent as a `Set-Cookie` header of its own, whichever way it is set: `res.cookie()` or `res.clearCookie()` called several times, `res.append('Set-Cookie', ...)`, or `res.setHeader('Set-Cookie', [...])`.
+
+**Cookie options are applied on these runtimes, as on Node.js.** `res.cookie(name, value, options)` and `res.clearCookie(name, options)` send the same `Set-Cookie` value the Node.js server sends for the same arguments: the value is URL-encoded, `Path` defaults to `/`, and `maxAge` (milliseconds, sent as seconds of `Max-Age`), `expires`, `httpOnly`, `secure`, `sameSite`, `domain` and `path` become the matching attributes. An invalid cookie name, `domain`, `path` or `sameSite` throws a `TypeError` at the call, as on Node.js.
+
+A cookie set with no `secure` option is `Secure` when the request reached the platform over https, as on the Node.js server it is when the request arrived over TLS. There is no connection to look at in a function, so the platform's word is taken: the scheme of the request URL on Vercel Edge and Cloudflare Workers, and the `X-Forwarded-Proto` header that API Gateway, a Function URL or a load balancer writes on AWS Lambda. `secure: true` and `secure: false` are taken as written.
+
+```typescript
+app.post('/login', (req, res) => {
+  res.cookie('session', 'abc123', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    maxAge: 60 * 60 * 1000, // one hour, in milliseconds
+  });
+  // Set-Cookie: session=abc123; Max-Age=3600; HttpOnly; Secure; SameSite=strict; Path=/
+  return { success: true };
+});
+
+app.post('/logout', (req, res) => {
+  res.clearCookie('session');
+  // Set-Cookie: session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; Path=/
+  // (`Secure` because the request arrived over https; over plain http it is left out)
+  return { success: true };
+});
+```
+
+`res.cookie()` does not sign by itself on these runtimes: without the cookie middleware, `signed: true` sends the value as given and logs a warning once. Install `middleware.cookie({ secret })` with `app.use()` and signed cookies are signed on the way out and verified into `req.signedCookies` on the way in, as on Node.js.
+
+`req.cookies` holds the request's cookies on all three runtimes, parsed as on Node.js: values are URL-decoded, so what `res.cookie('name', 'a b')` wrote (`name=a%20b` on the wire) reads back as `req.cookies.name === 'a b'`. A value that is not valid percent-encoding is kept as sent, a repeated name has its last value, and a cookie with an empty value is left out.
+
+### Response Bodies
+
+- A string is sent as it is; an object is sent as JSON with `Content-Type: application/json`.
+- A `Buffer`, a typed array or an `ArrayBuffer` is sent as bytes under the `Content-Type` the handler set (`application/octet-stream` when it set none). On Lambda the bytes are base64-encoded for the platform (see [Binary Responses](#binary-responses)).
+- On Vercel Edge and Cloudflare Workers a web `ReadableStream` passed to `res.send()` is streamed to the client. `res.send()` is typed for strings and Buffers, so TypeScript needs a cast for a stream or a typed array.
+- On Vercel Edge and Cloudflare Workers a response with status 204, 205 or 304 is sent without a body, whatever the handler passed.
+- CR and LF characters are removed from header values (`res.setHeader()`, `res.append()`, `res.redirect()`, `res.cookie()`).
+
+### Request Bodies
+
+- A JSON body (`Content-Type: application/json`) is parsed into `req.body`.
+- On Vercel Edge and Cloudflare Workers a malformed JSON body is answered with `400` and `{ "success": false, "error": "Invalid request body", "requestId": "..." }` before the handler runs, as on Node.js; an empty body gives `req.body === null`.
+- On Lambda a malformed JSON body reaches the handler as the string that was sent.
+- A URL-encoded form body is parsed into an object on Cloudflare Workers and reaches the handler as a string on Lambda and Vercel Edge.
+- Other bodies reach the handler as a string. Binary request bodies are not supported on these runtimes: the bytes are decoded as text.
 
 ---
 
@@ -569,7 +680,8 @@ async function createUser(userData: any) {
 import { createApp } from '@morojs/moro';
 import { setupRoutes } from './shared/app.js';
 
-const app = await createApp();
+// setupRoutes() registers a WebSocket namespace on Node.js, and WebSockets are opt-in
+const app = await createApp({ websocket: { enabled: true } });
 setupRoutes(app);
 app.listen(3000);
 
@@ -731,6 +843,14 @@ jobs:
 
 ```typescript
 // config.ts
+
+// Secrets have no fallback value. A default in code becomes the production
+// secret the first time the variable is missing, so fail at startup instead.
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  throw new Error('JWT_SECRET is not set (generate one with: openssl rand -hex 32)');
+}
+
 export const config = {
   database: {
     url: process.env.DATABASE_URL,
@@ -744,7 +864,7 @@ export const config = {
     ttl: process.env.CACHE_TTL ? parseInt(process.env.CACHE_TTL) : 300,
   },
   auth: {
-    secret: process.env.JWT_SECRET || 'dev-secret',
+    secret: jwtSecret,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
 };
@@ -754,8 +874,10 @@ export const config = {
 
 ```typescript
 // config/runtime.ts
-export function getRuntimeConfig(runtime: string) {
-  const baseConfig = {
+import type { MoroOptions } from '@morojs/moro';
+
+export function getRuntimeConfig(runtime: string): MoroOptions {
+  const baseConfig: MoroOptions = {
     cors: true,
     compression: true,
     helmet: true,
@@ -765,16 +887,11 @@ export function getRuntimeConfig(runtime: string) {
     case 'node':
       return {
         ...baseConfig,
-        cluster: process.env.NODE_ENV === 'production',
-        websockets: true,
-      };
-
-    case 'vercel-edge':
-      return {
-        ...baseConfig,
-        streaming: true,
-        regions: ['iad1', 'sfo1'],
-        cache: { edge: true },
+        // Fork workers across cores in production
+        performance: {
+          clustering: { enabled: process.env.NODE_ENV === 'production' },
+        },
+        websocket: { enabled: true },
       };
 
     case 'aws-lambda':
@@ -785,18 +902,21 @@ export function getRuntimeConfig(runtime: string) {
         server: { timeouts: { keepAlive: 5000 } },
       };
 
+    case 'vercel-edge':
     case 'cloudflare-workers':
-      return {
-        ...baseConfig,
-        kv: { enabled: true },
-        durableObjects: true,
-      };
+      // Nothing runtime-specific to pass here: regions are chosen in the
+      // platform's own route config (`export const config` / vercel.json),
+      // and KV namespaces and Durable Objects are bound in wrangler.toml and
+      // reach a handler as `req.env`
+      return baseConfig;
 
     default:
       return baseConfig;
   }
 }
 ```
+
+The object is what `createApp()` (or the runtime's own factory) takes: `createApp(getRuntimeConfig('node'))`.
 
 ---
 
@@ -843,7 +963,7 @@ when the app is created, so pass them to `createApp()`:
 
 ```typescript
 const app = await createApp({
-  // Node.js: fork workers across cores (SO_REUSEPORT; Node server on Windows)
+  // Node.js: one worker per core (SO_REUSEPORT; Node server on Windows)
   performance: {
     clustering: { enabled: true, workers: 'auto' },
   },

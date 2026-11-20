@@ -6,7 +6,8 @@ export function registerBodySizeHooks(hookManager: any, options: BodySizeOptions
 
   hookManager.on('request', async (context: any) => {
     const { request, response } = context;
-    if (!request || !response) return;
+    // A request that has already been answered is finished
+    if (!request || !response || response.headersSent) return;
 
     core.checkBodySize(request, response);
   });

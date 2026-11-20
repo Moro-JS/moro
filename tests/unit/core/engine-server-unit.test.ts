@@ -3,8 +3,12 @@
 // implements the native API contract (engine repo docs/API.md) in memory.
 // No native binary required: the fake records serve/respond/writeHead/write/
 // end calls per reqId and drives the onRequest/onAborted/onWritable callbacks.
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, afterEach, jest } from '@jest/globals';
 import { MoroEngineServer } from '../../../src/core/http/moro-engine-server.js';
+import { getEngineCapabilities } from '../../../src/core/utilities/package-utils.js';
+import { MoroLogger, logger as globalLogger } from '../../../src/core/logger/index.js';
+// The shared stand-in, which advertises the capabilities it is given
+import { createFakeEngine as createEngineWith } from '../../utils/fake-engine.js';
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'OTHER'];
 
@@ -804,6 +808,84 @@ describe('MoroEngineServer (fake engine)', () => {
       expect(setCookie).toMatch(/Path=\//);
     });
 
+    it('cookie() with signed: true and no cookie middleware throws instead of sending the value', async () => {
+      const { engine, server } = createServer();
+      let message = '';
+      server.setRouterHandler((req, res) => {
+        try {
+          res.cookie('pref', 'dark', { signed: true });
+        } catch (error) {
+          message = (error as Error).message;
+        }
+        res.cookie('plain', 'y');
+        res.json({ success: true, data: null });
+        return true;
+      });
+      const reqId = engine.simulate({});
+      await tick();
+
+      const headers = foldFlat(engine.requests.get(reqId).ops[0].headersFlat);
+      expect(headers['set-cookie']).toEqual(['plain=y; Path=/']);
+      expect(message).toMatch(/res\.cookie\('pref'.*signed: true.*cannot sign/);
+      expect(message).toMatch(/middleware\.cookie\(\{ secret/);
+    });
+
+    it('cookie() takes maxAge in milliseconds and sends seconds of Max-Age', async () => {
+      const { engine, server } = createServer();
+      server.setRouterHandler((req, res) => {
+        res.cookie('day', 'x', { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
+        res.cookie('brief', 'x', { maxAge: 1500 });
+        res.cookie('browser', 'x', { maxAge: null });
+        res.json({ success: true, data: null });
+        return true;
+      });
+      const reqId = engine.simulate({});
+      await tick();
+
+      const headers = foldFlat(engine.requests.get(reqId).ops[0].headersFlat);
+      expect(headers['set-cookie']).toEqual([
+        'day=x; Max-Age=86400; HttpOnly; Path=/',
+        'brief=x; Max-Age=1; Path=/',
+        'browser=x; Path=/',
+      ]);
+    });
+
+    it('cookie() refuses a name or attribute that would change the header', async () => {
+      const { engine, server } = createServer();
+      const outcome: string[] = [];
+      server.setRouterHandler((req, res) => {
+        const attempt = (set: () => void) => {
+          try {
+            set();
+            outcome.push('sent');
+          } catch (error) {
+            outcome.push((error as Error).message);
+          }
+        };
+        attempt(() => res.cookie('a b', 'x'));
+        attempt(() => res.cookie('sid', 'x', { path: '/app; Domain=evil.example' }));
+        attempt(() => res.cookie('sid', 'x', { domain: 'example.com; Secure' }));
+        attempt(() => res.cookie('sid', 'x', { sameSite: 'lax; Secure' }));
+        attempt(() => res.cookie('sid', 'x', { expires: 'tomorrow; Secure' }));
+        attempt(() => res.cookie('ok', 'x', { domain: '.example.com', sameSite: 'Lax' }));
+        res.json({ success: true, data: null });
+        return true;
+      });
+      const reqId = engine.simulate({});
+      await tick();
+
+      expect(outcome).toEqual([
+        expect.stringContaining('Invalid cookie name'),
+        expect.stringContaining('Invalid cookie path'),
+        expect.stringContaining('Invalid cookie domain'),
+        expect.stringContaining('Invalid cookie sameSite'),
+        expect.stringContaining('Invalid cookie expires'),
+        'sent',
+      ]);
+      const headers = foldFlat(engine.requests.get(reqId).ops[0].headersFlat);
+      expect(headers['set-cookie']).toEqual(['ok=x; SameSite=Lax; Domain=.example.com; Path=/']);
+    });
+
     it('sendStatus uses the code (not "OK") as the body for unknown statuses', async () => {
       const { engine, server } = createServer();
       server.setRouterHandler((req, res) => {
@@ -832,6 +914,38 @@ describe('MoroEngineServer (fake engine)', () => {
       expect(captured).toBe('%zz');
     });
 
+    it('matches optional parameters and wildcards in direct routes', async () => {
+      const { engine, server } = createServer();
+      const seen: any[] = [];
+      const record = (route: string) => (req: any, res: any) => {
+        seen.push([route, req.params]);
+        res.json({ success: true });
+      };
+      server.get('/users/:id?', record('users'));
+      server.get('/files/*', record('files'));
+
+      const statuses: number[] = [];
+      for (const path of [
+        '/users',
+        '/users/7',
+        '/files/a/b%20c.txt',
+        '/files/',
+        '/files',
+        '/files//x',
+      ]) {
+        const reqId = engine.simulate({ path });
+        await tick();
+        statuses.push(engine.requests.get(reqId).ops[0].status);
+      }
+      expect(statuses).toEqual([200, 200, 200, 200, 404, 404]);
+      expect(seen).toEqual([
+        ['users', {}],
+        ['users', { id: '7' }],
+        ['files', { '*': 'a/b c.txt' }],
+        ['files', { '*': '' }],
+      ]);
+    });
+
     it('invokes the global error handler for errors thrown in middleware', async () => {
       const { engine, server } = createServer();
       let handledErr: any = null;
@@ -847,6 +961,277 @@ describe('MoroEngineServer (fake engine)', () => {
       expect(handledErr).toBeInstanceOf(Error);
       const op = engine.requests.get(reqId).ops[0];
       expect(JSON.stringify(op.body)).toContain('custom-shape');
+    });
+  });
+
+  // What servers created from here on log at `level`, as messages. The suite
+  // runs with logging at 'error', where info and warn are not even formatted.
+  let levelBefore: any;
+  function captureLog() {
+    levelBefore = globalLogger.getLevel();
+    globalLogger.setLevel('info');
+    const spy = jest.spyOn(MoroLogger.prototype as any, 'log').mockImplementation(() => {});
+    return (level: string, pattern: RegExp) =>
+      spy.mock.calls.filter(c => c[0] === level && pattern.test(String(c[1]))).map(c => c[1]);
+  }
+  function releaseLog() {
+    jest.restoreAllMocks();
+    if (levelBefore) globalLogger.setLevel(levelBefore);
+    levelBefore = undefined;
+  }
+
+  describe('timeouts and limits handed to serve()', () => {
+    afterEach(releaseLog);
+
+    // A server as the framework creates one: with the engine's capabilities
+    // and the app's limits, the request timeout already resolved
+    const serve = (capabilities: Record<string, boolean>, limits: any = {}) => {
+      const engine = createEngineWith({ capabilities });
+      const server = new MoroEngineServer({
+        engineModule: engine,
+        capabilities: getEngineCapabilities(engine),
+        limits: { ...limits, timeouts: { request: 300000, ...limits.timeouts } },
+      });
+      return { engine, server };
+    };
+    const SPARES = { limits: true, responseLimits: true, idleSparesDrainingResponse: true };
+    const CUTS = { limits: true, responseLimits: true };
+
+    it('applies the 75 s idle default only where the idle timeout spares a response still being delivered', () => {
+      expect(serve(SPARES).engine.serveOptions.idleTimeoutMs).toBe(75000);
+      // An engine whose idle timeout cuts such a response gets none by default
+      expect(serve(CUTS).engine.serveOptions.idleTimeoutMs).toBe(0);
+      expect(serve({}).engine.serveOptions.idleTimeoutMs).toBe(0);
+    });
+
+    it('hands over a configured idle timeout as given on either engine, 0 included', () => {
+      for (const capabilities of [SPARES, CUTS]) {
+        for (const idle of [0, 500, 120000]) {
+          const { engine } = serve(capabilities, { timeouts: { idle } });
+          expect(engine.serveOptions.idleTimeoutMs).toBe(idle);
+        }
+      }
+    });
+
+    it('says once at start-up that the idle default is not applied, and how to set one', () => {
+      const logged = captureLog();
+      const about = /server\.timeouts\.idle/;
+
+      const { server } = serve(CUTS);
+      const lines = logged('info', about);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/75 s default is not applied/);
+      expect(lines[0]).toMatch(/set server\.timeouts\.idle/);
+
+      // listen() after close() registers a fresh native server: no second line
+      server.listen(8093, () => {});
+      server.close(() => {});
+      server.listen(8094, () => {});
+      server.close(() => {});
+      expect(logged('info', about)).toHaveLength(1);
+    });
+
+    it('says nothing about the idle timeout when one is configured or the default applies', () => {
+      const logged = captureLog();
+      serve(SPARES);
+      serve(CUTS, { timeouts: { idle: 0 } });
+      serve(CUTS, { timeouts: { idle: 60000 } });
+      expect(logged('info', /server\.timeouts\.idle/)).toEqual([]);
+      expect(logged('warn', /server\.timeouts\.idle/)).toEqual([]);
+    });
+
+    it('leaves the timeouts to the engine when it is constructed without limits', () => {
+      const engine = createEngineWith({ capabilities: CUTS });
+      new MoroEngineServer({ engineModule: engine, capabilities: getEngineCapabilities(engine) });
+      expect('idleTimeoutMs' in engine.serveOptions).toBe(false);
+    });
+
+    it('hands over server.limits.responseBackpressureLimit when set and the engine has response limits', () => {
+      const set = serve(CUTS, { responseBackpressureLimit: 8 * 1024 * 1024 });
+      expect(set.engine.serveOptions.responseBackpressureLimit).toBe(8 * 1024 * 1024);
+
+      // Not configured: the key is left out, and the engine's default (no limit) stands
+      expect('responseBackpressureLimit' in serve(CUTS).engine.serveOptions).toBe(false);
+
+      // An engine that does not parse the option is not handed it
+      const old = serve({ limits: true }, { responseBackpressureLimit: 8 * 1024 * 1024 });
+      expect('responseBackpressureLimit' in old.engine.serveOptions).toBe(false);
+    });
+  });
+
+  describe('response headers the engine will not send', () => {
+    afterEach(releaseLog);
+
+    const respondWith = async (set: (res: any) => void, times = 1) => {
+      const { engine, server } = createServer();
+      server.setRouterHandler((_req, res) => {
+        set(res);
+        res.send('ok');
+        return true;
+      });
+      let reqId = 0;
+      for (let i = 0; i < times; i++) reqId = engine.simulate({});
+      await tick();
+      return foldFlat(engine.requests.get(reqId).ops[0].headersFlat);
+    };
+
+    it('reports a value with a line break once per header name, and still hands it over as set', async () => {
+      const logged = captureLog();
+      const policy = "default-src 'self';\n  script-src 'self'";
+
+      const headers = await respondWith(res => {
+        res.setHeader('Content-Security-Policy', policy);
+        res.setHeader('X-Fine', 'one line');
+      }, 3);
+
+      // Nothing about what reaches the engine changes: it is the engine that leaves the field out
+      expect(headers['content-security-policy']).toEqual([policy]);
+      expect(headers['x-fine']).toEqual(['one line']);
+      const lines = logged('warn', /was not sent/);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/"content-security-policy"/);
+      expect(lines[0]).toMatch(/control character/);
+      expect(lines[0]).not.toContain(policy);
+    });
+
+    it('reports NUL, CR and DEL in a value, a value of a list, and a name that is not a token', async () => {
+      const logged = captureLog();
+      await respondWith(res => {
+        res.setHeader('X-Nul', 'a\x00b');
+        res.setHeader('X-Cr', 'a\rb');
+        res.setHeader('X-Del', 'a\x7fb');
+        res.setHeader('X-List', ['fine', 'not\nfine']);
+        res.setHeader('bad name', 'v');
+        res.setHeader('X-Split\r\nInjected: 1', 'v');
+      });
+
+      const lines = logged('warn', /was not sent/).join('\n');
+      for (const name of ['x-nul', 'x-cr', 'x-del', 'x-list']) {
+        expect(lines).toMatch(new RegExp(`"${name}" was not sent: its value`));
+      }
+      expect(lines).toMatch(/"bad name" was not sent: that is not a valid header name/);
+      // The name is shown escaped: it cannot start a line of its own in the log
+      expect(lines).toContain('"x-split\\r\\ninjected: 1" was not sent');
+      expect(logged('warn', /was not sent/)).toHaveLength(6);
+    });
+
+    it('says nothing for values a header can carry: tab, Latin-1, an empty value, a cookie', async () => {
+      const logged = captureLog();
+      await respondWith(res => {
+        res.setHeader('X-Tab', 'a\tb');
+        res.setHeader('X-Latin', 'café');
+        res.setHeader('X-Empty', '');
+        res.setHeader('X-Number', 42 as any);
+        res.cookie('sid', 'v\r\nSet-Cookie: evil=1', { path: '/' });
+      });
+      expect(logged('warn', /was not sent/)).toEqual([]);
+    });
+
+    it('keeps looking at a sample of responses after the first thousand', async () => {
+      const logged = captureLog();
+      // Well past the responses that are all looked at
+      await respondWith(res => res.setHeader('X-Usual', 'fine'), 1500);
+      expect(logged('warn', /was not sent/)).toEqual([]);
+
+      // A header that is wrong on every response is found within a thousand more
+      await respondWith(res => res.setHeader('X-Late-Mistake', 'two\nlines'), 1000);
+      const lines = logged('warn', /was not sent/);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/"x-late-mistake"/);
+    });
+  });
+
+  describe('absolute-form request targets', () => {
+    const seenFor = async (path: string, options: any = {}) => {
+      const { engine, server } = createServer();
+      let seen: any = null;
+      server.use((req: any, _res: any, next: any) => {
+        seen = { middlewarePath: req.path };
+        next();
+      });
+      server.setRouterHandler((req, res) => {
+        Object.assign(seen, {
+          path: req.path,
+          url: req.url,
+          originalUrl: req.originalUrl,
+          query: req.query,
+          host: req.headers.host,
+          hostname: req.hostname,
+          subdomains: req.subdomains,
+          agent: req.headers['user-agent'],
+        });
+        res.json({ success: true, data: null });
+        return true;
+      });
+      engine.simulate({
+        path,
+        headers: { host: 'header.example', 'user-agent': 'probe' },
+        ...options,
+      });
+      await tick();
+      return seen;
+    };
+
+    it('are routed by their path and query, with the host of the target', async () => {
+      // The engine hands the target over with the query already split off
+      const seen = await seenFor('http://api.eu.example.com:8443/users/7', { query: 'a=1&b=two' });
+      expect(seen).toEqual({
+        middlewarePath: '/users/7',
+        path: '/users/7',
+        url: '/users/7?a=1&b=two',
+        originalUrl: '/users/7?a=1&b=two',
+        query: { a: '1', b: 'two' },
+        // RFC 9112 3.2.2: the Host header is ignored for such a request
+        host: 'api.eu.example.com:8443',
+        hostname: 'api.eu.example.com',
+        subdomains: ['eu', 'api'],
+        agent: 'probe',
+      });
+    });
+
+    it('take https, an upper-case scheme, a target with no path, user information and an IPv6 host', async () => {
+      expect(await seenFor('https://example.com/a/b')).toMatchObject({
+        path: '/a/b',
+        host: 'example.com',
+      });
+      expect(await seenFor('HTTP://Example.COM/a')).toMatchObject({
+        path: '/a',
+        host: 'Example.COM',
+      });
+      expect(await seenFor('http://example.com', { query: 'x=1' })).toMatchObject({
+        path: '/',
+        url: '/?x=1',
+        host: 'example.com',
+      });
+      expect(await seenFor('http://user:secret@example.com/a')).toMatchObject({
+        path: '/a',
+        host: 'example.com',
+      });
+      expect(await seenFor('http://[::1]:8080/a')).toMatchObject({
+        path: '/a',
+        host: '[::1]:8080',
+        hostname: '[::1]',
+      });
+    });
+
+    it('leave every other target as it was sent, with the Host header', async () => {
+      for (const target of [
+        '/users/7',
+        '/http://example.com/a',
+        '*',
+        'example.com:443',
+        'users/7',
+        'ftp://example.com/a',
+        'http:/example.com/a',
+        'http:///a',
+        'http://:8080/a',
+      ]) {
+        expect(await seenFor(target)).toMatchObject({
+          middlewarePath: target,
+          path: target,
+          host: 'header.example',
+        });
+      }
     });
   });
 });

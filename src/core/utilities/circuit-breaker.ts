@@ -20,12 +20,8 @@ export class CircuitBreaker extends EventEmitter {
   }
 
   async execute<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'OPEN') {
-      if (Date.now() - this.lastFailTime < this.options.resetTimeout) {
-        throw new Error('Circuit breaker is OPEN');
-      }
-      this.state = 'HALF_OPEN';
-      this.emit('halfOpen');
+    if (this.isOpen()) {
+      throw new Error('Circuit breaker is OPEN');
     }
 
     try {
@@ -70,14 +66,35 @@ export class CircuitBreaker extends EventEmitter {
       this.failures++;
     }
 
-    if (this.failures >= this.options.failureThreshold && this.state !== 'OPEN') {
+    // A failure while HALF_OPEN is a failed recovery probe: go straight back
+    // to OPEN, whatever the failure count in the monitoring window says.
+    if (
+      this.state === 'HALF_OPEN' ||
+      (this.failures >= this.options.failureThreshold && this.state !== 'OPEN')
+    ) {
       this.state = 'OPEN';
       this.emit('open');
     }
   }
 
+  /**
+   * Whether calls are currently being rejected.
+   *
+   * Once `resetTimeout` has elapsed since the last failure, an OPEN breaker
+   * moves to HALF_OPEN here (as it does in `execute()`), so callers that gate
+   * on `isOpen()` and report the outcome through `recordSuccess()` /
+   * `recordFailure()` get a recovery probe too.
+   */
   public isOpen(): boolean {
-    return this.state === 'OPEN';
+    if (this.state !== 'OPEN') {
+      return false;
+    }
+    if (Date.now() - this.lastFailTime < this.options.resetTimeout) {
+      return true;
+    }
+    this.state = 'HALF_OPEN';
+    this.emit('halfOpen');
+    return false;
   }
 
   public getState(): 'CLOSED' | 'OPEN' | 'HALF_OPEN' {

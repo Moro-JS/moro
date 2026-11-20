@@ -125,6 +125,11 @@ export interface EngineCapabilities {
    *  handshake itself and fires onWsOpen, so an upgrade never round-trips
    *  through onRequest; the handshake stays readable on the socket. */
   wsAutoUpgrade: boolean;
+  /** Engine-side upgrades are safe together with batched dispatch: the
+   *  engine no longer upgrades a pipelined handshake from inside a response
+   *  call. Without it the framework turns engine-side upgrades on only when
+   *  batched dispatch is off, and upgrades in onRequest otherwise. */
+  wsAutoUpgradeBatch: boolean;
   /** I/O transport in use ('epoll', 'uv', 'uring'), when the engine reports it. */
   transport?: string;
   /** getBodyType()/getBodyText() exist (engine >= 1.1.19): the body's media
@@ -133,6 +138,11 @@ export interface EngineCapabilities {
   /** getBodyLent() exists (engine >= 1.1.19): the body as a buffer valid for
    *  the request only. Gates server.lendBodies. */
   bodyLent: boolean;
+  /** The idle sweep leaves alone a connection that still has a response to
+   *  deliver: a response written in one piece to a slow reader is not cut at
+   *  idleTimeoutMs. Gates the default for server.timeouts.idle; engines
+   *  without it get an idle timeout only when one is configured. */
+  idleSparesDrainingResponse: boolean;
 }
 
 // One place to name every boolean flag: getEngineCapabilities coerces each
@@ -155,8 +165,10 @@ const CAP_KEYS = [
   'batchDispatch',
   'paramRoutes',
   'wsAutoUpgrade',
+  'wsAutoUpgradeBatch',
   'bodyText',
   'bodyLent',
+  'idleSparesDrainingResponse',
 ] as const;
 
 /** The TLS library a loaded @morojs/engine terminates TLS with (1.1.20+). */
@@ -260,6 +272,25 @@ export interface NativeEngineLoadResult {
   capabilities?: EngineCapabilities;
   /** The TLS library in use (@morojs/engine 1.1.20+). */
   tls?: EngineTlsInfo;
+  /**
+   * The path in `MORO_ENGINE_BINARY` when that variable was set as the
+   * engine loaded its native binary: the engine then loads that file and no
+   * other. The engine does not report where its binary came from, so this is
+   * the variable as it stood at load.
+   */
+  binaryOverride?: string;
+}
+
+/**
+ * What the start-up lines that name the engine add when `MORO_ENGINE_BINARY`
+ * chose its binary: the override is for builds and diagnostics, and a process
+ * running on a binary other than the installed one should say so every time
+ * it starts.
+ */
+export function engineBinaryNote(binaryOverride: string | undefined): string {
+  return binaryOverride
+    ? `; native binary loaded from MORO_ENGINE_BINARY=${binaryOverride}, not from the installed package`
+    : '';
 }
 
 const NO_CAPABILITIES: EngineCapabilities = Object.freeze(
@@ -414,12 +445,16 @@ export function loadNativeEngine(options?: {
           version = undefined;
         }
         const tls = getEngineTlsInfo(module);
+        // Read here, after the checks above made the engine load its binary
+        const binaryOverride =
+          candidate === '@morojs/engine' ? process.env.MORO_ENGINE_BINARY : undefined;
         result = {
           module,
           source: candidate,
           ...(version !== undefined ? { version } : {}),
           capabilities: getEngineCapabilities(module),
           ...(tls ? { tls } : {}),
+          ...(binaryOverride ? { binaryOverride } : {}),
         };
         break;
       } catch (error) {

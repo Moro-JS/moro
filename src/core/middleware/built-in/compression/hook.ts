@@ -6,7 +6,8 @@ export function registerCompressionHooks(hookManager: any, options: CompressionO
 
   hookManager.on('request', async (context: any) => {
     const { request, response } = context;
-    if (!request || !response) return;
+    // A request that has already been answered is finished
+    if (!request || !response || response.headersSent) return;
 
     if (core.shouldCompress(request, response)) {
       core.wrapResponse(request, response);

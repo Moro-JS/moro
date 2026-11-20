@@ -18,6 +18,8 @@ import { setImmediate } from 'node:timers';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
 import { HttpRequest, HttpResponse, HttpHandler, Middleware } from '../../types/http.js';
+import type { SendFileOptions } from '../../types/http.js';
+import { fileCacheControl, locateFile } from './utils/file-send.js';
 import {
   loadNativeEngine,
   getNativeEngineLoadErrors,
@@ -27,7 +29,7 @@ import {
   parseMultipart as parseMultipartBuffer,
   type MultipartLimits,
 } from './utils/multipart-parser.js';
-import type { HttpRuntimeLimits } from './utils/size.js';
+import { DEFAULT_IDLE_TIMEOUT_MS, type HttpRuntimeLimits } from './utils/size.js';
 import type { Http2ServerOptions } from './http2-server.js';
 import {
   resolveCompressionSettings,
@@ -39,7 +41,31 @@ import {
   negotiateEncoding,
   type CompressionSettings,
 } from './utils/compression.js';
-import { bodyIsText, isJsonMediaType } from './utils/body-type.js';
+import {
+  bodyIsText,
+  isJsonMediaType,
+  isMultipartMediaType,
+  isUrlEncodedMediaType,
+} from './utils/body-type.js';
+import { absoluteTargetOf, hostnameOf } from './utils/hostname.js';
+import {
+  clearCookieOptions,
+  serializeCookie,
+  unsignedCookieError,
+} from './utils/cookie-attributes.js';
+import {
+  clientAddress,
+  firstForwarded,
+  forwardedAddresses,
+  type ProxyTrust,
+} from './utils/trust-proxy.js';
+import { dispatchMiddleware, WAIT_UNLESS_ANSWERED } from './utils/middleware-dispatch.js';
+import {
+  attachmentDisposition,
+  clearRepresentationHeaders,
+  destroyUnfinishedResponse,
+  locationHeaderValue,
+} from './utils/response-headers.js';
 import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
 import { InflightRegistry } from './utils/inflight-registry.js';
 import { parseRawQueryString } from './utils/query-parser.js';
@@ -47,6 +73,20 @@ import { PathMatcher } from '../routing/path-matcher.js';
 
 /** Engine method table - onRequest's methodIdx indexes into this */
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'OTHER'] as const;
+
+/**
+ * A WebSocket bridge's check of an upgrade request, run before the engine
+ * answers it (see MoroEngineServer.enableWebSocket): nothing lets the upgrade
+ * go ahead, a number is the HTTP status the handshake is refused with.
+ */
+export type WsVerifyUpgrade = (request: {
+  ip: string;
+  flat: string[] | undefined;
+  query: string;
+  path: string;
+  method: string;
+  secure: boolean;
+}) => number | undefined | Promise<number | undefined>;
 
 // Pre-cached status strings for common codes (sendStatus bodies; the engine
 // derives the wire reason phrase from the numeric status itself)
@@ -161,6 +201,64 @@ function flattenHeaders(
   return flat;
 }
 
+// Response headers the engine leaves out. It refuses a field whose name is not
+// a token or whose value holds a control character (CR, LF, NUL, ...), which
+// is what keeps a handler from splitting the response. The field is then
+// simply absent: a Content-Security-Policy written over several lines of a
+// template literal is gone from every response, and nothing says so.
+// The engine does not report what it refused, and looking at every value of
+// every response here would cost each of them a scan (some 60 ns a header,
+// a sixth of the whole response with six of them), so a sample is looked at:
+// every response that carries headers until HEADER_CHECK_ALL of them have
+// been, then one in 512 to 767, which is under a nanosecond a response. A
+// header that is wrong on every response of a route is found at once or soon
+// after; one that is wrong only now and then (a value taken from a request)
+// may never be reported. Nothing about what is sent changes, and each header
+// name is reported once per process.
+const HEADER_CHECK_ALL = 1024;
+const HEADER_REPORTS_MAX = 64;
+let headerChecksDone = 0;
+// Responses with headers still to pass before the next one is looked at
+let headerCheckIn = 0;
+const reportedHeaderNames = new Set<string>();
+const HEADER_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+// eslint-disable-next-line no-control-regex
+const HEADER_VALUE_CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+
+function reportHeadersNotSent(flat: string[], logger: any): void {
+  headerChecksDone++;
+  headerCheckIn = headerChecksDone < HEADER_CHECK_ALL ? 0 : 512 + (headerChecksDone & 255);
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    const name = flat[i] as string;
+    const nameIsValid = HEADER_NAME_TOKEN.test(name);
+    if (nameIsValid && !HEADER_VALUE_CONTROL.test(flat[i + 1] as string)) continue;
+    if (reportedHeaderNames.has(name) || reportedHeaderNames.size >= HEADER_REPORTS_MAX) continue;
+    reportedHeaderNames.add(name);
+    // The name is shown escaped and cut short: it may be the part at fault
+    const shown = JSON.stringify(name.length > 64 ? `${name.slice(0, 64)}...` : name);
+    logger.warn(
+      nameIsValid
+        ? `Response header ${shown} was not sent: its value contains a control character ` +
+            '(a line break, a NUL, ...), which a header value cannot carry. A value written over ' +
+            'several lines has to be joined into one. Reported once for this header.'
+        : `Response header ${shown} was not sent: that is not a valid header name. ` +
+            'Reported once for this header.',
+      'ResponseHeaders'
+    );
+  }
+}
+
+// A request target in absolute-form (RFC 9112 3.2.2): `http://host[:port]/path`.
+// The engine hands the target over as it was sent, with the query split off,
+// so req.path would be the whole URL and no route could match it. The request
+// is given the path of that URL, and its host in place of the Host header.
+function useAbsoluteTarget(req: EngineRequest, target: string): void {
+  const absolute = absoluteTargetOf(target);
+  if (absolute === undefined) return;
+  req.path = absolute.path;
+  req.headers.host = absolute.host;
+}
+
 // Content-Type sniff for send(): does the body start with '{' or '[' after
 // optional leading whitespace? Regex `\s` matches exactly the set trimStart()
 // strips, and the match stops at the first non-space character, so this costs
@@ -176,6 +274,19 @@ const JSON_BODY_START = /^\s*[{[]/;
  * returns a stable snapshot and reqIds are safe no-ops after the response
  * terminates, so there is no validity window.
  */
+// The address of the peer a request's connection comes from. With
+// server.trustProxy set, req.ip is the client instead, so the getters that
+// decide whether the forwarded headers count read the peer on its own.
+function peerAddressOf(req: EngineRequest): string {
+  return req._server._getRemoteAddress(req._reqId) ?? '';
+}
+
+// Whether that peer is a trusted proxy
+function peerIsTrusted(req: EngineRequest, trust: ProxyTrust): boolean {
+  const fixed = trust.peer;
+  return fixed !== undefined ? fixed : trust(peerAddressOf(req), 0);
+}
+
 export class EngineRequest extends LazyEventEmitter {
   method: string;
   path: string;
@@ -301,6 +412,15 @@ export class EngineRequest extends LazyEventEmitter {
     this._headers = value;
   }
 
+  /**
+   * @internal `headers` when something has read them already, undefined
+   * otherwise: for code that can use a header that is at hand but must not
+   * fetch them all from the engine for it.
+   */
+  get _headersIfRead(): Record<string, string> | undefined {
+    return this._headers;
+  }
+
   get cookies(): Record<string, string> {
     let c = this._cookies;
     if (c === undefined) {
@@ -362,6 +482,11 @@ export class EngineRequest extends LazyEventEmitter {
     let ip = this._ip;
     if (ip === undefined) {
       ip = this._server._getRemoteAddress(this._reqId) ?? '';
+      // server.trustProxy: the client as the trusted proxies report it
+      const trust = this._server.proxyTrust;
+      if (trust !== undefined) {
+        ip = clientAddress(ip as string, this.headers['x-forwarded-for'], trust);
+      }
       this._ip = ip as string;
     }
     return ip as string;
@@ -379,7 +504,9 @@ export class EngineRequest extends LazyEventEmitter {
   get socket(): any {
     let s = this._socket;
     if (s === undefined) {
-      const getIp = () => this.ip; // arrow captures this lexically (no this-alias)
+      // arrow captures this lexically (no this-alias). The address is the
+      // connected peer's: req.ip, unless server.trustProxy makes that the client
+      const getIp = () => (this._server.proxyTrust === undefined ? this.ip : peerAddressOf(this));
       const encrypted = Boolean((this._server as any)?.isSsl);
       s = {
         get remoteAddress() {
@@ -407,13 +534,27 @@ export class EngineRequest extends LazyEventEmitter {
   // ==== Express-compatible request helpers ====
 
   get hostname(): string {
-    const host = this.headers.host || '';
-    return host ? (host.split(':')[0] ?? '') : '';
+    // server.trustProxy: X-Forwarded-Host counts when a trusted proxy sent it
+    const trust = this._server ? this._server.proxyTrust : undefined;
+    if (trust !== undefined) {
+      const forwardedHost = firstForwarded(this.headers['x-forwarded-host']);
+      if (forwardedHost !== undefined && peerIsTrusted(this, trust)) {
+        return hostnameOf(forwardedHost);
+      }
+    }
+    return hostnameOf(this.headers.host || '');
   }
 
   get protocol(): string {
     const forwardedProto = this.headers['x-forwarded-proto'];
-    if (forwardedProto) return (forwardedProto.split(',')[0] ?? '').trim();
+    const trust = this._server ? this._server.proxyTrust : undefined;
+    if (trust !== undefined) {
+      // server.trustProxy is set: the header counts only from a trusted proxy
+      const forwarded = firstForwarded(forwardedProto);
+      if (forwarded !== undefined && peerIsTrusted(this, trust)) return forwarded;
+    } else if (forwardedProto) {
+      return (forwardedProto.split(',')[0] ?? '').trim();
+    }
     return this._server && (this._server as any).isSsl ? 'https' : 'http';
   }
 
@@ -432,6 +573,11 @@ export class EngineRequest extends LazyEventEmitter {
 
   get ips(): string[] {
     const forwardedFor = this.headers['x-forwarded-for'];
+    const trust = this._server ? this._server.proxyTrust : undefined;
+    if (trust !== undefined) {
+      // server.trustProxy is set: the client and the trusted proxies only
+      return forwardedAddresses(peerAddressOf(this), forwardedFor, trust);
+    }
     return forwardedFor
       ? forwardedFor
           .split(',')
@@ -611,6 +757,43 @@ export class EngineResponse extends LazyEventEmitter {
     return this._aborted;
   }
 
+  /**
+   * Abandon the response. The engine has one way to finish a request, end(),
+   * so that is what a response already under way gets:
+   *  - one that declared a Content-Length and is short of it is cut off: the
+   *    engine closes the connection instead of keeping it alive, and the
+   *    client sees a truncated transfer;
+   *  - a chunked one can only be terminated where it stands. The client is
+   *    no longer left waiting on an open response, but nothing on the wire
+   *    marks the body as incomplete.
+   * A response that has not started is answered with an empty 500.
+   * 'close' is emitted without 'finish', as for a response that did not
+   * complete.
+   */
+  destroy(_error?: Error) {
+    if (this._ended) return this;
+    try {
+      if (this.headersSent) {
+        this._server._end(this._reqId, undefined);
+      } else {
+        this.statusCode = 500;
+        this._server._respond(this._reqId, 500, null, null);
+        this.headersSent = true;
+      }
+    } catch {
+      // the request is already gone (aborted) - nothing left to end
+    }
+    this._ended = true;
+    if (this._registered) {
+      this._registered = false;
+      this._server._complete(this._reqId);
+    }
+    if (this._events) this.emit('close');
+    const req = this._moroReq;
+    if (req && req._events) req.emit('close');
+    return this;
+  }
+
   // Node ServerResponse lifecycle: 'finish' then 'close' after the terminal
   // write; the request wrapper's 'close' fires too (IncomingMessage parity).
   // Also releases the reqId from the server's in-flight map.
@@ -669,6 +852,7 @@ export class EngineResponse extends LazyEventEmitter {
         flat.push(key, String(value));
       }
     }
+    if (flat !== null && --headerCheckIn < 0) reportHeadersNotSent(flat, this._logger);
     return flat;
   }
 
@@ -808,6 +992,14 @@ export class EngineResponse extends LazyEventEmitter {
     // still cost). The default config must pay zero for this feature.
     if (!s.enabled) {
       this._server._respond(this._reqId, this.statusCode, this._headersFlat(), body);
+      this.headersSent = true;
+      this._emitDone();
+      return;
+    }
+    // res.json(undefined) serialises to nothing: an empty body, never a
+    // candidate for compression (reading its length would throw).
+    if (body === undefined || body === null) {
+      this._server._respond(this._reqId, this.statusCode, this._headersFlat(), null);
       this.headersSent = true;
       this._emitDone();
       return;
@@ -1100,7 +1292,7 @@ export class EngineResponse extends LazyEventEmitter {
 
     const redirectCode = code || 302;
     this.statusCode = redirectCode;
-    this.setHeader('location', url.replace(/[\r\n]/g, ''));
+    this.setHeader('location', locationHeaderValue(url));
 
     try {
       this._server._respond(this._reqId, redirectCode, this._headersFlat(), null);
@@ -1258,41 +1450,16 @@ export class EngineResponse extends LazyEventEmitter {
   }
 
   cookie(name: string, value: string, options?: any) {
-    // Percent-encode the value (matches the Node path and Express): an
-    // unencoded value containing ';' or ',' would inject cookie attributes, and
-    // control chars would make the native header validator silently drop the
-    // whole Set-Cookie header.
-    const parts = [name, '=', encodeURIComponent(value)];
+    // Signing is done by the cookie middleware, which replaces this method.
+    // Reaching here with `signed` means no signer is registered, and the
+    // value must not go out unsigned under a name the application trusts.
+    if (options && options.signed) throw unsignedCookieError(name);
 
-    if (options) {
-      // maxAge: 0 is meaningful (immediate expiry - clearCookie relies on it)
-      if (options.maxAge !== undefined && options.maxAge !== null) {
-        parts.push('; Max-Age=', String(options.maxAge));
-      }
-      if (options.expires) {
-        const expires =
-          options.expires instanceof Date ? options.expires.toUTCString() : String(options.expires);
-        parts.push('; Expires=', expires);
-      }
-      if (options.domain) {
-        parts.push('; Domain=', options.domain);
-      }
-      if (options.secure) {
-        parts.push('; Secure');
-      }
-      if (options.httpOnly) {
-        parts.push('; HttpOnly');
-      }
-      if (options.sameSite) {
-        parts.push('; SameSite=', options.sameSite);
-      }
-    }
-    // Path defaults to '/' (Express behavior): without it the browser scopes
-    // the cookie to the current URL's directory, so a clearCookie() from
-    // /auth/logout would miss a cookie originally set at Path=/.
-    parts.push('; Path=', options?.path ?? '/');
-
-    const cookie = parts.join('');
+    // The serializer every server shares: the value percent-encoded (an
+    // unencoded ';' or ',' would inject attributes, and a control character
+    // would make the native header validator drop the whole header), Path
+    // defaulting to '/'.
+    const cookie = serializeCookie(name, value, options ?? undefined, this._moroReq);
     const lowerKey = 'set-cookie';
     const existing = this.responseHeaders[lowerKey];
     if (existing) {
@@ -1309,24 +1476,40 @@ export class EngineResponse extends LazyEventEmitter {
   }
 
   clearCookie(name: string, options: any = {}) {
-    const clearOptions: any = { expires: new Date(0), maxAge: 0 };
-    if (options.path !== undefined) clearOptions.path = options.path;
-    if (options.domain !== undefined) clearOptions.domain = options.domain;
-    if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
-    if (options.secure !== undefined) clearOptions.secure = options.secure;
-    if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
-    return this.cookie(name, '', clearOptions);
+    return this.cookie(name, '', clearCookieOptions(options));
   }
 
   // ==== File responses ====
 
   // Small files go out in one respond(); larger files stream with
   // backpressure ('drain' via the engine's onWritable)
-  async sendFile(filePath: string): Promise<void> {
+  async sendFile(filePath: string, options?: SendFileOptions): Promise<void> {
     if (this.headersSent || this._ended) return;
 
     let streamRef: any = null; // read stream, so the catch can tear it down
+    // True once this call has written the file's own headers
+    let described = false;
+    // True when this call put a Cache-Control on the response (an option
+    // asked for one); a Cache-Control the handler set is not this call's.
+    let cacheSet = false;
     try {
+      // `root` confines the path; the dotfile policy comes with it
+      if (options !== undefined && (options.root !== undefined || options.dotfiles !== undefined)) {
+        const located = await locateFile(
+          filePath,
+          options.root,
+          options.dotfiles ?? (options.root !== undefined ? 'ignore' : 'allow')
+        );
+        if (located === 'forbidden') {
+          clearRepresentationHeaders(this, true);
+          this.removeHeader('Content-Type');
+          this.status(403).json({ success: false, error: 'Forbidden' });
+          return;
+        }
+        if (located === 'not-found') throw new Error('not served');
+        filePath = located;
+      }
+
       const fs = await import('fs');
       const path = await import('path');
       const stats = await fs.promises.stat(filePath);
@@ -1337,7 +1520,16 @@ export class EngineResponse extends LazyEventEmitter {
       }
       this.setHeader('X-Content-Type-Options', 'nosniff');
       this.setHeader('Last-Modified', stats.mtime.toUTCString());
-      this.setHeader('Cache-Control', 'public, max-age=31536000');
+      // No Cache-Control unless the caller asked for one: how long a file
+      // may be cached, and by whom, is the application's to say.
+      if (options !== undefined) {
+        const cacheControl = fileCacheControl(options);
+        if (cacheControl !== undefined) {
+          this.setHeader('Cache-Control', cacheControl);
+          cacheSet = true;
+        }
+      }
+      described = true;
 
       if (stats.size <= SENDFILE_BUFFER_LIMIT) {
         const data = await fs.promises.readFile(filePath);
@@ -1403,6 +1595,15 @@ export class EngineResponse extends LazyEventEmitter {
       if (this.headersSent && !this._ended) {
         this.end();
       } else if (!this.headersSent && !this._ended) {
+        // The answer is now an error body, not the file: nothing that
+        // described the file may stay on it. Content-Disposition from
+        // attachment()/download() would have the browser save the error under
+        // the file's name, and a cache lifetime set above belongs to the
+        // file. A Cache-Control the handler set itself is left alone.
+        // The Content-Type goes too (attachment() takes it from the file
+        // name): json() keeps one that is set, and this body is JSON.
+        clearRepresentationHeaders(this, !(described && cacheSet));
+        this.removeHeader('Content-Type');
         this.status(404).json({ success: false, error: 'File not found' });
       }
     }
@@ -1411,8 +1612,7 @@ export class EngineResponse extends LazyEventEmitter {
   attachment(filename?: string) {
     if (this.headersSent) return this;
     if (filename) {
-      const safeName = filename.replace(/[\r\n"]/g, '');
-      this.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      this.setHeader('Content-Disposition', attachmentDisposition(filename));
       if (!this.getHeader('Content-Type')) {
         const dot = filename.lastIndexOf('.');
         if (dot !== -1) {
@@ -1425,9 +1625,36 @@ export class EngineResponse extends LazyEventEmitter {
     return this;
   }
 
-  async download(filePath: string, filename?: string): Promise<void> {
-    this.attachment(filename || filePath.split('/').pop());
-    return this.sendFile(filePath);
+  // Never rejects, like sendFile(): a handler may call it without awaiting,
+  // and a rejection nobody is waiting for would end the process.
+  async download(
+    filePath: string,
+    filename?: string | SendFileOptions,
+    options?: SendFileOptions
+  ): Promise<void> {
+    try {
+      // download(path, options): the name is the file's own
+      if (filename !== null && typeof filename === 'object') {
+        options = filename;
+        filename = undefined;
+      }
+      // The display name goes into Content-Disposition and nowhere else: the
+      // type a browser is told is the file's own, not the one its download
+      // name suggests. A Content-Type the handler set before the call stays.
+      const typed = 'content-type' in this.responseHeaders;
+      this.attachment(filename || filePath.split('/').pop());
+      if (!typed) this.removeHeader('Content-Type');
+      await this.sendFile(filePath, options);
+    } catch (error) {
+      this._logger.error('res.download() failed', 'Download', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!this.headersSent && !this._ended) {
+        clearRepresentationHeaders(this);
+        this.removeHeader('Content-Type');
+        this.status(500).json({ success: false, error: 'Internal server error' });
+      }
+    }
   }
 
   format(handlers: Record<string, () => any | Promise<any>>): void {
@@ -1544,7 +1771,7 @@ export class EngineResponse extends LazyEventEmitter {
 
   location(url: string) {
     if (this.headersSent) return this;
-    this.setHeader('Location', url.replace(/[\r\n]/g, ''));
+    this.setHeader('Location', locationHeaderValue(url));
     return this;
   }
 
@@ -1700,6 +1927,13 @@ export class MoroEngineServer {
     status: number;
     headersFlat: string[] | null;
   }> = [];
+  // A reply the engine sends by itself passes nothing in JS, so the engine
+  // holds the two lists above only while a request would meet nothing there
+  // before its handler: no global middleware, no request or response hook.
+  // Once either exists the routes are taken back from the engine and their
+  // requests are dispatched like any other, through the chain to the route's
+  // JS handler (see _syncNativeRoutes). False while they are taken back.
+  private _nativeRoutesLive = true;
   // Batched pipelined dispatch (engine >= 1.1.6, capabilities.batchDispatch):
   // the engine parses complete pipelined requests ahead and delivers them in
   // one onRequestBatch(count) call; the descriptors/control/paths buffers are
@@ -1726,6 +1960,8 @@ export class MoroEngineServer {
   private hookManager: any;
   private requestCounter = 0;
   private requestTrackingEnabled = true; // Generate request IDs (read lazily by EngineRequest)
+  /** @internal read by the request getters: server.trustProxy, compiled (undefined = not set) */
+  proxyTrust: ProxyTrust | undefined = undefined;
   private isListening = false;
   private port?: number;
   private host?: string;
@@ -1748,17 +1984,34 @@ export class MoroEngineServer {
     ): void;
     onMessage(wsId: number, data: any, isBinary: boolean): void;
     onClose(wsId: number, code: number): void;
+    verifyUpgrade?: WsVerifyUpgrade;
   };
   // Handshake info for the upgrade currently in flight: set just before
   // upgradeToWebSocket() (which fires onWsOpen synchronously), consumed there.
   private _pendingWsInfo?: { ip: string; flat: string[] | undefined; query: string } | undefined;
+  // Upgrade requests waiting for an asynchronous verifyUpgrade verdict. An
+  // entry leaves when the verdict arrives or when the client goes away first
+  // (onAborted), after which the request id is no longer this request's.
+  private _upgradesPending?: Set<number>;
+  // The request being handed back to onRequest after its verdict let it
+  // through and the engine found the handshake invalid: not probed again.
+  private _upgradeRedispatch = -1;
 
   // Body size limits (bytes) - configured from server.bodySizeLimit/maxUploadSize
   private maxBodySize: number = 10 * 1024 * 1024;
   private maxUploadSize: number = 100 * 1024 * 1024;
   private reusePort = false;
+  /**
+   * WebSocket permessage-deflate is in force: websocket.compression was set
+   * and the engine advertises capabilities.wsDeflate. It is an option of the
+   * engine's serve(), so it is decided when the server is created.
+   */
+  readonly wsCompression: boolean = false;
   private _capabilities?: EngineCapabilities;
   private _limits?: HttpRuntimeLimits;
+  // The start-up line about the idle timeout default was written (once per
+  // server, not again when listen() registers a fresh native server)
+  private _idleDefaultNoted = false;
   private _ssl?: Record<string, any>;
   private _http2Settings?: Http2ServerOptions;
   private multipartLimits?: MultipartLimits;
@@ -1780,6 +2033,13 @@ export class MoroEngineServer {
   // Direct router dispatch (set from Moro.listen via setRouterHandler)
   private routerHandler?: (req: HttpRequest, res: HttpResponse) => boolean | Promise<boolean>;
 
+  // The router of the app this server belongs to (set by the framework when
+  // it creates the server). Dispatch goes through routerHandler; this is for
+  // code inside a request that needs the app's own router or configuration
+  // and reaches the server through the request. Declared only: the property
+  // exists once the framework sets it, and no other field moves for it.
+  declare router?: import('../routing/unified-router.js').UnifiedRouter;
+
   // Global error handler (Moro.setErrorHandler) - shapes errors thrown from
   // global middleware, hooks and body parsing (parity with MoroHttpServer)
   private errorHandler?: (err: any, req: HttpRequest, res: HttpResponse) => any | Promise<any>;
@@ -1791,9 +2051,13 @@ export class MoroEngineServer {
   // harness does between cases). Checked before the unified router in dispatch.
   private directRoutes: Array<{
     method: string;
-    pattern: RegExp;
+    /** A path without parameters: answered for exactly this text, and no pattern */
+    literal: string | undefined;
+    pattern: RegExp | undefined;
     paramNames: string[];
     handlers: Array<Middleware | HttpHandler>;
+    /** The path ends in optional parameters: one the request left out has no key */
+    optional?: boolean;
   }> = [];
 
   constructor(
@@ -1819,12 +2083,16 @@ export class MoroEngineServer {
       /** server.lendBodies: unparsed (binary) bodies are views over the
        *  engine's bytes, valid until the response is sent. */
       lendBodies?: boolean;
+      /** websocket.compression: have the engine negotiate permessage-deflate
+       *  with the WebSocket clients that offer it (engine caps.wsDeflate). */
+      wsCompression?: boolean;
     } = {}
   ) {
     if (options.maxBodySize) this.maxBodySize = options.maxBodySize;
     if (options.maxUploadSize) this.maxUploadSize = options.maxUploadSize;
     this.reusePort = options.reusePort === true;
     if (options.capabilities) this._capabilities = options.capabilities;
+    this.wsCompression = options.wsCompression === true && this._capabilities?.wsDeflate === true;
     if (options.limits) this._limits = options.limits;
     if (options.ssl) this._ssl = options.ssl;
     if (options.http2Settings) this._http2Settings = options.http2Settings;
@@ -1871,22 +2139,31 @@ export class MoroEngineServer {
       this._endWith = surface.endWith;
       this._templatesOn = true;
     }
-    if (this._capabilities?.staticRoutes === true && typeof surface.setStaticRoute === 'function') {
+    // Both need the matching clear function as well: a route the engine
+    // could not be asked to give back is never handed to it.
+    if (
+      this._capabilities?.staticRoutes === true &&
+      typeof surface.setStaticRoute === 'function' &&
+      typeof surface.clearStaticRoutes === 'function'
+    ) {
       this._setStaticRoute = surface.setStaticRoute;
       this._staticOn = true;
     }
-    if (this._capabilities?.paramRoutes === true && typeof surface.setParamRoute === 'function') {
+    if (
+      this._capabilities?.paramRoutes === true &&
+      typeof surface.setParamRoute === 'function' &&
+      typeof surface.clearParamRoutes === 'function'
+    ) {
       this._setParamRoute = surface.setParamRoute;
       this._paramOn = true;
     }
-    if (
+    const wsAutoUpgradeAvailable =
       this._capabilities?.wsAutoUpgrade === true &&
       typeof surface.setWsAutoUpgrade === 'function' &&
       typeof surface.wsGetHeaders === 'function' &&
       typeof surface.wsGetQuery === 'function' &&
-      typeof surface.wsGetRemoteAddress === 'function'
-    ) {
-      this._setWsAutoUpgrade = surface.setWsAutoUpgrade;
+      typeof surface.wsGetRemoteAddress === 'function';
+    if (wsAutoUpgradeAvailable) {
       this._wsGetHeaders = surface.wsGetHeaders;
       this._wsGetQuery = surface.wsGetQuery;
       this._wsGetRemoteAddress = surface.wsGetRemoteAddress;
@@ -1915,6 +2192,19 @@ export class MoroEngineServer {
       this._getBatchBuffers = surface.getBatchBuffers;
       this._getPath = surface.getPath;
       this._batchOn = true;
+    }
+    // Engine-side upgrades are turned on (enableWebSocket) only when batched
+    // dispatch is off, or the engine says the pair is safe
+    // (capabilities.wsAutoUpgradeBatch): engines 1.1.15 to 1.1.21 upgrade a
+    // handshake that arrives pipelined behind another request from inside
+    // that request's response call, and abort the process. Otherwise the
+    // upgrade stays with onRequest, the path every engine before 1.1.15
+    // uses, which is sound under batched dispatch.
+    if (
+      wsAutoUpgradeAvailable &&
+      (!this._batchOn || this._capabilities?.wsAutoUpgradeBatch === true)
+    ) {
+      this._setWsAutoUpgrade = surface.setWsAutoUpgrade;
     }
 
     // TLS: pass it through when the engine supports it; otherwise keep the
@@ -2004,12 +2294,17 @@ export class MoroEngineServer {
 
   /**
    * Register a fixed reply for one (method, path) that the engine serves
-   * without calling into JS: no routing, no middleware, no hooks and no
-   * header building per request. The bytes on the wire are those of
-   * respond(status, headers, body). Returns false when this engine cannot
-   * take it (no capability, or a method the engine does not index), so the
-   * caller keeps its JS handler as the answer. Registering the same
-   * (method, path) again replaces the earlier reply.
+   * without calling into JS: no routing and no header building per request.
+   * The bytes on the wire are those of respond(status, headers, body).
+   * Returns false when this engine cannot take it (no capability, or a
+   * method the engine does not index), so the caller keeps its JS handler as
+   * the answer. Registering the same (method, path) again replaces the
+   * earlier reply.
+   *
+   * The engine answers only while this server has no global middleware and
+   * no request or response hook, whenever those are registered: with either
+   * in place the request is dispatched like any other, so the middleware and
+   * hooks run and the route's JS handler sends the reply.
    */
   setStaticRoute(
     method: string,
@@ -2028,10 +2323,11 @@ export class MoroEngineServer {
     const headersFlat = flattenHeaders(headers);
     const fixedBody = body === undefined ? null : body;
     const entry = { methodIdx, path, status, headersFlat, body: fixedBody };
+    this._syncNativeRoutes();
     const at = this.staticRoutes.findIndex(r => r.methodIdx === methodIdx && r.path === path);
     if (at === -1) this.staticRoutes.push(entry);
     else this.staticRoutes[at] = entry;
-    fn(this.serverId, methodIdx, path, status, headersFlat, fixedBody);
+    if (this._nativeRoutesLive) fn(this.serverId, methodIdx, path, status, headersFlat, fixedBody);
     return true;
   }
 
@@ -2043,9 +2339,46 @@ export class MoroEngineServer {
     }
   }
 
-  // listen() after close() registers a fresh native server; give it every
-  // static and parameter route the old one had.
-  private _reapplyStaticRoutes(): void {
+  // Whether a request meets anything in JS before its route: the same
+  // conditions onRequest reads per request, asked here only when one of them
+  // may have changed.
+  private _chainInFront(): boolean {
+    if (this.globalMiddleware.length > 0) return true;
+    const hookManager = this.hookManager;
+    return !!(
+      hookManager &&
+      (hookManager.hasHooks === undefined ||
+        hookManager.hasHooks('request') ||
+        hookManager.hasHooks('response'))
+    );
+  }
+
+  // Bring what the engine holds in line with _chainInFront(): every static
+  // and parameter route while nothing is in front, none otherwise. Called
+  // when middleware is added (use), when hooks change (setHookManager and the
+  // manager's change notice), when a route is registered and from listen();
+  // never per request. The engine applies a route-table change from the next
+  // request on.
+  private _syncNativeRoutes(): void {
+    const live = !this._chainInFront();
+    if (live === this._nativeRoutesLive) return;
+    this._nativeRoutesLive = live;
+    if (live) {
+      this._applyNativeRoutes();
+      return;
+    }
+    if (this._staticOn && this.staticRoutes.length > 0) {
+      this._engine.clearStaticRoutes(this.serverId);
+    }
+    if (this._paramOn && this.paramRoutes.length > 0) {
+      this._engine.clearParamRoutes(this.serverId);
+    }
+  }
+
+  // Give the native server every static and parameter route on record: when
+  // they become live again, and for the fresh native server that listen()
+  // registers after close().
+  private _applyNativeRoutes(): void {
     const fn = this._setStaticRoute;
     if (fn !== undefined) {
       for (const r of this.staticRoutes) {
@@ -2072,7 +2405,9 @@ export class MoroEngineServer {
    * on the wire. Returns false when this engine cannot take it (no
    * capability, compression on, or an unindexed method), so the caller keeps
    * its JS handler. Registering the same (method, prefix, suffix) again
-   * replaces the earlier reply.
+   * replaces the earlier reply. As with setStaticRoute, the engine answers
+   * only while this server has no global middleware and no request or
+   * response hook; otherwise the route's JS handler does, behind them.
    */
   setParamRoute(
     method: string,
@@ -2088,12 +2423,13 @@ export class MoroEngineServer {
     if (methodIdx < 0 || methodIdx >= STATIC_ROUTE_METHODS) return false;
     const headersFlat = flattenHeaders(headers);
     const entry = { methodIdx, prefix, suffix, status, headersFlat };
+    this._syncNativeRoutes();
     const at = this.paramRoutes.findIndex(
       r => r.methodIdx === methodIdx && r.prefix === prefix && r.suffix === suffix
     );
     if (at === -1) this.paramRoutes.push(entry);
     else this.paramRoutes[at] = entry;
-    fn(this.serverId, methodIdx, prefix, suffix, status, headersFlat);
+    if (this._nativeRoutesLive) fn(this.serverId, methodIdx, prefix, suffix, status, headersFlat);
     return true;
   }
 
@@ -2124,7 +2460,35 @@ export class MoroEngineServer {
       reusePort: this.reusePort,
     };
     // Timeouts + connection cap: understood since the engine's first release.
-    if (t.idle !== undefined) serveOptions.idleTimeoutMs = t.idle;
+    // The engine reads 0 as "disabled", so 0 is only ever passed when the
+    // configuration says 0. An app's limits arrive with the request timeout
+    // resolved (server.timeouts.request, 5 minutes by default) and the idle
+    // timeout as configured: unset means the framework default, set once here
+    // at listen time. Without limits (this class constructed directly) the
+    // engine's own defaults apply.
+    // The default is for an engine whose idle sweep leaves a connection with
+    // a response still to deliver alone (capabilities.idleSparesDrainingResponse).
+    // One without it closes a slow reader in the middle of a response that
+    // was written in one piece, so there an unset idle timeout stays off,
+    // and only a configured one is handed over, as given.
+    let idle = t.idle;
+    if (idle === undefined && limits) {
+      if (caps?.idleSparesDrainingResponse === true) {
+        idle = DEFAULT_IDLE_TIMEOUT_MS;
+      } else {
+        idle = 0;
+        if (!this._idleDefaultNoted) {
+          this._idleDefaultNoted = true;
+          this.logger.info(
+            `server.timeouts.idle is not set, and the ${DEFAULT_IDLE_TIMEOUT_MS / 1000} s default is not applied ` +
+              'on this version of @morojs/engine: its idle timeout also closes a connection that is still ' +
+              'receiving a response. No idle timeout is in force; set server.timeouts.idle (ms) to apply one.',
+            'Init'
+          );
+        }
+      }
+    }
+    if (idle !== undefined) serveOptions.idleTimeoutMs = idle;
     if (t.request !== undefined) serveOptions.requestTimeoutMs = t.request;
     if (limits?.maxConnections && limits.maxConnections > 0) {
       serveOptions.maxConnections = limits.maxConnections;
@@ -2144,6 +2508,12 @@ export class MoroEngineServer {
         serveOptions.writeHighWaterMark = limits.writeHighWaterMark;
       if (limits?.backlog !== undefined) serveOptions.backlog = limits.backlog;
     }
+    // server.limits.responseBackpressureLimit: the bytes one connection may
+    // have queued and not yet sent before the engine closes it. Handed over
+    // only when configured; the engine's own default is no limit.
+    if (caps?.responseLimits && limits?.responseBackpressureLimit !== undefined) {
+      serveOptions.responseBackpressureLimit = limits.responseBackpressureLimit;
+    }
     // TLS: gated on the engine's own capability flag (caps.tls), not a version
     // number, so a mismatched engine build is never handed an ssl option it
     // can't parse.
@@ -2154,6 +2524,25 @@ export class MoroEngineServer {
     if (caps?.http2 && this._http2Settings) {
       serveOptions.http2 = {
         ...(this._http2Settings.settings ?? {}),
+      };
+    }
+    // websocket.compression: the engine negotiates permessage-deflate with a
+    // client that offers it, at either upgrade (its own, or the one asked for
+    // in onRequest), and with no other client.
+    // sharedCompressor: what the server sends is compressed by one stream of
+    // its own, message by message, where the engine's default keeps a
+    // compressor per connection, allocated at the handshake (measured: about
+    // 230 KB a connection against about 14 KB).
+    // An inflated message is capped by the engine at maxDecompressedSize,
+    // which it takes from wsMaxMessageSize when left out, so a configured
+    // message limit is handed over as both and compression cannot carry a
+    // message past it.
+    if (this.wsCompression) {
+      serveOptions.wsDeflate = {
+        sharedCompressor: true,
+        ...(limits?.wsMaxMessageSize !== undefined
+          ? { maxDecompressedSize: limits.wsMaxMessageSize }
+          : {}),
       };
     }
     const callbacks: Record<string, any> = {
@@ -2232,19 +2621,114 @@ export class MoroEngineServer {
 
   // ---- WebSocket bridge (used by EngineWebSocketAdapter) ----
 
-  /** Register the engine WebSocket bridge; upgrade requests then route natively. */
+  /**
+   * Register the engine WebSocket bridge; upgrade requests then route natively.
+   *
+   * A bridge with `verifyUpgrade` decides each handshake before it is
+   * answered: the function gets the upgrade request and returns nothing to
+   * let it through, or the HTTP status to refuse it with (or a promise of
+   * either). The upgrade then stays in onRequest, where the request can
+   * still be answered as plain HTTP.
+   */
   enableWebSocket(bridge: {
     onOpen(wsId: number, path: string): void;
     onMessage(wsId: number, data: any, isBinary: boolean): void;
     onClose(wsId: number, code: number): void;
+    verifyUpgrade?: WsVerifyUpgrade;
   }): void {
     this._wsBridge = bridge;
     // With the capability the engine answers valid handshakes itself; the
     // onRequest branch below stays for an invalid one (surfaced as a plain
-    // request, answered 400 by the router) and for older engines.
-    if (this._setWsAutoUpgrade) {
+    // request, answered 400 by the router) and for older engines. Not with
+    // verifyUpgrade: a handshake the engine answered can no longer be refused.
+    if (this._setWsAutoUpgrade && bridge.verifyUpgrade === undefined) {
       this._setWsAutoUpgrade(this.serverId, true);
       this._wsAutoOn = true;
+    }
+  }
+
+  // The bridge's verdict on an upgrade request. True when the request is
+  // finished with here: refused, or parked until an asynchronous verdict.
+  private verifyUpgradeRequest(
+    verify: WsVerifyUpgrade,
+    reqId: number,
+    methodIdx: number,
+    path: string,
+    info: { ip: string; flat: string[] | undefined; query: string }
+  ): boolean {
+    let verdict: number | undefined | Promise<number | undefined>;
+    try {
+      verdict = verify({
+        ip: info.ip,
+        flat: info.flat,
+        query: info.query,
+        path,
+        method: (methodIdx === 7
+          ? (this._getMethod(reqId) || 'OTHER').toUpperCase()
+          : METHODS[methodIdx]) as string,
+        secure: this.isSsl,
+      });
+    } catch {
+      verdict = 500;
+    }
+    if (verdict !== null && typeof verdict === 'object' && typeof verdict.then === 'function') {
+      const pending = (this._upgradesPending ??= new Set<number>());
+      pending.add(reqId);
+      verdict.then(
+        status => this.settleUpgrade(reqId, methodIdx, path, info, status),
+        () => this.settleUpgrade(reqId, methodIdx, path, info, 500)
+      );
+      return true;
+    }
+    if (verdict) {
+      this.refuseUpgrade(reqId, verdict as number);
+      return true;
+    }
+    return false;
+  }
+
+  // An asynchronous verdict arrived: refuse, or upgrade as onRequest would
+  // have done on the spot.
+  private settleUpgrade(
+    reqId: number,
+    methodIdx: number,
+    path: string,
+    info: { ip: string; flat: string[] | undefined; query: string },
+    status: number | undefined
+  ): void {
+    // The client went away while the check ran: nothing to answer.
+    if (!this._upgradesPending?.delete(reqId)) return;
+    if (status) {
+      this.refuseUpgrade(reqId, status);
+      return;
+    }
+    this._pendingWsInfo = info;
+    const wsId = this._upgradeToWebSocket(reqId);
+    this._pendingWsInfo = undefined;
+    if (wsId !== -1) return;
+    // Not a valid handshake: a plain request, as when it is found out at once.
+    this._upgradeRedispatch = reqId;
+    try {
+      this.dispatchOne(reqId, methodIdx, path);
+    } finally {
+      this._upgradeRedispatch = -1;
+    }
+  }
+
+  // A refused handshake is an ordinary HTTP response; the connection never
+  // becomes a WebSocket.
+  private refuseUpgrade(reqId: number, status: number): void {
+    const code = Number.isInteger(status) && status >= 400 && status <= 599 ? status : 403;
+    const error = code === 403 ? 'Forbidden' : code === 401 ? 'Unauthorized' : 'Upgrade refused';
+    try {
+      this._respond(
+        reqId,
+        code,
+        ['content-type', 'application/json'],
+        `{"success":false,"error":"${error}"}`
+      );
+    } catch {
+      // already answered or gone
     }
   }
 
@@ -2309,9 +2793,24 @@ export class MoroEngineServer {
     handlers: Array<Middleware | HttpHandler>
   ): void {
     const compiled = PathMatcher.compile(path);
-    const pattern =
-      compiled.pattern || new RegExp(`^${(path.split('?')[0] ?? '').replace(/\//g, '\\/')}$`);
-    this.directRoutes.push({ method, pattern, paramNames: compiled.paramNames, handlers });
+    const paramNames = compiled.paramNames;
+    if (paramNames.length === 0 || compiled.pattern === null) {
+      // No parameter: the path is matched as it is written, character for
+      // character, as the Node server's table matches it. '*', '.', '+' and
+      // the like stand for themselves ('/files/*' is not '/files', and
+      // '/v1.0' is not '/v1x0').
+      const literal = path.split('?')[0] ?? '';
+      this.directRoutes.push({ method, literal, pattern: undefined, paramNames, handlers });
+      return;
+    }
+    this.directRoutes.push({
+      method,
+      literal: undefined,
+      pattern: compiled.pattern,
+      paramNames,
+      handlers,
+      ...(compiled.variableLength === true && { optional: true }),
+    });
   }
 
   get(path: string, ...handlers: Array<Middleware | HttpHandler>): void {
@@ -2346,16 +2845,19 @@ export class MoroEngineServer {
     const path = httpReq.path;
     for (const route of this.directRoutes) {
       if (route.method !== method) continue;
-      const matches = path.match(route.pattern);
-      if (!matches) continue;
-
-      if (route.paramNames.length > 0) {
+      const pattern = route.pattern;
+      if (pattern === undefined) {
+        if (route.literal !== path) continue;
+      } else {
+        const matches = path.match(pattern);
+        if (!matches) continue;
         const params: Record<string, string> = {};
         for (let i = 0; i < route.paramNames.length; i++) {
           const paramName = route.paramNames[i];
           if (paramName === undefined) continue;
           const raw = matches[i + 1];
           if (raw === undefined) {
+            if (route.optional === true) continue;
             params[paramName] = '';
           } else {
             // Malformed escapes (e.g. /users/%zz) keep the raw text - a
@@ -2424,7 +2926,7 @@ export class MoroEngineServer {
     // would be one native call per request on the listener for nothing.
     if (this._wsBridge && !this._wsAutoOn) {
       const upgrade = this._getHeader(reqId, 'upgrade');
-      if (upgrade && upgrade.toLowerCase() === 'websocket') {
+      if (upgrade && upgrade.toLowerCase() === 'websocket' && reqId !== this._upgradeRedispatch) {
         // Snapshot handshake data now - the upgrade invalidates the reqId,
         // after which these fetchers return empty values. The headers stay
         // the engine's flat [name, value, ...] list: the adapter builds the
@@ -2436,6 +2938,15 @@ export class MoroEngineServer {
         // Capture the query string too (invalidated by the upgrade like the
         // rest), so handlers can read handshake query params (e.g. orgId).
         const query: string = this._getQuery(reqId) || '';
+        // A bridge that checks handshakes gives its verdict first; a refused
+        // one is answered with its HTTP status and is never upgraded.
+        const verify = this._wsBridge.verifyUpgrade;
+        if (
+          verify !== undefined &&
+          this.verifyUpgradeRequest(verify, reqId, methodIdx, path, { ip, flat, query })
+        ) {
+          return;
+        }
         this._pendingWsInfo = { ip, flat, query };
         const wsId = this._upgradeToWebSocket(reqId);
         this._pendingWsInfo = undefined;
@@ -2445,12 +2956,20 @@ export class MoroEngineServer {
     }
 
     // methodIdx 7 (OTHER) needs the extra crossing; the seven common methods
-    // resolve from the static table
+    // resolve from the static table. A token that is not one of the seven is
+    // upper-cased here, once: the router matches methods case-insensitively,
+    // so `delete /x` reaches the DELETE handler, and every hook and middleware
+    // in front of it must see the same 'DELETE' the router acted on - a guard
+    // comparing req.method against 'DELETE' would otherwise be skipped.
     const method = (
-      methodIdx === 7 ? this._getMethod(reqId) || 'OTHER' : METHODS[methodIdx]
+      methodIdx === 7 ? (this._getMethod(reqId) || 'OTHER').toUpperCase() : METHODS[methodIdx]
     ) as string;
 
     const httpReq = new EngineRequest(this, reqId, method, path);
+    // Every target a route can match starts with '/'. One that does not may
+    // be in absolute-form ("GET http://host/path"), which a server has to
+    // accept (RFC 9112 3.2.2): it is routed by its path, with its host.
+    if (path.charCodeAt(0) !== 47 /* / */) useAbsoluteTarget(httpReq, path);
     const httpRes = new EngineResponse(this, reqId, this.logger);
     httpRes._moroReq = httpReq;
 
@@ -2598,6 +3117,7 @@ export class MoroEngineServer {
   private onAborted(reqId: number): void {
     const httpRes = this.inflight.take(reqId);
     if (httpRes) httpRes._handleAbort();
+    else if (this._upgradesPending !== undefined) this._upgradesPending.delete(reqId);
   }
 
   private onWritable(reqId: number): void {
@@ -2783,10 +3303,17 @@ export class MoroEngineServer {
       // Send error response if not already sent
       if (!httpRes.writableEnded && !httpRes.headersSent) {
         try {
+          // What the handler had set described the body it meant to send
+          clearRepresentationHeaders(httpRes);
           httpRes._sendConstantJson(500, '{"success":false,"error":"Internal server error"}');
         } catch {
           this.logger.error('Failed to send error response', 'ResponseError');
         }
+      } else {
+        // The failure came after the response had started: nothing can be
+        // answered any more, and an unfinished response would keep the client
+        // waiting for the rest of a body that is not coming.
+        destroyUnfinishedResponse(httpRes);
       }
     }
   }
@@ -2818,10 +3345,9 @@ export class MoroEngineServer {
       const type = getBodyType(reqId);
       if (type === null) return;
       contentType = type;
-      isMultipart = contentType.includes('multipart/form-data');
+      isMultipart = isMultipartMediaType(contentType);
       const isJson = !isMultipart && isJsonMediaType(contentType);
-      const isForm =
-        !isMultipart && !isJson && contentType.includes('application/x-www-form-urlencoded');
+      const isForm = !isMultipart && !isJson && isUrlEncodedMediaType(contentType);
       const decoded = isJson || isForm || (!isMultipart && bodyIsText(contentType));
       if (decoded) {
         const text = this._getBodyText(reqId);
@@ -2875,7 +3401,7 @@ export class MoroEngineServer {
         (httpReq._headers !== undefined
           ? httpReq._headers['content-type']
           : this._getHeader(reqId, 'content-type')) || '';
-      isMultipart = contentType.includes('multipart/form-data');
+      isMultipart = isMultipartMediaType(contentType);
     }
     const maxSize = isMultipart ? this.maxUploadSize : this.maxBodySize;
 
@@ -2897,7 +3423,7 @@ export class MoroEngineServer {
     try {
       if (isJsonMediaType(contentType)) {
         httpReq.body = JSON.parse(buffer.toString('utf-8'));
-      } else if (contentType.includes('application/x-www-form-urlencoded')) {
+      } else if (isUrlEncodedMediaType(contentType)) {
         const params = new URLSearchParams(buffer.toString('utf-8'));
         const body: Record<string, any> = {};
         params.forEach((value, key) => {
@@ -2933,7 +3459,8 @@ export class MoroEngineServer {
   // Supports: 3-arg (req, res, next), 4-arg (err, req, res, next) error middlewares,
   // and next(err) to skip forward to the next error middleware.
   //
-  // Sync-aware dispatch (mirrors MoroHttpServer.executeMiddleware): middleware
+  // Sync-aware dispatch (utils/middleware-dispatch, shared with the Node
+  // servers): middleware
   // that calls next() synchronously (or throws synchronously) advances the
   // chain in a plain loop with ZERO promise allocations. A promise is only
   // created when a middleware actually completes asynchronously. Returns
@@ -2945,105 +3472,9 @@ export class MoroEngineServer {
     req: HttpRequest,
     res: HttpResponse
   ): void | Promise<void> {
-    return this.dispatchMiddleware(middleware, req, res, 0, undefined);
-  }
-
-  private dispatchMiddleware(
-    middleware: Middleware[],
-    req: HttpRequest,
-    res: HttpResponse,
-    startIndex: number,
-    initialError: any
-  ): void | Promise<void> {
-    const len = middleware.length;
-    let activeError: any = initialError;
-    let i = startIndex;
-
-    while (i < len) {
-      if (res.headersSent) return;
-
-      const mw = middleware[i] as any;
-      i++;
-      const isErrorHandler = mw.length >= 4;
-
-      // Non-error middleware is skipped while an error is active; error middleware
-      // is skipped while no error is active. Matches Express semantics.
-      if (activeError !== undefined && !isErrorHandler) continue;
-      if (activeError === undefined && isErrorHandler) continue;
-
-      let settled = false;
-      let settledError: any = undefined;
-      let asyncResolve: ((err: any) => void) | undefined;
-
-      const next = (err?: any) => {
-        if (settled) return;
-        settled = true;
-        settledError = err;
-        if (asyncResolve) asyncResolve(err);
-      };
-
-      let result: any;
-      try {
-        result = isErrorHandler ? mw(activeError, req, res, next) : mw(req, res, next);
-      } catch (err) {
-        if (!settled) {
-          settled = true;
-          settledError = err;
-        }
-      }
-
-      const isThenable = result && typeof result.then === 'function';
-
-      if (settled) {
-        // Completed synchronously (next() called sync, or threw sync). A still
-        // pending returned promise no longer gates the chain once next() has
-        // been called; swallow late rejections so they never go unhandled.
-        if (isThenable) {
-          (result as Promise<void>).then(undefined, () => {});
-        }
-        activeError = settledError;
-        continue;
-      }
-
-      if (!isThenable && res.headersSent) {
-        // Terminal middleware (Express style): it answered the request and
-        // deliberately never calls next(). The chain is finished - skip
-        // allocating a promise that nothing would ever settle (the response was
-        // already sent, so this only ever produced immediate garbage).
-        return;
-      }
-
-      if (!isThenable) {
-        // Sync-looking middleware that neither called next() nor returned a
-        // promise: it will call next() later (e.g. from an event callback).
-        // Fall back to a promise for the remainder of the chain.
-        const resumeIndex = i;
-        return new Promise<any>(resolve => {
-          asyncResolve = resolve;
-        }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
-      }
-
-      // Async middleware: completion is next() OR promise settle, whichever
-      // happens first (same semantics as the previous implementation).
-      const resumeIndex = i;
-      return new Promise<any>(resolve => {
-        asyncResolve = resolve;
-        (result as Promise<void>).then(
-          () => {
-            if (!settled) next();
-          },
-          (err: any) => {
-            if (!settled) next(err);
-          }
-        );
-      }).then(err => this.dispatchMiddleware(middleware, req, res, resumeIndex, err));
-    }
-
-    // If an error is still unhandled after the chain, re-throw so the top-level
-    // catch in handleRequest can invoke the registered errorHandler / default 500.
-    if (activeError !== undefined) {
-      throw activeError;
-    }
+    // A middleware that answered the request without calling next() ends the
+    // chain; one that has done neither yet is waited for.
+    return dispatchMiddleware(middleware, req, res, 0, undefined, WAIT_UNLESS_ANSWERED);
   }
 
   // Public API - matches the MoroHttpServer interface
@@ -3066,6 +3497,8 @@ export class MoroEngineServer {
     }
 
     this.globalMiddleware.push(middleware);
+    // Routes the engine was answering by itself now have this in front of them
+    this._syncNativeRoutes();
   }
 
   // Configure request tracking (ID generation)
@@ -3073,11 +3506,27 @@ export class MoroEngineServer {
     this.requestTrackingEnabled = enabled;
   }
 
+  /**
+   * Apply server.trustProxy (compiled by compileTrustProxy). With undefined,
+   * req.ip / req.ips / req.protocol / req.hostname are derived as they were
+   * before the setting existed.
+   */
+  setTrustProxy(trust: ProxyTrust | undefined): void {
+    this.proxyTrust = trust;
+  }
+
   // Note: Route registration methods (get, post, etc.) are not used by the
   // engine adapter - all routing is handled by UnifiedRouter via setRouterHandler
 
   setHookManager(hookManager: any): void {
     this.hookManager = hookManager;
+    // A hook registered later (app.hooks.before('request', ...), a hook-based
+    // middleware installed after listen()) must be in front of every route,
+    // including the ones the engine was answering by itself.
+    if (hookManager && typeof hookManager.onRegistrationChange === 'function') {
+      hookManager.onRegistrationChange(() => this._syncNativeRoutes());
+    }
+    this._syncNativeRoutes();
   }
 
   configurePerformance(config: any): void {
@@ -3112,10 +3561,14 @@ export class MoroEngineServer {
       if (this.closed) {
         this.serverId = this.registerWithEngine();
         this._resetTemplates();
-        this._reapplyStaticRoutes();
+        // The fresh native server holds no routes yet
+        this._nativeRoutesLive = false;
         if (this._wsAutoOn && this._setWsAutoUpgrade) this._setWsAutoUpgrade(this.serverId, true);
         this.closed = false;
       }
+      // The last look before requests arrive: a hook manager that cannot
+      // announce its changes is asked here.
+      this._syncNativeRoutes();
       // Synchronous bind; throws on bind errors, returns the actual port
       // (meaningful when port 0 asks for an ephemeral one)
       let boundHost = host;

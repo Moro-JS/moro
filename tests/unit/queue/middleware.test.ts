@@ -3,7 +3,7 @@
  * Tests for rate limiting, priority, and monitoring middleware
  */
 
-import { describe, test, expect, beforeEach } from '@jest/globals';
+import { describe, test, expect, beforeEach, jest } from '@jest/globals';
 import {
   createRateLimitMiddleware,
   RateLimiter,
@@ -58,6 +58,85 @@ describe('Queue Middleware', () => {
 
       expect(executionCount).toBe(3);
       expect(duration).toBeGreaterThan(30); // Should have some delay
+    });
+
+    test('delays the job over the limit, and runs it, whatever millisecond it arrives in', async () => {
+      jest.useFakeTimers();
+      try {
+        // 2 jobs per 100 ms: a token takes 50 ms to come back. A third job
+        // that arrives `gap` ms after the second finds part of one there and
+        // waits for the rest; 4 ms later that is 0.08 + 0.92 of a token,
+        // which floating point makes 0.9999999999999999.
+        for (const gap of [0, 1, 4, 5, 6, 7, 13, 26]) {
+          let executionCount = 0;
+          const rateLimitedHandler = createRateLimitMiddleware(
+            async () => {
+              executionCount++;
+            },
+            { max: 2, duration: 100 }
+          );
+          await rateLimitedHandler(createMockJob({ id: 1 }));
+          await rateLimitedHandler(createMockJob({ id: 2 }));
+          await jest.advanceTimersByTimeAsync(gap);
+
+          const outcome = rateLimitedHandler(createMockJob({ id: 3 })).then(
+            () => 'ran',
+            (error: Error) => error.message
+          );
+          // Not before its token is back...
+          await jest.advanceTimersByTimeAsync(50 - gap - 2);
+          expect({ gap, executionCount }).toEqual({ gap, executionCount: 2 });
+          // ...and then it runs
+          await jest.advanceTimersByTimeAsync(10);
+          expect({ gap, outcome: await outcome }).toEqual({ gap, outcome: 'ran' });
+          expect(executionCount).toBe(3);
+        }
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('runs every job that waits for the same token, one token at a time', async () => {
+      jest.useFakeTimers();
+      try {
+        const ran: number[] = [];
+        const rateLimitedHandler = createRateLimitMiddleware(
+          async (job: JobContext) => {
+            ran.push(job.data.id);
+          },
+          { max: 2, duration: 100 }
+        );
+        await rateLimitedHandler(createMockJob({ id: 1 }));
+        await rateLimitedHandler(createMockJob({ id: 2 }));
+
+        // Two more at once: both wait for the token that is back in 50 ms
+        const outcomes = Promise.all(
+          [3, 4].map(id =>
+            rateLimitedHandler(createMockJob({ id })).then(
+              () => 'ran',
+              (error: Error) => error.message
+            )
+          )
+        );
+        await jest.advanceTimersByTimeAsync(55);
+        expect(ran).toHaveLength(3);
+        await jest.advanceTimersByTimeAsync(55);
+        expect(await outcomes).toEqual(['ran', 'ran']);
+        expect([...ran].sort()).toEqual([1, 2, 3, 4]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('gives up on a limit that can never let a job through', async () => {
+      const rateLimitedHandler = createRateLimitMiddleware(async () => {}, {
+        max: 0.5,
+        duration: 20,
+      });
+
+      await expect(rateLimitedHandler(createMockJob({ id: 1 }))).rejects.toThrow(
+        'Rate limit still exceeded after waiting'
+      );
     });
 
     test('should use RateLimiter factory methods', () => {
@@ -233,6 +312,43 @@ describe('Queue Middleware', () => {
       // Should only keep last 1000
       expect(collector.getJobMetrics('job-0')).toBeUndefined();
       expect(collector.getJobMetrics('job-1499')).toBeDefined();
+    });
+
+    test('keeps per-job records for the most recent 1000 jobs, and counts every job', async () => {
+      const monitored = createMonitoringMiddleware(async () => 'ok', { collector });
+      const jobs = Array.from({ length: 1200 }, (_, n) => ({
+        ...createMockJob({ n }),
+        id: `job-${n}`,
+      }));
+      for (const job of jobs) await monitored(job);
+
+      expect(collector.getJobMetrics('job-0')).toBeUndefined();
+      expect(collector.getJobMetrics('job-199')).toBeUndefined();
+      expect(collector.getJobMetrics('job-200')?.success).toBe(true);
+      expect(collector.getJobMetrics('job-1199')?.success).toBe(true);
+      expect(collector.getQueueStats('test-queue')?.totalJobs).toBe(1200);
+
+      // The number is configurable, and a job that is still running keeps its
+      // record however many jobs start after it
+      const small = new QueueMetricsCollector({ maxJobMetrics: 2 });
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => (release = resolve));
+      const slow = createMonitoringMiddleware(
+        async (job: JobContext) => {
+          if (job.id === 'slow') await gate;
+        },
+        { collector: small }
+      );
+      const running = slow({ ...createMockJob({}), id: 'slow' });
+      for (const id of ['a', 'b', 'c', 'd']) await slow({ ...createMockJob({}), id });
+
+      expect(small.getJobMetrics('slow')).toBeDefined();
+      expect(small.getJobMetrics('a')).toBeUndefined();
+      expect(small.getJobMetrics('d')).toBeDefined();
+      release();
+      await running;
+      expect(small.getJobMetrics('slow')?.success).toBe(true);
+      expect(small.getQueueStats('test-queue')?.totalJobs).toBe(5);
     });
 
     test('should track min/max duration', async () => {

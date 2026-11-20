@@ -57,6 +57,21 @@ export interface MultipartLimits {
   maxFileSize?: number;
 }
 
+/**
+ * Marks an object as the output of this parser. The upload middleware reads
+ * `req.body.files` only from a body that carries it, so a JSON (or any other)
+ * body shaped like `{ files: ... }` is never mistaken for parsed uploads. A
+ * request body cannot carry a symbol key, and the property is non-enumerable,
+ * so it does not show up in spreads, `Object.keys` or serialization. Uses the
+ * global registry so a custom multipart parser can brand its own output.
+ */
+export const MULTIPART_BODY: unique symbol = Symbol.for('moro.multipart.body');
+
+/** True when `body` came out of `parseMultipart` (or was branded like it). */
+export function isMultipartBody(body: unknown): body is ParsedMultipart {
+  return typeof body === 'object' && body !== null && (body as any)[MULTIPART_BODY] === true;
+}
+
 const DEFAULT_MAX_PARTS = 1000;
 const DEFAULT_MAX_PART_HEADER_BYTES = 16 * 1024;
 
@@ -140,6 +155,31 @@ function decodeExtendedValue(value: string): string | null {
 }
 
 /**
+ * Whether the bytes at `pos`, just past a boundary token, end that token:
+ * "--" (the closing delimiter), or optional SP/HTAB padding and then CRLF
+ * (RFC 2046 §5.1.1). Anything else means the token was only the start of a
+ * longer one - "--abcdef" is not a delimiter for boundary "abc" - and the
+ * bytes belong to the part's content. A body that stops right after the token
+ * or its padding counts, so the caller reports it as an unterminated line.
+ */
+function endsBoundaryToken(buffer: Buffer, pos: number): boolean {
+  if (buffer[pos] === 0x2d && buffer[pos + 1] === 0x2d) return true;
+  let i = pos;
+  while (buffer[i] === 0x20 || buffer[i] === 0x09) i++;
+  if (i >= buffer.length) return true;
+  return buffer[i] === 0x0d && buffer[i + 1] === 0x0a;
+}
+
+/** Offset of the next real delimiter at or after `from`, or -1. */
+function indexOfDelimiter(buffer: Buffer, delimiter: Buffer, from: number): number {
+  let at = buffer.indexOf(delimiter, from);
+  while (at !== -1 && !endsBoundaryToken(buffer, at + delimiter.length)) {
+    at = buffer.indexOf(delimiter, at + 1);
+  }
+  return at;
+}
+
+/**
  * Parse a buffered multipart/form-data payload into fields and files.
  * Duplicate part names are last-wins in `fields` and `files` (matching
  * URLSearchParams-style access); `parts` keeps every part in order.
@@ -175,10 +215,13 @@ export function parseMultipart(
   // Locate the first delimiter: at the very start it appears without the
   // leading CRLF; otherwise a preamble precedes it (RFC 2046 §5.1.1).
   let pos: number;
-  if (buffer.subarray(0, dashBoundary.length).equals(dashBoundary)) {
+  if (
+    buffer.subarray(0, dashBoundary.length).equals(dashBoundary) &&
+    endsBoundaryToken(buffer, dashBoundary.length)
+  ) {
     pos = dashBoundary.length;
   } else {
-    const first = buffer.indexOf(delimiter);
+    const first = indexOfDelimiter(buffer, delimiter, 0);
     if (first === -1) throw new Error('Malformed multipart body: boundary not found');
     pos = first + delimiter.length;
   }
@@ -191,7 +234,7 @@ export function parseMultipart(
     const lineEnd = buffer.indexOf(CRLF_BUF, pos);
     if (lineEnd === -1) throw new Error('Malformed multipart body: unterminated boundary line');
     const partStart = lineEnd + 2;
-    const next = buffer.indexOf(delimiter, partStart);
+    const next = indexOfDelimiter(buffer, delimiter, partStart);
     // No delimiter after the part: the message was cut off before its
     // closing delimiter, so the last part cannot be trusted to be complete.
     if (next === -1) throw new Error('Malformed multipart body: missing closing delimiter');
@@ -210,7 +253,9 @@ export function parseMultipart(
     pos = next + delimiter.length;
   }
 
-  return { fields, files, parts };
+  const parsed: ParsedMultipart = { fields, files, parts };
+  Object.defineProperty(parsed, MULTIPART_BODY, { value: true });
+  return parsed;
 }
 
 function parsePart(

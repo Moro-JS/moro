@@ -9,6 +9,13 @@ import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { closeApp, createTestPort } from '../setup.js';
 import { describeEngine } from './engine-test-utils.js';
+import { loadNativeEngine } from '../../src/core/utilities/package-utils.js';
+import * as net from 'net';
+
+// limits.responseBackpressureLimit is handed to engines that advertise
+// responseLimits; an older engine has no such limit to enforce.
+const responseLimits = loadNativeEngine()?.capabilities?.responseLimits === true;
+const itResponseLimits = responseLimits ? it : it.skip;
 
 const testPort = () => createTestPort();
 const listen = (app: any, port: number) =>
@@ -67,6 +74,60 @@ describeEngine('Native engine configurable limits (over the wire)', () => {
     expect(res.status).toBe(200);
     expect((await res.json()).bytes).toBe(body.length);
   }, 30000);
+
+  itResponseLimits(
+    'limits.responseBackpressureLimit closes a connection with more than that queued unsent; without it the response waits for the client',
+    async () => {
+      const megabyte = 1024 * 1024;
+      const small = Buffer.alloc(megabyte, 0x61);
+      const large = Buffer.alloc(8 * megabyte, 0x62);
+
+      // One request for the 8 MiB response from a client that starts reading late
+      const largeToSlowClient = async (limits: any) => {
+        if (app) {
+          await closeApp(app);
+          resetConfig();
+        }
+        const port = testPort();
+        app = await createApp({ logger: { level: 'fatal' }, server: { engine: 'moro', limits } });
+        app.get('/small', (_req: any, res: any) => res.send(small));
+        app.get('/large', (_req: any, res: any) => res.send(large));
+        await listen(app, port);
+
+        // A response under the limit is delivered whole
+        const read = await fetch(`http://127.0.0.1:${port}/small`);
+        expect((await read.arrayBuffer()).byteLength).toBe(megabyte);
+
+        const socket = net.connect({ host: '127.0.0.1', port });
+        await new Promise(resolve => socket.once('connect', resolve));
+        socket.pause();
+        socket.on('error', () => {});
+        let received = 0;
+        let closed = false;
+        socket.on('data', chunk => (received += chunk.length));
+        socket.on('close', () => (closed = true));
+        socket.write('GET /large HTTP/1.1\r\nHost: t\r\n\r\n');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        socket.resume();
+        const deadline = Date.now() + 5000;
+        while (!closed && received < large.length && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        socket.destroy();
+        return { received, closed };
+      };
+
+      // 8 MiB written at once is more than may wait: the connection is closed
+      const limited = await largeToSlowClient({ responseBackpressureLimit: '3mb' });
+      expect(limited.closed).toBe(true);
+      expect(limited.received).toBeLessThan(large.length);
+
+      // Not set: nothing bounds the queue, and the client gets all of it
+      const unlimited = await largeToSlowClient({});
+      expect(unlimited.received).toBeGreaterThan(large.length);
+      expect(unlimited.closed).toBe(false);
+    }
+  );
 
   it('multipart maxFiles is enforced (413 over the limit)', async () => {
     const port = testPort();

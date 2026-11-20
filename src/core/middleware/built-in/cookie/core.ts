@@ -1,13 +1,23 @@
 // Cookie Core - Reusable cookie parsing and setting logic
 import * as crypto from 'crypto';
-import { HttpResponse } from '../../../../types/http.js';
+import { HttpRequest, HttpResponse } from '../../../../types/http.js';
+import { clearCookieOptions, serializeCookie } from '../../../http/utils/cookie-attributes.js';
 
 // ===== Types =====
 
 export interface CookieOptions {
-  maxAge?: number;
+  /**
+   * Lifetime in milliseconds, as in Express. Sent as whole seconds of
+   * `Max-Age`; `null` sends no `Max-Age`.
+   */
+  maxAge?: number | null;
   expires?: Date;
   httpOnly?: boolean;
+  /**
+   * Whether the cookie is `Secure`. Left out, it follows the connection: the
+   * cookie is `Secure` when the request arrived over TLS (a TLS connection to
+   * this server, or https as reported by a proxy named in `server.trustProxy`).
+   */
   secure?: boolean;
   sameSite?: 'strict' | 'lax' | 'none';
   domain?: string;
@@ -23,6 +33,24 @@ export interface CookieOptions {
 /** Prefix marking a signed value, matching the cookie-parser convention. */
 const SIGNED_PREFIX = 's:';
 
+/**
+ * One signing key, or several for rotation: values are signed with the first
+ * and a value signed with any of them verifies. Entries that are not set
+ * (`[process.env.SECRET, process.env.SECRET_PREVIOUS]` with the second one
+ * absent) are skipped.
+ */
+export type CookieSecret = string | readonly (string | undefined | null)[];
+
+/**
+ * The usable keys of a `secret` option, in order: empty strings and
+ * non-strings are dropped, so "no secret" is always an empty list.
+ */
+export function cookieSecrets(secret: CookieSecret | undefined | null): string[] {
+  if (typeof secret === 'string') return secret ? [secret] : [];
+  if (!Array.isArray(secret)) return [];
+  return secret.filter((key): key is string => typeof key === 'string' && key !== '');
+}
+
 /** `s:<value>.<signature>` — HMAC-SHA256 of the value, base64url encoded. */
 export function signCookieValue(value: string, secret: string): string {
   const signature = crypto
@@ -35,9 +63,10 @@ export function signCookieValue(value: string, secret: string): string {
 
 /**
  * Verify a signed value, returning the payload or null when the value isn't
- * signed or the signature doesn't match. Comparison is constant-time.
+ * signed or the signature doesn't match. Comparison is constant-time. Given
+ * several secrets, the value verifies when any one of them signed it.
  */
-export function unsignCookieValue(signed: string, secret: string): string | null {
+export function unsignCookieValue(signed: string, secret: CookieSecret): string | null {
   if (!signed.startsWith(SIGNED_PREFIX)) return null;
 
   const body = signed.slice(SIGNED_PREFIX.length);
@@ -46,12 +75,24 @@ export function unsignCookieValue(signed: string, secret: string): string | null
 
   const value = body.slice(0, separator);
   const provided = Buffer.from(body.slice(separator + 1));
+
+  if (typeof secret === 'string') {
+    return signatureMatches(value, provided, secret) ? value : null;
+  }
+  for (let i = 0; i < secret.length; i++) {
+    const key = secret[i];
+    if (typeof key === 'string' && key !== '' && signatureMatches(value, provided, key)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function signatureMatches(value: string, provided: Buffer, secret: string): boolean {
   const expected = Buffer.from(
     crypto.createHmac('sha256', secret).update(value).digest('base64').replace(/=+$/, '')
   );
-
-  if (provided.length !== expected.length) return null;
-  return crypto.timingSafeEqual(provided, expected) ? value : null;
+  return provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
 }
 
 /** Whether a raw cookie value carries the signed marker. */
@@ -100,45 +141,54 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
 }
 
 /**
- * Build a Set-Cookie header string from name, value, and options
+ * Visit every `name=value` pair of a Cookie header in order, repeated names
+ * included. Accepts exactly the pairs parseCookies() does, decoded the same way.
+ */
+function eachCookie(cookieHeader: string, visit: (name: string, value: string) => void): void {
+  let start = 0;
+  const len = cookieHeader.length;
+
+  for (let i = 0; i <= len; i++) {
+    if (i === len || cookieHeader[i] === ';') {
+      if (i > start) {
+        const cookie = cookieHeader.substring(start, i).trim();
+        const equalIndex = cookie.indexOf('=');
+        if (equalIndex > 0) {
+          const name = cookie.substring(0, equalIndex);
+          const value = cookie.substring(equalIndex + 1);
+          if (name && value) {
+            let decoded = value;
+            try {
+              decoded = decodeURIComponent(value);
+            } catch {
+              // keep the raw value, as parseCookies() does
+            }
+            visit(name, decoded);
+          }
+        }
+      }
+      start = i + 1;
+    }
+  }
+}
+
+/**
+ * Build a Set-Cookie header string from name, value, and options. `maxAge` is
+ * in milliseconds (sent as whole seconds of `Max-Age`); an invalid name,
+ * domain, path or sameSite throws a TypeError.
+ *
+ * `req` and `res` are the request the cookie answers and its response: with
+ * no `secure` option the cookie is `Secure` when that request arrived over
+ * TLS. Without them only an explicit `secure` counts.
  */
 export function buildCookieString(
   name: string,
   value: string,
-  options: CookieOptions = {}
+  options: CookieOptions = {},
+  req?: unknown,
+  res?: unknown
 ): string {
-  const cookieValue = encodeURIComponent(value);
-  let cookieString = `${name}=${cookieValue}`;
-
-  if (options.maxAge !== undefined) {
-    cookieString += `; Max-Age=${options.maxAge}`;
-  }
-
-  if (options.expires) {
-    cookieString += `; Expires=${options.expires.toUTCString()}`;
-  }
-
-  if (options.httpOnly) {
-    cookieString += '; HttpOnly';
-  }
-
-  if (options.secure) {
-    cookieString += '; Secure';
-  }
-
-  if (options.sameSite) {
-    cookieString += `; SameSite=${options.sameSite}`;
-  }
-
-  if (options.domain) {
-    cookieString += `; Domain=${options.domain}`;
-  }
-
-  if (options.path) {
-    cookieString += `; Path=${options.path}`;
-  }
-
-  return cookieString;
+  return serializeCookie(name, value, options, req, res);
 }
 
 /**
@@ -146,10 +196,19 @@ export function buildCookieString(
  * Used directly by the router for route-based cookie handling
  */
 export class CookieCore {
+  // Every key a signed cookie may verify against; the first one signs.
+  private secrets: string[];
   private secret: string | undefined;
 
-  constructor(secret?: string) {
-    this.secret = secret;
+  /**
+   * @param secret The signing key, or several for rotation: put the new key
+   * first. Cookies are signed with the first key and a cookie signed with any
+   * of them still verifies, so the old key can stay listed until the cookies
+   * it signed have expired.
+   */
+  constructor(secret?: CookieSecret) {
+    this.secrets = cookieSecrets(secret);
+    this.secret = this.secrets[0];
   }
 
   /**
@@ -179,8 +238,51 @@ export class CookieCore {
         plain[name] = value;
         continue;
       }
-      const verified = unsignCookieValue(value, this.secret);
+      const verified = unsignCookieValue(value, this.secrets);
       if (verified !== null) signed[name] = verified;
+    }
+
+    return { cookies: plain, signedCookies: signed };
+  }
+
+  /**
+   * Read a request's Cookie header into plain values and verified signed
+   * ones. Signatures are checked per occurrence, before repeated names are
+   * collapsed: a name that carries a verified signed value is a signed cookie
+   * whatever else was sent under the same name, so a second cookie planted
+   * with that name cannot hide it from `signedCookies` or stand in for it in
+   * `cookies`. Names without a verified value resolve as before - the last
+   * occurrence decides, and a signed value that fails verification is dropped.
+   * @internal
+   */
+  readCookies(cookieHeader: string | undefined): {
+    cookies: Record<string, string>;
+    signedCookies: Record<string, string>;
+  } {
+    // One key is the common case: verify against the string, not a list
+    const secret: CookieSecret | undefined = this.secrets.length > 1 ? this.secrets : this.secret;
+    if (!secret || !cookieHeader) {
+      return { cookies: parseCookies(cookieHeader || ''), signedCookies: {} };
+    }
+
+    const plain: Record<string, string> = {};
+    const signed: Record<string, string> = {};
+
+    eachCookie(cookieHeader, (name, value) => {
+      if (!isSignedCookieValue(value)) {
+        plain[name] = value;
+        return;
+      }
+      const verified = unsignCookieValue(value, secret);
+      if (verified !== null) {
+        signed[name] = verified;
+      } else if (plain[name] !== undefined) {
+        delete plain[name];
+      }
+    });
+
+    for (const name of Object.keys(signed)) {
+      if (plain[name] !== undefined) delete plain[name];
     }
 
     return { cookies: plain, signedCookies: signed };
@@ -189,7 +291,13 @@ export class CookieCore {
   /**
    * Set a cookie on the response
    */
-  setCookie(res: HttpResponse, name: string, value: string, options: CookieOptions = {}): void {
+  setCookie(
+    res: HttpResponse,
+    name: string,
+    value: string,
+    options: CookieOptions = {},
+    req?: HttpRequest
+  ): void {
     let outgoing = value;
     if (options.signed) {
       if (!this.secret) {
@@ -201,7 +309,7 @@ export class CookieCore {
       outgoing = signCookieValue(value, this.secret);
     }
 
-    const cookieString = buildCookieString(name, outgoing, options);
+    const cookieString = buildCookieString(name, outgoing, options, req, res);
 
     const existingCookies = res.getHeader('Set-Cookie') || [];
     // Avoid spread operator - direct array manipulation
@@ -213,18 +321,13 @@ export class CookieCore {
   /**
    * Clear a cookie by setting its expiration to the past
    */
-  clearCookie(res: HttpResponse, name: string, options: CookieOptions = {}): void {
-    // Avoid spread operator - manually set properties
-    const clearOptions: CookieOptions = {
-      expires: new Date(0),
-      maxAge: 0,
-    };
-    // Copy other options manually
-    if (options.path !== undefined) clearOptions.path = options.path;
-    if (options.domain !== undefined) clearOptions.domain = options.domain;
-    if (options.httpOnly !== undefined) clearOptions.httpOnly = options.httpOnly;
-    if (options.secure !== undefined) clearOptions.secure = options.secure;
-    if (options.sameSite !== undefined) clearOptions.sameSite = options.sameSite;
-    this.setCookie(res, name, '', clearOptions);
+  clearCookie(
+    res: HttpResponse,
+    name: string,
+    options: CookieOptions = {},
+    req?: HttpRequest
+  ): void {
+    const clearOptions: CookieOptions = clearCookieOptions(options);
+    this.setCookie(res, name, '', clearOptions, req);
   }
 }

@@ -136,6 +136,36 @@ describe('QueueManager', () => {
     });
   });
 
+  describe('Retention of finished jobs', () => {
+    const wait = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+
+    test("applies a queue's retention option to its adapter", async () => {
+      await manager.registerQueue('bounded', {
+        adapter: 'memory',
+        retention: { completed: 2, failed: 1 },
+      });
+      await manager.registerQueue('other', { adapter: 'memory', retention: { completed: 4 } });
+      for (const queue of ['bounded', 'other']) {
+        await manager.processQueue(queue, 50, async (job: JobContext) => {
+          if (job.data.fail) throw new Error('boom');
+        });
+      }
+
+      for (let n = 0; n < 6; n++) {
+        await manager.addToQueue('bounded', { n });
+        await manager.addToQueue('bounded', { n, fail: true });
+        await manager.addToQueue('other', { n });
+      }
+      await wait();
+
+      const numbers = async (queue: string, status: 'completed' | 'failed') =>
+        (await manager.getJobs(queue, status)).map(job => job.data.n);
+      expect(await numbers('bounded', 'completed')).toEqual([4, 5]);
+      expect(await numbers('bounded', 'failed')).toEqual([5]);
+      expect(await numbers('other', 'completed')).toEqual([2, 3, 4, 5]);
+    });
+  });
+
   describe('Queue Status and Control', () => {
     beforeEach(async () => {
       await manager.registerQueue('test-queue', { adapter: 'memory' });

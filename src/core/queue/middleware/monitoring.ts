@@ -20,17 +20,46 @@ export interface JobMetrics {
   memoryUsage?: NodeJS.MemoryUsage;
 }
 
+/** Per-job records a collector keeps unless told otherwise. */
+const DEFAULT_MAX_JOB_METRICS = 1000;
+
 /**
  * Queue metrics collector
  */
 export class QueueMetricsCollector {
   private metrics: Map<string, JobMetrics> = new Map();
   private aggregatedStats: Map<string, QueueStats> = new Map();
+  private maxJobMetrics: number;
+
+  /**
+   * `maxJobMetrics` is how many per-job records are kept, most recent first
+   * (default 1000; `Infinity` keeps every one). The aggregated statistics per
+   * queue count every job, whatever this is.
+   */
+  constructor(options: { maxJobMetrics?: number } = {}) {
+    const max = options.maxJobMetrics;
+    this.maxJobMetrics = typeof max === 'number' && max >= 0 ? max : DEFAULT_MAX_JOB_METRICS;
+  }
 
   /**
    * Record job start
    */
   recordStart(jobId: string, queueName: string, attemptsMade: number): void {
+    // Newest last (a Map iterates in insertion order); a job that runs again
+    // moves to the end. The oldest finished records make room for a new one;
+    // a job that is still running keeps its record so its result is counted.
+    this.metrics.delete(jobId);
+    while (this.metrics.size >= this.maxJobMetrics && this.metrics.size > 0) {
+      let oldest: string | undefined;
+      for (const [id, metric] of this.metrics) {
+        if (metric.endTime !== undefined) {
+          oldest = id;
+          break;
+        }
+      }
+      if (oldest === undefined) break;
+      this.metrics.delete(oldest);
+    }
     this.metrics.set(jobId, {
       jobId,
       queueName,

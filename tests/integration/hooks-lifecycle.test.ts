@@ -1,7 +1,10 @@
 /* eslint-disable no-undef */
 import { createApp, createAppEdge, middleware, HOOK_EVENTS } from '../../src/index.js';
 import { Moro } from '../../src/moro.js';
-import { createTestPort, delay, waitFor } from '../setup.js';
+import { resetConfig } from '../../src/core/config/index.js';
+import { UnifiedRouter } from '../../src/core/routing/unified-router.js';
+import { closeApp, createTestPort, delay, waitFor } from '../setup.js';
+import { engineLoadable } from './engine-test-utils.js';
 
 describe('Hook lifecycle - integration', () => {
   let app: Moro;
@@ -136,5 +139,111 @@ describe('Hook lifecycle - integration', () => {
     });
     const secondData = (await second.json()) as any;
     expect(secondData.views).toBe(2);
+  });
+});
+
+// A before('request') hook gates the request on every HTTP backend, whether it
+// is an async function or an ordinary function that returns a promise.
+// UnifiedRouter and the configuration are process-wide, so each test boots one
+// app, exercises it and closes it before the next one starts.
+type BackendId = 'node' | 'moro';
+const BACKENDS: BackendId[] = engineLoadable ? ['node', 'moro'] : ['node'];
+
+describe.each(BACKENDS)('Request hooks that gate a request on the %s backend', backend => {
+  let app: any;
+
+  async function boot(register: (app: any) => void): Promise<string> {
+    resetConfig();
+    UnifiedRouter.reset();
+    app = await createApp({
+      logger: { level: 'fatal' },
+      autoDiscover: false,
+      routing: false,
+      server: { engine: backend },
+    } as any);
+    register(app);
+    const port = createTestPort();
+    await new Promise<void>(resolve => app.listen(port, '127.0.0.1', () => resolve()));
+    return `http://127.0.0.1:${port}`;
+  }
+
+  afterEach(async () => {
+    if (app) await closeApp(app);
+    app = undefined;
+  });
+
+  it('awaits a hook that returns a promise without being async', async () => {
+    const order: string[] = [];
+    const base = await boot(app => {
+      // Deliberately NOT an async function: an arrow that returns a promise.
+      app.hooks.before('request', (ctx: any) =>
+        new Promise<void>(resolve => setTimeout(resolve, 15)).then(() => {
+          order.push('hook');
+          if (ctx.request.headers['x-api-key'] !== 'good') {
+            ctx.response.status(401).json({ error: 'denied' });
+          }
+        })
+      );
+      app.delete('/account').handler(() => {
+        order.push('handler');
+        return { deleted: true };
+      });
+    });
+
+    const denied = await fetch(`${base}/account`, {
+      method: 'DELETE',
+      headers: { 'x-api-key': 'bad' },
+    });
+    expect(denied.status).toBe(401);
+    expect(order).toEqual(['hook']);
+
+    order.length = 0;
+    const allowed = await fetch(`${base}/account`, {
+      method: 'DELETE',
+      headers: { 'x-api-key': 'good' },
+    });
+    expect(allowed.status).toBe(200);
+    expect(order).toEqual(['hook', 'handler']);
+  });
+
+  it('turns a rejected hook promise into an error response, not a crash', async () => {
+    let handlerRan = false;
+    const base = await boot(app => {
+      app.hooks.before('request', (ctx: any) =>
+        Promise.resolve().then(() => {
+          if (ctx.request.headers['x-api-key'] !== 'good') throw new Error('invalid token');
+        })
+      );
+      app.get('/data').handler(() => {
+        handlerRan = true;
+        return { ok: true };
+      });
+    });
+
+    const bad = await fetch(`${base}/data`, { headers: { 'x-api-key': 'bad' } });
+    expect(bad.status).toBeGreaterThanOrEqual(500);
+    expect(handlerRan).toBe(false);
+
+    // The process is still serving.
+    const good = await fetch(`${base}/data`, { headers: { 'x-api-key': 'good' } });
+    expect(good.status).toBe(200);
+  });
+
+  it('does not swallow a deliberate hook error whose message mentions headersSent', async () => {
+    let handlerRan = false;
+    const base = await boot(app => {
+      app.hooks.before('request', (ctx: any) => {
+        const key = String(ctx.request.headers['x-api-key'] ?? '');
+        if (key !== 'good') throw new Error(`Unknown API key: ${key}`);
+      });
+      app.get('/data').handler(() => {
+        handlerRan = true;
+        return { ok: true };
+      });
+    });
+
+    const res = await fetch(`${base}/data`, { headers: { 'x-api-key': 'headersSent getter' } });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(handlerRan).toBe(false);
   });
 });

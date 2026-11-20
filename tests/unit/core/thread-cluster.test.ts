@@ -3,11 +3,14 @@
 // with a fake Worker spawner and fake timers: worker-count math, GC-tuning
 // detection, transport resolution, and the primary's sequencing (spawn,
 // ready-once, restart backoff, boot/bind failures, health pings, bounded
-// shutdown that posts 'shutdown' before it ever terminate()s).
+// shutdown that posts 'shutdown' before it ever terminate()s, the message
+// channel that keeps application messages out of the protocol).
 import { describe, it, expect } from '@jest/globals';
 import { EventEmitter } from 'events';
 import {
   ThreadClusterPrimary,
+  CLUSTER_CHANNEL,
+  nextRestartDelay,
   computeWorkerCount,
   usableCpuCount,
   usableMemoryBytes,
@@ -20,9 +23,12 @@ import {
 
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
 
+// Like node:worker_threads' Worker, threadId reads -1 from the moment the
+// thread has exited, which includes the 'exit' listeners themselves.
 class FakeWorker extends EventEmitter {
   static nextId = 1;
-  threadId = FakeWorker.nextId++;
+  private id = FakeWorker.nextId++;
+  exited = false;
   posted: any[] = [];
   terminated = false;
   constructor(
@@ -30,6 +36,13 @@ class FakeWorker extends EventEmitter {
     public options: any
   ) {
     super();
+  }
+  get threadId() {
+    return this.exited ? -1 : this.id;
+  }
+  emit(event: string, ...args: any[]) {
+    if (event === 'exit') this.exited = true;
+    return super.emit(event, ...args);
   }
   postMessage(m: any) {
     this.posted.push(m);
@@ -41,12 +54,15 @@ class FakeWorker extends EventEmitter {
   }
   unref() {}
   ref() {}
-  // test drivers
+  // test drivers: what the framework's own worker side posts
+  send(body: any) {
+    this.emit('message', { channel: CLUSTER_CHANNEL, threadId: this.threadId, ...body });
+  }
   ready(port = 3000) {
-    this.emit('message', { type: 'ready', threadId: this.threadId, port });
+    this.send({ type: 'ready', port });
   }
   fatal(code: string, message = 'fatal') {
-    this.emit('message', { type: 'fatal', threadId: this.threadId, code, message });
+    this.send({ type: 'fatal', code, message });
   }
 }
 
@@ -354,8 +370,8 @@ describe('thread-cluster', () => {
       spawned[0].ready();
       spawned[1].ready();
       const done = primary.shutdown(1000);
-      expect(spawned[0].posted).toEqual([{ type: 'shutdown' }]);
-      expect(spawned[1].posted).toEqual([{ type: 'shutdown' }]);
+      expect(spawned[0].posted).toEqual([{ channel: CLUSTER_CHANNEL, type: 'shutdown' }]);
+      expect(spawned[1].posted).toEqual([{ channel: CLUSTER_CHANNEL, type: 'shutdown' }]);
       spawned[0].emit('exit', 0); // drains in time
       clock.advance(1000); // deadline -> straggler terminated
       await done;
@@ -388,9 +404,153 @@ describe('thread-cluster', () => {
       expect(spawned[0].posted.filter(m => m.type === 'ping')).toHaveLength(4);
       expect(warnings.some(w => /missed 4 health pings/.test(w))).toBe(true);
       expect(spawned[0].terminated).toBe(false);
-      spawned[0].emit('message', { type: 'pong', threadId: spawned[0].threadId, inflight: 0 });
+      spawned[0].send({ type: 'pong', inflight: 0 });
       clock.advance(1000);
       expect(warnings.filter(w => /missed/.test(w))).toHaveLength(1);
+    });
+
+    it('forgets a worker that exited and names it in the restart warning', () => {
+      const warnings: string[] = [];
+      const { primary, spawned, clock } = primaryWith({
+        logger: { ...logger, warn: (m: string) => warnings.push(m) },
+      });
+      primary.start();
+      const first = spawned[0].threadId;
+      spawned[0].ready();
+      spawned[1].ready();
+      spawned[0].emit('exit', 1);
+      expect(warnings[0]).toContain(`Worker thread ${first} exited (code 1)`);
+      expect(primary.workers.size).toBe(1);
+      clock.advance(200);
+      spawned[2].ready();
+      expect(primary.workers.size).toBe(2);
+      expect([...primary.workers.values()].every(r => !r.worker.exited)).toBe(true);
+    });
+
+    it('reports no missed health pings for a worker that no longer exists', () => {
+      const warnings: string[] = [];
+      const { primary, spawned, clock } = primaryWith({
+        logger: { ...logger, warn: (m: string) => warnings.push(m) },
+        healthIntervalMs: 1000,
+      });
+      primary.start();
+      spawned[0].ready();
+      spawned[1].ready();
+      spawned[0].emit('exit', 1);
+      clock.advance(200);
+      spawned[2].ready();
+      for (let i = 0; i < 10; i++) {
+        clock.advance(1000);
+        for (const w of spawned) if (!w.exited) w.send({ type: 'pong', inflight: 0 });
+      }
+      expect(warnings.filter(w => /missed \d+ health pings/.test(w))).toEqual([]);
+    });
+
+    it('starts the back-off again at 200 ms for a worker that had been up longer than the restart window', () => {
+      const { primary, spawned, clock } = primaryWith();
+      primary.start();
+      spawned[0].ready();
+      spawned[1].ready();
+      const delayOfNextRespawn = () => {
+        const t0 = clock.now;
+        const due = clock.timers
+          .filter(t => t.at > t0 && t.at - t0 <= 5000)
+          .sort((a, b) => a.at - b.at)[0];
+        clock.advance(due.at - t0);
+        return due.at - t0;
+      };
+      spawned[0].emit('exit', 1);
+      expect(delayOfNextRespawn()).toBe(200);
+      spawned[2].ready();
+      spawned[2].emit('exit', 1);
+      expect(delayOfNextRespawn()).toBe(400);
+      spawned[3].ready();
+      clock.advance(2 * 60 * 60 * 1000); // two hours of service
+      spawned[3].emit('exit', 1);
+      expect(delayOfNextRespawn()).toBe(200);
+    });
+
+    it('holds the event loop with a pending restart, and with no other timer', () => {
+      const refs: string[] = [];
+      const { primary, spawned } = primaryWith({
+        workerCount: 1,
+        setTimer: (_fn: () => void, ms: number) => ({ ref: () => refs.push(`ref ${ms}`) }),
+        clearTimer: () => {},
+      });
+      primary.start();
+      spawned[0].ready();
+      // The only worker dies: nothing but the restart timer is left.
+      spawned[0].emit('exit', 1);
+      expect(refs).toEqual(['ref 200']);
+    });
+
+    it('ignores messages that do not carry the cluster channel', () => {
+      const { primary, spawned, events } = primaryWith();
+      primary.start();
+      // What application code or a library may post on the same port
+      spawned[0].emit('message', { type: 'ready', threadId: spawned[0].threadId, port: 3000 });
+      expect(events).toEqual([]);
+      expect(primary.bootPhase).toBe(true);
+      spawned[0].emit('message', { type: 'fatal', code: 'EADDRINUSE', message: 'not ours' });
+      spawned[0].emit('message', { channel: 'another-library', type: 'fatal', code: 'EADDRINUSE' });
+      spawned[0].emit('message', 'fatal');
+      spawned[0].emit('message', null);
+      expect(events).toEqual([]);
+      spawned[0].ready();
+      expect(events).toEqual(['ready']);
+    });
+
+    it("accepts 'fatal' from a worker only before that worker is ready", () => {
+      const errors: string[] = [];
+      const { primary, spawned, events, clock } = primaryWith({
+        logger: { ...logger, error: (m: string) => errors.push(m) },
+      });
+      primary.start();
+      spawned[0].ready();
+      spawned[1].ready();
+      spawned[0].fatal('EADDRINUSE', 'sent long after start-up');
+      expect(events).toEqual(['ready']);
+      expect(errors).toEqual([]);
+      // ...and the worker is still supervised: its death is restarted
+      spawned[0].emit('exit', 1);
+      clock.advance(200);
+      expect(spawned).toHaveLength(3);
+    });
+
+    it("records 'closed' and says at the deadline which workers had finished closing", async () => {
+      const warnings: string[] = [];
+      const { primary, spawned, clock } = primaryWith({
+        logger: { ...logger, warn: (m: string) => warnings.push(m) },
+      });
+      primary.start();
+      spawned[0].ready();
+      spawned[1].ready();
+      const done = primary.shutdown(1000);
+      spawned[0].send({ type: 'closed' });
+      expect([...primary.workers.values()].map(r => r.closed)).toEqual([true, false]);
+      clock.advance(1000);
+      await done;
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('terminating 2 worker thread(s)');
+      expect(warnings[0]).toContain('1 had closed and were kept alive by');
+      expect(spawned.every(w => w.terminated)).toBe(true);
+    });
+  });
+
+  describe('nextRestartDelay', () => {
+    it('doubles from 200 ms to a ceiling of 5 s and counts the restarts', () => {
+      const state = { restarts: 0, lastStart: 0 };
+      const delays = [];
+      for (let i = 0; i < 7; i++) delays.push(nextRestartDelay(state, 0, 1000 + i));
+      expect(delays).toEqual([200, 400, 800, 1600, 3200, 5000, 5000]);
+      expect(state).toEqual({ restarts: 7, lastStart: 1006 });
+    });
+
+    it('starts again at 200 ms once a worker has been up for more than 60 s', () => {
+      const state = { restarts: 5, lastStart: 1_000_000 };
+      expect(nextRestartDelay(state, 59_000, 1_059_500)).toBe(5000);
+      expect(nextRestartDelay(state, 61_000, 1_200_000)).toBe(200);
+      expect(state.restarts).toBe(1);
     });
   });
 });

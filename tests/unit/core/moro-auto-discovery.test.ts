@@ -145,6 +145,72 @@ describe('Moro Auto-Discovery Integration', () => {
       expect((app as any).loadedModules.has('orders')).toBe(false);
     });
 
+    it('warns once at start-up that the lazy strategy is not applied', async () => {
+      const app = await createApp({
+        autoDiscover: { enabled: true, paths: ['./modules'], loadingStrategy: 'lazy' },
+        logger: { level: 'error' },
+      });
+      const warn = jest.spyOn((app as any).logger, 'warn').mockImplementation(() => {});
+
+      await app.initializeAutoDiscoveryNow();
+      await app.initializeAutoDiscoveryNow();
+
+      const lazy = warn.mock.calls.filter(c => String(c[0]).includes("loadingStrategy 'lazy'"));
+      expect(lazy).toHaveLength(1);
+      expect(String(lazy[0][0])).toContain('is not applied');
+      expect(String(lazy[0][0])).toContain('none of their routes is served');
+    });
+
+    it('warns once at start-up that recursive: false is not applied, and says what is', async () => {
+      const app = await createApp({
+        autoDiscover: { enabled: true, paths: ['./modules'], recursive: false },
+        logger: { level: 'error' },
+      });
+      const warn = jest.spyOn((app as any).logger, 'warn').mockImplementation(() => {});
+
+      await app.initializeAutoDiscoveryNow();
+      await app.initializeAutoDiscoveryNow();
+
+      const recursive = warn.mock.calls.filter(c => String(c[0]).includes('recursive: false'));
+      expect(recursive).toHaveLength(1);
+      expect(String(recursive[0][0])).toContain('is not applied');
+      expect(String(recursive[0][0])).toContain('maxDepth: 0');
+      // The modules in the directories below are loaded all the same
+      expect((app as any).loadedModules.has('users')).toBe(true);
+    });
+
+    it('warns once at start-up that watchForChanges does not reload modules', async () => {
+      const app = await createApp({
+        autoDiscover: { enabled: true, paths: ['./modules'], watchForChanges: true },
+        logger: { level: 'error' },
+      });
+      const warn = jest.spyOn((app as any).logger, 'warn').mockImplementation(() => {});
+
+      await app.initializeAutoDiscoveryNow();
+      (app as any).moduleDiscovery.cleanup();
+
+      const watch = warn.mock.calls.filter(c => String(c[0]).includes('watchForChanges'));
+      expect(watch).toHaveLength(1);
+      expect(String(watch[0][0])).toContain('does not reload modules');
+      // Modules are still loaded eagerly; only the reload is missing
+      expect((app as any).loadedModules.has('users')).toBe(true);
+    });
+
+    it('says nothing about either setting when neither is used', async () => {
+      const app = await createApp({
+        autoDiscover: { enabled: true, paths: ['./modules'] },
+        logger: { level: 'error' },
+      });
+      const warn = jest.spyOn((app as any).logger, 'warn').mockImplementation(() => {});
+
+      await app.initializeAutoDiscoveryNow();
+
+      const mine = warn.mock.calls.filter(c =>
+        /loadingStrategy|watchForChanges/.test(String(c[0]))
+      );
+      expect(mine).toEqual([]);
+    });
+
     it('should handle conditional loading strategy', async () => {
       // Create module with environment condition
       await createTestModule('admin', {

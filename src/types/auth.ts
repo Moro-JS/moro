@@ -115,6 +115,12 @@ export interface AuthSession {
   userId: string;
   expires: Date;
   user: AuthUser;
+  /**
+   * The organization the session is working in, or `null` when none is
+   * active. Present on a Better Auth session when its organization plugin is
+   * in use (`organization()`).
+   */
+  activeOrganizationId?: string | null;
   [key: string]: any;
 }
 

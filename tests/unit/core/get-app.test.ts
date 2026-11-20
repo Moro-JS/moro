@@ -1,6 +1,13 @@
 // Unit Tests - getApp() singleton accessor
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { createApp, getApp } from '../../../src/index.js';
+import {
+  createApp,
+  createAppNode,
+  createAppEdge,
+  createAppLambda,
+  createAppWorker,
+  getApp,
+} from '../../../src/index.js';
 
 describe('getApp()', () => {
   it('should return the app instance created by createApp()', async () => {
@@ -32,5 +39,18 @@ describe('getApp()', () => {
     expect(typeof app.loadModule).toBe('function');
     expect(typeof app.listen).toBe('function');
     expect(typeof app.websocket).toBe('function');
+  });
+
+  it.each([
+    ['createAppNode', createAppNode],
+    ['createAppEdge', createAppEdge],
+    ['createAppLambda', createAppLambda],
+    ['createAppWorker', createAppWorker],
+  ])('should return the app instance created by %s()', async (_name, factory) => {
+    const other = await createApp({ logger: { level: 'error' } });
+    const app = await factory({ logger: { level: 'error' } });
+
+    expect(getApp()).toBe(app);
+    expect(getApp()).not.toBe(other);
   });
 });

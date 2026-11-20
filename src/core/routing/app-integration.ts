@@ -8,8 +8,8 @@ import {
   RouteBuilder,
   RouteSchema,
   CompiledRoute,
-  createRoute,
-  defineRoute,
+  IntelligentRouteBuilder,
+  ExecutableRoute,
   HttpMethod,
 } from './index.js';
 import { HttpRequest, HttpResponse } from '../http/index.js';
@@ -25,7 +25,12 @@ const logger = createFrameworkLogger('AppIntegration');
  * This was part of the public API, so we maintain it as an alias
  */
 export class RouteRegistry {
-  private router = UnifiedRouter.getInstance();
+  private router: UnifiedRouter;
+
+  /** @param router The router to read from. Left out, the current app's. */
+  constructor(router?: UnifiedRouter) {
+    this.router = router ?? UnifiedRouter.getInstance();
+  }
 
   register(_route: CompiledRoute): void {
     // Routes are automatically registered with UnifiedRouter when created
@@ -69,7 +74,15 @@ export interface IntelligentApp {
 // Intelligent routing manager class
 // Now a thin facade to UnifiedRouter
 export class IntelligentRoutingManager implements IntelligentApp {
-  private router = UnifiedRouter.getInstance();
+  private router: UnifiedRouter;
+
+  /**
+   * @param router The router this manager registers on and reads from. An app
+   *   passes its own; left out, it is the current app's.
+   */
+  constructor(router?: UnifiedRouter) {
+    this.router = router ?? UnifiedRouter.getInstance();
+  }
 
   // Chainable route methods - delegate to createRoute
   get(path: string): RouteBuilder {
@@ -102,7 +115,7 @@ export class IntelligentRoutingManager implements IntelligentApp {
 
   // Schema-first route method
   route(schema: RouteSchema): CompiledRoute {
-    const compiledRoute = defineRoute(schema);
+    const compiledRoute = new ExecutableRoute(schema, this.router);
     this.register(compiledRoute);
     return compiledRoute;
   }
@@ -162,8 +175,8 @@ export class IntelligentRoutingManager implements IntelligentApp {
   }
 
   private createChainableRoute(method: HttpMethod, path: string): RouteBuilder {
-    // Just create and return the builder - it auto-registers with UnifiedRouter
-    return createRoute(method, path);
+    // Just create and return the builder - it registers on this manager's router
+    return new IntelligentRouteBuilder(method, path, this.router);
   }
 }
 

@@ -1,6 +1,7 @@
 // @ts-nocheck
-import { createApp } from '../../src/index.js';
-import { createTestPort } from '../setup.js';
+import { createApp, resetConfig } from '../../src/index.js';
+import { MoroLogger, logger as globalLogger } from '../../src/core/logger/index.js';
+import { createTestPort, waitFor } from '../setup.js';
 
 describe('Jobs Integration', () => {
   let app;
@@ -264,6 +265,90 @@ describe('Jobs Integration', () => {
 
       expect(handler).toHaveBeenCalled();
     }, 5000); // Reduced timeout from 10000
+  });
+
+  describe("Leader election with the 'redis' strategy", () => {
+    // Just enough of an ioredis client for the lock: SET ... NX, GET, EVAL
+    function fakeRedis() {
+      const store = new Map<string, string>();
+      return {
+        store,
+        defineCommand: () => {},
+        set: jest.fn(async (key: string, value: string) => {
+          if (store.has(key)) return null;
+          store.set(key, value);
+          return 'OK';
+        }),
+        get: jest.fn(async (key: string) => store.get(key) ?? null),
+        eval: jest.fn(async () => 1),
+        del: jest.fn(async (key: string) => (store.delete(key) ? 1 : 0)),
+      };
+    }
+
+    function captureWarnings() {
+      globalLogger.setLevel('warn');
+      const logSpy = jest.spyOn(MoroLogger.prototype as any, 'log').mockImplementation(() => {});
+      return () =>
+        logSpy.mock.calls
+          .filter(c => c[0] === 'warn' && /no Redis client was given/.test(String(c[1])))
+          .map(c => String(c[1]));
+    }
+
+    // Each of these apps has its own jobs configuration
+    async function appWith(leaderElection: any) {
+      await app.close();
+      resetConfig();
+      app = await createApp({
+        jobs: { gracefulShutdownTimeout: 1000, leaderElection },
+        logger: { level: 'warn' },
+        workers: { enabled: false },
+      });
+      return app;
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      globalLogger.setLevel('fatal');
+      resetConfig();
+    });
+
+    it('takes the lock through jobs.leaderElection.redisClient and runs jobs', async () => {
+      const redisClient = fakeRedis();
+      const warnings = captureWarnings();
+      await appWith({ strategy: 'redis', redisClient, lockTimeout: 3000 });
+
+      const handler = jest.fn().mockResolvedValue('done');
+      app.job('tick', '1s', handler);
+      await new Promise<void>(resolve => app.listen(createTestPort(), () => resolve()));
+
+      await waitFor(() => handler.mock.calls.length > 0, {
+        timeout: 4000,
+        description: 'the job to run as leader',
+      });
+      expect(redisClient.set).toHaveBeenCalled();
+      expect(redisClient.store.has('moro:jobs:leader:lock')).toBe(true);
+      expect(warnings()).toEqual([]);
+    }, 10000);
+
+    it('warns once at start-up when no client was given, and still starts', async () => {
+      const warnings = captureWarnings();
+
+      await appWith({ strategy: 'redis' });
+
+      expect(warnings()).toHaveLength(1);
+      expect(warnings()[0]).toContain('no scheduled job will run');
+      expect(warnings()[0]).toContain('redisClient');
+      expect(app.getJobStats()).toBeDefined();
+    });
+
+    it('does not warn for the file strategy or when leader election is off', async () => {
+      const warnings = captureWarnings();
+
+      await appWith({ strategy: 'file' });
+      await appWith({ enabled: false, strategy: 'redis' });
+
+      expect(warnings()).toEqual([]);
+    });
   });
 
   describe('Error Handling', () => {

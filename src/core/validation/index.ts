@@ -4,9 +4,10 @@
 import { HttpRequest, HttpResponse } from '../http/index.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { createUserRequire, isPackageAvailable } from '../utilities/package-utils.js';
+import { warnIfPackageAffected } from '../utilities/package-notices.js';
 import { ValidationSchema, normalizeValidationError } from './schema-interface.js';
 import { handleValidationError } from './error-handler.js';
-import { getGlobalConfig } from '../config/index.js';
+import { configForRequest } from '../config/config-manager.js';
 import type { ValidationErrorHandler } from '../../types/config.js';
 
 const logger = createFrameworkLogger('Validation');
@@ -33,6 +34,7 @@ function loadZodSync() {
     // Use synchronous require for immediate availability
     const userRequire = createUserRequire();
     zodModule = userRequire('zod');
+    warnIfPackageAffected('zod', userRequire.resolve('zod'));
   } catch {
     // Zod not installed or failed to load
     zodModule = null;
@@ -111,15 +113,10 @@ export function validate<TBody = any, TQuery = any, TParams = any>(
     try {
       const validatedReq = req as ValidatedRequest<TBody>;
 
-      // Get global validation config
-      let globalHandler: ValidationErrorHandler | undefined;
-      try {
-        const globalConfig = getGlobalConfig();
-        globalHandler = globalConfig.modules.validation.onError;
-      } catch {
-        // Config not initialized yet, use default handler
-        globalHandler = undefined;
-      }
+      // modules.validation.onError of the app handling this request; with no
+      // configuration initialized, the default handler
+      const globalHandler: ValidationErrorHandler | undefined =
+        configForRequest(req)?.modules?.validation?.onError;
 
       // Validate body
       if (config.body) {

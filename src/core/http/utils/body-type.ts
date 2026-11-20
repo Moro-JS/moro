@@ -80,3 +80,40 @@ export function isJsonMediaType(contentType: string | undefined): boolean {
   const mime = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase();
   return mime === 'application/json';
 }
+
+/**
+ * True when the Content-Type's media type IS multipart/form-data.
+ *
+ * Compared on the media type itself, never by substring: the multipart branch
+ * selects the (much larger) upload size limit, so a parameter that merely
+ * mentions the name - `application/json; x=multipart/form-data` - must not
+ * qualify. The first-character check keeps the common JSON request at one
+ * comparison.
+ */
+export function isMultipartMediaType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  const first = contentType.charCodeAt(0);
+  // 'm' / 'M' / leading whitespace are the only starts a multipart type can have
+  if (first !== 109 && first !== 77 && first !== 32 && first !== 9) return false;
+  const semi = contentType.indexOf(';');
+  const mime = semi === -1 ? contentType : contentType.slice(0, semi);
+  return mime.trim().toLowerCase() === 'multipart/form-data';
+}
+
+const URLENCODED_MEDIA_TYPE = 'application/x-www-form-urlencoded';
+
+/**
+ * True when the Content-Type names `application/x-www-form-urlencoded`, the
+ * type whose body `req.body` parses as form fields. Media types are
+ * case-insensitive (RFC 9110 8.3.1): `Application/X-WWW-Form-Urlencoded` is
+ * the same type. The lowercase spelling every browser and client library
+ * sends is matched without lowercasing a copy of the header.
+ */
+export function isUrlEncodedMediaType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  if (contentType.includes(URLENCODED_MEDIA_TYPE)) return true;
+  return (
+    contentType.length >= URLENCODED_MEDIA_TYPE.length &&
+    contentType.toLowerCase().includes(URLENCODED_MEDIA_TYPE)
+  );
+}

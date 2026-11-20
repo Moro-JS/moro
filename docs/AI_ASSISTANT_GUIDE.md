@@ -23,13 +23,26 @@ MoroJS eliminates Express.js pain points through:
 // Node.js (traditional server) - Recommended for APIs
 import { createApp } from '@morojs/moro';
 
+// Explicit allow-list of browser origins, for example
+// CORS_ORIGIN=https://app.example.com,https://admin.example.com
+// Credentialed CORS must never fall back to '*': fail at startup instead.
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+if (allowedOrigins.length === 0) {
+  throw new Error('CORS_ORIGIN must list the allowed origins (comma-separated)');
+}
+
 const app = await createApp({
   // Essential API middleware - always enable these
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
+    enabled: true, // required: a cors object without `enabled: true` installs nothing
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
+    credentials: true, // only with an explicit origin list, never with '*'
   },
   compression: true, // Reduce bandwidth usage
   helmet: true, // Security headers
@@ -46,28 +59,23 @@ const app = await createApp({
   },
 });
 
+// Serverless runtimes: getHandler() does not apply the `cors`, `helmet` and
+// `compression` options (or `app.use(fn)` middleware), so none are passed here.
+// Configure CORS and compression at the platform.
+
 // Vercel Edge Functions
 import { createAppEdge } from '@morojs/moro';
-const app = await createAppEdge({
-  cors: { origin: '*', credentials: false }, // Edge-appropriate CORS
-  compression: true,
-});
+const app = await createAppEdge();
 export default app.getHandler();
 
 // AWS Lambda
 import { createAppLambda } from '@morojs/moro';
-const app = await createAppLambda({
-  cors: { origin: '*' },
-  compression: true,
-});
+const app = await createAppLambda();
 export const handler = app.getHandler();
 
 // Cloudflare Workers
 import { createAppWorker } from '@morojs/moro';
-const app = await createAppWorker({
-  cors: { origin: '*' },
-  compression: true,
-});
+const app = await createAppWorker();
 export default { fetch: app.getHandler() };
 ```
 
@@ -163,7 +171,7 @@ app
   });
 ```
 
-### 4. Authentication (Auth.js Integration)
+### 4. Authentication (Better Auth Integration)
 
 **Setup:**
 
@@ -183,9 +191,12 @@ app.use(
       }),
     ],
     secret: process.env.AUTH_SECRET!,
+    baseURL: process.env.BASE_URL, // the public URL of the app
   })
 );
 ```
+
+With the optional `better-auth` package installed this serves sign-in under `/api/auth` (`/api/auth/signin/github`, ...). `auth()` also verifies `Authorization: Bearer` JWTs (optional `jsonwebtoken` package). See the [Authentication Guide](./AUTH_GUIDE.md).
 
 **Usage in Routes:**
 
@@ -193,9 +204,9 @@ app.use(
 // Require authentication
 app
   .get('/profile')
-  .auth()
+  .auth({})
   .handler((req, res) => {
-    return { user: req.user };
+    return { user: req.auth.user };
   });
 
 // Role-based access
@@ -215,7 +226,7 @@ app
   .get('/public')
   .auth({ optional: true })
   .handler((req, res) => {
-    const message = req.user ? `Hello ${req.user.name}` : 'Hello guest';
+    const message = req.auth.user ? `Hello ${req.auth.user.name}` : 'Hello guest';
     return { message };
   });
 ```
@@ -245,8 +256,8 @@ app
 5. Authentication (`.auth()`)
 6. Validation (`.body()`/`.query()`/`.params()`/`.headers()`/`.validate()`)
 7. Transform middleware (`.transform()`)
-8. Caching (`.cache()`) - a cache hit responds here and skips steps 9-10
-9. After middleware (`.after()`, and `.use()` which is an alias for it)
+8. After middleware (`.after()`, and `.use()` which is an alias for it)
+9. Caching (`.cache()`) - looked up after every guard above; a hit responds here and skips the handler
 10. Handler (`.handler()`) - terminal, must be chained last
 
 ### 6. Error Handling
@@ -305,12 +316,24 @@ app.get('/download', (req, res) => {
 
 ```typescript
 // moro.config.ts - Production-ready API configuration
+
+// Explicit allow-list of browser origins (comma-separated in CORS_ORIGIN).
+// Credentialed CORS must never fall back to '*': fail at startup instead.
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+if (allowedOrigins.length === 0) {
+  throw new Error('CORS_ORIGIN must list the allowed origins (comma-separated)');
+}
+
 export default {
   server: {
     port: process.env.PORT || 3000,
     host: '0.0.0.0', // Accept external connections
     maxConnections: 1000,
-    timeout: 30000,
+    timeouts: { request: 30000 },
     bodySizeLimit: '10mb',
   },
 
@@ -318,10 +341,10 @@ export default {
   security: {
     cors: {
       enabled: true,
-      origin: process.env.CORS_ORIGIN?.split(',') || '*',
+      origin: allowedOrigins,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-      credentials: true,
+      credentials: true, // only with an explicit origin list, never with '*'
     },
     helmet: { enabled: true },
     rateLimit: {
@@ -381,7 +404,7 @@ app.database(db);
 
 ```typescript
 app.get('/users').handler(async (req, res) => {
-  const users = await req.database.query('SELECT * FROM users');
+  const users = await db.query('SELECT * FROM users'); // the adapter registered above
   return { users };
 });
 ```
@@ -392,11 +415,11 @@ app.get('/users').handler(async (req, res) => {
 
 ```typescript
 const app = await createApp({
-  websocket: { enabled: true }, // Auto-detects Socket.IO or ws
+  websocket: { enabled: true }, // Served by the native engine (socket.io or ws on the Node.js server)
 });
 
 app.websocket('/chat', {
-  connect: socket => {
+  connection: socket => {
     console.log(`Client connected: ${socket.id}`);
     socket.join('general');
   },

@@ -4,6 +4,7 @@
 export {
   WorkerManager,
   getWorkerManager,
+  setConfiguredWorkerPoolOptions,
   executeOnWorker,
   workerTasks,
   type WorkerTask,

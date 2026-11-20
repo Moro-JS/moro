@@ -4,8 +4,11 @@ import { HttpResponse } from '../../../../types/http.js';
 // ===== Types =====
 
 export interface SSEOptions {
+  /** Send a `: heartbeat` comment every this many milliseconds on an open stream. */
   heartbeat?: number;
+  /** Reconnection delay (ms) sent to the client when a stream opens. */
   retry?: number;
+  /** Add `Access-Control-Allow-Origin: *` to the stream's response. */
   cors?: boolean;
 }
 
@@ -18,6 +21,34 @@ export interface SSEConnection {
 
 // ===== Core Logic =====
 
+// A line of the event stream ends at CR, LF or CRLF, and a blank line ends the
+// event. A value written into a field must therefore never carry a line break
+// of its own, or it would start a new field - or a new event.
+const LINE_BREAK = /\r\n|\r|\n/;
+const LINE_BREAKS = /[\r\n]+/g;
+
+/** `id` and `event` are single-line fields: line breaks are removed. */
+function singleLine(value: string): string {
+  const text = String(value);
+  return LINE_BREAK.test(text) ? text.replace(LINE_BREAKS, '') : text;
+}
+
+/**
+ * Write `value` under `prefix`, one field line per line of text - how the
+ * event-stream format carries a multi-line value. The client joins `data`
+ * lines back together with a newline.
+ */
+function fieldLines(prefix: string, value: string): string {
+  if (!LINE_BREAK.test(value)) {
+    return `${prefix}${value}\n`;
+  }
+  let out = '';
+  for (const line of value.split(LINE_BREAK)) {
+    out += `${prefix}${line}\n`;
+  }
+  return out;
+}
+
 /**
  * Format SSE event data
  */
@@ -25,15 +56,19 @@ export function formatSSEEvent(data: any, event?: string, id?: string): string {
   let message = '';
 
   if (id) {
-    message += `id: ${id}\n`;
+    message += `id: ${singleLine(id)}\n`;
   }
 
   if (event) {
-    message += `event: ${event}\n`;
+    message += `event: ${singleLine(event)}\n`;
   }
 
-  const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
-  message += `data: ${dataStr}\n\n`;
+  // JSON.stringify escapes line breaks, so only a string can carry them
+  if (typeof data === 'string') {
+    message += `${fieldLines('data: ', data)}\n`;
+  } else {
+    message += `data: ${JSON.stringify(data)}\n\n`;
+  }
 
   return message;
 }
@@ -42,7 +77,7 @@ export function formatSSEEvent(data: any, event?: string, id?: string): string {
  * Format SSE comment
  */
 export function formatSSEComment(comment: string): string {
-  return `: ${comment}\n\n`;
+  return `${fieldLines(': ', String(comment))}\n`;
 }
 
 /**
@@ -61,6 +96,38 @@ export class SSECore {
 
   constructor(options: SSEOptions = {}) {
     this.options = options;
+  }
+
+  /**
+   * Give a response the event-stream helpers. Nothing is sent and no timer
+   * starts here: the stream opens when the handler calls `res.sse()` (or
+   * sends its first event with `res.sendEvent()` / `sendComment()` /
+   * `sendRetry()`), so a request that never reaches a handler - no such
+   * route, a guard that refused it - is answered the way it would be without
+   * this middleware.
+   */
+  attach(req: { on?: (event: string, listener: () => void) => unknown }, res: HttpResponse): void {
+    const resAny = res as any;
+    let connection: SSEConnection | null = null;
+
+    const open = (): SSEConnection => {
+      if (connection !== null) return connection;
+      // A handler that wrote its own head keeps it
+      if (!resAny.headersSent) this.initializeSSE(res);
+      const opened = this.createConnection(res);
+      connection = opened;
+      // The heartbeat timer ends with the connection, whoever closes it
+      const release = () => opened.close();
+      if (typeof req.on === 'function') req.on('close', release);
+      if (typeof resAny.on === 'function') resAny.on('close', release);
+      return opened;
+    };
+
+    resAny.sse = open;
+    resAny.sendEvent = (data: any, event?: string, id?: string) =>
+      open().sendEvent(data, event, id);
+    resAny.sendComment = (comment: string) => open().sendComment(comment);
+    resAny.sendRetry = (ms: number) => open().sendRetry(ms);
   }
 
   /**

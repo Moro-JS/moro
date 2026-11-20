@@ -354,6 +354,74 @@ describe('JobScheduler', () => {
     });
   });
 
+  describe('Taking over leadership', () => {
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    /** A scheduler whose leader election is driven by the test. */
+    function standbyScheduler() {
+      const standby = new JobScheduler(logger, {
+        enableLeaderElection: true,
+        leaderElection: { strategy: 'none' },
+        executor: { maxRetries: 0, timeout: 2000, enableMemoryMonitoring: false },
+      });
+      const election = standby.leaderElection;
+      const state = { leading: false };
+      // Another instance holds the lock when this one starts
+      election.start = async () => {};
+      election.shutdown = async () => {};
+      election.isCurrentLeader = () => state.leading;
+      const elect = () => {
+        state.leading = true;
+        election.emit('leader:elected', {});
+      };
+      return { standby, elect };
+    }
+
+    it('starts a recurring job from its next slot, not with a run the previous leader made', async () => {
+      const { standby, elect } = standbyScheduler();
+      try {
+        const handler = jest.fn();
+        const jobId = standby.registerJob('tick', { type: 'interval', interval: 300 }, handler);
+        await standby.start();
+
+        // A slot passes while the other instance leads (and runs it)
+        await sleep(400);
+        expect(handler).not.toHaveBeenCalled();
+        expect(standby.getJob(jobId).nextRun.getTime()).toBeLessThan(Date.now());
+
+        const electedAt = Date.now();
+        elect();
+        await sleep(100);
+        expect(handler).not.toHaveBeenCalled();
+        expect(standby.getJob(jobId).nextRun.getTime()).toBeGreaterThanOrEqual(electedAt + 290);
+
+        await sleep(350);
+        expect(handler).toHaveBeenCalledTimes(1);
+      } finally {
+        await standby.shutdown();
+      }
+    });
+
+    it('keeps a next run time that has not passed yet', async () => {
+      const { standby, elect } = standbyScheduler();
+      try {
+        const handler = jest.fn();
+        const stale = standby.registerJob('stale', { type: 'interval', interval: 100 }, jest.fn());
+        const jobId = standby.registerJob('tick', { type: 'interval', interval: 600 }, handler);
+        await standby.start();
+        const planned = standby.getJob(jobId).nextRun.getTime();
+
+        await sleep(200);
+        elect();
+        // The stale one moved on; the one still ahead kept its slot
+        expect(standby.getJob(stale).nextRun.getTime()).toBeGreaterThan(Date.now());
+        expect(standby.getJob(jobId).nextRun.getTime()).toBe(planned);
+      } finally {
+        await standby.shutdown();
+      }
+    });
+  });
+
   describe('Graceful Shutdown', () => {
     it('should complete running jobs before shutdown', async () => {
       const handler = jest.fn().mockImplementation(

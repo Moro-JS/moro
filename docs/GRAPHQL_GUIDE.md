@@ -93,6 +93,29 @@ app.listen(3000, () => {
 });
 ```
 
+`graphqlInit()` returns at once and builds the schema in the background. The
+endpoint answers `GET` and `POST` on `path` (default `/graphql`) on the native
+engine and on the Node.js server alike, from the first request: a request
+that arrives while the schema is still being built waits for it. Other
+methods on that path get `405`. The playground is served on `playgroundPath`
+unless `enablePlayground` is `false` or `NODE_ENV` is `production`.
+
+The playground page loads GraphiQL and React from `unpkg.com` at exact versions
+(`graphiql@2.4.7`, `react@18.3.1`, `react-dom@18.3.1`), each with a
+subresource-integrity digest, so the browser runs those files or nothing. A
+browser that cannot reach the CDN shows an empty page; the GraphQL endpoint
+itself does not depend on it.
+
+If the schema cannot be built (a syntax error in `typeDefs`, a missing
+resolver package), the error is logged, the app keeps running and the
+endpoint answers `500 {"errors":[{"message":"GraphQL is not available"}]}`.
+`await app.getGraphQLSchema()` rejects with the original error, which makes
+it a convenient start-up check.
+
+The `graphql` package is loaded from the application's working directory
+(the project that depends on `@morojs/moro`), the same place every optional
+package is loaded from.
+
 ### TypeScript-First with Pothos
 
 ```typescript
@@ -188,10 +211,10 @@ app.listen(3000);
 import { createApp, createPothosBuilder } from '@morojs/moro';
 
 const app = await createApp({
-  websocket: true, // Enable WebSocket support
+  websocket: { enabled: true }, // Enable WebSocket support
 });
 
-const builder = createPothosBuilder();
+const builder = await createPothosBuilder();
 
 // Define subscription type
 builder.subscriptionType({
@@ -244,7 +267,7 @@ const app = await createApp();
 // Setup authentication
 app.use(
   auth({
-    providers: [providers.GitHub({ clientId: '...', clientSecret: '...' })],
+    providers: [providers.github({ clientId: '...', clientSecret: '...' })],
     secret: process.env.AUTH_SECRET,
   })
 );
@@ -292,7 +315,7 @@ app.listen(3000);
 import { createApp, createPothosBuilder, createDataLoader } from '@morojs/moro';
 
 const app = await createApp();
-const builder = createPothosBuilder();
+const builder = await createPothosBuilder();
 
 // Create DataLoader for batching user queries
 const createUserLoader = () =>
@@ -367,30 +390,63 @@ app.graphqlInit({
   // Performance
   enableJIT: true, // GraphQL-JIT compilation
   jitCacheTTL: 3600000, // 1 hour
+  jitCacheMaxSize: 1000, // Max compiled queries cached (oldest evicted)
 
   // Features
-  enableIntrospection: true, // Disabled in production
+  enableIntrospection: true, // Default: on, except when NODE_ENV=production; an explicit value always wins
   enableSubscriptions: true, // Requires WebSocket
-  enableBatching: true, // Query batching
 
   // Error handling
-  formatError: error => ({
-    message: error.message,
-    // Hide internal errors in production
-  }),
-  debug: false, // Include stack traces
+  debug: false, // Include stack traces in error responses (never when NODE_ENV=production)
 
-  // Security
-  maxDepth: 10, // Query depth limit
-  maxComplexity: 1000, // Query complexity limit
+  // Query limits (none unless set)
+  maxDepth: 10, // Deepest nesting of fields an operation may have
+  maxComplexity: 1000, // Most fields an operation may select
 
-  // Rate limiting (per operation type)
-  rateLimit: {
-    queries: { requests: 100, window: 60000 },
-    mutations: { requests: 20, window: 60000 },
-  },
+  // Value the root resolvers receive as their first argument (default: null)
+  rootValue: { version: '1.0.0' },
 });
 ```
+
+### Query depth and complexity limits
+
+`maxDepth` and `maxComplexity` are checked on the parsed document before
+anything runs. Neither is set by default.
+
+- **Depth** is the number of nested field levels: `{ user }` is 1,
+  `{ user { posts { title } } }` is 3.
+- **Complexity** is the number of fields the operation selects. A fragment
+  counts every time it is spread.
+- Introspection fields (`__typename`, `__schema`, `__type` and what is selected
+  under them) are not counted, so the playground's schema query is not affected
+  by a low limit. Introspection has its own switch, `enableIntrospection`.
+- When a request names an operation (`operationName`), only that operation is
+  measured; otherwise every operation in the document is.
+
+A document over a limit is answered like any other invalid document: status
+`200` with an `errors` array and no `data`, and no resolver runs.
+
+```json
+{
+  "errors": [
+    {
+      "message": "Query depth of 12 exceeds maximum allowed depth of 10",
+      "locations": [{ "line": 1, "column": 1 }],
+      "extensions": { "code": "QUERY_TOO_DEEP" }
+    }
+  ]
+}
+```
+
+The complexity error reads `Query complexity of 1204 exceeds maximum allowed
+complexity of 1000` with `extensions.code` `QUERY_TOO_COMPLEX`.
+
+The limits are enforced by the built-in `graphql-js` adapter. A custom
+`adapter` receives the same options in `initialize()` and applies its own.
+
+`enableBatching`, `formatError`, `validationRules`, `plugins` and the
+per-operation `rateLimit` are accepted by the options type and are not applied
+by the built-in endpoint.
 
 ## API Reference
 
@@ -404,15 +460,17 @@ app.graphqlInit({
 
 - `createPothosBuilder(options)` - Create Pothos schema builder
 - `createDataLoader(batchFn, options)` - Create DataLoader instance
-- `createComplexityPlugin(options)` - Query complexity analyzer
-- `createDepthLimitPlugin(options)` - Query depth limiter
+- `createComplexityPlugin(options)` / `createDepthLimitPlugin(options)` - plugin
+  objects in the `requestDidStart` shape, for a GraphQL server that runs such
+  plugins. The built-in endpoint does not run plugins: set `maxDepth` and
+  `maxComplexity` instead.
 
 ## Best Practices
 
 1. **Use Pothos for TypeScript projects** - Full type inference and safety
 2. **Enable GraphQL-JIT in production** - 5-10x performance boost
 3. **Use DataLoader for database queries** - Prevents N+1 queries
-4. **Set depth and complexity limits** - Prevent expensive queries
+4. **Set `maxDepth` and `maxComplexity`** - Prevent expensive queries
 5. **Disable playground in production** - Security best practice
 6. **Use context for auth and request data** - Clean resolver signatures
 

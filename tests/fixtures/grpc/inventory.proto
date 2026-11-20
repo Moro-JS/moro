@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package acme.inventory.v1;
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  RETIRED = 2;
+}
+
+message Tag {
+  string key = 1;
+  string value = 2;
+}
+
+message Supplier {
+  message Address {
+    string city = 1;
+    string country = 2;
+  }
+  string name = 1;
+  Address address = 2;
+}
+
+message Item {
+  string id = 1;
+  string name = 2;
+  int64 quantity = 3;
+  Status status = 4;
+  repeated Tag tags = 5;
+  Supplier supplier = 6;
+  repeated int32 bins = 7;
+  bytes checksum = 8;
+  map<string, string> attributes = 9;
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+message ListItemsRequest {
+  Status status = 1;
+  int32 limit = 2;
+}
+
+message ImportSummary {
+  int32 count = 1;
+  int64 total_quantity = 2;
+  repeated string ids = 3;
+}
+
+message Adjustment {
+  string id = 1;
+  sint64 delta = 2;
+}
+
+service Inventory {
+  rpc GetItem (GetItemRequest) returns (Item) {}
+  rpc ListItems (ListItemsRequest) returns (stream Item) {}
+  rpc ImportItems (stream Item) returns (ImportSummary) {}
+  rpc Adjust (stream Adjustment) returns (stream Item) {}
+}

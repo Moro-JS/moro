@@ -10,6 +10,7 @@ export {
   withRetry,
   withTimeout,
 } from './container.js';
+export type { ContainerRegisterOptions } from './container.js';
 export { CircuitBreaker } from './circuit-breaker.js';
 export { HookManager, HOOK_EVENTS } from './hooks.js';
 export { isPackageAvailable, resolveUserPackage, createUserRequire } from './package-utils.js';

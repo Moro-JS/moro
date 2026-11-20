@@ -104,15 +104,16 @@ export interface GraphQLOptions {
   // Performance
   enableJIT?: boolean; // Enable GraphQL-JIT compilation (default: true)
   jitCacheTTL?: number; // JIT cache TTL in ms (default: 3600000 - 1 hour)
+  jitCacheMaxSize?: number; // Max compiled queries kept in the JIT cache, oldest evicted (default: 1000)
 
   // Features
-  enableIntrospection?: boolean; // Default: true in development
+  enableIntrospection?: boolean; // Default: true unless NODE_ENV=production; an explicit value always wins
   enableSubscriptions?: boolean; // Default: true if WebSocket enabled
   enableBatching?: boolean; // Enable query batching
 
   // Error handling
   formatError?: (error: GraphQLError) => any;
-  debug?: boolean; // Include stack traces in errors
+  debug?: boolean; // Include stack traces in errors (ignored when NODE_ENV=production)
 
   // Validation & security
   validationRules?: any[];

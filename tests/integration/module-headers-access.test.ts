@@ -56,7 +56,6 @@ describe('Module Routes - Headers Access', () => {
       app.listen(port, () => resolve());
     });
 
-    // eslint-disable-next-line no-undef
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/test-module/test-headers`, {
       headers: {
         Authorization: 'Bearer test-token-123',
@@ -109,7 +108,6 @@ describe('Module Routes - Headers Access', () => {
       app.listen(port, () => resolve());
     });
 
-    // eslint-disable-next-line no-undef
     const response = await fetch(
       `http://localhost:${port}/api/v1.0.0/header-test/check-all-headers`,
       {
@@ -158,7 +156,7 @@ describe('Module Routes - Headers Access', () => {
     });
 
     // Test with valid header
-    // eslint-disable-next-line no-undef
+
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/validated-module/validated`, {
       headers: {
         'X-API-Key': 'secret-key',
@@ -196,7 +194,6 @@ describe('Module Routes - Headers Access', () => {
       app.listen(port, () => resolve());
     });
 
-    // eslint-disable-next-line no-undef
     const response = await fetch(`http://localhost:${port}/api/v1.0.0/auth-module/auth-check`, {
       headers: {
         Authorization: 'Bearer token',
@@ -208,5 +205,65 @@ describe('Module Routes - Headers Access', () => {
     expect(data.hasAuth).toBe(true);
     expect(data.hasCookies).toBe(true);
     expect(data.cookieCount).toBeGreaterThan(0);
+  });
+
+  describe('request id on a failed module route', () => {
+    const failingModule: ModuleDefinition = {
+      name: 'failing-module',
+      version: '1.0.0',
+      routes: [
+        {
+          method: 'GET',
+          path: '/boom',
+          handler: () => {
+            throw new Error('handler failed');
+          },
+        },
+      ],
+    };
+
+    const requestBoom = async (headers: Record<string, string>): Promise<any> => {
+      const response = await fetch(`http://localhost:${port}/api/v1.0.0/failing-module/boom`, {
+        headers,
+      });
+      expect(response.status).toBe(500);
+      return response.json();
+    };
+
+    beforeEach(async () => {
+      await app.loadModule(defineModule(failingModule));
+      await new Promise<void>(resolve => {
+        app.listen(port, () => resolve());
+      });
+    });
+
+    it('echoes a client x-request-id that looks like an id', async () => {
+      for (const id of [
+        '7f3c2f1e-0b7a-4c58-9d55-0e9a4c1d2b3a',
+        'req_01HZX3T9K8:edge-1.eu',
+        'Root=1-67891233-abcdef012345678912345678',
+        'a'.repeat(128),
+      ]) {
+        const body = await requestBoom({ 'x-request-id': id });
+        expect(body.requestId).toBe(id);
+      }
+    });
+
+    it('generates the id when the client x-request-id is not a plausible id', async () => {
+      for (const id of [
+        '<img src=x onerror=alert(1)>',
+        'two words',
+        'quote"and[bracket]',
+        'a'.repeat(129),
+      ]) {
+        const body = await requestBoom({ 'x-request-id': id });
+        expect(body.requestId).toMatch(/^[0-9a-f]{16}$/);
+      }
+    });
+
+    it('generates the id when the header is absent', async () => {
+      const body = await requestBoom({});
+      expect(body.requestId).toMatch(/^[0-9a-f]{16}$/);
+    });
   });
 });

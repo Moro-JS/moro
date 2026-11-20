@@ -4,6 +4,24 @@
 import type { MailAdapter, MailOptions, MailResult } from './types.js';
 
 /**
+ * A display name as an RFC 5322 quoted-string: `\` and `"` are escaped, so the
+ * name cannot end early and be read as a second address. For provider APIs
+ * that take an address only as a `name <email>` string.
+ */
+export function quoteDisplayName(name: unknown): string {
+  return `"${String(name).replace(/[\\"]/g, '\\$&')}"`;
+}
+
+/**
+ * Whether a display name has to be quoted to stay one name in a
+ * `name <email>` string: it contains an RFC 5322 special character other than
+ * "." (a name such as `Acme Inc.` is accepted as written).
+ */
+export function displayNameNeedsQuoting(name: unknown): boolean {
+  return /[()<>[\]:;@\\,"]/.test(String(name));
+}
+
+/**
  * Abstract base class for mail adapters
  * Provides common functionality and interface
  */

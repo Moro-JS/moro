@@ -208,4 +208,70 @@ describe('multipart-parser: ordered parts and strict framing', () => {
     const body = Buffer.from(`--X${CRLF}Content-Disposition: form-data; name="a"`);
     expect(() => parseMultipart(body, type)).toThrow();
   });
+
+  it('treats a line that only starts with the boundary as content, not as a delimiter', () => {
+    // "--Xtra" begins with "--X" but is a different token: everything after it
+    // still belongs to the "note" field, and no "injected" part exists.
+    const value = [
+      'before',
+      '--Xtra',
+      'Content-Disposition: form-data; name="injected"',
+      '',
+      'smuggled',
+      '--X-not-the-end',
+      'after',
+    ].join(CRLF);
+    const body = buildBody('X', [
+      { headers: ['Content-Disposition: form-data; name="note"'], body: value },
+      { headers: ['Content-Disposition: form-data; name="last"'], body: 'kept' },
+    ]);
+
+    const result = parseMultipart(body, type);
+
+    expect(result.parts.map(p => p.name)).toEqual(['note', 'last']);
+    expect(result.fields.note).toBe(value);
+    expect(result.fields.injected).toBeUndefined();
+    expect(result.fields.last).toBe('kept');
+  });
+
+  it('does not start the body at a first line that only starts with the boundary', () => {
+    const body = Buffer.concat([
+      Buffer.from(
+        `--Xtra${CRLF}Content-Disposition: form-data; name="preamble"${CRLF}${CRLF}no${CRLF}`
+      ),
+      buildBody('X', [{ headers: ['Content-Disposition: form-data; name="a"'], body: 'v' }]),
+    ]);
+
+    const result = parseMultipart(body, type);
+
+    expect(result.parts.map(p => p.name)).toEqual(['a']);
+    expect(result.fields.a).toBe('v');
+  });
+
+  it('accepts space and tab padding between the boundary and its line break', () => {
+    const body = Buffer.from(
+      `--X \t${CRLF}Content-Disposition: form-data; name="a"${CRLF}${CRLF}one${CRLF}` +
+        `--X\t ${CRLF}Content-Disposition: form-data; name="b"${CRLF}${CRLF}two${CRLF}` +
+        `--X--${CRLF}`
+    );
+
+    const result = parseMultipart(body, type);
+
+    expect(result.fields.a).toBe('one');
+    expect(result.fields.b).toBe('two');
+  });
+
+  it('throws when the only closing line merely starts with the boundary', () => {
+    const body = Buffer.from(
+      `--X${CRLF}Content-Disposition: form-data; name="a"${CRLF}${CRLF}v${CRLF}--Xtra--${CRLF}`
+    );
+    expect(() => parseMultipart(body, type)).toThrow(/closing delimiter/);
+  });
+
+  it('still reports a body that stops right after a boundary as unterminated', () => {
+    const body = Buffer.from(
+      `--X${CRLF}Content-Disposition: form-data; name="a"${CRLF}${CRLF}v${CRLF}--X`
+    );
+    expect(() => parseMultipart(body, type)).toThrow(/unterminated boundary line/);
+  });
 });

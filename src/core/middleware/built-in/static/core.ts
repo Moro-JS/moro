@@ -5,6 +5,7 @@ import { createReadStream, watch as watchDir, type FSWatcher, type Stats } from 
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { isCompressible, negotiateEncoding } from '../../../http/utils/compression.js';
+import { FILE_MIME_TYPES, withTextCharset } from '../../../http/utils/mime-types.js';
 
 export interface StaticCacheOptions {
   /**
@@ -14,8 +15,8 @@ export interface StaticCacheOptions {
   maxFileBytes?: number;
   /**
    * Budget for everything cached, in bytes, originals and precompressed
-   * sidecars together; the oldest entries leave when it is exceeded.
-   * Default 64 MiB.
+   * sidecars together, plus each entry's key and bookkeeping; the oldest
+   * entries leave when it is exceeded. Default 64 MiB.
    */
   maxBytes?: number;
   /**
@@ -32,6 +33,12 @@ export interface StaticCacheOptions {
    * supports it; a watcher that cannot be started is simply not used.
    */
   watch?: boolean;
+  /**
+   * Most files kept at once, whatever their size; the oldest entries leave
+   * when it is exceeded. The same number bounds the request paths remembered
+   * for them. Default 10,000.
+   */
+  maxEntries?: number;
 }
 
 export interface StaticOptions {
@@ -104,6 +111,12 @@ interface CachedVariant {
 }
 
 interface CacheEntry {
+  /**
+   * What the entry is held under: the resolved (real) path of what was asked
+   * for - the file itself or, for a directory, its index file by the name it
+   * has in that directory. Never the request path.
+   */
+  key: string;
   /** The resolved (real) path of the original, the key's target on disk */
   filePath: string;
   baseMimeType: string;
@@ -120,6 +133,15 @@ interface CacheEntry {
   /** The disk check in flight past the revalidation window, shared by every request that crosses it together */
   revalidating: Promise<boolean> | null;
 }
+
+/**
+ * What one cached file and one remembered request path are charged against
+ * the byte budget on top of their contents and key: the entry object, its
+ * variants, validators and Map slot. An estimate, there so that a file of a
+ * few bytes (or none) is not free to keep.
+ */
+const ENTRY_OVERHEAD_BYTES = 512;
+const ALIAS_OVERHEAD_BYTES = 96;
 
 const stampOf = (st: { mtimeMs: number; size: number; ino: number }): FileStamp => ({
   mtimeMs: st.mtimeMs,
@@ -144,79 +166,32 @@ export class StaticCore {
   /** Files at or below this size are read in one go instead of streamed. */
   private static readonly STREAM_THRESHOLD = 512 * 1024;
 
-  // The in-memory cache (see StaticOptions.cache), keyed by the request path
-  // under the prefix. Null when caching is off.
+  /** `root` with a trailing separator: what a path inside the root starts with */
+  private rootWithSep: string;
+
+  // The in-memory cache (see StaticOptions.cache), keyed by the resolved real
+  // path (see CacheEntry.key): however a file is asked for, it is held once.
+  // Null when caching is off.
   private cache: Map<string, CacheEntry> | null = null;
+  // Request path (normalized, under the prefix) -> the key of the entry it
+  // resolved to, recorded only after the containment and dotfile checks
+  // passed. It is what lets a repeated request reach its entry without
+  // touching the disk.
+  private aliases = new Map<string, string>();
   private cacheMaxFileBytes = 1024 * 1024;
   private cacheMaxBytes = 64 * 1024 * 1024;
+  private cacheMaxEntries = 10000;
   private cacheRevalidateMs = 1000;
+  // Everything charged to the budget: entries (bodies, key, overhead) and aliases
   private cacheBytes = 0;
   private watcher: FSWatcher | null = null;
   private watchWanted = true;
 
-  private mimeTypes: Record<string, string> = {
-    // Documents / text
-    '.html': 'text/html',
-    '.htm': 'text/html',
-    '.xhtml': 'application/xhtml+xml',
-    '.css': 'text/css',
-    '.js': 'application/javascript',
-    '.mjs': 'application/javascript',
-    '.cjs': 'application/javascript',
-    '.map': 'application/json',
-    '.json': 'application/json',
-    '.jsonld': 'application/ld+json',
-    '.webmanifest': 'application/manifest+json',
-    '.xml': 'application/xml',
-    '.txt': 'text/plain',
-    '.md': 'text/markdown',
-    '.csv': 'text/csv',
-    '.yaml': 'application/yaml',
-    '.yml': 'application/yaml',
-    '.pdf': 'application/pdf',
-    '.wasm': 'application/wasm',
-    // Images
-    '.png': 'image/png',
-    '.apng': 'image/apng',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.avif': 'image/avif',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.bmp': 'image/bmp',
-    '.tif': 'image/tiff',
-    '.tiff': 'image/tiff',
-    // Fonts
-    '.woff': 'font/woff',
-    '.woff2': 'font/woff2',
-    '.ttf': 'font/ttf',
-    '.otf': 'font/otf',
-    '.eot': 'application/vnd.ms-fontobject',
-    // Audio / video
-    '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
-    '.flac': 'audio/flac',
-    '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac',
-    '.oga': 'audio/ogg',
-    '.opus': 'audio/ogg',
-    '.weba': 'audio/webm',
-    '.mp4': 'video/mp4',
-    '.m4v': 'video/mp4',
-    '.webm': 'video/webm',
-    '.ogg': 'video/ogg',
-    '.ogv': 'video/ogg',
-    '.mov': 'video/quicktime',
-    // Archives
-    '.zip': 'application/zip',
-    '.gz': 'application/gzip',
-    '.tar': 'application/x-tar',
-  };
+  private mimeTypes: Record<string, string> = FILE_MIME_TYPES;
 
   constructor(options: StaticOptions) {
     this.root = path.resolve(options.root);
+    this.rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
     this.prefix = StaticCore.normalizePrefix(options.prefix);
     this.maxAge = options.maxAge || 0;
     this.index = options.index || ['index.html', 'index.htm'];
@@ -231,6 +206,9 @@ export class StaticCore {
       if (c.maxFileBytes !== undefined) this.cacheMaxFileBytes = Math.max(0, c.maxFileBytes);
       if (c.maxBytes !== undefined) this.cacheMaxBytes = Math.max(0, c.maxBytes);
       if (c.revalidateMs !== undefined) this.cacheRevalidateMs = Math.max(0, c.revalidateMs);
+      if (c.maxEntries !== undefined && c.maxEntries > 0) {
+        this.cacheMaxEntries = Math.floor(c.maxEntries);
+      }
       this.watchWanted = c.watch !== false;
     }
   }
@@ -251,8 +229,11 @@ export class StaticCore {
     // A Range request keeps the uncached path (byte offsets refer to the
     // identity file on disk).
     const cache = this.cache;
+    let alias: string | null = null;
     if (cache !== null) {
-      const entry = cache.get(urlPath);
+      alias = this.aliasKey(urlPath);
+      const known = alias !== null ? this.aliases.get(alias) : undefined;
+      const entry = known !== undefined ? cache.get(known) : undefined;
       if (entry !== undefined && req.headers.range === undefined) {
         if (Date.now() - entry.checkedAt < this.cacheRevalidateMs) {
           return this.serveCached(req, res, entry);
@@ -279,7 +260,7 @@ export class StaticCore {
           entry.checkedAt = Date.now();
           return this.serveCached(req, res, entry);
         }
-        this.evict(urlPath, entry);
+        this.evict(entry.key, entry);
       }
     }
 
@@ -289,33 +270,40 @@ export class StaticCore {
       // Security: prevent directory traversal. The trailing separator is required —
       // a bare prefix check would allow sibling dirs like `/app/static-backups` to
       // satisfy `startsWith('/app/static')` and escape the root.
-      const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
+      const rootWithSep = this.rootWithSep;
       if (filePath !== this.root && !filePath.startsWith(rootWithSep)) {
         res.status(403).json({ success: false, error: 'Forbidden' });
         return true;
       }
 
+      // The path as it was asked for: a dot segment in it counts even when it
+      // is a link to an ordinary name
+      let hidden = this.dotfiles !== 'allow' && this.hasDotSegment(filePath);
+
       // Security: resolve symlinks and re-check path to prevent symlink-based traversal
       try {
         const realPath = await fs.realpath(filePath);
-        if (realPath !== this.root && !realPath.startsWith(rootWithSep)) {
+        const realBase = await this.rootOf(realPath);
+        if (realBase === null) {
           res.status(403).json({ success: false, error: 'Forbidden' });
           return true;
         }
         filePath = realPath;
+        // ...and the path it resolves to: an ordinary name must not be a way
+        // into a hidden directory either
+        if (!hidden && this.dotfiles !== 'allow') hidden = this.hasDotSegment(realPath, realBase);
       } catch {
         // realpath fails if file doesn't exist — handled by stat below
       }
 
-      // Handle dotfiles
-      const basename = path.basename(filePath);
-      if (basename.startsWith('.')) {
+      // Handle dotfiles: any segment below the root, not only the last one
+      // (`/.git/config` is as hidden as `/.env`)
+      if (hidden) {
         if (this.dotfiles === 'deny') {
           res.status(403).json({ success: false, error: 'Forbidden' });
           return true;
-        } else if (this.dotfiles === 'ignore') {
-          return false;
         }
+        return false;
       }
 
       let stats;
@@ -325,23 +313,61 @@ export class StaticCore {
         return false; // File not found, let other middleware handle
       }
 
+      // The name the response is typed by and cached under. For a file it is
+      // the resolved path; for a directory, the index file as it is named
+      // there (an index.html that links to a differently named file is still
+      // an HTML page).
+      let servedAs = filePath;
+
       // Handle directories
       if (stats.isDirectory()) {
         let indexFound = false;
 
         for (const indexFile of this.index) {
           const indexPath = path.join(filePath, indexFile);
+          let indexStats;
           try {
-            const indexStats = await fs.stat(indexPath);
-            if (indexStats.isFile()) {
-              filePath = indexPath;
-              stats = indexStats;
-              indexFound = true;
-              break;
-            }
+            indexStats = await fs.stat(indexPath);
           } catch {
-            // Continue to next index file
+            continue; // Continue to next index file
           }
+          if (!indexStats.isFile()) continue;
+
+          // Security: the index is reached through stat(), which follows
+          // links, so it gets the same containment check as a file asked for
+          // by name - an index.html linked to a file outside the root is not
+          // served.
+          let realIndex: string;
+          try {
+            realIndex = await fs.realpath(indexPath);
+          } catch {
+            continue; // gone between stat and realpath
+          }
+          const indexBase = await this.rootOf(realIndex);
+          if (indexBase === null) {
+            res.status(403).json({ success: false, error: 'Forbidden' });
+            return true;
+          }
+          // A link from the index into a hidden location follows the dotfile
+          // policy. (An index that is not a link is the configured name
+          // inside a directory already checked above.)
+          if (
+            realIndex !== indexPath &&
+            this.dotfiles !== 'allow' &&
+            this.hasDotSegment(realIndex, indexBase)
+          ) {
+            if (this.dotfiles === 'deny') {
+              res.status(403).json({ success: false, error: 'Forbidden' });
+              return true;
+            }
+            return false;
+          }
+
+          servedAs = indexPath;
+          filePath = realIndex;
+          stats = indexStats;
+          indexFound = true;
+          break;
         }
 
         if (!indexFound) {
@@ -350,7 +376,7 @@ export class StaticCore {
       }
 
       // Get mime type and add charset for text files
-      const ext = path.extname(filePath);
+      const ext = path.extname(servedAs);
       const baseMimeType = this.mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
       const contentType = this.addCharsetIfNeeded(baseMimeType);
 
@@ -362,9 +388,19 @@ export class StaticCore {
         stats.size <= this.cacheMaxFileBytes &&
         req.headers.range === undefined
       ) {
-        const entry = await this.buildEntry(filePath, stats, baseMimeType, contentType);
+        // The key is a resolved path that passed the containment and dotfile
+        // checks, never the request path. A file already held (reached before
+        // by another spelling of its path) is not read a second time.
+        const key = servedAs;
+        const held = cache.get(key);
+        if (held !== undefined && sameStamp(stampOf(stats), held.identity.stamp)) {
+          if (alias !== null) this.remember(alias, key);
+          return this.serveCached(req, res, held);
+        }
+        const entry = await this.buildEntry(key, filePath, stats, baseMimeType, contentType);
         if (entry !== null) {
-          this.insert(urlPath, entry);
+          this.insert(key, entry);
+          if (alias !== null) this.remember(alias, key);
           return this.serveCached(req, res, entry);
         }
       }
@@ -487,6 +523,7 @@ export class StaticCore {
    * read), in which case the request takes the uncached path's answer.
    */
   private async buildEntry(
+    key: string,
     filePath: string,
     stats: { mtimeMs: number; size: number; ino: number; mtime: Date },
     baseMimeType: string,
@@ -508,11 +545,12 @@ export class StaticCore {
     };
     const sidecars: CachedVariant[] = [];
     const sidecarStamps: Array<FileStamp | null> = [];
-    let bytes = body.length;
+    // The key and a fixed overhead are charged with the body, so an empty or
+    // tiny file still counts for what keeping it costs.
+    let bytes = body.length + key.length + ENTRY_OVERHEAD_BYTES;
     if (this.precompressed) {
-      const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
       for (const { encoding, suffix } of SIDECARS) {
-        const found = await this.statSidecar(filePath + suffix, rootWithSep);
+        const found = await this.statSidecar(filePath + suffix);
         sidecarStamps.push(found ? stampOf(found.stats) : null);
         // A sidecar older than its source is a stale body for a replaced
         // asset: not served, and its stamp is still remembered so a later
@@ -535,6 +573,7 @@ export class StaticCore {
       }
     }
     return {
+      key,
       filePath,
       baseMimeType,
       contentType,
@@ -550,13 +589,10 @@ export class StaticCore {
   }
 
   /** The sidecar at `candidate` when it is a regular file inside the root. */
-  private async statSidecar(
-    candidate: string,
-    rootWithSep: string
-  ): Promise<{ real: string; stats: Stats } | null> {
+  private async statSidecar(candidate: string): Promise<{ real: string; stats: Stats } | null> {
     try {
       const real = await fs.realpath(candidate);
-      if (!real.startsWith(rootWithSep)) return null;
+      if ((await this.rootOf(real)) === null) return null;
       const stats = await fs.stat(real);
       if (!stats.isFile()) return null;
       return { real, stats };
@@ -601,16 +637,136 @@ export class StaticCore {
     if (old !== undefined) this.evict(key, old);
     cache.set(key, entry);
     this.cacheBytes += entry.bytes;
-    // Over budget: the oldest entries go first (insertion order).
+    // Over the byte budget or the entry cap: the oldest entries go first
+    // (insertion order).
     for (const [k, e] of cache) {
-      if (this.cacheBytes <= this.cacheMaxBytes || k === key) break;
+      if (
+        (this.cacheBytes <= this.cacheMaxBytes && cache.size <= this.cacheMaxEntries) ||
+        k === key
+      ) {
+        break;
+      }
       this.evict(k, e);
     }
+    this.trimAliases();
     this.ensureWatcher();
   }
 
   private evict(key: string, entry: CacheEntry): void {
     if (this.cache !== null && this.cache.delete(key)) this.cacheBytes -= entry.bytes;
+  }
+
+  /**
+   * The key a request path is remembered under, or null when it is not
+   * remembered at all (it points outside the root). Spellings of one location
+   * - `//app.css`, `/./app.css`, `/x/../app.css` - share a key, so they cannot
+   * be used to grow the table; the usual request (no empty or dot segment)
+   * is its own key and costs two scans.
+   */
+  private aliasKey(urlPath: string): string | null {
+    if (
+      urlPath.charCodeAt(0) === 47 /* / */ &&
+      urlPath.indexOf('//') === -1 &&
+      urlPath.indexOf('/.') === -1 &&
+      (path.sep === '/' || urlPath.indexOf('\\') === -1)
+    ) {
+      return urlPath;
+    }
+    const joined = path.join(this.root, urlPath);
+    if (joined === this.root) return '/';
+    if (!joined.startsWith(this.rootWithSep)) return null;
+    // Keeps the leading separator, like the plain form above
+    return joined.slice(this.rootWithSep.length - 1);
+  }
+
+  /** Record that a request path resolved (and was allowed) to a cached file. */
+  private remember(alias: string, key: string): void {
+    const aliases = this.aliases;
+    const isNew = !aliases.has(alias);
+    aliases.set(alias, key);
+    if (isNew) {
+      this.cacheBytes += alias.length + ALIAS_OVERHEAD_BYTES;
+      this.trimAliases(alias);
+    }
+  }
+
+  /**
+   * Keep the remembered paths within the entry cap and the byte budget,
+   * oldest first (never the one just recorded). A dropped one costs its next
+   * request a look at the disk, nothing else: the file itself stays cached
+   * under its real path.
+   */
+  private trimAliases(keep?: string): void {
+    const aliases = this.aliases;
+    for (const alias of aliases.keys()) {
+      if (
+        (aliases.size <= this.cacheMaxEntries && this.cacheBytes <= this.cacheMaxBytes) ||
+        alias === keep
+      ) {
+        break;
+      }
+      aliases.delete(alias);
+      this.cacheBytes -= alias.length + ALIAS_OVERHEAD_BYTES;
+    }
+  }
+
+  /**
+   * Whether a path inside the root has a hidden segment below the root: a
+   * directory or file whose name starts with a dot, anywhere along the way.
+   * `.well-known` is the one exception (RFC 8615: ACME challenges,
+   * security.txt and the like are meant to be served). The root's own
+   * location is not looked at - serving from `~/.app/public` hides nothing.
+   */
+  // The root as the file system resolves it. realpath() of a file below a
+  // root that is, or sits under, a symbolic link (/var on macOS, a deploy's
+  // `current -> releases/N`) starts with this and not with the root as given.
+  private realRoot: { root: string; withSep: string } | null = null;
+
+  private async resolveRealRoot(): Promise<{ root: string; withSep: string }> {
+    let root = this.root;
+    try {
+      root = await fs.realpath(this.root);
+    } catch {
+      // A root that does not exist yet is compared as given
+    }
+    this.realRoot = { root, withSep: root.endsWith(path.sep) ? root : root + path.sep };
+    return this.realRoot;
+  }
+
+  /**
+   * The root (with its trailing separator) that a realpath() result lies
+   * inside: the root as given, or as the file system resolves it. Null when
+   * it lies outside both. A link switched while the server runs is followed:
+   * a miss resolves the root again once.
+   */
+  private async rootOf(real: string): Promise<string | null> {
+    const inside = (r: { root: string; withSep: string }) =>
+      real === r.root || real.startsWith(r.withSep);
+    if (inside({ root: this.root, withSep: this.rootWithSep })) return this.rootWithSep;
+    let resolved = this.realRoot ?? (await this.resolveRealRoot());
+    if (inside(resolved)) return resolved.withSep;
+    const before = resolved.root;
+    resolved = await this.resolveRealRoot();
+    return resolved.root !== before && inside(resolved) ? resolved.withSep : null;
+  }
+
+  private hasDotSegment(absolutePath: string, rootWithSep = this.rootWithSep): boolean {
+    if (!absolutePath.startsWith(rootWithSep)) return false;
+    const sep = path.sep;
+    let start = rootWithSep.length;
+    const length = absolutePath.length;
+    while (start < length) {
+      let end = absolutePath.indexOf(sep, start);
+      if (end === -1) end = length;
+      if (
+        absolutePath.charCodeAt(start) === 46 /* . */ &&
+        absolutePath.slice(start, end) !== '.well-known'
+      ) {
+        return true;
+      }
+      start = end + 1;
+    }
+    return false;
   }
 
   /**
@@ -649,6 +805,7 @@ export class StaticCore {
     }
     if (this.cache !== null) {
       this.cache.clear();
+      this.aliases.clear();
       this.cacheBytes = 0;
     }
   }
@@ -749,13 +906,12 @@ export class StaticCore {
     acceptEncoding: string | undefined
   ): Promise<{ path: string; encoding: string; stats: { size: number } } | null> {
     if (!acceptEncoding) return null;
-    const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
     for (const { encoding, suffix } of SIDECARS) {
       if (negotiateEncoding(acceptEncoding, [encoding]) !== encoding) continue;
       const candidate = filePath + suffix;
       try {
         const real = await fs.realpath(candidate);
-        if (!real.startsWith(rootWithSep)) continue;
+        if ((await this.rootOf(real)) === null) continue;
         const st = await fs.stat(real);
         if (!st.isFile() || st.mtime.getTime() < sourceMtime.getTime()) continue;
         return { path: real, encoding, stats: { size: st.size } };
@@ -896,9 +1052,15 @@ export class StaticCore {
     }
   }
 
-  /** HTTP/2 responses are plain objects with no stream plumbing to pipe into. */
+  /**
+   * Whether a large file is piped to the response. The HTTP/2 server's
+   * response (the one carrying its stream as `_stream`) is always answered
+   * from memory through send()/end(), which is also what joins the body to
+   * response compression there.
+   */
   private static canStream(res: HttpResponse): boolean {
     const writable = res as any;
+    if (writable._stream !== undefined) return false;
     return typeof writable.write === 'function' && typeof writable.on === 'function';
   }
 
@@ -929,19 +1091,7 @@ export class StaticCore {
   }
 
   private addCharsetIfNeeded(mimeType: string): string {
-    const textTypes = [
-      'text/',
-      'application/json',
-      'application/javascript',
-      'application/xml',
-      'application/yaml',
-      'image/svg+xml',
-    ];
-    const needsCharset =
-      textTypes.some(type => mimeType.startsWith(type)) ||
-      mimeType.endsWith('+json') ||
-      mimeType.endsWith('+xml');
-    return needsCharset ? `${mimeType}; charset=utf-8` : mimeType;
+    return withTextCharset(mimeType);
   }
 
   getRoot(): string {

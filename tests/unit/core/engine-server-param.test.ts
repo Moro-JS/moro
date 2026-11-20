@@ -7,11 +7,14 @@
 // request records one 'param' op and never reaches the router, non-matching
 // shapes do, the call is refused without the capability / export / for an
 // unindexed method / with compression on, and routes are re-registered on
-// the fresh native server that listen() creates after close().
+// the fresh native server that listen() creates after close(). Like static
+// routes, the engine holds them only while no global middleware and no
+// request / response hook is registered.
 import { describe, it, expect } from '@jest/globals';
 import { MoroEngineServer } from '../../../src/core/http/moro-engine-server.js';
 import { createFakeEngine } from '../../utils/fake-engine.js';
 import { getEngineCapabilities } from '../../../src/core/utilities/package-utils.js';
+import { HookManager } from '../../../src/core/utilities/hooks.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -128,6 +131,63 @@ describe('MoroEngineServer parameter routes', () => {
     expect(engine.requests.get(hit).ops).toEqual([
       { type: 'param', status: 200, headersFlat: null, body: '9' },
     ]);
+  });
+
+  it('takes its parameter routes back from the engine while global middleware or a hook is registered', async () => {
+    const engine = createFakeEngine({ capabilities: PARAM_CAPS });
+    const server = createServer(engine);
+    const hooks = new HookManager();
+    server.setHookManager(hooks);
+    const seen: string[] = [];
+    server.setRouterHandler((req, res) => {
+      seen.push(`route ${req.path}`);
+      res.end('js');
+      return true;
+    });
+    server.setParamRoute('GET', '/user/', '', 200, null);
+    server.listen(0);
+    const direct = engine.simulate({ method: 'GET', path: '/user/1' });
+    expect(engine.requests.get(direct).ops[0].type).toBe('param');
+
+    // A hook comes and goes: the routes follow it.
+    const hook = () => {
+      seen.push('hook');
+    };
+    hooks.before('request', hook);
+    expect(engine.paramRoutes.get(server.serverId)).toBeUndefined();
+    engine.simulate({ method: 'GET', path: '/user/2' });
+    await tick();
+    await tick();
+    expect(seen).toEqual(['hook', 'route /user/2']);
+    hooks.removeHook('request', hook);
+    expect(engine.paramRoutes.get(server.serverId)).toHaveLength(1);
+
+    // Middleware registered on the running server stays in front for good.
+    seen.length = 0;
+    server.use((req, _res, next) => {
+      seen.push(`middleware ${req.path}`);
+      next();
+    });
+    expect(engine.paramRoutes.get(server.serverId)).toBeUndefined();
+    const guarded = engine.simulate({ method: 'GET', path: '/user/3' });
+    await tick();
+    expect(seen).toEqual(['middleware /user/3', 'route /user/3']);
+    expect(engine.requests.get(guarded).ops.some(op => op.type === 'param')).toBe(false);
+
+    // A route registered now is accepted, and stays in JS as well.
+    const before = engine.paramCalls.length;
+    expect(server.setParamRoute('GET', '/item/', '', 200, null)).toBe(true);
+    expect(engine.paramCalls).toHaveLength(before);
+  });
+
+  it('is refused by an engine that could not be asked to give the routes back', () => {
+    const noClear = createFakeEngine({
+      capabilities: PARAM_CAPS,
+      omitFunctions: ['clearParamRoutes'],
+    });
+    const server = createServer(noClear);
+    expect(server.paramRoutesEnabled).toBe(false);
+    expect(server.setParamRoute('GET', '/user/', '')).toBe(false);
   });
 
   it('clearParamRoutes() hands the routes back to JS', async () => {

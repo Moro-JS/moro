@@ -11,8 +11,30 @@ import { WebSocketAdapter, WebSocketNamespace, WebSocketConnection } from './web
 import { createFrameworkLogger } from '../logger/index.js';
 import { normalizeValidationError } from '../validation/schema-interface.js';
 
+/**
+ * Settings of the circuit breaker around module WebSocket handlers: the
+ * `performance.circuitBreaker` config section.
+ */
+export interface WebSocketCircuitBreakerOptions {
+  enabled?: boolean;
+  failureThreshold?: number;
+  resetTimeout?: number;
+  monitoringPeriod?: number;
+}
+
+// An error that says the message was at fault (a 4xx `status` or
+// `statusCode`). The breaker does not count these.
+function isClientError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const status =
+    (error as { status?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
 export class WebSocketManager {
   private circuitBreakers = new Map<string, CircuitBreaker>();
+  // Off unless setCircuitBreakerOptions() is given `enabled: true`
+  private circuitBreakerOptions: WebSocketCircuitBreakerOptions | undefined;
   private rateLimiters = new Map<string, Map<string, { count: number; resetTime: number }>>();
   private logger = createFrameworkLogger('WebSocketManager');
 
@@ -35,6 +57,15 @@ export class WebSocketManager {
    */
   enableCompression(options?: any): void {
     this.adapter.setCompression(true, options);
+  }
+
+  /**
+   * Put module WebSocket handlers behind a circuit breaker each (the
+   * `performance.circuitBreaker` config section). Without `enabled: true`
+   * handlers run with no breaker, which is the default.
+   */
+  setCircuitBreakerOptions(options: WebSocketCircuitBreakerOptions | undefined): void {
+    this.circuitBreakerOptions = options && options.enabled === true ? options : undefined;
   }
 
   /**
@@ -159,13 +190,38 @@ export class WebSocketManager {
             }
           }
 
-          // Circuit breaker protection
-          const circuitBreaker = this.getCircuitBreaker(handlerKey);
-
-          const result = await circuitBreaker.execute(async () => {
+          // The handler. With performance.circuitBreaker.enabled it runs
+          // behind a breaker shared by every connection: only an error the
+          // handler throws counts towards opening it, and not one that
+          // carries a 4xx status, so the messages one client sends cannot
+          // switch the event off for everyone else.
+          const runHandler = async () => {
             const controller = this.container.resolve(moduleConfig.name);
             return await (controller as any)[wsConfig.handler](socket, data);
-          });
+          };
+          const circuitBreaker = this.getCircuitBreaker(handlerKey);
+          let result: any;
+          if (circuitBreaker === undefined) {
+            result = await runHandler();
+          } else {
+            if (circuitBreaker.isOpen()) {
+              const unavailable = {
+                success: false,
+                error: 'Service temporarily unavailable',
+                code: 'CIRCUIT_OPEN',
+              };
+              if (callback) callback(unavailable);
+              else socket.emit('error', unavailable);
+              return;
+            }
+            try {
+              result = await runHandler();
+            } catch (handlerError) {
+              if (!isClientError(handlerError)) circuitBreaker.recordFailure();
+              throw handlerError;
+            }
+            circuitBreaker.recordSuccess();
+          }
 
           // Handle response
           if (callback) {
@@ -204,19 +260,21 @@ export class WebSocketManager {
   }
 
   /**
-   * Get or create circuit breaker for handler
+   * The circuit breaker of a handler, or undefined when breakers are not
+   * enabled (the default)
    */
-  private getCircuitBreaker(handlerKey: string): CircuitBreaker {
+  private getCircuitBreaker(handlerKey: string): CircuitBreaker | undefined {
+    const options = this.circuitBreakerOptions;
+    if (options === undefined) return undefined;
     if (!this.circuitBreakers.has(handlerKey)) {
       const circuitBreaker = new CircuitBreaker({
-        failureThreshold: 5,
-        resetTimeout: 60000,
-        monitoringPeriod: 10000,
+        failureThreshold: options.failureThreshold ?? 5,
+        resetTimeout: options.resetTimeout ?? 60000,
+        monitoringPeriod: options.monitoringPeriod ?? 10000,
       });
       this.circuitBreakers.set(handlerKey, circuitBreaker);
     }
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.circuitBreakers.get(handlerKey)!;
+    return this.circuitBreakers.get(handlerKey);
   }
 
   /**

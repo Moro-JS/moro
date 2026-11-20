@@ -11,6 +11,7 @@ Complete documentation for the MoroJS framework (v1.8.x).
 - **[Getting Started](./GETTING_STARTED.md)** - Complete setup guide and first application
 - **[API Reference](./API.md)** - Comprehensive framework API documentation
 - **[Configuration Reference](./CONFIGURATION_REFERENCE.md)** - Full configuration options and defaults
+- **[Defaults and what they mean](./SECURITY_DEFAULTS.md)** - What a default app does and does not do for its own protection, and how to change each default
 - **[Example Config](./EXAMPLE_CONFIG.md)** - Annotated example configuration
 - **[Init Pattern](./INIT_PATTERN.md)** - Recommended application initialization pattern
 - **[Migration Guide](./MIGRATION.md)** - Migrate from Express, Fastify, NestJS, and Koa
@@ -18,7 +19,7 @@ Complete documentation for the MoroJS framework (v1.8.x).
 ### Core Features
 
 - **[Authentication Guide](./AUTH_GUIDE.md)** - Complete Better Auth integration with RBAC and security
-- **[Native Auth Adapter](./NATIVE_AUTH_ADAPTER.md)** - Custom native `@auth/morojs` auth adapter internals
+- **[Native Auth Adapter](./NATIVE_AUTH_ADAPTER.md)** - The `createAuthMiddleware` adapter that runs an Auth.js-style configuration on Better Auth
 - **[Native Auth Summary](./NATIVE_AUTH_SUMMARY.md)** - Overview of the native auth adapter
 - **[Validation Libraries](./VALIDATION-LIBRARIES.md)** - Using Zod, Joi, Yup, and Class Validator
 - **[Response Helpers](./RESPONSE_HELPERS.md)** - Standardized response builder helpers

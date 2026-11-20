@@ -85,7 +85,6 @@ MoroJS uses a hybrid radix tree implementation for route matching.
 
 - **Static routes:** O(1) complexity via hash-based Map lookup
 - **Dynamic routes:** O(log n) complexity via tree traversal
-- **Wildcard routes:** O(log n) complexity via tree traversal
 - **Memory:** Lazy node initialization (nodes created only when needed)
 
 #### Implementation Details
@@ -164,13 +163,17 @@ app.get('/api/users/:id/comments', getUserComments);
 // Routes with common prefixes share tree nodes
 ```
 
-**Wildcard Routes**
+**Optional parameters and wildcards**
 
-```typescript
-app.get('/files/*', handler);
-// Uses tree traversal (O(log n))
-// Matches any path under /files/
-```
+A route path is made of fixed segments and named parameters (`:id`, one whole
+segment each). Its last segments can be optional parameters (`/posts/:id?`)
+and its last segment a wildcard (`/files/*`); see "How request paths are
+matched" in the API reference. An optional parameter costs nothing per
+request: the route is entered in the tree once for each path it stands for. A
+wildcard is looked for only after every other route has turned the path down,
+so an application's other routes are matched exactly as they are without it.
+Regex parameters (`:id(\d+)`) are not supported; validate the parameter with
+`.params(schema)`.
 
 #### Scaling Behavior
 
@@ -212,8 +215,7 @@ app
   .get('/api/popular-data')
   .cache({
     ttl: 300, // 5 minutes
-    key: req => `popular-data`,
-    strategy: 'memory',
+    key: 'popular-data',
   })
   .handler(async (req, res) => {
     // Expensive operation
@@ -235,9 +237,9 @@ See [Worker Threads Guide](./WORKERS_GUIDE.md) for CPU-intensive operations.
 // ❌ Inefficient - unnecessary middleware
 app
   .post('/simple-endpoint')
-  .auth({ required: false }) // Unnecessary if no auth needed
+  .auth({ optional: true }) // Unnecessary if no auth needed
   .cache({ ttl: 0 }) // Unnecessary if no caching
-  .rateLimit({ requests: 1000000 }) // Too high to be meaningful
+  .rateLimit({ requests: 1000000, window: 60000 }) // Too high to be meaningful
   .handler(simpleHandler);
 
 // ✅ Optimized - minimal middleware
@@ -365,23 +367,21 @@ app.get('/users').handler(async (req, res) => {
 Best for frequently accessed, small data:
 
 ```typescript
-// Basic memory caching
+// Basic memory caching: route-level .cache() keeps responses in process memory
+// (at most modules.cache.maxSize entries, 1,000 by default; least recently used leave first)
 app
   .get('/popular-posts')
   .cache({
     ttl: 300, // 5 minutes
-    strategy: 'memory',
   })
   .handler(getPopularPosts);
 
-// Advanced memory caching with custom key
+// Memory caching with a custom key
 app
   .get('/user-preferences/:id')
   .cache({
     ttl: 600,
-    strategy: 'memory',
     key: req => `prefs:${req.params.id}`,
-    maxSize: 1000, // Limit cache size
   })
   .handler(getUserPreferences);
 ```
@@ -391,82 +391,28 @@ app
 Best for shared data across instances:
 
 ```typescript
-// Redis caching setup
-import { RedisAdapter } from '@morojs/moro';
-const redis = new RedisAdapter({
-  host: 'localhost',
-  port: 6379,
-});
-app.cache(redis);
+// Redis caching is done by the cache middleware (requires the `redis` package).
+// It caches GET responses; each strategy pattern is a regular expression
+// tested against the request path.
+import { middleware } from '@morojs/moro';
 
-// Use Redis caching
-app
-  .get('/global-stats')
-  .cache({
-    ttl: 900, // 15 minutes
-    strategy: 'redis',
-    key: 'global:stats',
-  })
-  .handler(getGlobalStats);
-```
-
-### Cache Invalidation
-
-```typescript
-// Tag-based cache invalidation
-app
-  .post('/users')
-  .body(UserSchema)
-  .handler(async (req, res) => {
-    const user = await createUser(req.body);
-
-    // Invalidate related caches
-    req.cache.invalidateTags(['users', 'stats']);
-
-    return { success: true, data: user };
-  });
-
-// Manual cache invalidation
-app.delete('/users/:id').handler(async (req, res) => {
-  await deleteUser(req.params.id);
-
-  // Invalidate specific cache entries
-  req.cache.delete(`user:${req.params.id}`);
-  req.cache.delete('users:list');
-
-  return { success: true };
-});
-```
-
-### Cache Strategies
-
-```typescript
-// Read-through caching
-app
-  .get('/expensive-data/:id')
-  .cache({
-    ttl: 3600,
-    strategy: 'read-through',
-    loader: async (key, req) => {
-      return await expensiveDataCalculation(req.params.id);
+app.use(
+  middleware.cache({
+    adapter: 'redis',
+    adapterOptions: {
+      host: 'localhost',
+      port: 6379,
+    },
+    strategies: {
+      '^/global-stats$': {
+        key: () => 'global:stats',
+        ttl: 900, // 15 minutes
+      },
     },
   })
-  .handler(async (req, res) => {
-    // Data is automatically cached
-    return { data: req.cached };
-  });
+);
 
-// Write-through caching
-app
-  .put('/user-settings/:id')
-  .cache({
-    strategy: 'write-through',
-    writeLoader: async (key, data) => {
-      await saveToDatabase(key, data);
-      return data;
-    },
-  })
-  .handler(updateUserSettings);
+app.get('/global-stats', getGlobalStats);
 ```
 
 ---
@@ -503,7 +449,7 @@ app
 // so /api/upload can't be starved by traffic elsewhere
 app
   .post('/api/upload')
-  .auth({ required: true })
+  .auth({})
   .rateLimit({
     requests: 10,
     window: 3600000, // 1 hour
@@ -533,48 +479,45 @@ the proxy in front of them.
 
 ## Circuit Breakers
 
-Circuit breakers automatically protect against cascading failures:
+Circuit breakers protect against cascading failures:
 
 ### Automatic Circuit Breaker
 
-```typescript
-// Automatic protection for external calls
-app.get('/external-api').handler(async (req, res) => {
-  // Automatically protected by circuit breaker
-  const data = await fetch('https://external-api.com/data');
-  return { data: await data.json() };
-});
-```
+Background jobs are wrapped in a circuit breaker automatically. Module route
+handlers and module WebSocket handlers are wrapped when
+`performance.circuitBreaker.enabled` is set (it is off by default), and then
+only server-side failures count towards opening one. For any other route, wrap
+the call yourself as shown below. See the
+[Circuit Breaker Guide](./CIRCUIT_BREAKER.md) for the details.
 
 ### Manual Circuit Breaker Configuration
 
 ```typescript
+import { CircuitBreaker } from '@morojs/moro';
+
 // Custom circuit breaker settings
-app
-  .get('/unreliable-service')
-  .circuitBreaker({
-    threshold: 5, // Open after 5 failures
-    timeout: 30000, // 30 second timeout
-    resetTimeout: 60000, // Try again after 1 minute
-    monitor: true, // Enable monitoring
-  })
-  .handler(async (req, res) => {
-    const result = await callUnreliableService();
-    return { result };
-  });
+const unreliableService = new CircuitBreaker({
+  failureThreshold: 5, // Open after 5 failures
+  resetTimeout: 60000, // Try again after 1 minute
+});
+
+app.get('/unreliable-service').handler(async (req, res) => {
+  const result = await unreliableService.execute(() => callUnreliableService());
+  return { result };
+});
 ```
 
 ### Circuit Breaker Events
 
 ```typescript
-// Monitor circuit breaker events
-app.events.on('circuit-breaker:opened', ({ endpoint, failures }) => {
-  console.log(`Circuit breaker opened for ${endpoint} after ${failures} failures`);
+// Monitor circuit breaker events (emitted by the breaker itself)
+unreliableService.on('open', () => {
+  console.log(`Circuit breaker opened after ${unreliableService.getFailures()} failures`);
   // Alert monitoring system
 });
 
-app.events.on('circuit-breaker:closed', ({ endpoint }) => {
-  console.log(`Circuit breaker closed for ${endpoint}`);
+unreliableService.on('closed', () => {
+  console.log('Circuit breaker closed');
   // Service recovered
 });
 ```
@@ -596,15 +539,7 @@ const db = new MySQLAdapter({
   database: 'myapp',
 
   // Performance settings
-  connectionLimit: 20,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true,
-
-  // Query optimization
-  dateStrings: false,
-  supportBigNumbers: true,
-  bigNumberStrings: false,
+  connectionLimit: 20, // pool size (default 10)
 });
 ```
 
@@ -640,7 +575,6 @@ app
   .cache({
     ttl: 1800, // 30 minutes
     key: req => `report:${req.query.date}`,
-    strategy: 'redis',
   })
   .handler(async (req, res) => {
     const report = await db.query(
@@ -667,22 +601,16 @@ app
   .post('/complex-operation')
   .body(ComplexOperationSchema)
   .handler(async (req, res) => {
-    const transaction = await req.database.beginTransaction();
+    // db is the adapter registered with app.database(db). The transaction
+    // commits when the callback resolves and rolls back when it throws.
+    const results = await db.transaction(async tx => {
+      const first = await tx.insert('table1', req.body.data1);
+      const second = await tx.insert('table2', req.body.data2);
+      const third = await tx.update('table3', req.body.updates, { id: req.body.id });
+      return [first, second, third];
+    });
 
-    try {
-      // Batch operations where possible
-      const results = await Promise.all([
-        transaction.insert('table1', req.body.data1),
-        transaction.insert('table2', req.body.data2),
-        transaction.update('table3', { id: req.body.id }, req.body.updates),
-      ]);
-
-      await transaction.commit();
-      return { success: true, results };
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+    return { success: true, results };
   });
 ```
 
@@ -731,6 +659,56 @@ processes`; on Node 24.21 the hooks reach the threads and the same entry
 runs on threads. Both are handled without configuration. Your compiled entry
 (`node dist/app.js`) runs on threads on every supported Node.
 
+#### What clustering shares, and what it does not
+
+**Connections are balanced by the kernel, and macOS does not balance them.**
+Every worker thread binds the port with `SO_REUSEPORT`, and the operating
+system decides which of those listeners gets a connection. Linux spreads them
+(200 connections over four workers: 50 / 58 / 44 / 48). macOS gives every
+connection to one listener (40 of 40 to the same worker thread), so on macOS
+clustering adds memory, not throughput. Measure a clustered app on Linux.
+
+**What is kept in memory is kept per worker.** Each worker has its own
+in-memory session store, its own WebSocket connections and rooms, and its own
+rate-limit counters, and a request is answered by whichever worker its
+connection landed on. Measured on Linux with four workers: a session written
+through one worker was found on 11 of 40 later reads, a room broadcast reached
+4 of 11 connected clients, and a limit of 5 requests a minute admitted 20.
+With more than one worker, keep sessions in the Redis store (`store: 'redis'`,
+see [Session Management](./MIDDLEWARE_GUIDE.md#session-management)), size a
+rate limit per worker or enforce it at the proxy, and do not count on a
+WebSocket broadcast reaching the clients of another worker.
+
+**Restarts.** A worker that dies (an uncaught exception, a non-zero exit code,
+a signal) is started again after 200 ms. The delay doubles each time the same
+worker has to be started again, up to 5 seconds, and goes back to 200 ms once
+a worker has stayed up for a minute. Worker threads and worker processes
+follow the same schedule, and the primary keeps trying for as long as it
+runs. A worker that exits with code 0 is not restarted. A port that cannot be
+bound (`EADDRINUSE`, `EACCES`) is reported once through the app's `'error'`
+event when the workers are threads, as it is without clustering; worker
+processes fail one by one and are started again on the schedule above until
+the port is free.
+
+**Shutdown.** On `SIGTERM` or `SIGINT` the primary runs `app.close()`: its
+`onClose` hooks, then every worker is asked to close, then the job scheduler
+and the other services of the primary stop, and the process exits with
+code 0. Each worker runs its own `app.close()`, so `onClose` hooks run once
+in every worker as well, and requests in flight get 2 seconds to finish. The
+primary waits up to 3 seconds for the workers and ends the ones still
+running. A second signal exits at once. `app.close()` called from your own
+code in the primary stops the workers the same way, without exiting. A
+`process.on('SIGTERM', ...)` handler in your entry script runs in the primary
+only when the workers are threads, because a worker thread receives no
+signals; with worker processes it runs in every worker too.
+
+**`memoryPerWorkerGB` is a divisor, not a limit.** It has one use:
+`workers: 'auto'` is `min(CPUs, floor(memory / memoryPerWorkerGB))`. No memory
+is reserved for a worker and none is capped.
+
+`app.listen(0)` (any free port) is refused when clustering is enabled, because
+every worker would be given a different port.
+
 ### Memory: where a Moro process's RSS goes
 
 Measured on macOS arm64, Node 24.11, idle then under `wrk -c 100` load:
@@ -760,22 +738,18 @@ processes).
 ### Vercel Edge Optimizations
 
 ```typescript
-// Edge-optimized configuration
-const app = await createAppEdge({
-  regions: ['iad1', 'sfo1'], // Deploy to specific regions
-  streaming: true, // Enable streaming responses
-  cache: {
-    edge: true, // Use edge caching
-    maxAge: 3600,
-  },
-});
+// Regions and edge caching are Vercel platform settings (vercel.json), not createAppEdge() options
+const app = await createAppEdge();
 
-// Optimized for edge
 // Route-level cache config is { ttl, key?, tags? }.
-// Vary-by-header belongs on the cache middleware: middleware.cache({ vary: [...] })
+// The response differs per location, so the location headers are part of the key.
 app
   .get('/api/geo-data')
-  .cache({ ttl: 3600, tags: ['geo'] })
+  .cache({
+    ttl: 3600,
+    tags: ['geo'],
+    key: req => `geo:${req.headers['cf-ipcountry']}:${req.headers['cf-region']}`,
+  })
   .handler((req, res) => {
     return {
       country: req.headers['cf-ipcountry'],
@@ -805,25 +779,19 @@ app.get('/_warmup', (req, res) => {
 ### Cloudflare Workers Optimizations
 
 ```typescript
-// Workers-optimized configuration
-const app = await createAppWorker({
-  kv: {
-    enabled: true,
-    namespace: 'API_CACHE',
-  },
-  durableObjects: true,
-  webSockets: true,
-});
+// KV namespaces and other bindings are declared in wrangler.toml and reach
+// the handler on req.env
+const app = await createAppWorker();
 
 // Use KV storage for caching
-app.get('/api/config').handler(async (req, res, env) => {
-  const cached = await env.API_CACHE.get('config');
+app.get('/api/config').handler(async (req, res) => {
+  const cached = await req.env.API_CACHE.get('config');
   if (cached) {
     return JSON.parse(cached);
   }
 
   const config = await fetchConfig();
-  await env.API_CACHE.put('config', JSON.stringify(config), {
+  await req.env.API_CACHE.put('config', JSON.stringify(config), {
     expirationTtl: 3600,
   });
 
@@ -838,30 +806,20 @@ app.get('/api/config').handler(async (req, res, env) => {
 ### Built-in Metrics
 
 ```typescript
-// Enable built-in monitoring
-const app = await createApp({
-  monitoring: {
-    enabled: true,
-    metrics: ['requests', 'latency', 'errors', 'memory'],
-    endpoint: '/metrics', // Prometheus format
-  },
-});
+import { createApp, middleware } from '@morojs/moro';
 
-// Custom metrics
-app.use((req, res, next) => {
-  const start = Date.now();
+const app = await createApp();
 
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    req.metrics.histogram('request_duration', duration, {
-      method: req.method,
-      route: req.route?.path,
-      status: res.statusCode,
-    });
-  });
-
-  next();
-});
+// Request count and duration histograms (by method and status), served in the
+// Prometheus text format
+app.use(
+  middleware.prometheus({
+    endpoint: '/metrics',
+    includeProcessMetrics: true, // process, heap and uptime gauges (default)
+    // Restrict who may scrape it
+    authorize: req => req.headers.authorization === `Bearer ${process.env.METRICS_TOKEN}`,
+  })
+);
 ```
 
 ### Performance Logging
@@ -888,7 +846,7 @@ app.use(async (req, res, next) => {
 ```typescript
 // Comprehensive health check
 app.get('/health', async (req, res) => {
-  const health = {
+  const health: Record<string, any> = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -898,7 +856,7 @@ app.get('/health', async (req, res) => {
 
   // Check database connectivity
   try {
-    await req.database.query('SELECT 1');
+    await db.query('SELECT 1'); // the adapter you registered with app.database(db)
     health.database = 'connected';
   } catch (error) {
     health.database = 'disconnected';
@@ -986,28 +944,6 @@ app.get('/cpu-intensive').handler(async (req, res) => {
 });
 ```
 
-#### 3. Database Connection Issues
-
-```typescript
-// Monitor database connection pool
-app.events.on('database:connection:error', ({ error, pool }) => {
-  console.error('Database connection error:', error);
-
-  // Check pool status
-  console.log('Pool status:', {
-    total: pool.totalConnections,
-    active: pool.activeConnections,
-    idle: pool.idleConnections,
-  });
-
-  // Alert if pool is exhausted
-  if (pool.activeConnections === pool.connectionLimit) {
-    console.error('Database connection pool exhausted!');
-    // Trigger alert
-  }
-});
-```
-
 ### Performance Debugging
 
 ```typescript
@@ -1037,26 +973,22 @@ app.use(async (req, res, next) => {
 ### Monitoring Tools Integration
 
 ```typescript
-// Integrate with monitoring services
-import { prometheus, newrelic, datadog } from 'monitoring-integrations';
+// Built-in integrations are middleware
+import { createApp, middleware } from '@morojs/moro';
 
-const app = await createApp({
-  monitoring: {
-    prometheus: {
-      enabled: true,
-      endpoint: '/metrics',
-    },
-    newrelic: {
-      enabled: process.env.NEW_RELIC_LICENSE_KEY,
-      appName: 'moro-api',
-    },
-    datadog: {
-      enabled: process.env.DD_API_KEY,
-      service: 'moro-api',
-      env: process.env.NODE_ENV,
-    },
-  },
-});
+const app = await createApp();
+
+// Prometheus: scrape endpoint
+app.use(middleware.prometheus({ endpoint: '/metrics' }));
+
+// CloudWatch: one Embedded Metric Format line per request
+app.use(middleware.cloudWatch({ namespace: 'MoroAPI' }));
+
+// OpenTelemetry: spans and metrics through @opentelemetry/api, exported by
+// whichever SDK your process has registered. Credential-carrying query
+// parameters (token, code, signature, ...) are recorded as REDACTED in
+// url.query; see redactedQueryParams in the Middleware Guide
+app.use(middleware.openTelemetry({ ignorePaths: ['/health'] }));
 ```
 
 ---

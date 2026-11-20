@@ -1,7 +1,7 @@
 // Moro Framework Documentation System
 // Automatic API documentation generation from intelligent routes and Validation schemas
 
-import { CompiledRoute } from '../routing/index.js';
+import { CompiledRoute, RouteSchema } from '../routing/index.js';
 import { IntelligentRoutingManager } from '../routing/app-integration.js';
 import {
   OpenAPIGenerator,
@@ -41,6 +41,10 @@ export class DocumentationSystem {
   private generator: OpenAPIGenerator;
   private swaggerUI: SwaggerUIMiddleware;
   private config: DocsConfig;
+  // Where the live route list comes from, once followRoutes() has been called
+  private routeSource: (() => CompiledRoute[]) | undefined;
+  // The route schemas the current document was generated from, in order
+  private documented: RouteSchema[] = [];
 
   constructor(config: DocsConfig) {
     this.config = {
@@ -67,7 +71,9 @@ export class DocumentationSystem {
       ...(this.config.includeSchemas !== undefined
         ? { includeSchemas: this.config.includeSchemas }
         : {}),
-      ...(this.config.enableAuth ? { securitySchemes: defaultSecuritySchemes } : {}),
+      ...(this.config.enableAuth
+        ? { securitySchemes: defaultSecuritySchemes }
+        : { enableAuth: false }),
     };
 
     this.generator = new OpenAPIGenerator(generationOptions);
@@ -75,6 +81,8 @@ export class DocumentationSystem {
     // Initialize with empty spec
     const initialSpec = this.generator.generate();
     this.swaggerUI = new SwaggerUIMiddleware(initialSpec, this.config.swaggerUI);
+    // The served document is brought up to date when it is asked for
+    this.swaggerUI.setSpecRefresher(() => this.syncRoutes());
 
     logger.info('Documentation system initialized', 'Initialization', {
       title: this.config.title,
@@ -83,20 +91,71 @@ export class DocumentationSystem {
     });
   }
 
-  // Generate documentation from intelligent routing manager
+  // Generate documentation from intelligent routing manager. Routes given in
+  // an earlier call stay documented; a route given again is documented once.
   generateFromRoutes(routes: CompiledRoute[]): OpenAPISpec {
     this.generator.addRoutes(routes);
+    return this.publish(routes.length);
+  }
+
+  // Generate the document from the routes the generator holds and hand it to
+  // the page that serves it
+  private publish(routeCount?: number): OpenAPISpec {
     const spec = this.generator.generate();
 
     // Update Swagger UI with new spec
     this.swaggerUI.updateSpec(spec);
 
     logger.info('Documentation generated from routes', 'Generation', {
-      routeCount: routes.length,
+      ...(routeCount !== undefined ? { routeCount } : {}),
       pathCount: Object.keys(spec.paths).length,
     });
 
     return spec;
+  }
+
+  /**
+   * Keep the document in step with a route list that changes after this call:
+   * routes declared later, and routes loaded from files while the server
+   * starts. The list is read again whenever the document is asked for (the
+   * getters below and the served `openapi.json`), and the document is
+   * generated again only when the list is not the one already documented.
+   */
+  followRoutes(source: () => CompiledRoute[]): void {
+    this.routeSource = source;
+    this.regenerate();
+  }
+
+  /**
+   * Generate the document again from the followed route list, which becomes
+   * the whole of what is documented. Without a followed list the document is
+   * generated again from the routes already given.
+   */
+  regenerate(): OpenAPISpec {
+    return this.routeSource ? this.documentOnly(this.routeSource()) : this.publish();
+  }
+
+  // Make the given routes the whole of what is documented
+  private documentOnly(routes: CompiledRoute[]): OpenAPISpec {
+    this.generator.setRoutes(routes);
+    this.documented = routes.map(route => route.schema);
+    return this.publish(routes.length);
+  }
+
+  // Regenerate if the followed route list has changed since the last generation
+  private syncRoutes(): void {
+    if (!this.routeSource) return;
+
+    const routes = this.routeSource();
+    const documented = this.documented;
+    if (
+      routes.length === documented.length &&
+      routes.every((route, index) => route.schema === documented[index])
+    ) {
+      return;
+    }
+
+    this.documentOnly(routes);
   }
 
   // Create middleware that serves the documentation
@@ -106,16 +165,19 @@ export class DocumentationSystem {
 
   // Generate OpenAPI spec as JSON
   getOpenAPIJSON(): string {
+    this.syncRoutes();
     return this.generator.generateJSON();
   }
 
   // Generate OpenAPI spec as YAML
   getOpenAPIYAML(): string {
+    this.syncRoutes();
     return this.generator.generateYAML();
   }
 
   // Get the current OpenAPI spec
   getSpec(): OpenAPISpec {
+    this.syncRoutes();
     return this.generator.generate();
   }
 
@@ -154,9 +216,10 @@ export class AppDocumentationManager {
     this.routingManager = routingManager;
     this.docSystem = new DocumentationSystem(config);
 
-    // Generate docs from current routes
+    // Generate docs from current routes, and again when the document is asked
+    // for after the route list has changed
     const routes = routingManager.getIntelligentRoutes();
-    this.docSystem.generateFromRoutes(routes);
+    this.docSystem.followRoutes(() => routingManager.getIntelligentRoutes());
 
     logger.info('Documentation enabled for app', 'AppIntegration', {
       title: config.title,
@@ -179,11 +242,10 @@ export class AppDocumentationManager {
       throw new Error('Documentation not enabled. Call enableDocs() first.');
     }
 
-    const routes = this.routingManager.getIntelligentRoutes();
-    this.docSystem.generateFromRoutes(routes);
+    const spec = this.docSystem.regenerate();
 
     logger.debug('Documentation refreshed', 'Refresh', {
-      routeCount: routes.length,
+      pathCount: Object.keys(spec.paths).length,
     });
   }
 

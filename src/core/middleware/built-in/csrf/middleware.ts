@@ -2,7 +2,7 @@
 import { StandardMiddleware } from '../../../../types/hooks.js';
 import { createFrameworkLogger } from '../../../logger/index.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import { CSRFCore, type CSRFOptions } from './core.js';
+import { CSRFCore, passesCSRFCheck, type CSRFOptions } from './core.js';
 
 const logger = createFrameworkLogger('CSRFMiddleware');
 
@@ -23,13 +23,14 @@ export function createCSRFMiddleware(options: CSRFOptions = {}): StandardMiddlew
   const csrfCore = new CSRFCore(options);
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
+    // Add CSRF token generation method
+    (req as any).csrfToken = () => csrfCore.attachToken(req, res);
+
+    // Validate token for non-safe methods; a request that fails is answered
+    // with 403 and the chain stops here
+    if (!(await passesCSRFCheck(csrfCore, req, res))) return;
+
     try {
-      // Add CSRF token generation method
-      (req as any).csrfToken = () => csrfCore.attachToken(req, res);
-
-      // Validate token for non-safe methods
-      await csrfCore.validateToken(req);
-
       // Execute next middleware
       await next();
     } catch (error) {

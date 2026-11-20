@@ -7,6 +7,9 @@
 
 import { AppConfig, OriginFunction } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
+import { unappliedSSLKeys, unappliedSSLKeysWarning } from '../http/utils/ssl-config.js';
+import { compileTrustProxy } from '../http/utils/trust-proxy.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS, parseSizeToBytes } from '../http/utils/size.js';
 
 const logger = createFrameworkLogger('ConfigValidator');
 
@@ -14,14 +17,68 @@ const logger = createFrameworkLogger('ConfigValidator');
  * Configuration validation error with detailed context
  */
 export class ConfigValidationError extends Error {
+  /**
+   * The rejected value, exactly as it was given. Readable as `error.value`,
+   * but not enumerable: Node prints an uncaught error together with its
+   * enumerable properties, and the rejected value can be a TLS key, a
+   * passphrase or a database password.
+   */
+  declare public readonly value: unknown;
+
   constructor(
     public readonly field: string,
-    public readonly value: unknown,
+    value: unknown,
     public readonly expectedType: string,
     message: string
   ) {
     super(`Configuration validation failed for '${field}': ${message}`);
     this.name = 'ConfigValidationError';
+    Object.defineProperty(this, 'value', {
+      value,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+  }
+}
+
+/**
+ * Settings that are accepted but do not mean what was written. They are
+ * collected while one configuration is validated and reported together, one
+ * warning per kind, once that configuration has been accepted.
+ */
+interface ValidationNotes {
+  /** Size strings the size parser cannot read */
+  sizes: string[];
+  /** Numeric settings given as null, a blank string or a boolean */
+  numbers: string[];
+  /** server.timeout applied because server.timeouts.request was not given */
+  timeout: string | null;
+}
+
+let notes: ValidationNotes = { sizes: [], numbers: [], timeout: null };
+
+function describeValue(value: unknown): string {
+  return typeof value === 'string' ? `'${value}'` : String(value);
+}
+
+function reportValidationNotes(collected: ValidationNotes): void {
+  if (collected.timeout) {
+    logger.warn(collected.timeout);
+  }
+  if (collected.sizes.length > 0) {
+    logger.warn(
+      'Size settings that cannot be read as a size are replaced by a fallback: ' +
+        `${collected.sizes.join('; ')}. ` +
+        "Write a number of bytes, or digits followed by b, kb, mb or gb with nothing after the unit ('512kb', '10mb')."
+    );
+  }
+  if (collected.numbers.length > 0) {
+    logger.warn(
+      'Numeric settings given as null, an empty string or a boolean are converted, not rejected: ' +
+        `${collected.numbers.join('; ')}. ` +
+        'For most limits and timeouts 0 means unlimited or disabled. Write the number that is meant.'
+    );
   }
 }
 
@@ -31,6 +88,8 @@ export class ConfigValidationError extends Error {
  */
 export function validateConfig(config: any): AppConfig {
   logger.debug('Validating configuration');
+
+  notes = { sizes: [], numbers: [], timeout: null };
 
   try {
     const validatedConfig: AppConfig = {
@@ -49,10 +108,12 @@ export function validateConfig(config: any): AppConfig {
     };
 
     logger.debug('Configuration validation successful');
+    reportValidationNotes(notes);
     return validatedConfig;
   } catch (error) {
     if (error instanceof ConfigValidationError) {
-      logger.error(`❌ Configuration validation failed for '${error.field}':`, error.message);
+      // error.message already reads "Configuration validation failed for '<field>': <reason>"
+      logger.error(`❌ ${error.message}`);
 
       // Provide helpful hints
       provideValidationHints(error);
@@ -60,7 +121,7 @@ export function validateConfig(config: any): AppConfig {
       throw error;
     }
 
-    logger.error('❌ Unexpected configuration validation error:', String(error));
+    logger.error(`❌ Unexpected configuration validation error: ${String(error)}`);
     throw new Error(`Configuration validation failed: ${String(error)}`);
   }
 }
@@ -85,8 +146,8 @@ function validateServerConfig(config: any, path: string) {
     // preserves the historical observed behavior — see schema.ts).
     maxConnections: validateNumber(config.maxConnections, `${path}.maxConnections`, { min: 0 }),
     timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 0 }),
-    bodySizeLimit: validateString(config.bodySizeLimit, `${path}.bodySizeLimit`),
-    maxUploadSize: validateString(config.maxUploadSize, `${path}.maxUploadSize`),
+    bodySizeLimit: validateBodySize(config.bodySizeLimit, `${path}.bodySizeLimit`),
+    maxUploadSize: validateBodySize(config.maxUploadSize, `${path}.maxUploadSize`),
     requestTracking: {
       enabled: validateBoolean(config.requestTracking?.enabled, `${path}.requestTracking.enabled`),
     },
@@ -98,18 +159,27 @@ function validateServerConfig(config: any, path: string) {
     },
   };
 
-  // Optional per-phase timeouts (all ms, >= 0 where 0 = default/disabled).
-  if (config.timeouts !== undefined) {
-    result.timeouts = validateServerTimeouts(config.timeouts, `${path}.timeouts`);
-  }
-  // `timeout` is a deprecated alias for `timeouts.request`. Fold it forward
-  // when set and the canonical field is absent.
-  if (config.timeout && config.timeout > 0 && result.timeouts?.request === undefined) {
-    result.timeouts = { ...(result.timeouts ?? {}), request: result.timeout };
-    if (config.timeouts?.request === undefined) {
-      logger.warn(`${path}.timeout is deprecated - use ${path}.timeouts.request instead`);
+  // Per-phase timeouts (all ms, >= 0; an explicit 0 disables that timeout).
+  const timeouts =
+    config.timeouts !== undefined
+      ? validateServerTimeouts(config.timeouts, `${path}.timeouts`)
+      : {};
+  // The request timeout is resolved here, after every source has been merged,
+  // because the schema defaults carry no timeouts.request: a value present at
+  // this point is one the configuration gave (0 included). When it gave none,
+  // the deprecated `timeout` is the request timeout if it is set, and the
+  // default applies otherwise.
+  if (timeouts.request === undefined) {
+    if (result.timeout > 0) {
+      timeouts.request = result.timeout;
+      notes.timeout =
+        `${path}.timeout is deprecated: its value (${result.timeout} ms) is applied as ` +
+        `${path}.timeouts.request. Write ${path}.timeouts.request instead.`;
+    } else {
+      timeouts.request = DEFAULT_REQUEST_TIMEOUT_MS;
     }
   }
+  result.timeouts = timeouts;
 
   // Optional fine-grained limits.
   if (config.limits !== undefined) {
@@ -142,6 +212,14 @@ function validateServerConfig(config: any, path: string) {
     result.lendBodies = validateBoolean(config.lendBodies, `${path}.lendBodies`);
   }
 
+  // Process-signal handling, read when the server starts listening.
+  if (config.gracefulShutdown !== undefined) {
+    result.gracefulShutdown = validateBoolean(config.gracefulShutdown, `${path}.gracefulShutdown`);
+  }
+  if (config.handleUncaught !== undefined) {
+    result.handleUncaught = validateBoolean(config.handleUncaught, `${path}.handleUncaught`);
+  }
+
   // The oldest spelling of engine: 'uws'. Accepted for the same reason and
   // handled in the same place.
   if (config.useUWebSockets !== undefined) {
@@ -153,7 +231,33 @@ function validateServerConfig(config: any, path: string) {
     result.ssl = validateSSLConfig(config.ssl, `${path}.ssl`);
   }
 
+  // Optional trusted-proxy setting. Left out of the result when absent: the
+  // servers tell "not set" (forwarded headers handled as before the setting
+  // existed) from an explicit `false` (no proxy is trusted).
+  if (config.trustProxy !== undefined && config.trustProxy !== null) {
+    result.trustProxy = validateTrustProxy(config.trustProxy, `${path}.trustProxy`);
+  }
+
   return result;
+}
+
+/**
+ * Validate server.trustProxy: true, false, a hop count, an address / CIDR
+ * range / range name, or a list of those. The value is compiled once here so
+ * that a mistyped address stops start-up instead of trusting nothing.
+ */
+function validateTrustProxy(value: any, path: string): boolean | number | string | string[] {
+  try {
+    compileTrustProxy(value);
+  } catch (error) {
+    throw new ConfigValidationError(
+      path,
+      value,
+      'boolean | number | string | string[]',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+  return Array.isArray(value) ? [...value] : value;
 }
 
 /**
@@ -165,6 +269,14 @@ function validateServerConfig(config: any, path: string) {
 function validateSSLConfig(config: any, path: string) {
   if (!config || typeof config !== 'object') {
     throw new ConfigValidationError(path, config, 'object', 'SSL configuration must be an object');
+  }
+
+  // Only the keys read below are carried into the validated config. A TLS
+  // option that is set and then dropped changes what the operator believes
+  // the listener enforces, so each one is named at start-up.
+  const unapplied = unappliedSSLKeys(config);
+  if (unapplied.length > 0) {
+    logger.warn(unappliedSSLKeysWarning(path, unapplied));
   }
 
   const result: any = {};
@@ -233,6 +345,31 @@ function validateSSLConfig(config: any, path: string) {
       `${path}.rejectUnauthorized`
     );
   }
+  // Handshake policy, handed to the TLS layer as written (Node's
+  // tls.createSecureContext meanings)
+  if (config.maxVersion !== undefined) {
+    result.maxVersion = validateEnum(
+      config.maxVersion,
+      ['TLSv1.2', 'TLSv1.3'],
+      `${path}.maxVersion`
+    );
+    if (result.minVersion === 'TLSv1.3' && result.maxVersion === 'TLSv1.2') {
+      throw new ConfigValidationError(
+        `${path}.maxVersion`,
+        config.maxVersion,
+        "'TLSv1.2' | 'TLSv1.3'",
+        `maxVersion 'TLSv1.2' is below minVersion 'TLSv1.3': no TLS version would be accepted`
+      );
+    }
+  }
+  for (const key of ['ciphers', 'ecdhCurve', 'sigalgs'] as const) {
+    if (config[key] !== undefined) result[key] = validateString(config[key], `${path}.${key}`);
+  }
+  if (config.honorCipherOrder !== undefined) {
+    result.honorCipherOrder = validateBoolean(config.honorCipherOrder, `${path}.honorCipherOrder`);
+  }
+  // PEM, as a string, a Buffer or a list of them: passed through whole
+  if (config.crl !== undefined) result.crl = config.crl;
 
   const hasKey = Boolean(result.key || result.keyFile || result.key_file_name);
   const hasCert = Boolean(result.cert || result.certFile || result.cert_file_name);
@@ -248,6 +385,40 @@ function validateSSLConfig(config: any, path: string) {
   return result;
 }
 
+/**
+ * A size string is accepted as written, but the size parser falls back to a
+ * fixed value for one it cannot read. Record those so that the fallback is
+ * named at start-up.
+ */
+function noteUnreadableSize(value: string, path: string): void {
+  const UNREADABLE = -1;
+  if (parseSizeToBytes(value, UNREADABLE) !== UNREADABLE) return;
+  notes.sizes.push(`${path} ${describeValue(value)} -> ${parseSizeToBytes(value)} bytes in force`);
+}
+
+/**
+ * server.bodySizeLimit / server.maxUploadSize: any string (as before), or a
+ * non-negative finite number of bytes.
+ */
+function validateBodySize(value: any, path: string): number | string {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new ConfigValidationError(
+        path,
+        value,
+        'size',
+        'Must be a size string or a non-negative number of bytes'
+      );
+    }
+    return value;
+  }
+  if (typeof value !== 'string') {
+    throw new ConfigValidationError(path, value, 'string', 'Must be a string');
+  }
+  noteUnreadableSize(value, path);
+  return value;
+}
+
 /** Size fields accept a number of bytes or a size string ('16kb', '10mb'). */
 function validateSize(value: any, path: string): number | string {
   if (typeof value === 'number') return validateNumber(value, path, { min: 0 });
@@ -255,6 +426,7 @@ function validateSize(value: any, path: string): number | string {
     if (!/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/i.test(value.trim())) {
       throw new ConfigValidationError(path, value, 'size', `Invalid size string: ${value}`);
     }
+    noteUnreadableSize(value, path);
     return value;
   }
   throw new ConfigValidationError(
@@ -289,6 +461,7 @@ function validateServerLimits(config: any, path: string) {
     'wsBackpressureLimit',
     'writeHighWaterMark',
     'maxPendingBytes',
+    'responseBackpressureLimit',
   ]) {
     if (config[key] !== undefined) result[key] = validateSize(config[key], `${path}.${key}`);
   }
@@ -446,6 +619,38 @@ function validateDatabaseConfig(config: any, path: string) {
 }
 
 /**
+ * Defaults for the keys of a `database.redis` / `mysql` / `postgresql` object
+ * that every such object must end up with. A section written in a config file
+ * or passed to createApp() may leave any of them out (the config types are
+ * DeepPartial); the missing ones take these values, the same ones the
+ * environment loader uses when REDIS_URL / MYSQL_HOST is set. A key that is
+ * present is validated as written.
+ */
+const REDIS_DEFAULTS = {
+  url: 'redis://localhost:6379',
+  maxRetries: 3,
+  retryDelay: 1000,
+  keyPrefix: 'moro:',
+} as const;
+const MYSQL_DEFAULTS = {
+  host: 'localhost',
+  port: 3306,
+  connectionLimit: 10,
+  acquireTimeout: 60000,
+  timeout: 60000,
+} as const;
+const POSTGRESQL_DEFAULTS = {
+  host: 'localhost',
+  port: 5432,
+  connectionLimit: 10,
+} as const;
+
+/** `value`, or `fallback` when the key was left out */
+function orDefault<T>(value: unknown, fallback: T): unknown {
+  return value === undefined ? fallback : value;
+}
+
+/**
  * Validate Redis configuration
  */
 function validateRedisConfig(config: any, path: string) {
@@ -459,10 +664,21 @@ function validateRedisConfig(config: any, path: string) {
   }
 
   return {
-    url: validateString(config.url, `${path}.url`),
-    maxRetries: validateNumber(config.maxRetries, `${path}.maxRetries`, { min: 0 }),
-    retryDelay: validateNumber(config.retryDelay, `${path}.retryDelay`, { min: 0 }),
-    keyPrefix: validateString(config.keyPrefix, `${path}.keyPrefix`),
+    url: validateString(orDefault(config.url, REDIS_DEFAULTS.url), `${path}.url`),
+    maxRetries: validateNumber(
+      orDefault(config.maxRetries, REDIS_DEFAULTS.maxRetries),
+      `${path}.maxRetries`,
+      { min: 0 }
+    ),
+    retryDelay: validateNumber(
+      orDefault(config.retryDelay, REDIS_DEFAULTS.retryDelay),
+      `${path}.retryDelay`,
+      { min: 0 }
+    ),
+    keyPrefix: validateString(
+      orDefault(config.keyPrefix, REDIS_DEFAULTS.keyPrefix),
+      `${path}.keyPrefix`
+    ),
   };
 }
 
@@ -480,11 +696,21 @@ function validateMySQLConfig(config: any, path: string) {
   }
 
   const result: any = {
-    host: validateString(config.host, `${path}.host`),
-    port: validatePort(config.port, `${path}.port`),
-    connectionLimit: validateNumber(config.connectionLimit, `${path}.connectionLimit`, { min: 1 }),
-    acquireTimeout: validateNumber(config.acquireTimeout, `${path}.acquireTimeout`, { min: 1000 }),
-    timeout: validateNumber(config.timeout, `${path}.timeout`, { min: 1000 }),
+    host: validateString(orDefault(config.host, MYSQL_DEFAULTS.host), `${path}.host`),
+    port: validatePort(orDefault(config.port, MYSQL_DEFAULTS.port), `${path}.port`),
+    connectionLimit: validateNumber(
+      orDefault(config.connectionLimit, MYSQL_DEFAULTS.connectionLimit),
+      `${path}.connectionLimit`,
+      { min: 1 }
+    ),
+    acquireTimeout: validateNumber(
+      orDefault(config.acquireTimeout, MYSQL_DEFAULTS.acquireTimeout),
+      `${path}.acquireTimeout`,
+      { min: 1000 }
+    ),
+    timeout: validateNumber(orDefault(config.timeout, MYSQL_DEFAULTS.timeout), `${path}.timeout`, {
+      min: 1000,
+    }),
   };
 
   // Optional fields
@@ -515,9 +741,13 @@ function validatePostgreSQLConfig(config: any, path: string) {
   }
 
   const result: any = {
-    host: validateString(config.host, `${path}.host`),
-    port: validatePort(config.port, `${path}.port`),
-    connectionLimit: validateNumber(config.connectionLimit, `${path}.connectionLimit`, { min: 1 }),
+    host: validateString(orDefault(config.host, POSTGRESQL_DEFAULTS.host), `${path}.host`),
+    port: validatePort(orDefault(config.port, POSTGRESQL_DEFAULTS.port), `${path}.port`),
+    connectionLimit: validateNumber(
+      orDefault(config.connectionLimit, POSTGRESQL_DEFAULTS.connectionLimit),
+      `${path}.connectionLimit`,
+      { min: 1 }
+    ),
   };
 
   // Optional fields
@@ -652,7 +882,7 @@ function validateModuleDefaultsConfig(config: any, path: string) {
 function validateRoutingConfig(
   config: any,
   path: string
-): boolean | { enabled: boolean; paths?: string[] } {
+): boolean | { enabled: boolean; paths?: string[]; strictMiddleware?: boolean } {
   if (config === undefined || config === null) {
     return true; // Enabled by default
   }
@@ -662,12 +892,18 @@ function validateRoutingConfig(
   }
 
   if (typeof config === 'object' && !Array.isArray(config)) {
-    const result: { enabled: boolean; paths?: string[] } = {
+    const result: { enabled: boolean; paths?: string[]; strictMiddleware?: boolean } = {
       enabled:
         config.enabled !== undefined ? validateBoolean(config.enabled, `${path}.enabled`) : true,
     };
     if (config.paths !== undefined) {
       result.paths = validateStringArray(config.paths, `${path}.paths`);
+    }
+    if (config.strictMiddleware !== undefined) {
+      result.strictMiddleware = validateBoolean(
+        config.strictMiddleware,
+        `${path}.strictMiddleware`
+      );
     }
     return result;
   }
@@ -675,8 +911,8 @@ function validateRoutingConfig(
   throw new ConfigValidationError(
     path,
     config,
-    'boolean | { enabled: boolean; paths?: string[] }',
-    'Routing must be a boolean or an object with enabled/paths'
+    'boolean | { enabled: boolean; paths?: string[]; strictMiddleware?: boolean }',
+    'Routing must be a boolean or an object with enabled/paths/strictMiddleware'
   );
 }
 
@@ -876,7 +1112,32 @@ function validateLoggingConfig(config: any, path: string) {
     enableMetadata: validateBoolean(config.enableMetadata, `${path}.enableMetadata`),
     enablePerformance: validateBoolean(config.enablePerformance, `${path}.enablePerformance`),
     outputs: validateLoggingOutputsConfig(config.outputs, `${path}.outputs`),
+    ...(config.redact !== undefined
+      ? { redact: validateLogRedact(config.redact, `${path}.redact`) }
+      : {}),
+    ...(config.escapeControlChars !== undefined
+      ? {
+          escapeControlChars: validateBoolean(
+            config.escapeControlChars,
+            `${path}.escapeControlChars`
+          ),
+        }
+      : {}),
   };
+}
+
+/** `logging.redact`: on, off, or on with extra key names to mask. */
+function validateLogRedact(value: any, path: string): boolean | string[] {
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value) && value.every(entry => typeof entry === 'string')) {
+    return value.slice();
+  }
+  throw new ConfigValidationError(
+    path,
+    value,
+    'boolean | string[]',
+    'Must be a boolean or an array of key names'
+  );
 }
 
 /**
@@ -1535,6 +1796,25 @@ function validateWebSocketOptions(config: any, path: string) {
       min: 1024,
     });
   }
+  // Handshake checks: carried through, so a config file can set them as
+  // createApp() options can.
+  if (config.enforceHandshakeChecks !== undefined) {
+    result.enforceHandshakeChecks = validateBoolean(
+      config.enforceHandshakeChecks,
+      `${path}.enforceHandshakeChecks`
+    );
+  }
+  if (config.verifyClient !== undefined) {
+    if (typeof config.verifyClient !== 'function') {
+      throw new ConfigValidationError(
+        `${path}.verifyClient`,
+        config.verifyClient,
+        'function',
+        'verifyClient must be a function'
+      );
+    }
+    result.verifyClient = config.verifyClient;
+  }
 
   return result;
 }
@@ -1555,7 +1835,7 @@ function validateWebSocketCorsOptions(config: any, path: string) {
   const result: any = {};
 
   if (config.origin !== undefined) {
-    result.origin = validateCorsOrigin(config.origin, `${path}.origin`);
+    result.origin = validateWebSocketCorsOrigin(config.origin, `${path}.origin`);
   }
   if (config.credentials !== undefined) {
     result.credentials = validateBoolean(config.credentials, `${path}.credentials`);
@@ -1564,7 +1844,63 @@ function validateWebSocketCorsOptions(config: any, path: string) {
   return result;
 }
 
+/**
+ * Validate the WebSocket handshake origin rule. The WebSocket adapters take
+ * what the HTTP CORS middleware takes and, in addition, a RegExp, alone or
+ * as an entry of a list (`security.cors.origin` does not: the CORS middleware
+ * has no use for one). A RegExp is handed on as the same object.
+ */
+function validateWebSocketCorsOrigin(
+  value: any,
+  path: string
+): string | boolean | RegExp | Array<string | RegExp> | ((...args: any[]) => any) {
+  if (typeof value === 'boolean' || typeof value === 'string' || typeof value === 'function') {
+    return value;
+  }
+  if (value instanceof RegExp) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const len = value.length;
+    const result: Array<string | RegExp> = new Array(len);
+    for (let i = 0; i < len; i++) {
+      const entry = value[i];
+      if (typeof entry !== 'string' && !(entry instanceof RegExp)) {
+        throw new ConfigValidationError(
+          `${path}[${i}]`,
+          entry,
+          'string | RegExp',
+          'Must be a string or a RegExp'
+        );
+      }
+      result[i] = entry;
+    }
+    return result;
+  }
+  throw new ConfigValidationError(
+    path,
+    value,
+    'string | RegExp | (string | RegExp)[] | boolean | function',
+    'Must be a string, a RegExp, an array of strings and RegExps, a boolean, or a function'
+  );
+}
+
 // Basic validation functions
+
+/**
+ * Number() turns null and a blank string into 0 and a boolean into 0 or 1.
+ * Such a value is still accepted; record it so that the number in force is
+ * named at start-up.
+ */
+function noteCoercedNumber(value: unknown, num: number, path: string): void {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    (typeof value === 'string' && value.trim() === '')
+  ) {
+    notes.numbers.push(`${path} ${describeValue(value)} -> ${num} in force`);
+  }
+}
 
 function validatePort(value: any, path: string): number {
   const num = Number(value);
@@ -1576,6 +1912,7 @@ function validatePort(value: any, path: string): number {
       'Must be a number between 1 and 65535'
     );
   }
+  noteCoercedNumber(value, num, path);
   return num;
 }
 
@@ -1617,6 +1954,7 @@ function validateNumber(
       `Must be at most ${options.max}`
     );
   }
+  noteCoercedNumber(value, num, path);
   return num;
 }
 
@@ -2027,6 +2365,10 @@ function validateJobsLeaderElectionConfig(config: any, path: string) {
       `${path}.heartbeatInterval`,
       { min: 1000 }
     );
+  }
+  // A live client object: handed on by reference, never copied or inspected.
+  if (config.redisClient !== undefined && config.redisClient !== null) {
+    result.redisClient = config.redisClient;
   }
 
   return result;

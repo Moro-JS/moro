@@ -19,7 +19,10 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
     version: '1.0.0',
     description: 'GraphQL middleware with Pothos support and GraphQL-JIT performance optimization',
     author: 'MoroJS Team',
-    dependencies: ['graphql'],
+    // `dependencies` names other middleware that must be installed first (the
+    // manager refuses to install without them). The `graphql` npm package is
+    // not one of those; it is loaded, with its own error message, on initialize.
+    dependencies: [],
     tags: ['graphql', 'api', 'pothos', 'performance'],
   },
 
@@ -29,27 +32,28 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
     const config = { ...options, ...middlewareOptions };
     const graphqlCore = new GraphQLCore(config);
 
-    // Initialize GraphQL
-    await graphqlCore.initialize();
+    // Initialization is asynchronous (it loads the graphql package and builds
+    // the schema). The hooks below are registered before it finishes, in the
+    // same tick as app.use(), and a GraphQL request waits for it, so the
+    // endpoint exists from the first request after listen().
+    // A failure rejects install(), awaited at the end of this function.
+    const ready = graphqlCore.initialize();
 
     const graphqlPath = config.path || '/graphql';
     const playgroundPath = config.playgroundPath || `${graphqlPath}/playground`;
     const enablePlayground =
       config.enablePlayground !== false && process.env.NODE_ENV !== 'production';
 
-    logger.info('GraphQL endpoint configured', 'Configuration', {
-      graphqlPath,
-      playgroundPath: enablePlayground ? playgroundPath : 'disabled',
-      jit: graphqlCore.getStats()?.jit?.enabled || false,
-    });
-
     // Register hooks for request processing
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
+      // Answered by a hook that ran before this one: nothing left to do
+      if (res.headersSent) return;
 
       // Handle GraphQL Playground
       if (enablePlayground && req.path === playgroundPath && req.method === 'GET') {
+        await ready;
         logger.debug('Serving GraphQL Playground', 'Playground');
         res.setHeader('Content-Type', 'text/html');
         res.status(200).send(graphqlCore.getPlaygroundHTML());
@@ -58,6 +62,7 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
 
       // Handle GraphQL endpoint
       if (req.path === graphqlPath) {
+        await ready;
         logger.debug('Processing GraphQL request', 'Request', {
           method: req.method,
           operationName: req.body?.operationName,
@@ -92,6 +97,14 @@ export const graphql = (options: GraphQLOptions): MiddlewareInterface => ({
       if (req.path === graphqlPath && req.graphqlMetrics) {
         logger.debug('GraphQL request completed', 'Metrics', req.graphqlMetrics);
       }
+    });
+
+    await ready;
+
+    logger.info('GraphQL endpoint configured', 'Configuration', {
+      graphqlPath,
+      playgroundPath: enablePlayground ? playgroundPath : 'disabled',
+      jit: graphqlCore.getStats()?.jit?.enabled || false,
     });
   },
 });

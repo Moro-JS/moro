@@ -3,6 +3,8 @@
 
 import { createFrameworkLogger } from '../logger/index.js';
 import { isPackageAvailable } from '../utilities/package-utils.js';
+import { logErrorLines } from '../utilities/log-error-lines.js';
+import { findServiceDefinition, qualifiedServiceName } from './grpc-adapter.js';
 import type { GrpcAdapter } from './grpc-adapter.js';
 import type {
   GrpcOptions,
@@ -27,8 +29,11 @@ export class GrpcManager {
   private services = new Map<string, ServiceRegistration>();
   private isInitialized = false;
   private isStarted = false;
+  // Whether the caller set `compression` (the merged options always carry it)
+  private compressionRequested: boolean;
 
   constructor(options: GrpcOptions = {}) {
+    this.compressionRequested = options.compression !== undefined;
     this.options = {
       port: 50051,
       host: '0.0.0.0',
@@ -74,15 +79,26 @@ export class GrpcManager {
         this.logger.info('Health check service enabled', 'Init');
       }
 
+      // Accepted but not implemented: say so once, at start-up, rather than
+      // let the configuration read as if it were in force.
       if (this.options.enableReflection) {
         this.adapter.enableReflection();
-        this.logger.info('Server reflection enabled', 'Init');
+      }
+
+      if (this.compressionRequested) {
+        this.logger.warn(
+          'gRPC option `compression` is not implemented and has no effect: message compression ' +
+            'is left to @grpc/grpc-js defaults whatever value is set. To configure it, pass the ' +
+            'grpc-js channel arguments through `channelOptions`.',
+          'Init'
+        );
       }
 
       this.isInitialized = true;
       this.logger.info(`gRPC manager initialized with ${adapterName} adapter`, 'Init');
     } catch (error) {
-      this.logger.error(`Failed to initialize gRPC manager: ${error}`, 'Init');
+      // The "package not found" errors carry an install hint over several lines
+      logErrorLines(this.logger, 'Failed to initialize gRPC manager', error, 'Init');
       throw error;
     }
   }
@@ -105,12 +121,12 @@ export class GrpcManager {
       // Load proto file
       const services = await this.adapter.loadProto(protoPath, packageName, protoOptions);
 
-      // Find the specified service
-      const serviceDefinition = services.find(s => s.serviceName === serviceName);
+      // Find the specified service, by name or package-qualified name
+      const serviceDefinition = findServiceDefinition(services, serviceName, packageName);
 
       if (!serviceDefinition) {
         throw new Error(
-          `Service ${serviceName} not found in ${protoPath}. Available services: ${services.map(s => s.serviceName).join(', ')}`
+          `Service ${serviceName} not found in ${protoPath}. Available services: ${services.map(qualifiedServiceName).join(', ')}`
         );
       }
 
@@ -266,7 +282,7 @@ export class GrpcManager {
           'To use gRPC with MoroJS, install the required packages:\n' +
           '  npm install @grpc/grpc-js @grpc/proto-loader\n\n' +
           'Then configure gRPC in your app:\n' +
-          "  app.grpc({ port: 50051, adapter: 'grpc-js' });"
+          "  app.grpcInit({ port: 50051, adapter: 'grpc-js' });"
       );
     }
 

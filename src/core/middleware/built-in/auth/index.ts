@@ -17,7 +17,20 @@ export {
   type AccountLinkingOptions,
   type RateLimitOptions,
   type BearerTokenOptions,
+  type AuthMiddlewareOptions,
 } from './core.js';
+
+// What the feature helpers return, and where auth() takes them
+export type {
+  AuthFeatureOptions,
+  AuthPluginHelper,
+  TwoFactorSettings,
+  OrganizationSettings,
+  AnonymousSettings,
+  BearerTokenSettings,
+  AccountLinkingSettings,
+  RateLimitSettings,
+} from '../../../auth/feature-helpers.js';
 
 // Middleware (for middleware chains)
 export { createAuthMiddleware } from './middleware.js';

@@ -1,7 +1,7 @@
 // Database SQLite Adapter
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
-import { resolveUserPackage } from '../../utilities/package-utils.js';
+import { importDriver } from './driver-support.js';
 import {
   quoteIdentifier as qi,
   quoteColumns,
@@ -18,39 +18,56 @@ interface SQLiteConfig {
   verbose?: boolean;
 }
 
+/**
+ * Run a prepared statement and return its rows. better-sqlite3 only lets
+ * all()/get() run a statement that returns data (`stmt.reader`); anything
+ * else (CREATE, UPDATE, DELETE, INSERT without RETURNING) has to go through
+ * run() and has no rows.
+ */
+function allRows<T>(db: any, sql: string, params?: any[]): T[] {
+  const stmt = db.prepare(sql);
+  if (stmt.reader) return stmt.all(params || []) as T[];
+  stmt.run(params || []);
+  return [];
+}
+
+function firstRow<T>(db: any, sql: string, params?: any[]): T | null {
+  const stmt = db.prepare(sql);
+  if (stmt.reader) return (stmt.get(params || []) as T) || null;
+  stmt.run(params || []);
+  return null;
+}
+
 export class SQLiteAdapter implements DatabaseAdapter {
   private db: any;
   private logger = createFrameworkLogger('SQLite');
   private initPromise: Promise<void>;
+  private transactionQueue: Promise<unknown> = Promise.resolve();
 
   constructor(config: SQLiteConfig = {}) {
     this.initPromise = this.initialize(config);
   }
 
   private async initialize(config: SQLiteConfig): Promise<void> {
-    try {
-      const sqlite3Path = resolveUserPackage('better-sqlite3');
-      const betterSqlite3 = await import(sqlite3Path);
-      const Database = betterSqlite3.default;
-      const filename = config.memory ? ':memory:' : config.filename || 'moro_app.db';
-      this.db = new Database(filename, {
-        readonly: config.readonly || false,
-        fileMustExist: config.fileMustExist || false,
-        timeout: config.timeout || 5000,
-        verbose: config.verbose ? this.logger.debug.bind(this.logger) : undefined,
-      });
+    const betterSqlite3 = await importDriver(
+      'better-sqlite3',
+      'better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3'
+    );
+    const Database = betterSqlite3.default;
+    const filename = config.memory ? ':memory:' : config.filename || 'moro_app.db';
+    this.db = new Database(filename, {
+      readonly: config.readonly || false,
+      fileMustExist: config.fileMustExist || false,
+      timeout: config.timeout || 5000,
+      verbose: config.verbose ? this.logger.debug.bind(this.logger) : undefined,
+    });
 
-      // Enable foreign keys
-      this.db.pragma('foreign_keys = ON');
+    // Enable foreign keys
+    this.db.pragma('foreign_keys = ON');
 
-      this.logger.info('SQLite connection established', 'Connection', {
-        filename,
-      });
-    } catch {
-      throw new Error(
-        'better-sqlite3 package is required for SQLite adapter. Install it with: npm install better-sqlite3'
-      );
-    }
+    this.logger.info('SQLite connection established', 'Connection', {
+      filename,
+    });
   }
 
   async connect(): Promise<void> {
@@ -72,9 +89,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     await this.initPromise;
     try {
-      const stmt = this.db.prepare(sql);
-      const results = stmt.all(params || []);
-      return results as T[];
+      return allRows<T>(this.db, sql, params);
     } catch (error) {
       this.logger.error('SQLite query failed', 'Query', {
         sql,
@@ -87,9 +102,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
     await this.initPromise;
     try {
-      const stmt = this.db.prepare(sql);
-      const result = stmt.get(params || []);
-      return (result as T) || null;
+      return firstRow<T>(this.db, sql, params);
     } catch (error) {
       this.logger.error('SQLite queryOne failed', 'Query', {
         sql,
@@ -180,12 +193,24 @@ export class SQLiteAdapter implements DatabaseAdapter {
 
   async transaction<T>(callback: (tx: DatabaseTransaction) => Promise<T>): Promise<T> {
     await this.initPromise;
-    const transaction = this.db.transaction(async () => {
-      const tx = new SQLiteTransaction(this.db);
-      return await callback(tx);
-    });
-
-    return transaction();
+    // better-sqlite3's own transaction() only takes a synchronous function
+    // and the callback here is async, so the transaction is opened and closed
+    // with statements. There is one connection: transactions run one after
+    // another, each waiting for the previous one to commit or roll back.
+    const run = async (): Promise<T> => {
+      this.db.exec('BEGIN');
+      try {
+        const result = await callback(new SQLiteTransaction(this.db));
+        this.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        if (this.db.inTransaction) this.db.exec('ROLLBACK');
+        throw error;
+      }
+    };
+    const result = this.transactionQueue.then(run, run);
+    this.transactionQueue = result.catch(() => undefined);
+    return result;
   }
 }
 
@@ -193,15 +218,11 @@ class SQLiteTransaction implements DatabaseTransaction {
   constructor(private db: any) {}
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
-    const stmt = this.db.prepare(sql);
-    const results = stmt.all(params || []);
-    return results as T[];
+    return allRows<T>(this.db, sql, params);
   }
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
-    const stmt = this.db.prepare(sql);
-    const result = stmt.get(params || []);
-    return (result as T) || null;
+    return firstRow<T>(this.db, sql, params);
   }
 
   async insert<T = any>(table: string, data: Record<string, any>): Promise<T> {
@@ -254,13 +275,12 @@ class SQLiteTransaction implements DatabaseTransaction {
   }
 
   async commit(): Promise<void> {
-    // SQLite transactions are handled automatically by better-sqlite3
+    // The adapter commits when the transaction callback resolves
     // This is just for interface compatibility
   }
 
   async rollback(): Promise<void> {
-    // SQLite transactions are handled automatically by better-sqlite3
-    // This is just for interface compatibility
+    // The adapter rolls back when the transaction callback throws
     throw new Error('Transaction rollback');
   }
 }

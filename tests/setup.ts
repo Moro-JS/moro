@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Test Setup - Global configuration and utilities for MoroJS tests
 import { jest, beforeEach, afterEach, afterAll } from '@jest/globals';
 import { destroyGlobalLogger, logger } from '../src/core/logger/index.js';
@@ -52,9 +51,35 @@ declare global {
 // its own 1000-port band via JEST_WORKER_ID). This is what lets the suite run
 // with maxWorkers > 1 without random-port clashes. (New tests can still prefer
 // app.listen(0) + reading the bound port.)
+//
+// Some ports in those bands cannot be used and are stepped over: the ones
+// fetch() refuses to connect to whatever is listening (the WHATWG "bad ports"
+// list; a test that landed on one failed with "bad port"), and the ones macOS
+// itself listens on: 5000 and 7000 (AirPlay Receiver), the first port of
+// workers 2 and 4, and 8021 (the ftp-proxy launch daemon, on loopback), which
+// was the 22nd port of whichever test file ran in worker 5.
+const FETCH_BAD_PORTS = [
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
+  103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
+  512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+  995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+  6669, 6679, 6697, 10080,
+];
+const UNUSABLE_TEST_PORTS = new Set([...FETCH_BAD_PORTS, 5000, 7000, 8021]);
+
+/** The first port at or after `port` that a test may listen on and fetch from. */
+export const usableTestPort = (port: number): number => {
+  while (UNUSABLE_TEST_PORTS.has(port)) port++;
+  return port;
+};
+
 const __workerId = parseInt(process.env.JEST_WORKER_ID || '1', 10);
 let __nextTestPort = 3000 + __workerId * 1000;
-const allocTestPort = () => __nextTestPort++;
+const allocTestPort = () => {
+  const port = usableTestPort(__nextTestPort);
+  __nextTestPort = port + 1;
+  return port;
+};
 globalThis.testPort = allocTestPort();
 
 // Mock console methods for cleaner test output (optional)
@@ -140,7 +165,14 @@ export const closeApp = async (app: any): Promise<void> => {
     if (app && app.core && app.core.httpServer) {
       await Promise.race([
         new Promise<void>(resolve => {
-          app.core.httpServer.close(() => resolve());
+          // The engine server takes a callback; the Node servers return a promise.
+          const closing = app.core.httpServer.close(() => resolve());
+          if (closing && typeof closing.then === 'function') {
+            closing.then(
+              () => resolve(),
+              () => resolve()
+            );
+          }
         }),
         new Promise<void>(resolve => {
           const t = setTimeout(resolve, 1000); // 1 second timeout

@@ -191,38 +191,41 @@ jobs:
       - name: Run security audit
         run: npm audit --audit-level moderate --omit=dev
 
-  publish:
-    name: Publish to NPM
+  # Builds and checks the tarball a release publishes. It runs on every push
+  # and pull request too, so the path a release takes is exercised long before
+  # a release is cut. Everything that executes dependency or project code on
+  # the way to a release happens here, in a job with no secrets and no OIDC
+  # token; the publish job below receives the finished tarball and nothing else.
+  package:
+    name: Package
     runs-on: ubuntu-latest
-    needs: [lint-and-format, test, coverage, build, security-audit]
-    if: github.event_name == 'release' && github.event.release.prerelease == false
-    permissions:
-      contents: read
-      id-token: write # required for npm provenance / trusted publishing
+    needs: [lint-and-format, test]
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # No `cache: 'npm'` here on purpose: what this job builds is what gets
+      # published, so it does not restore a dependency cache that other jobs
+      # and workflows are able to write.
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
 
-      # OIDC trusted publishing (tokenless publish) needs npm >= 11.5.1. Node 20
-      # ships npm 10.x, and npm@latest is now 12.x (which dropped Node 20 support),
-      # so pin the 11.x line — it supports Node 20.17+ and does trusted publishing.
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@11
-
+      # --ignore-scripts: nothing below needs a dependency's install script
+      # (the build is plain `tsc`, the validators are plain Node scripts), and
+      # the root `prepare` (husky git hooks) is not needed in CI.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # The tag the release was cut from must match the version being published,
       # so a moved/mismatched tag can never ship a wrong-versioned tarball.
       - name: Verify tag matches package.json version
+        if: github.event_name == 'release'
         run: |
           PKG_VERSION="v$(node -p "require('./package.json').version")"
           TAG="${GITHUB_REF_NAME}"
@@ -235,18 +238,116 @@ jobs:
       - name: Build project
         run: npm run build
 
-      # Run the project's own tarball validators (pack + install into a temp
-      # project + import as a consumer) instead of only `npm pack --dry-run`.
       - name: Validate dist
         run: node scripts/validate-dist.mjs
 
-      - name: Validate published package
-        run: node scripts/validate-package.mjs
+      # Pack once. The file made here is the file that is validated, uploaded
+      # and published; its SHA-256 travels to the publish job as a job output,
+      # apart from the artifact, and is checked there before publishing.
+      - name: Pack
+        id: pack
+        run: |
+          mkdir package-out
+          npm pack --ignore-scripts --pack-destination package-out
+          if [ "$(ls package-out | wc -l)" -ne 1 ]; then
+            echo "::error::Expected exactly one tarball in package-out/"
+            ls -la package-out
+            exit 1
+          fi
+          TARBALL="$(ls package-out)"
+          SHA256="$(sha256sum "package-out/${TARBALL}" | cut -d' ' -f1)"
+          echo "tarball: ${TARBALL}   sha256: ${SHA256}"
+          echo "tarball=${TARBALL}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+
+      # Install the tarball into a temp project and import it as a consumer
+      # would; also checks the shipped source maps and the package size.
+      - name: Validate the tarball
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: node scripts/validate-package.mjs "package-out/${TARBALL}"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: package-out/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that can publish. It holds the OIDC token npm trusts, so it
+  # runs no dependency install, no build and no script from this repository:
+  # there is no checkout at all. It sets up a fixed Node (for the npm bundled
+  # with it), fetches the tarball the package job of this same run built,
+  # checks it is that file, and hands it to `npm publish`.
+  #
+  # `environment: npm-publish` puts the job behind that environment's
+  # protection rules (required reviewers, allowed tags), which are set in the
+  # repository settings, and lets the trusted publisher on npmjs.com be bound
+  # to the environment as well as to this workflow file.
+  publish:
+    name: Publish to NPM
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, test, coverage, build, security-audit, package]
+    if: github.event_name == 'release' && github.event.release.prerelease == false
+    environment: npm-publish
+    permissions:
+      id-token: write # npm trusted publishing and provenance
+
+    steps:
+      # An exact Node release, for the npm inside it: trusted publishing needs
+      # npm >= 11.5.1 and Node 24.11.0 bundles npm 11.6.1, so no `npm install -g
+      # npm` runs in this job. Bump the version deliberately. No `cache:` either:
+      # nothing is installed here.
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24.11.0'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check npm supports trusted publishing
+        run: |
+          NPM_VERSION="$(npm --version)"
+          echo "node $(node --version)   npm ${NPM_VERSION}"
+          if [ "$(printf '%s\n' '11.5.1' "${NPM_VERSION}" | sort -V | head -n 1)" != "11.5.1" ]; then
+            echo "::error::npm ${NPM_VERSION} cannot do trusted publishing (11.5.1 or later is needed)"
+            exit 1
+          fi
+
+      # Only this run's artifacts can be fetched this way.
+      - name: Download the tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package
+          path: package-out
+
+      # The file must be the one the package job made (same name, same
+      # SHA-256), and its name must carry the version of the release tag.
+      - name: Verify the tarball
+        env:
+          TARBALL: ${{ needs.package.outputs.tarball }}
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          EXPECTED_NAME="morojs-moro-${GITHUB_REF_NAME#v}.tgz"
+          echo "tarball: ${TARBALL}   expected for tag ${GITHUB_REF_NAME}: ${EXPECTED_NAME}"
+          if [ -z "${TARBALL}" ] || [ "${TARBALL}" != "${EXPECTED_NAME}" ]; then
+            echo "::error::Tarball ${TARBALL} is not the package for release tag ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          ACTUAL_SHA256="$(sha256sum "package-out/${TARBALL}" | cut -d' ' -f1)"
+          echo "sha256: ${ACTUAL_SHA256}   expected: ${EXPECTED_SHA256}"
+          if [ -z "${EXPECTED_SHA256}" ] || [ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]; then
+            echo "::error::Downloaded tarball does not match the one the package job built"
+            exit 1
+          fi
 
       # OIDC trusted publishing: npm authenticates via the id-token exchange
       # (id-token: write above + the trusted publisher configured on npmjs.com),
       # so no NPM_TOKEN is needed. --provenance publishes a signed
-      # build-provenance attestation, giving consumers source-to-artifact
-      # traceability.
+      # build-provenance attestation for this exact tarball, naming this
+      # workflow run and commit. --ignore-scripts: publishing a tarball runs no
+      # lifecycle script, and the flag keeps it that way.
       - name: Publish to NPM
-        run: npm publish --access public --provenance
+        env:
+          TARBALL: ${{ needs.package.outputs.tarball }}
+        run: npm publish "./package-out/${TARBALL}" --provenance --access public --ignore-scripts

@@ -14,7 +14,9 @@ import type {
   BulkJobData,
   QueueConnectionConfig,
   JobContext,
+  QueueRetentionOptions,
 } from '../types.js';
+import { JobRetention } from './retention.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 
 /**
@@ -40,9 +42,24 @@ export class BullAdapter extends QueueAdapter {
   private workers: Map<string, BullMQWorker> = new Map();
   private connectionConfig: QueueConnectionConfig;
 
-  constructor(connectionConfig: QueueConnectionConfig = {}) {
+  private retention: JobRetention;
+
+  constructor(connectionConfig: QueueConnectionConfig = {}, retention?: QueueRetentionOptions) {
     super();
     this.connectionConfig = connectionConfig;
+    this.retention = new JobRetention(retention);
+  }
+
+  /**
+   * What BullMQ does with a finished job in Redis. A job's own setting is
+   * passed on as given; without one BullMQ keeps the queue's most recent
+   * `limit` jobs of that outcome (its "keep count"), or all of them when the
+   * limit is Infinity.
+   */
+  private keepJobs(ownSetting: boolean | number | undefined, limit: number): boolean | number {
+    if (ownSetting !== undefined && ownSetting !== null) return ownSetting;
+    if (limit === Infinity) return false;
+    return limit === 0 ? true : limit;
   }
 
   /**
@@ -74,12 +91,17 @@ export class BullAdapter extends QueueAdapter {
       const redisModule = await import(redisPath);
       this.IORedis = redisModule.default || redisModule;
 
-      // Create Redis connection
+      // Create Redis connection. `username` (a Redis ACL user) and `tls` (the
+      // options ioredis hands to Node's TLS) are passed on only when set, so a
+      // connection configured without them is opened exactly as before.
+      const { username, tls } = this.connectionConfig;
       this.connection = new this.IORedis({
         host: this.connectionConfig.host || 'localhost',
         port: this.connectionConfig.port || 6379,
+        ...(username !== undefined && { username }),
         password: this.connectionConfig.password,
         db: this.connectionConfig.database || 0,
+        ...(tls !== undefined && { tls }),
         maxRetriesPerRequest: null,
       });
 
@@ -122,8 +144,8 @@ export class BullAdapter extends QueueAdapter {
             delay: options.backoff.delay,
           }
         : undefined,
-      removeOnComplete: options.removeOnComplete,
-      removeOnFail: options.removeOnFail,
+      removeOnComplete: this.keepJobs(options.removeOnComplete, this.retention.completed),
+      removeOnFail: this.keepJobs(options.removeOnFail, this.retention.failed),
       jobId: options.jobId,
     };
 
@@ -152,17 +174,19 @@ export class BullAdapter extends QueueAdapter {
     const bullJobs = jobs.map(job => ({
       name: queueName,
       data: job.data,
-      opts: job.options
-        ? {
-            priority: job.options.priority,
-            delay: job.options.delay,
-            attempts: job.options.attempts,
-            backoff: job.options.backoff,
-            removeOnComplete: job.options.removeOnComplete,
-            removeOnFail: job.options.removeOnFail,
-            jobId: job.options.jobId,
-          }
-        : undefined,
+      opts: {
+        ...(job.options
+          ? {
+              priority: job.options.priority,
+              delay: job.options.delay,
+              attempts: job.options.attempts,
+              backoff: job.options.backoff,
+              jobId: job.options.jobId,
+            }
+          : {}),
+        removeOnComplete: this.keepJobs(job.options?.removeOnComplete, this.retention.completed),
+        removeOnFail: this.keepJobs(job.options?.removeOnFail, this.retention.failed),
+      },
     }));
 
     const addedJobs = await queue.addBulk(bullJobs);

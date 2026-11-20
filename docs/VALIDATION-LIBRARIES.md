@@ -15,10 +15,11 @@ const app = new Moro();
 const UserSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  age: z.number().min(18).optional()
+  age: z.number().min(18).optional(),
 });
 
-app.post('/users')
+app
+  .post('/users')
   .body(UserSchema)
   .handler((req, res) => {
     // req.body is fully typed as z.infer<typeof UserSchema>
@@ -36,11 +37,12 @@ import { z } from 'zod';
 
 const ZodSchema = z.object({
   name: z.string(),
-  age: z.number()
+  age: z.number(),
 });
 
-app.post('/zod-validation')
-  .body(ZodSchema)  // ✅ Works directly!
+app
+  .post('/zod-validation')
+  .body(ZodSchema) // ✅ Works directly!
   .handler((req, res) => {
     // Fully typed!
     return { user: req.body };
@@ -55,11 +57,12 @@ import { joi } from '@morojs/moro';
 
 const JoiSchema = Joi.object({
   name: Joi.string().required(),
-  age: Joi.number().min(18)
+  age: Joi.number().min(18),
 });
 
-app.post('/joi-validation')
-  .body(joi(JoiSchema))  // ✅ Wrapped with adapter
+app
+  .post('/joi-validation')
+  .body(joi(JoiSchema)) // ✅ Wrapped with adapter
   .handler((req, res) => {
     return { user: req.body };
   });
@@ -73,11 +76,12 @@ import { yup as yupAdapter } from '@morojs/moro';
 
 const YupSchema = yup.object({
   name: yup.string().required(),
-  age: yup.number().min(18)
+  age: yup.number().min(18),
 });
 
-app.post('/yup-validation')
-  .body(yupAdapter(YupSchema))  // ✅ Wrapped with adapter
+app
+  .post('/yup-validation')
+  .body(yupAdapter(YupSchema)) // ✅ Wrapped with adapter
   .handler((req, res) => {
     return { user: req.body };
   });
@@ -97,11 +101,12 @@ const validateUser = customValidator(async (data: any) => {
   }
   return {
     name: data.name,
-    age: data.age || null
+    age: data.age || null,
   };
 }, 'user-validator');
 
-app.post('/custom-validation')
+app
+  .post('/custom-validation')
   .body(validateUser)
   .handler((req, res) => {
     return { user: req.body };
@@ -111,7 +116,7 @@ app.post('/custom-validation')
 ### 5. Class Validator (TypeScript Decorators)
 
 ```typescript
-import { IsString, IsNumber, Min, IsOptional } from 'class-validator';
+import { validate, IsString, IsNumber, Min, IsOptional } from 'class-validator';
 import { classValidator } from '@morojs/moro';
 
 class User {
@@ -124,12 +129,53 @@ class User {
   age?: number;
 }
 
-app.post('/class-validation')
-  .body(classValidator(User))
+app
+  .post('/class-validation')
+  .body(classValidator(User, validate)) // class-validator's validate() does the checking
+  .handler((req, res) => {
+    return { user: req.body }; // an instance of User
+  });
+```
+
+Pass class-validator's `validate` as the second argument: the framework does
+not import the package itself. `classValidator(User)` on its own copies the
+body onto a `User` instance and checks nothing (a warning says so once at
+start-up). A request that fails gets a 400 naming each field:
+
+```json
+{
+  "success": false,
+  "error": "Validation failed for body",
+  "details": [
+    {
+      "field": "name",
+      "message": "name must be a string",
+      "code": "class_validator",
+      "path": ["name"]
+    }
+  ]
+}
+```
+
+To pass class-validator options, wrap the call:
+
+```typescript
+import { validate } from 'class-validator';
+import { classValidator } from '@morojs/moro';
+
+app
+  .post('/strict')
+  .body(
+    classValidator(User, user => validate(user, { whitelist: true, forbidNonWhitelisted: true }))
+  )
   .handler((req, res) => {
     return { user: req.body };
   });
 ```
+
+The decorators need `"experimentalDecorators": true` in `tsconfig.json`. Values
+are checked as they arrive (`"age": "20"` is a string and fails `@IsNumber()`):
+the adapter does not convert types.
 
 ## Mixed Validation in Same App
 
@@ -143,29 +189,31 @@ import * as yupLib from 'yup';
 const app = new Moro();
 
 // Zod for user creation
-app.post('/users')
+app
+  .post('/users')
   .body(z.object({ name: z.string(), email: z.string().email() }))
   .handler(createUser);
 
 // Joi for product validation
-app.post('/products')
+app
+  .post('/products')
   .body(joi(Joi.object({ title: Joi.string(), price: Joi.number() })))
   .handler(createProduct);
 
 // Yup for order validation
-app.post('/orders')
+app
+  .post('/orders')
   .body(yup(yupLib.object({ productId: yupLib.string(), quantity: yupLib.number() })))
   .handler(createOrder);
 
 // Custom function for webhooks
-app.post('/webhooks')
-  .body(customValidator(validateWebhook))
-  .handler(handleWebhook);
+app.post('/webhooks').body(customValidator(validateWebhook)).handler(handleWebhook);
 ```
 
 ## Installation & Dependencies
 
 ### Core Framework (No validation dependencies)
+
 ```bash
 npm install @morojs/moro
 ```
@@ -173,27 +221,34 @@ npm install @morojs/moro
 ### Choose Your Validation Library
 
 **Option 1: Zod (Recommended)**
+
 ```bash
 npm install zod
 ```
 
+Zod 4 (4.6.6 or later) and Zod 3 (3.22.3 or later) are both supported. Zod before 4.6.6, which includes every Zod 3 release, has a published advisory: validating an oversized collection that has a size constraint can exhaust memory ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)). When Moro loads such a version (through its `z` export or the OpenAPI generator) it logs one warning at start-up and keeps working; move to Zod 4.6.6 or later to clear it.
+
 **Option 2: Joi**
+
 ```bash
 npm install joi
 npm install --save-dev @types/joi  # For TypeScript
 ```
 
 **Option 3: Yup**
+
 ```bash
 npm install yup
 ```
 
 **Option 4: Class Validator**
+
 ```bash
 npm install class-validator class-transformer
 ```
 
 **Option 5: Use All of Them!**
+
 ```bash
 npm install zod joi yup class-validator class-transformer
 ```
@@ -201,21 +256,25 @@ npm install zod joi yup class-validator class-transformer
 ## Framework Benefits
 
 ### ✅ Zero Breaking Changes
+
 - Existing Zod code works unchanged
 - No API modifications needed
 - Same TypeScript inference
 
 ### ✅ Choose Your Tool
+
 - Use what your team knows
 - Different libraries for different needs
 - No vendor lock-in
 
 ### ✅ Lightweight Core
+
 - Framework doesn't include validation libraries
 - Users only install what they need
 - Smaller bundle sizes
 
 ### ✅ Universal Interface
+
 - All validation libraries work the same way
 - Consistent error handling
 - Same developer experience
@@ -237,9 +296,11 @@ Other libraries are wrapped with lightweight adapters that convert their APIs to
 ## Migration Guide
 
 ### If You're Already Using Zod
+
 **No changes needed!** Your code continues to work exactly as before.
 
 ### If You Want to Switch Libraries
+
 ```typescript
 // Before (Zod)
 .body(z.object({ name: z.string() }))
@@ -248,7 +309,7 @@ Other libraries are wrapped with lightweight adapters that convert their APIs to
 .body(joi(Joi.object({ name: Joi.string() })))
 
 // After (Yup)
-.body(yup(yup.object({ name: yup.string() })))
+.body(yup(yupLib.object({ name: yupLib.string() }))) // import * as yupLib from 'yup'
 
 // After (Custom)
 .body(customValidator(myValidationFunction))
@@ -272,5 +333,10 @@ All validation libraries produce consistent error responses:
   "requestId": "req_123"
 }
 ```
+
+`field` is the path of the value that failed, joined with dots (`user.email`,
+`tags.1`), whichever library reported it; `code` is that library's own name
+for the rule (`too_small`, `any.required`, `min`, …). `details` is left out
+when `NODE_ENV` is `production`.
 
 This gives you **complete flexibility** while maintaining the excellent developer experience!

@@ -41,10 +41,10 @@ app.get('/user/:id', async (req, res) => {
 ```typescript
 // Reuses objects from pool
 app.get('/user/:id', async (req, res) => {
-  const params = poolManager.acquireParamObject(); // Reused object
+  const params = poolManager.acquireParams(); // Reused object
   params.id = req.params.id;
   const user = await getUser(params);
-  poolManager.releaseParamObject(params); // Return to pool
+  poolManager.releaseParams(params); // Return to pool
   res.json(user);
 });
 ```
@@ -108,8 +108,15 @@ const buffer = poolManager.acquireBuffer(1024);
 buffer.write('Hello World');
 
 // Release back to pool
-poolManager.releaseBuffer(buffer, 1024);
+poolManager.releaseBuffer(buffer);
 ```
+
+`acquireBuffer(size)` returns a zero-filled buffer of the smallest pooled size that fits, so its
+`length` can be larger than `size` (`acquireBuffer(1000)` returns 1024 bytes). A request above
+16384 bytes is allocated outside the pools, also zero-filled. `releaseBuffer()` clears the buffer
+before pooling it, so no caller is handed what an earlier one wrote: do not keep using a buffer
+after releasing it. Clearing costs about 30 ns for the small sizes and about 230 ns for a
+16384-byte buffer per acquire/release pair.
 
 ### 5. Route Cache (LRU)
 
@@ -130,15 +137,16 @@ app.get('/api/v1/posts/:id', handler2);
 Caches complete responses for common endpoints.
 
 ```typescript
-// Cache responses automatically
-poolManager.setResponseCache('/api/config', {
-  buffer: Buffer.from(JSON.stringify({ version: '1.0.0' })),
-  headers: { 'Content-Type': 'application/json' },
-  statusCode: 200,
-});
+// Cache a response explicitly (bodies under 4KB; nothing is cached automatically)
+poolManager.cacheResponse(
+  '/api/config',
+  Buffer.from(JSON.stringify({ version: '1.0.0' })),
+  { 'Content-Type': 'application/json' },
+  200
+);
 
 // Retrieve cached response
-const cached = poolManager.getResponseCache('/api/config');
+const cached = poolManager.getCachedResponse('/api/config');
 if (cached) {
   res.writeHead(cached.statusCode, cached.headers);
   res.end(cached.buffer);
@@ -159,7 +167,7 @@ const poolManager = ObjectPoolManager.getInstance();
 
 ```typescript
 // Acquire parameter object
-const params = poolManager.acquireParamObject();
+const params = poolManager.acquireParams();
 params.userId = '123';
 params.action = 'view';
 
@@ -167,14 +175,14 @@ params.action = 'view';
 await processAction(params);
 
 // Release back to pool
-poolManager.releaseParamObject(params);
+poolManager.releaseParams(params);
 ```
 
 ### Query Objects
 
 ```typescript
 // Acquire query object
-const query = poolManager.acquireQueryObject();
+const query = poolManager.acquireQuery();
 query.page = '1';
 query.limit = '10';
 
@@ -182,7 +190,7 @@ query.limit = '10';
 const results = await search(query);
 
 // Release back to pool
-poolManager.releaseQueryObject(query);
+poolManager.releaseQuery(query);
 ```
 
 ### Buffers
@@ -199,14 +207,14 @@ buffer.write(data);
 await writeToFile(buffer, data.length);
 
 // Release back to pool
-poolManager.releaseBuffer(buffer, 4096);
+poolManager.releaseBuffer(buffer);
 ```
 
 ### Route Cache
 
 ```typescript
 // Check route cache
-const cached = poolManager.getRouteCache('GET:/users/123');
+const cached = poolManager.getCachedRoute('GET:/users/123');
 
 if (cached) {
   // Use cached route
@@ -215,7 +223,7 @@ if (cached) {
 
 // Cache miss - compute and cache
 const route = findRoute('GET', '/users/123');
-poolManager.setRouteCache('GET:/users/123', route);
+poolManager.cacheRoute('GET:/users/123', route);
 ```
 
 ## Custom Pools
@@ -332,7 +340,7 @@ const app = await createApp();
 const poolManager = ObjectPoolManager.getInstance();
 
 // Pre-warm pools for better performance
-poolManager.preWarm({
+poolManager.preWarmPools({
   params: 500,
   query: 500,
   headers: 200,
@@ -354,7 +362,7 @@ app.get('/api/search', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.end(buffer.slice(0, json.length));
   } finally {
-    poolManager.releaseBuffer(buffer, 4096);
+    poolManager.releaseBuffer(buffer);
   }
 });
 
@@ -389,7 +397,7 @@ console.log('Object Pooling Statistics:', {
   responseCache: stats.responseCache,
 
   // Performance
-  performance: stats.performance,
+  performance: poolManager.getPerformanceSummary(),
 });
 ```
 
@@ -440,18 +448,8 @@ MoroJS automatically adjusts pool sizes based on usage patterns:
 // Enable adaptive mode (enabled by default)
 poolManager.setAdaptiveMode(true);
 
-// Get adaptive sizing recommendations
-const recommendations = poolManager.getAdaptiveSizingRecommendations();
-
-console.log('Pool Size Recommendations:', recommendations);
-// {
-//   paramPool: { current: 100, recommended: 250 },
-//   queryPool: { current: 100, recommended: 150 },
-//   ...
-// }
-
-// Apply recommendations
-poolManager.applyAdaptiveSizing();
+// Turn it off to keep the sizes you pre-warmed
+poolManager.setAdaptiveMode(false);
 ```
 
 ## Best Practices
@@ -460,33 +458,33 @@ poolManager.applyAdaptiveSizing();
 
 ```typescript
 // Good: Always release
-const params = poolManager.acquireParamObject();
+const params = poolManager.acquireParams();
 try {
-  await process(params);
+  await handle(params);
 } finally {
-  poolManager.releaseParamObject(params); // Always released
+  poolManager.releaseParams(params); // Always released
 }
 
 // Bad: May not release on error
-const params = poolManager.acquireParamObject();
-await process(params);
-poolManager.releaseParamObject(params); // Skipped if error
+const params = poolManager.acquireParams();
+await handle(params);
+poolManager.releaseParams(params); // Skipped if error
 ```
 
 ### 2. Don't Mutate After Release
 
 ```typescript
 // Good
-const params = poolManager.acquireParamObject();
+const params = poolManager.acquireParams();
 params.id = '123';
-await process(params);
-poolManager.releaseParamObject(params);
+await handle(params);
+poolManager.releaseParams(params);
 // Don't use params after this
 
 // Bad
-const params = poolManager.acquireParamObject();
+const params = poolManager.acquireParams();
 params.id = '123';
-poolManager.releaseParamObject(params);
+poolManager.releaseParams(params);
 params.id = '456'; // Don't do this!
 ```
 
@@ -496,7 +494,7 @@ params.id = '456'; // Don't do this!
 // Good: Pre-warm before high traffic
 const poolManager = ObjectPoolManager.getInstance();
 
-poolManager.preWarm({
+poolManager.preWarmPools({
   params: 1000,
   query: 500,
   buffers: {
@@ -518,13 +516,13 @@ await app.listen(3000);
 // Good: Size based on traffic
 const isProduction = process.env.NODE_ENV === 'production';
 
-poolManager.preWarm({
+poolManager.preWarmPools({
   params: isProduction ? 2000 : 100,
   query: isProduction ? 1000 : 50,
 });
 
 // Bad: One size fits all
-poolManager.preWarm({
+poolManager.preWarmPools({
   params: 50,
   query: 50,
 }); // Too small for production
@@ -556,33 +554,39 @@ setInterval(() => {
 ```typescript
 // Good: Cache static/rarely-changing responses
 const config = { version: '1.0.0', features: ['a', 'b'] };
-poolManager.setResponseCache('/api/config', {
-  buffer: Buffer.from(JSON.stringify(config)),
-  headers: { 'Content-Type': 'application/json' },
-  statusCode: 200
+poolManager.cacheResponse('/api/config', Buffer.from(JSON.stringify(config)), {
+  'Content-Type': 'application/json',
 });
 
 // Bad: Cache user-specific responses
 // Don't cache dynamic content
-poolManager.setResponseCache(`/api/users/${userId}`, ...);
+poolManager.cacheResponse(`/api/users/${userId}`, userBuffer, userHeaders);
 ```
 
 ### 7. Clear Pools When Needed
 
 ```typescript
-// Clear pools during maintenance
-app.post('/admin/maintenance/clear-pools', async (req, res) => {
-  const poolManager = ObjectPoolManager.getInstance();
+// Clear pools during maintenance.
+// .auth() is enforced by the router: 401 when not signed in, 403 without the
+// admin role. It reads req.auth, which your auth middleware must populate;
+// until one is installed the route answers 500 instead of running.
+app
+  .post('/admin/maintenance/clear-pools')
+  .auth({ roles: ['admin'] })
+  .handler(async (req, res) => {
+    const poolManager = ObjectPoolManager.getInstance();
 
-  // Clear route cache
-  poolManager.clearRouteCache();
+    // Clear route cache
+    poolManager.clearRouteCache();
 
-  // Clear response cache
-  poolManager.clearResponseCache();
+    // Clear response cache
+    poolManager.clearResponseCache();
 
-  res.json({ cleared: true });
-});
+    res.json({ cleared: true });
+  });
 ```
+
+> This route changes server state: never expose it without the `.auth({ roles: ['admin'] })` guard (or an equivalent access check).
 
 ## Complete Example
 
@@ -611,7 +615,7 @@ const resultPool = new ObjectPool<SearchResult>(
 );
 
 // Pre-warm pools
-poolManager.preWarm({
+poolManager.preWarmPools({
   params: 500,
   query: 1000,
   buffers: {
@@ -632,7 +636,7 @@ app.get('/search', async (req, res) => {
     const items = await search(q, page, limit);
     result.items = items;
     result.total = items.length;
-    result.page = parseInt(page);
+    result.page = Number(page);
 
     // Use buffer pool for response
     const buffer = poolManager.acquireBuffer(4096);
@@ -644,7 +648,7 @@ app.get('/search', async (req, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(buffer.slice(0, json.length));
     } finally {
-      poolManager.releaseBuffer(buffer, 4096);
+      poolManager.releaseBuffer(buffer);
     }
   } finally {
     resultPool.release(result);
@@ -676,18 +680,19 @@ console.log('Server running with optimized object pooling');
 ### ObjectPoolManager Methods
 
 - `getInstance(): ObjectPoolManager` - Get singleton instance
-- `acquireParamObject(): Record<string, string>` - Get parameter object
-- `releaseParamObject(obj): void` - Release parameter object
-- `acquireQueryObject(): Record<string, string>` - Get query object
-- `releaseQueryObject(obj): void` - Release query object
-- `acquireBuffer(size: number): Buffer` - Get buffer
-- `releaseBuffer(buffer: Buffer, size: number): void` - Release buffer
-- `getRouteCache(key: string): any` - Get cached route
-- `setRouteCache(key: string, value: any): void` - Cache route
-- `getResponseCache(key: string): any` - Get cached response
-- `setResponseCache(key: string, value: any): void` - Cache response
-- `preWarm(config: PreWarmConfig): void` - Pre-warm pools
-- `getStats(): PoolStats` - Get all statistics
+- `acquireParams(): Record<string, string>` - Get parameter object
+- `releaseParams(obj): void` - Release parameter object
+- `acquireQuery(): Record<string, string>` - Get query object
+- `releaseQuery(obj): void` - Release query object
+- `acquireBuffer(size: number): Buffer` - Get a zero-filled buffer of at least `size` bytes
+- `releaseBuffer(buffer: Buffer): void` - Clear the buffer and return it to its pool
+- `getCachedRoute(key: string): any` - Get cached route
+- `cacheRoute(key: string, route: any): void` - Cache route
+- `getCachedResponse(key: string)` - Get cached response (`{ buffer, headers, statusCode }` or `undefined`)
+- `cacheResponse(key: string, buffer: Buffer, headers, statusCode?): void` - Cache response
+- `preWarmPools(sizes?): void` - Pre-warm pools (`params`, `query`, `headers`, `buffers`)
+- `getStats()` - Get all statistics
+- `getPerformanceSummary()` - Hit rates, utilization and estimated memory
 - `setAdaptiveMode(enabled: boolean): void` - Enable/disable adaptive sizing
 
 ### ObjectPool<T> Methods

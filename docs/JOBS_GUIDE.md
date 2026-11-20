@@ -144,6 +144,8 @@ const app = await createApp({
     leaderElection: {
       enabled: true,
       strategy: 'file', // 'file' | 'redis' | 'none'
+      // Default: <os.tmpdir()>/moro-jobs-leader-<id>.lock, where <id> is derived from the
+      // app's working directory (instances started from the same directory share one lock)
       lockPath: '/tmp/moro-jobs-leader.lock',
       lockTimeout: 30000,
       heartbeatInterval: 10000,
@@ -151,6 +153,51 @@ const app = await createApp({
   },
 });
 ```
+
+The `'file'` strategy elects one leader among processes that share the lock
+file: one host, or several hosts on a shared volume. For instances that share
+nothing but a Redis server, use the `'redis'` strategy and hand it a connected
+client, either ioredis or node-redis 4+:
+
+```typescript
+import { createApp } from '@morojs/moro';
+import Redis from 'ioredis';
+
+const app = await createApp({
+  jobs: {
+    leaderElection: {
+      strategy: 'redis',
+      redisClient: new Redis(process.env.REDIS_URL),
+      lockTimeout: 30000,
+      heartbeatInterval: 10000,
+    },
+  },
+});
+```
+
+`redisClient` is required for the `'redis'` strategy and can only be passed to
+`createApp()` (a config file should not open connections). The framework uses
+the client as it is and never closes it. It has to be an ioredis client or a
+connected node-redis 4+ client (`createClient()` from `redis`, after
+`connect()`): the lock is taken with `SET ... NX PX` and refreshed and released
+by scripts, and the two libraries take those calls in different forms. Any
+other client object is refused when the scheduler starts: the error is logged
+and no scheduled job runs. The lock expires after `lockTimeout` on its own, so
+a leader that disappears is replaced without anyone clearing it. Without a client no instance can
+become leader: the app starts, logs one warning, and **no scheduled job
+runs**.
+
+#### What a new leader runs
+
+Every instance registers the same jobs; only the leader runs them. When a
+standby becomes leader, a recurring job whose scheduled time passed while the
+other instance led starts from its **next** slot: the standby does not run a
+slot the previous leader had. For a cron job that is the next matching time;
+for an interval job, one interval after the takeover. A slot that fell between
+the old leader stopping and the new one being elected is not made up, so keep
+`lockTimeout` shorter than the gap you can accept. A one-time job
+(`oneTimeAt(date)`) whose time has passed still runs when its instance becomes
+leader.
 
 ### Job Execution Options
 
@@ -177,6 +224,7 @@ const app = await createApp({
   jobs: {
     enabled: true,
     stateManager: {
+      // Default: <os.tmpdir()>/moro-jobs-state-<id>.json (same per-app <id> as the leader lock)
       persistPath: './data/jobs-state.json',
       historySize: 100,
       persistInterval: 30000,
@@ -449,7 +497,7 @@ app.job(
       await criticalOperation();
     } catch (error) {
       // Log error but don't throw - prevents infinite retries
-      logger.error('Critical operation failed', error);
+      logger.error('Critical operation failed', 'Jobs', { error });
       await sendAlert(error);
     }
   },

@@ -20,8 +20,12 @@
     "emitDecoratorMetadata": true,
     "resolveJsonModule": true,
     "declaration": true,
+    // Maps are shipped so `node --enable-source-maps` reports the original
+    // file names and line numbers. The sources themselves are not embedded in
+    // them (that more than doubled the package): scripts/validate-package.mjs
+    // fails the release if a shipped map carries `sourcesContent`.
     "sourceMap": true,
-    "inlineSources": true,
+    "inlineSources": false,
     "isolatedModules": true
   },
   "include": ["src/**/*"],

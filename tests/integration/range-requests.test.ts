@@ -56,6 +56,13 @@ describe('middleware.range() over HTTP', () => {
     await fs.mkdir(path.join(dir, 'served'));
     await fs.writeFile(path.join(dir, 'served', 'clip.bin'), 'a'.repeat(990) + '0123456789');
     await fs.writeFile(path.join(dir, 'secret.bin'), 'TOP-SECRET');
+    // A file with a type of its own, and hidden ones: by name, and by directory
+    await fs.writeFile(path.join(dir, 'clip.mp4'), 'a'.repeat(990) + '0123456789');
+    await fs.writeFile(path.join(dir, '.env'), 'DOT-SECRET');
+    await fs.mkdir(path.join(dir, 'served', '.private'));
+    await fs.writeFile(path.join(dir, 'served', '.private', 'clip.bin'), 'DOT-SECRET');
+    await fs.mkdir(path.join(dir, 'served', '.well-known'));
+    await fs.writeFile(path.join(dir, 'served', '.well-known', 'note.txt'), 'well known');
   });
 
   afterAll(async () => {
@@ -87,6 +94,25 @@ describe('middleware.range() over HTTP', () => {
         // Confined to `served/` - the param goes in as the client sent it
         app.get('/served/:file', async (req: any, res: any) => {
           await res.sendRange(req.params.file, { root: path.join(dir, 'served') });
+        });
+        // No Content-Type from the handler: the file's own
+        app.get('/clip', async (_req: any, res: any) => {
+          await res.sendRange(path.join(dir, 'clip.mp4'));
+        });
+        app.get('/dotfile', async (_req: any, res: any) => {
+          await res.sendRange(path.join(dir, '.env'));
+        });
+        app.get('/dotfile-denied', async (_req: any, res: any) => {
+          await res.sendRange(path.join(dir, '.env'), { dotfiles: 'deny' });
+        });
+        app.get('/dotfile-allowed', async (_req: any, res: any) => {
+          await res.sendRange(path.join(dir, '.env'), { dotfiles: 'allow' });
+        });
+        app.get('/hidden-directory', async (_req: any, res: any) => {
+          await res.sendRange('.private/clip.bin', { root: path.join(dir, 'served') });
+        });
+        app.get('/well-known', async (_req: any, res: any) => {
+          await res.sendRange('.well-known/note.txt', { root: path.join(dir, 'served') });
         });
         port = createTestPort();
         await new Promise<void>(resolve => app.listen(port, () => resolve()));
@@ -175,6 +201,62 @@ describe('middleware.range() over HTTP', () => {
         const res = await get(port, urlPath);
         expect(res.status).toBe(404);
         expect(res.body).not.toContain('TOP-SECRET');
+      });
+
+      it('sends the file with its own Content-Type and nosniff', async () => {
+        const whole = await get(port, '/clip');
+        expect(whole.status).toBe(200);
+        expect(whole.headers['content-type']).toBe('video/mp4');
+        expect(whole.headers['x-content-type-options']).toBe('nosniff');
+
+        const part = await get(port, '/clip', { range: 'bytes=-10' });
+        expect(part.status).toBe(206);
+        expect(part.headers['content-type']).toBe('video/mp4');
+        expect(part.headers['x-content-type-options']).toBe('nosniff');
+        expect(part.body).toBe('0123456789');
+
+        // Each part of a multipart answer is typed as the file
+        const parts = await get(port, '/clip', { range: 'bytes=0-1,-3' });
+        expect(parts.status).toBe(206);
+        expect(parts.body).toContain('Content-Type: video/mp4\r\n');
+
+        // An error answer is JSON, not a piece of the file
+        const past = await get(port, '/clip', { range: 'bytes=5000-' });
+        expect(past.status).toBe(416);
+        expect(String(past.headers['content-type'])).toMatch(/^application\/json/);
+        expect(JSON.parse(past.body)).toEqual({ success: false, error: 'Range not satisfiable' });
+      });
+
+      it('keeps a Content-Type the handler set', async () => {
+        const res = await get(port, '/file', { range: 'bytes=0-0' });
+        expect(res.headers['content-type']).toBe('application/octet-stream');
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+      });
+
+      it('treats a hidden file as missing unless the policy says otherwise', async () => {
+        const ignored = await get(port, '/dotfile');
+        expect(ignored.status).toBe(404);
+        expect(ignored.body).not.toContain('DOT-SECRET');
+        expect(JSON.parse(ignored.body)).toEqual({ success: false, error: 'File not found' });
+
+        const denied = await get(port, '/dotfile-denied');
+        expect(denied.status).toBe(403);
+        expect(denied.body).not.toContain('DOT-SECRET');
+
+        const allowed = await get(port, '/dotfile-allowed');
+        expect(allowed.status).toBe(200);
+        expect(allowed.body).toBe('DOT-SECRET');
+      });
+
+      it('applies the dotfile policy to every segment below the root', async () => {
+        const hidden = await get(port, '/hidden-directory');
+        expect(hidden.status).toBe(404);
+        expect(hidden.body).not.toContain('DOT-SECRET');
+
+        const wellKnown = await get(port, '/well-known');
+        expect(wellKnown.status).toBe(200);
+        expect(wellKnown.body).toBe('well known');
+        expect(wellKnown.headers['content-type']).toBe('text/plain; charset=utf-8');
       });
 
       it('keeps serving after the failures above', async () => {

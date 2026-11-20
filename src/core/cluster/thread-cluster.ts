@@ -254,13 +254,36 @@ export function resolveClusterTransport(input: TransportInput): ClusterTransport
 
 // ---- primary <-> worker protocol ----------------------------------------------
 
-export type WorkerToPrimary =
-  | { type: 'ready'; threadId: number; port: number }
-  | { type: 'closed'; threadId: number }
-  | { type: 'pong'; threadId: number; inflight: number }
-  | { type: 'fatal'; threadId: number; code: string; message: string };
+/**
+ * Every protocol message carries `channel: CLUSTER_CHANNEL`. The port it
+ * travels on (parentPort / the Worker object) is shared with application code
+ * and libraries, which post `{ type: 'ready' }`-shaped messages of their own:
+ * a message without the channel is not ours and is ignored by both ends.
+ * Primary and workers are the same module in the same process, so the two
+ * ends always agree on the value.
+ */
+export const CLUSTER_CHANNEL = 'moro:cluster';
 
-export type PrimaryToWorker = { type: 'shutdown' } | { type: 'ping' };
+interface ClusterMessage {
+  channel: typeof CLUSTER_CHANNEL;
+}
+
+export type WorkerToPrimary = ClusterMessage &
+  (
+    | { type: 'ready'; threadId: number; port: number }
+    | { type: 'closed'; threadId: number }
+    | { type: 'pong'; threadId: number; inflight: number }
+    | { type: 'fatal'; threadId: number; code: string; message: string }
+  );
+
+export type PrimaryToWorker = ClusterMessage & ({ type: 'shutdown' } | { type: 'ping' });
+
+type WithoutChannel<T> = T extends unknown ? Omit<T, 'channel'> : never;
+type WorkerToPrimaryBody = WithoutChannel<WorkerToPrimary>;
+
+function isClusterMessage(m: unknown): boolean {
+  return !!m && typeof m === 'object' && (m as { channel?: unknown }).channel === CLUSTER_CHANNEL;
+}
 
 /** The subset of worker_threads.Worker the primary uses (fakeable). */
 export interface WorkerLike {
@@ -288,6 +311,8 @@ export interface WorkerRecord {
   index: number;
   startedAt: number;
   ready: boolean;
+  /** The worker reported that its close() completed. */
+  closed: boolean;
   port: number | null;
   restarts: number;
   missedPongs: number;
@@ -320,6 +345,24 @@ const RESTART_WINDOW_MS = 60_000; // a worker alive this long resets its backoff
 const HEALTH_INTERVAL_MS = 30_000;
 const HEALTH_MISSES_BEFORE_WARN = 3;
 
+export interface RestartState {
+  restarts: number;
+  lastStart: number;
+}
+
+/**
+ * Delay before one worker slot is started again, for both transports: 200 ms,
+ * doubling on every consecutive restart up to 5 s. A worker that had been up
+ * for the restart window (60 s) starts again from 200 ms. Updates `state`.
+ */
+export function nextRestartDelay(state: RestartState, aliveMs: number, now: number): number {
+  if (now - state.lastStart > RESTART_WINDOW_MS && aliveMs > RESTART_WINDOW_MS) state.restarts = 0;
+  const delay = Math.min(RESTART_MAX_MS, RESTART_BASE_MS * 2 ** state.restarts);
+  state.restarts += 1;
+  state.lastStart = now;
+  return delay;
+}
+
 const defaultSpawn: SpawnWorker = (entry, options) =>
   new (wt().Worker)(entry, options) as unknown as WorkerLike;
 
@@ -330,7 +373,7 @@ export class ThreadClusterPrimary {
   private readonly setTimer: (fn: () => void, ms: number) => any;
   private readonly clearTimer: (t: any) => void;
   private readonly records = new Map<number, WorkerRecord>();
-  private readonly backoff = new Map<number, { restarts: number; lastStart: number }>();
+  private readonly backoff = new Map<number, RestartState>();
   private readyFired = false;
   private shuttingDown = false;
   private healthTimer: any = null;
@@ -384,76 +427,80 @@ export class ThreadClusterPrimary {
       name: `moro-worker-${index}`,
     };
     const worker = this.spawnFn(this.opts.entry, options);
+    // Read once, here: a Worker's threadId is -1 from the moment the thread
+    // has exited, which includes every 'exit' listener.
+    const threadId = worker.threadId;
     const record: WorkerRecord = {
       worker,
       index,
       startedAt: this.now(),
       ready: false,
+      closed: false,
       port: null,
       restarts: this.backoff.get(index)?.restarts ?? 0,
       missedPongs: 0,
     };
-    this.records.set(worker.threadId, record);
+    this.records.set(threadId, record);
     let bootFailed = false;
 
     worker.on('message', (m: WorkerToPrimary) => {
-      if (!m || typeof m !== 'object') return;
+      // Anything without the channel was posted by application code.
+      if (!isClusterMessage(m)) return;
       if (m.type === 'ready') {
         record.ready = true;
         record.port = m.port;
-        this.opts.logger.info(
-          `Worker thread ${worker.threadId} ready on port ${m.port}`,
-          'Cluster'
-        );
+        this.opts.logger.info(`Worker thread ${threadId} ready on port ${m.port}`, 'Cluster');
         if (!this.readyFired) {
           this.readyFired = true;
           this.opts.onReady();
         }
       } else if (m.type === 'pong') {
         record.missedPongs = 0;
+      } else if (m.type === 'closed') {
+        // The worker's close() has completed; the thread exits by itself once
+        // nothing in it holds the event loop.
+        record.closed = true;
       } else if (m.type === 'fatal') {
+        // 'fatal' reports a failed start. A worker that is already serving
+        // has nothing of the kind to report.
+        if (record.ready) return;
         bootFailed = true;
         const err = Object.assign(new Error(m.message), {
           code: m.code,
-          threadId: worker.threadId,
+          threadId,
         });
         const isBind = m.code === 'EADDRINUSE' || m.code === 'EACCES';
         this.opts.logger.error(
-          `Worker thread ${worker.threadId} fatal (${m.code}): ${m.message}`,
+          `Worker thread ${threadId} fatal (${m.code}): ${m.message}`,
           'Cluster'
         );
         if (!this.readyFired || isBind) this.opts.onFatal(err, isBind ? 'bind' : 'boot');
       }
     });
     worker.on('error', (err: Error) => {
-      this.opts.logger.error(`Worker thread ${worker.threadId} error: ${err.message}`, 'Cluster');
+      this.opts.logger.error(`Worker thread ${threadId} error: ${err.message}`, 'Cluster');
       if (!record.ready && !this.readyFired) {
         bootFailed = true;
         this.opts.onFatal(err, 'boot');
       }
     });
     worker.on('exit', (code: number) => {
-      this.records.delete(worker.threadId);
+      this.records.delete(threadId);
       if (this.shuttingDown) return;
       if (bootFailed) return; // onFatal already decided what happens
       if (code === 0 && record.ready) {
         // A worker that finished on its own after serving: nothing to
         // supervise (mirrors cluster's exitedAfterDisconnect).
-        this.opts.logger.warn(`Worker thread ${worker.threadId} exited cleanly`, 'Cluster');
+        this.opts.logger.warn(`Worker thread ${threadId} exited cleanly`, 'Cluster');
         return;
       }
-      this.scheduleRestart(index, worker.threadId, code);
+      this.scheduleRestart(index, threadId, code, this.now() - record.startedAt);
     });
   }
 
-  private scheduleRestart(index: number, oldThreadId: number, code: number): void {
+  private scheduleRestart(index: number, oldThreadId: number, code: number, aliveMs = 0): void {
     const state = this.backoff.get(index) ?? { restarts: 0, lastStart: 0 };
-    const alive = this.now() - (this.records.get(oldThreadId)?.startedAt ?? this.now());
-    if (this.now() - state.lastStart > RESTART_WINDOW_MS && alive > RESTART_WINDOW_MS)
-      state.restarts = 0;
-    const delay = Math.min(RESTART_MAX_MS, RESTART_BASE_MS * 2 ** state.restarts);
-    state.restarts += 1;
-    state.lastStart = this.now();
+    const delay = nextRestartDelay(state, aliveMs, this.now());
     this.backoff.set(index, state);
     this.opts.logger.warn(
       `Worker thread ${oldThreadId} exited (code ${code}). Restarting in ${delay} ms...`,
@@ -472,6 +519,11 @@ export class ThreadClusterPrimary {
         this.scheduleRestart(index, oldThreadId, -1);
       }
     }, delay);
+    // Unlike the health and deadline timers, a pending restart must hold the
+    // event loop: when every worker is down at once (a one-worker cluster, or
+    // a fault common to all of them) nothing else does, and the process would
+    // exit with code 0 instead of starting the worker again.
+    (t as { ref?: () => void } | null)?.ref?.();
     this.pendingTimers.add(t);
   }
 
@@ -487,7 +539,7 @@ export class ThreadClusterPrimary {
         );
       }
       try {
-        r.worker.postMessage({ type: 'ping' });
+        r.worker.postMessage({ channel: CLUSTER_CHANNEL, type: 'ping' });
       } catch {
         // exiting
       }
@@ -516,7 +568,7 @@ export class ThreadClusterPrimary {
         new Promise<void>(resolve => {
           r.worker.once('exit', () => resolve());
           try {
-            r.worker.postMessage({ type: 'shutdown' });
+            r.worker.postMessage({ channel: CLUSTER_CHANNEL, type: 'shutdown' });
           } catch {
             resolve();
           }
@@ -533,8 +585,15 @@ export class ThreadClusterPrimary {
     if (timer) this.clearTimer(timer);
     if (outcome === 'timeout') {
       const stragglers = [...this.records.values()];
+      // A worker that reported 'closed' finished its own shutdown and is kept
+      // alive by something the application left open; the others were still
+      // closing (a request in flight, an onClose hook that has not settled).
+      const closed = stragglers.filter(r => r.closed).length;
       this.opts.logger.warn(
-        `Shutdown deadline (${deadlineMs} ms) reached; terminating ${stragglers.length} worker thread(s)`,
+        `Shutdown deadline (${deadlineMs} ms) reached; terminating ${stragglers.length} worker thread(s)` +
+          (closed > 0
+            ? ` (${closed} had closed and were kept alive by a timer, socket or other handle still open in application code)`
+            : ''),
         'Cluster'
       );
       await Promise.all(
@@ -562,7 +621,8 @@ export class ThreadClusterWorker {
   constructor(logger: ClusterLogger) {
     this.logger = logger;
     this.port?.on('message', (m: PrimaryToWorker) => {
-      if (!m || typeof m !== 'object') return;
+      // Anything without the channel is addressed to application code.
+      if (!isClusterMessage(m)) return;
       if (m.type === 'ping') {
         this.post({ type: 'pong', threadId: this.tid, inflight: this.inflight() });
       } else if (m.type === 'shutdown') {
@@ -571,9 +631,9 @@ export class ThreadClusterWorker {
     });
   }
 
-  private post(m: WorkerToPrimary): void {
+  private post(m: WorkerToPrimaryBody): void {
     try {
-      this.port?.postMessage(m);
+      this.port?.postMessage({ channel: CLUSTER_CHANNEL, ...m });
     } catch {
       // primary gone
     }

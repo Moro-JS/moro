@@ -17,6 +17,9 @@ export interface CSPDirectives {
   childSrc?: string[];
   workerSrc?: string[];
   formAction?: string[];
+  baseUri?: string[];
+  frameAncestors?: string[];
+  manifestSrc?: string[];
   upgradeInsecureRequests?: boolean;
   blockAllMixedContent?: boolean;
 }
@@ -107,6 +110,12 @@ export class CSPCore {
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
       frameSrc: ["'none'"],
+      // These three do not fall back to default-src: unless they are named, a
+      // page can be re-based, post its forms to any origin and be framed by
+      // any site.
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
     };
   }
 

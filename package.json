@@ -48,6 +48,7 @@
     "docs:json": "typedoc --json docs-json/api.json src/index.ts",
     "docs:markdown": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "docs:all": "npm run docs:build && npm run docs:json && npm run docs:markdown",
+    "docs:check": "node scripts/check-doc-samples.mjs",
     "prerelease": "npm run lint:fix && npm run format && npm run build && node scripts/release.js",
     "prerelease:patch": "npm run lint:fix && npm run format && npm run build && node scripts/release.js patch",
     "prerelease:minor": "npm run lint:fix && npm run format && npm run build && node scripts/release.js minor",
@@ -116,42 +117,50 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@morojs/engine": "^1.1.0"
+    "@morojs/engine": "^1.2.1"
   },
   "peerDependencies": {
-    "@aws-sdk/client-ses": ">=3.927.0",
-    "@aws-sdk/client-sqs": ">=3.927.0",
-    "@grpc/grpc-js": ">=1.14.1",
+    "@aws-sdk/client-cloudfront": ">=3.974.0",
+    "@aws-sdk/client-ses": ">=3.974.0",
+    "@aws-sdk/client-sqs": ">=3.974.0",
+    "@grpc/grpc-js": ">=1.14.5",
     "@grpc/proto-loader": ">=0.8.0",
     "@opentelemetry/api": ">=1.9.0",
     "@pothos/core": ">=4.10.0",
     "@sendgrid/mail": ">=8.1.6",
     "amqplib": ">=0.10.9",
-    "better-auth": ">=1.3.34",
+    "aws-sdk": ">=2.1354.0",
+    "better-auth": ">=1.7.7",
     "better-sqlite3": ">=12.2.0",
     "bullmq": ">=5.63.0",
     "class-validator": ">=0.14.0",
     "dataloader": ">=2.2.3",
-    "drizzle-orm": ">=0.44.5",
+    "drizzle-orm": ">=0.45.2",
     "ejs": ">=3.1.10",
     "graphql": ">=16.12.0",
     "graphql-jit": ">=0.8.7",
     "handlebars": ">=4.7.10",
     "ioredis": ">=5.7.0",
-    "joi": ">=17.0.0",
+    "isolated-vm": ">=4.3.7",
+    "joi": ">=17.13.9",
+    "jsonwebtoken": ">=9.0.0",
     "kafkajs": ">=2.2.4",
     "mongodb": ">=6.19.0",
-    "mysql2": ">=3.14.5",
-    "nodemailer": ">=7.0.10",
+    "mysql2": ">=3.23.1",
+    "nodemailer": ">=10.1.4",
     "pg": ">=8.16.3",
-    "resend": ">=6.4.2",
+    "redis": ">=4.0.0",
+    "resend": ">=6.12.3",
     "socket.io": ">=4.8.1",
     "swagger-ui-dist": ">=5.28.1",
-    "ws": ">=8.18.0",
+    "ws": ">=8.21.0",
     "yup": ">=1.7.1",
-    "zod": ">=3.22.0"
+    "zod": "^3.22.3 || >=4.6.6"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-cloudfront": {
+      "optional": true
+    },
     "@aws-sdk/client-ses": {
       "optional": true
     },
@@ -174,6 +183,9 @@
       "optional": true
     },
     "amqplib": {
+      "optional": true
+    },
+    "aws-sdk": {
       "optional": true
     },
     "better-auth": {
@@ -209,7 +221,13 @@
     "ioredis": {
       "optional": true
     },
+    "isolated-vm": {
+      "optional": true
+    },
     "joi": {
+      "optional": true
+    },
+    "jsonwebtoken": {
       "optional": true
     },
     "kafkajs": {
@@ -225,6 +243,9 @@
       "optional": true
     },
     "pg": {
+      "optional": true
+    },
+    "redis": {
       "optional": true
     },
     "resend": {
@@ -248,6 +269,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
+    "@grpc/grpc-js": "^1.14.7",
+    "@grpc/proto-loader": "^0.8.1",
     "@jest/globals": "^30.1.2",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-async-hooks": "^2.12.0",
@@ -277,18 +300,18 @@
     "ts-jest": "^29.4.1",
     "tsx": "^4.7.0",
     "typedoc": "^0.28.12",
-    "typedoc-github-theme": "^0.4.0",
-    "typedoc-material-theme": "^1.4.1",
-    "typedoc-plugin-extras": "^4.0.1",
     "typedoc-plugin-markdown": "^4.8.1",
-    "typedoc-theme-hierarchy": "^6.0.0",
     "typescript": "^5.9.2",
     "ws": "^8.21.0",
     "zod": "^4.1.8"
   },
   "overrides": {
-    "fast-uri": "^3.1.3",
-    "brace-expansion": "^5.0.8"
+    "fast-uri": "^3.1.9",
+    "brace-expansion": "^5.0.8",
+    "glob": "^14.0.6",
+    "test-exclude": {
+      "minimatch": "^11.0.9"
+    }
   },
   "files": [
     "dist/**/*",

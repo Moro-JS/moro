@@ -75,7 +75,27 @@ export function normalizeValidationError(error: any): ValidationError {
     );
   }
 
-  // Yup error format
+  // Yup error format, validated with `abortEarly: false`: one entry per failed
+  // field in `inner`, each with its own path. The top-level error then has no
+  // path of its own, only the list of messages.
+  if (error && Array.isArray(error.inner) && error.inner.length > 0) {
+    const issues: ValidationIssue[] = [];
+    for (const inner of error.inner) {
+      const path = parseYupPath(inner?.path);
+      const messages: unknown[] =
+        Array.isArray(inner?.errors) && inner.errors.length > 0 ? inner.errors : [inner?.message];
+      for (const message of messages) {
+        issues.push({
+          path,
+          message: typeof message === 'string' && message ? message : 'Validation failed',
+          code: inner?.type || 'invalid',
+        });
+      }
+    }
+    return new ValidationError(issues);
+  }
+
+  // Yup error format, single error (`abortEarly: true`)
   if (error && error.errors && Array.isArray(error.errors)) {
     return new ValidationError(
       error.errors.map((msg: string, index: number) => ({
@@ -94,6 +114,23 @@ export function normalizeValidationError(error: any): ValidationError {
       code: 'unknown',
     },
   ]);
+}
+
+/**
+ * Split a Yup error path ("user.email", "tags[1]", 'meta["a.b"]') into its
+ * segments, the form the other libraries report: ['user', 'email'], ['tags', 1].
+ */
+function parseYupPath(path: unknown): (string | number)[] {
+  if (typeof path !== 'string' || path === '') return [];
+  const segments: (string | number)[] = [];
+  const pattern = /\[(\d+)\]|\["((?:[^"\\]|\\.)*)"\]|[^.[\]]+/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(path)) !== null) {
+    if (match[1] !== undefined) segments.push(Number(match[1]));
+    else if (match[2] !== undefined) segments.push(match[2]);
+    else segments.push(match[0]);
+  }
+  return segments.length > 0 ? segments : [path];
 }
 
 // Type helper for inferring types from validation schemas

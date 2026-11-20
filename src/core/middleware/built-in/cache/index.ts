@@ -2,7 +2,7 @@
 // Re-exports all public APIs for the cache built-in
 
 // Core (for direct use by router and custom implementations)
-export { CacheCore, sharedCacheCore, type CacheConfig } from './core.js';
+export { CacheCore, sharedCacheCore, type CacheConfig, type CacheCoreOptions } from './core.js';
 
 // Middleware (for middleware chains)
 export { createCacheMiddleware } from './middleware.js';

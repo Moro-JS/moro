@@ -49,9 +49,12 @@ export const cdn = (options: CDNOptions = {}): MiddlewareInterface => ({
     hooks.before('request', async (context: HookContext) => {
       const req = context.request as any;
       const res = context.response as any;
+      // Answered by a hook that ran before this one: nothing left to do
+      if (res.headersSent) return;
 
-      // Set CDN headers on all responses
-      cdnCore.setHeaders(res);
+      // Set CDN headers. The shared-cache Cache-Control only stays on
+      // responses a CDN may keep for everyone (see CDNCore.applyHeaders).
+      cdnCore.applyHeaders(req, res);
 
       // Add CDN methods to response
       res.purgeCDN = async (urls?: string[]) => {
@@ -72,7 +75,10 @@ export const cdn = (options: CDNOptions = {}): MiddlewareInterface => ({
     if (config.autoInvalidate && config.invalidationPatterns) {
       hooks.after('response', async (context: HookContext) => {
         const req = context.request as any;
-        await cdnCore.autoInvalidate(req.path);
+        const res = context.response as any;
+        // Only after a write that succeeded: a read or a failed request has
+        // changed nothing worth purging
+        await cdnCore.autoInvalidate(req.path, req.method, res?.statusCode);
       });
     }
 

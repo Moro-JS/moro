@@ -20,15 +20,16 @@ Complete guide to gRPC support in MoroJS.
 
 MoroJS includes native gRPC support for building high-performance microservices.
 
+Messages travel as standard protobuf: each method uses the serialisers that `@grpc/proto-loader` builds from your `.proto` file. A MoroJS gRPC server therefore answers any gRPC client that has the same `.proto` (stubs generated for other languages, a plain `@grpc/grpc-js` client, health probes), and a client created with `app.createGrpcClient()` calls any gRPC server.
+
 ### Features
 
 - **Proto-based Services** - Define services using Protocol Buffers
 - **Streaming** - Unary, server streaming, client streaming, bidirectional
 - **Middleware** - Authentication, validation, logging
 - **Health Checks** - Built-in health check service
-- **Reflection** - Server reflection for debugging
 - **TLS/SSL** - Secure communication support
-- **Interceptors** - Request/response interception
+- **Interceptors** - grpc-js client interceptors, passed per call
 
 ### gRPC Call Types
 
@@ -65,7 +66,6 @@ app.grpcInit({
   host: '0.0.0.0',
   adapter: 'grpc-js',
   enableHealthCheck: true,
-  enableReflection: true,
 });
 
 // Register a service
@@ -90,32 +90,13 @@ app.listen(3000, () => {
 });
 ```
 
-### Low-Level API (Advanced)
-
-For more control, you can use the `GrpcManager` directly:
-
-```typescript
-import { GrpcManager } from '@morojs/moro';
-
-const grpcManager = new GrpcManager({
-  port: 50051,
-  host: '0.0.0.0',
-});
-
-// Initialize
-await grpcManager.initialize();
-
-// Register a service
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: async (call, callback) => {
-    const user = await db.users.findById(call.request.id);
-    callback(null, user);
-  },
-});
-
-// Start server
-await grpcManager.start();
-```
+The gRPC server listens on every interface (`host: '0.0.0.0'`) and in plaintext unless you say
+otherwise. Started that way it logs a warning: calls and their metadata, tokens included, are
+unencrypted, and any host that can reach the port can call the services. There are two ways out,
+and either one removes the warning: set `host: '127.0.0.1'` to accept local connections only, or
+set `credentials` to serve TLS (see [TLS/SSL](#tlsssl)). TLS encrypts the calls; to also decide
+who may connect, give `rootCerts` and `requireClientCert: true`, and only clients holding a
+certificate you issued are let in.
 
 ---
 
@@ -177,18 +158,37 @@ message ChatMessage {
 }
 ```
 
+### Messages in JavaScript
+
+Handlers and clients exchange plain objects. Their shape follows the `.proto`:
+
+- Field names are the ones in the `.proto` (`user_id`, not `userId`).
+- `int64` and the other 64-bit integer types arrive as strings (`'9007199254740993'`), so that values beyond `Number.MAX_SAFE_INTEGER` survive. When sending, a number or a string is accepted.
+- Enum values arrive as their names (`'ACTIVE'`).
+- `bytes` fields are `Buffer`s, `repeated` fields are arrays and `map` fields are objects.
+- A field that was not set arrives with its default (`''`, `0`, `'0'`, `[]`, the first enum value), except a nested message, which is `null`.
+
+```typescript
+// rpc Chat (stream ChatMessage) returns (stream ChatMessage) {}
+call.on('data', message => {
+  message.user_id; // '123'
+  message.timestamp; // '1767225600000' (int64: a string)
+});
+```
+
 ---
 
 ## Server Implementation
+
+Handlers are registered under the method's name in the `.proto` (`GetUser`) or its lower-camel-case form (`getUser`). A key that matches no method of the service is reported in a start-up warning and never called; a method without a handler answers `UNIMPLEMENTED`.
 
 ### Unary RPC
 
 Single request, single response.
 
-**Using MoroJS Integration:**
-
 ```typescript
 import { createApp } from '@morojs/moro';
+import * as grpc from '@grpc/grpc-js';
 
 const app = await createApp();
 
@@ -225,39 +225,6 @@ await app.grpcService('./proto/users.proto', 'UserService', {
 app.listen(3000);
 ```
 
-**Using Low-Level API:**
-
-```typescript
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: async (call, callback) => {
-    try {
-      const { id } = call.request;
-
-      const user = await db.users.findOne({ id });
-
-      if (!user) {
-        return callback({
-          code: grpc.status.NOT_FOUND,
-          message: 'User not found',
-        });
-      }
-
-      callback(null, {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        age: user.age,
-      });
-    } catch (error) {
-      callback({
-        code: grpc.status.INTERNAL,
-        message: error.message,
-      });
-    }
-  },
-});
-```
-
 ### Server Streaming RPC
 
 Single request, stream of responses.
@@ -267,27 +234,25 @@ Single request, stream of responses.
   ListUsers: async call => {
     const { page, limit } = call.request;
 
-    try {
-      const users = await db.users
-        .find()
-        .skip(page * limit)
-        .limit(limit);
+    // If this throws, the stream ends with an error status
+    // (the error's gRPC `code` when it has one, normally INTERNAL otherwise)
+    const users = await db.users
+      .find()
+      .skip(page * limit)
+      .limit(limit);
 
-      // Stream each user
-      for (const user of users) {
-        call.write({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          age: user.age,
-        });
-      }
-
-      // End stream
-      call.end();
-    } catch (error) {
-      call.destroy(error);
+    // Stream each user
+    for (const user of users) {
+      call.write({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        age: user.age,
+      });
     }
+
+    // End stream
+    call.end();
   };
 }
 ```
@@ -371,54 +336,57 @@ Stream both requests and responses.
 
 ### Creating a Client
 
-**Using MoroJS Integration:**
-
 ```typescript
 import { createApp } from '@morojs/moro';
 
 const app = await createApp();
 
-// Create a gRPC client
-const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051', {
-  credentials: 'insecure', // or provide TLS credentials
-});
+app.grpcInit({ port: 50051 });
+
+// Create a gRPC client. Without `credentials` the connection is plaintext;
+// for TLS pass { credentials: { rootCerts, privateKey, certChain } } (see TLS/SSL).
+const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051');
 
 // Use the client
-const user = await new Promise((resolve, reject) => {
-  client.GetUser({ id: '123' }, (error, response) => {
-    if (error) reject(error);
-    else resolve(response);
-  });
-});
+const user = await client.GetUser({ id: '123' });
 
 console.log(user.name);
 ```
 
-**Using Low-Level API:**
-
-```typescript
-const client = await grpcManager.createClient(
-  './protos/user.proto',
-  'UserService',
-  'localhost:50051',
-  {
-    credentials: grpc.credentials.createInsecure(),
-  }
-);
-```
+The client has one method per RPC, under its name in the `.proto` (`client.GetUser`) and its lower-camel-case form (`client.getUser`). The service name may be given with its package (`'user.UserService'`).
 
 ### Unary Call
 
-```typescript
-const response = await new Promise((resolve, reject) => {
-  client.GetUser({ id: '123' }, (error, response) => {
-    if (error) return reject(error);
-    resolve(response);
-  });
-});
+A unary method called without a callback returns a promise. It resolves to the response and rejects with the grpc-js error, which carries the status `code`, the `details` text and the trailing `metadata`.
 
-console.log(response.name);
+```typescript
+import * as grpc from '@grpc/grpc-js';
+
+try {
+  const response = await client.GetUser({ id: '123' });
+  console.log(response.name);
+} catch (error) {
+  if (error.code === grpc.status.NOT_FOUND) {
+    console.log('No such user:', error.details);
+  }
+}
+
+// Metadata and call options follow the request, as in grpc-js
+const metadata = new grpc.Metadata();
+metadata.add('x-request-id', 'abc-123');
+const user = await client.GetUser({ id: '123' }, metadata, { deadline: Date.now() + 5000 });
 ```
+
+With a callback as the last argument the method behaves exactly as in grpc-js, and returns the call object (which can be cancelled) instead of a promise:
+
+```typescript
+const call = client.GetUser({ id: '123' }, (error, response) => {
+  if (error) return console.error(error.code, error.details);
+  console.log(response.name);
+});
+```
+
+Streaming methods return the grpc-js call stream, not a promise.
 
 ### Server Streaming Call
 
@@ -436,6 +404,14 @@ call.on('end', () => {
 call.on('error', error => {
   console.error('Stream error:', error);
 });
+```
+
+The stream is also async-iterable; a failed call rejects the loop:
+
+```typescript
+for await (const user of client.ListUsers({ page: 0, limit: 10 })) {
+  console.log('Received user:', user.name);
+}
 ```
 
 ### Client Streaming Call
@@ -484,23 +460,38 @@ call.on('end', () => {
 
 ## Middleware
 
+Each middleware factory returns an `async (call, callback?)` function. To attach middleware to a method, register an array: every element before the last runs in order as middleware, and the last element is the handler. A middleware stops the call by throwing or by answering through `callback`, and the handler then never runs. A middleware also receives `next` as a third argument: one that wraps the rest of the call (a logger, a timer) awaits `next()`, which runs the remaining middleware and the handler; one that does not call it is simply followed by the next element.
+
 ### Authentication Middleware
 
 ```typescript
 import { grpcAuth, grpcRequireRole } from '@morojs/moro';
 
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: grpcAuth()(async (call, callback) => {
-    // call.user is now available
-    const user = await db.users.findOne({ id: call.request.id });
-    callback(null, user);
-  }),
+// `verify` receives the bearer token from the `authorization` metadata and
+// resolves to the user. A rejection or a falsy result is UNAUTHENTICATED.
+const auth = grpcAuth({
+  verify: async token => verifyJWT(token, process.env.JWT_SECRET),
+});
 
-  DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
-    // Only admins can delete users
-    await db.users.deleteOne({ id: call.request.id });
-    callback(null, { success: true });
-  }),
+await app.grpcService('./proto/users.proto', 'UserService', {
+  GetUser: [
+    auth,
+    async (call, callback) => {
+      // The verified user is attached to the call as `user`
+      const user = await db.users.findOne({ id: call.request.id });
+      callback(null, user);
+    },
+  ],
+
+  DeleteUser: [
+    auth,
+    grpcRequireRole('admin'),
+    async (call, callback) => {
+      // Only admins can delete users
+      await db.users.deleteOne({ id: call.request.id });
+      callback(null, { success: true });
+    },
+  ],
 });
 ```
 
@@ -514,30 +505,55 @@ const GetUserSchema = z.object({
   id: z.string().uuid(),
 });
 
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: grpcValidate(GetUserSchema)(async (call, callback) => {
-    // Request is validated
-    const user = await db.users.findOne({ id: call.request.id });
-    callback(null, user);
-  }),
+await app.grpcService('./proto/users.proto', 'UserService', {
+  GetUser: [
+    grpcValidate({ request: GetUserSchema }),
+    async (call, callback) => {
+      // call.request is the parsed value; an invalid request is answered
+      // with INVALID_ARGUMENT and never reaches this handler
+      const user = await db.users.findOne({ id: call.request.id });
+      callback(null, user);
+    },
+  ],
 });
 ```
 
 ### Logging Middleware
 
+`grpcLogger` wraps the rest of the call, so put it first in the array: it logs when the call arrives and again when the remaining middleware and the handler have finished, with the elapsed time, or the failure if one of them throws.
+
 ```typescript
 import { grpcLogger } from '@morojs/moro';
 
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: grpcLogger({
-    logRequest: true,
-    logResponse: true,
-    logMetadata: true,
-  })(async (call, callback) => {
-    const user = await db.users.findOne({ id: call.request.id });
-    callback(null, user);
-  }),
+await app.grpcService('./proto/users.proto', 'UserService', {
+  GetUser: [
+    grpcLogger({
+      logRequest: true, // request message, at debug level
+      logResponse: true, // response of unary and client-streaming calls, at debug level
+      logMetadata: true, // call metadata, at debug level (credential values are redacted)
+    }),
+    async (call, callback) => {
+      const user = await db.users.findOne({ id: call.request.id });
+      callback(null, user);
+    },
+  ],
 });
+```
+
+`logRequest` and `logResponse` do not write messages whole:
+
+- the value of a field whose name contains `authorization`, `cookie`, `token`, `secret`,
+  `password` or `api-key` / `apiKey` / `api_key`, at any depth, is logged as `[REDACTED]`;
+- a `bytes` field is logged as its size (`[4096 bytes]`);
+- the text is cut at `maxBodyLength` characters (default 2048), followed by how many were left out.
+
+Pass `fullBodies: true` to log messages whole and as they are, for example while debugging
+locally. `grpcDetailedLogger()` is `grpcLogger()` with the three `log*` options on and the same
+redaction and length limit.
+
+```typescript
+grpcLogger({ logRequest: true, maxBodyLength: 500 }); // shorter
+grpcLogger({ logRequest: true, logResponse: true, fullBodies: true }); // everything, unredacted
 ```
 
 ---
@@ -547,20 +563,24 @@ await grpcManager.registerService('./protos/user.proto', 'UserService', {
 ### Token-Based Auth
 
 ```typescript
-import { grpcAuth, extractTokenFromMetadata } from '@morojs/moro';
+import { grpcAuth } from '@morojs/moro';
 
 // Server side
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
-  GetUser: grpcAuth({
-    extractToken: extractTokenFromMetadata,
-    verifyToken: async token => {
-      return await verifyJWT(token, process.env.JWT_SECRET);
+await app.grpcService('./proto/users.proto', 'UserService', {
+  GetUser: [
+    // The token is read from the `authorization` metadata ("Bearer <token>").
+    // `verify` is required: without it every call is rejected as UNAUTHENTICATED.
+    grpcAuth({
+      verify: async token => {
+        return await verifyJWT(token, process.env.JWT_SECRET);
+      },
+    }),
+    async (call, callback) => {
+      console.log('Authenticated user:', call.user);
+      const user = await db.users.findOne({ id: call.request.id });
+      callback(null, user);
     },
-  })(async (call, callback) => {
-    console.log('Authenticated user:', call.user);
-    const user = await db.users.findOne({ id: call.request.id });
-    callback(null, user);
-  }),
+  ],
 });
 
 // Client side
@@ -574,21 +594,35 @@ client.GetUser({ id: '123' }, metadata, (error, response) => {
 
 ### Role-Based Access
 
-```typescript
-import { grpcRequireRole, grpcRequirePermission } from '@morojs/moro';
+`grpcRequireRole` and `grpcRequirePermission` check the user that `grpcAuth` attached, so `grpcAuth` goes before them. Roles are read from `user.roles` (or `user.role`) and permissions from `user.permissions`, and are matched exactly.
 
-await grpcManager.registerService('./protos/user.proto', 'UserService', {
+```typescript
+import { grpcAuth, grpcRequireRole, grpcRequirePermission } from '@morojs/moro';
+
+const auth = grpcAuth({
+  verify: async token => verifyJWT(token, process.env.JWT_SECRET),
+});
+
+await app.grpcService('./proto/users.proto', 'UserService', {
   // Requires 'admin' role
-  DeleteUser: grpcRequireRole('admin')(async (call, callback) => {
-    await db.users.deleteOne({ id: call.request.id });
-    callback(null, { success: true });
-  }),
+  DeleteUser: [
+    auth,
+    grpcRequireRole('admin'),
+    async (call, callback) => {
+      await db.users.deleteOne({ id: call.request.id });
+      callback(null, { success: true });
+    },
+  ],
 
   // Requires specific permission
-  UpdateUser: grpcRequirePermission('users:write')(async (call, callback) => {
-    const updated = await db.users.updateOne({ id: call.request.id }, call.request.updates);
-    callback(null, updated);
-  }),
+  UpdateUser: [
+    auth,
+    grpcRequirePermission('users:write'),
+    async (call, callback) => {
+      const updated = await db.users.updateOne({ id: call.request.id }, call.request.updates);
+      callback(null, updated);
+    },
+  ],
 });
 ```
 
@@ -624,6 +658,26 @@ import * as grpc from '@grpc/grpc-js';
 }
 ```
 
+### Thrown Errors
+
+A handler or middleware that throws ends the call with an error status: the error's own `code` when it is a gRPC status code (1 to 16), normally `INTERNAL` otherwise. The error's message becomes the status details, and a `metadata` property (a `grpc.Metadata`) is sent as trailing metadata. In a streaming handler the stream ends with that status.
+
+```typescript
+{
+  GetUser: async (call, callback) => {
+    const user = await db.users.findOne({ id: call.request.id });
+
+    if (!user) {
+      throw Object.assign(new Error('User not found'), { code: grpc.status.NOT_FOUND });
+    }
+
+    callback(null, user);
+  };
+}
+```
+
+With `NODE_ENV=production`, a thrown error that carries no gRPC status code of its own reaches the client without its message: the status code is the one it would have had, the details are that status's standard text (`Internal server error` for `INTERNAL`), and the error is logged on the server with its message and stack. An exception's text can hold a file path, a query or a connection string, which a client has no use for. An error you gave a `code`, as above, and a status object passed to `callback()` keep their message in every environment: that text is yours, written for the client. Outside production the message of every thrown error is sent.
+
 ### Common Status Codes
 
 | Code                  | Use Case                   |
@@ -644,13 +698,14 @@ import * as grpc from '@grpc/grpc-js';
 ### Error with Metadata
 
 ```typescript
+const metadata = new grpc.Metadata();
+metadata.set('error-code', 'USER_ID_INVALID');
+metadata.set('field', 'id');
+
 callback({
   code: grpc.status.INVALID_ARGUMENT,
   message: 'Invalid user ID',
-  metadata: new grpc.Metadata({
-    'error-code': 'USER_ID_INVALID',
-    field: 'id',
-  }),
+  metadata,
 });
 ```
 
@@ -661,25 +716,14 @@ callback({
 ### Health Checks
 
 ```typescript
-const grpcManager = new GrpcManager({
+app.grpcInit({
   port: 50051,
-  enableHealthCheck: true,
+  enableHealthCheck: true, // the default
 });
 
-// Health check is automatically available at:
-// grpc://localhost:50051/grpc.health.v1.Health/Check
-```
-
-### Server Reflection
-
-```typescript
-const grpcManager = new GrpcManager({
-  port: 50051,
-  enableReflection: true,
-});
-
-// Allows tools like grpcurl to discover services
-// grpcurl -plaintext localhost:50051 list
+// The Health service is registered automatically. It is the standard
+// grpc.health.v1.Health service (Check and Watch), so gRPC health probes can
+// call it. It always reports SERVING, whatever service name is asked for.
 ```
 
 ### TLS/SSL
@@ -687,7 +731,8 @@ const grpcManager = new GrpcManager({
 ```typescript
 import * as fs from 'fs';
 
-const grpcManager = new GrpcManager({
+// Server
+app.grpcInit({
   port: 50051,
   credentials: {
     privateKey: fs.readFileSync('./key.pem'),
@@ -695,36 +740,37 @@ const grpcManager = new GrpcManager({
   },
 });
 
-// Client
-const credentials = grpc.credentials.createSsl(
-  fs.readFileSync('./ca.pem'),
-  fs.readFileSync('./client-key.pem'),
-  fs.readFileSync('./client-cert.pem')
-);
-
-const client = await grpcManager.createClient(
-  './protos/user.proto',
-  'UserService',
-  'localhost:50051',
-  { credentials }
-);
-```
-
-### Compression
-
-```typescript
-const grpcManager = new GrpcManager({
+// Server that only accepts clients with a certificate signed by ca.pem (mutual TLS)
+app.grpcInit({
   port: 50051,
-  compression: true,
+  credentials: {
+    privateKey: fs.readFileSync('./key.pem'),
+    certChain: fs.readFileSync('./cert.pem'),
+    rootCerts: fs.readFileSync('./ca.pem'),
+    requireClientCert: true,
+  },
 });
 
-// Messages are automatically compressed using gzip
+// Client: `credentials` takes the PEM contents
+const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051', {
+  credentials: {
+    rootCerts: fs.readFileSync('./ca.pem'),
+    privateKey: fs.readFileSync('./client-key.pem'),
+    certChain: fs.readFileSync('./client-cert.pem'),
+  },
+});
 ```
+
+A server without `credentials` listens in plaintext, and a client without `credentials` opens a plaintext connection; the two sides have to agree. On the client, `rootCerts` is the CA that signed the server's certificate (leave it out to use the system's root certificates), and `privateKey` and `certChain` are only needed when the server asks for a client certificate.
+
+On the server, `requireClientCert: true` makes the server ask every client for a certificate and refuse one that presents none, or one that `rootCerts` did not sign. It is off by default: with `rootCerts` alone a client certificate is not asked for. The option was first named `checkServerIdentity`; that name is still read when `requireClientCert` is not set, and `requireClientCert` wins when both are.
+
+From JavaScript, where the option is not type-checked, the client also takes `credentials: 'insecure'` (plaintext) and a grpc-js channel credentials object such as `grpc.credentials.createSsl(...)`, which is used as given.
 
 ### Message Size Limits
 
 ```typescript
-const grpcManager = new GrpcManager({
+app.grpcInit({
   port: 50051,
   maxReceiveMessageLength: 10 * 1024 * 1024, // 10MB
   maxSendMessageLength: 10 * 1024 * 1024, // 10MB
@@ -739,7 +785,6 @@ const loggingInterceptor = (options, nextCall) => {
     start: (metadata, listener, next) => {
       console.log('Request started');
       next(metadata, {
-        ...listener,
         onReceiveMessage: (message, next) => {
           console.log('Received message:', message);
           next(message);
@@ -759,49 +804,55 @@ client.GetUser({ id: '123' }, { interceptors: [loggingInterceptor] }, callback);
 ### With HTTP Server
 
 ```typescript
-import { createApp, GrpcManager } from '@morojs/moro';
+import { createApp } from '@morojs/moro';
 
 const app = await createApp();
-const grpcManager = new GrpcManager({ port: 50051 });
 
-// Initialize both
-await grpcManager.initialize();
+app.grpcInit({ port: 50051 });
+
+// gRPC endpoints
+await app.grpcService('./proto/users.proto', 'UserService', {
+  GetUser: async (call, callback) => {
+    const user = await db.users.findById(call.request.id);
+    callback(null, user);
+  },
+});
 
 // HTTP endpoints
 app.get('/api/users/:id', async (req, res) => {
-  // Use gRPC internally
-  const user = await grpcClient.GetUser({ id: req.params.id });
+  const user = await db.users.findById(req.params.id);
   return user;
 });
 
-// Start both servers
-await grpcManager.start();
-app.listen(3000);
-
-console.log('HTTP server on port 3000');
-console.log('gRPC server on port 50051');
+// Starts the HTTP server, and the gRPC server with it
+app.listen(3000, () => {
+  console.log('HTTP server on port 3000');
+  console.log('gRPC server on port 50051');
+});
 ```
 
 ### Service Discovery
 
 ```typescript
-// Register with service discovery
-await grpcManager.registerService('./protos/user.proto', 'UserService', implementation);
+// Register a service
+await app.grpcService('./proto/users.proto', 'UserService', implementation);
 
-// Get service info
-const services = grpcManager.getRegisteredServices();
+// List what is registered: [{ serviceName, methods }]
+const services = app.getGrpcServices();
 console.log('Available services:', services);
 ```
 
 ### Metrics
 
 ```typescript
-// Get gRPC metrics
-const stats = await grpcManager.getStats();
+// Get gRPC metrics (null until the gRPC server has started)
+const stats = app.getGrpcStats();
 
-console.log(`Total Calls: ${stats.totalCalls}`);
-console.log(`Active Calls: ${stats.activeCalls}`);
-console.log(`Failed Calls: ${stats.failedCalls}`);
+if (stats) {
+  console.log(`Total Calls: ${stats.totalCalls}`);
+  console.log(`Active Calls: ${stats.activeCalls}`);
+  console.log(`Failed Calls: ${stats.failedCalls}`);
+}
 ```
 
 ---
@@ -841,10 +892,11 @@ Always handle errors properly:
 
       callback(null, user);
     } catch (error) {
+      console.error('GetUser failed:', error);
+
       callback({
         code: grpc.status.INTERNAL,
         message: 'Failed to fetch user',
-        metadata: new grpc.Metadata({ 'internal-error': error.message }),
       });
     }
   };
@@ -873,7 +925,7 @@ Always handle errors properly:
 ### 4. Implement Health Checks
 
 ```typescript
-const grpcManager = new GrpcManager({
+app.grpcInit({
   port: 50051,
   enableHealthCheck: true,
 });
@@ -890,14 +942,15 @@ setInterval(async () => {
 ### 5. Use Connection Pooling
 
 ```typescript
-// Reuse clients
+// Reuse clients: create each one once and keep it
 const clientPool = new Map();
 
-function getClient(service) {
-  if (!clientPool.has(service)) {
-    clientPool.set(service, createClient(service));
+async function getClient(protoPath, serviceName, address) {
+  const key = `${serviceName}@${address}`;
+  if (!clientPool.has(key)) {
+    clientPool.set(key, await app.createGrpcClient(protoPath, serviceName, address));
   }
-  return clientPool.get(service);
+  return clientPool.get(key);
 }
 ```
 
@@ -912,13 +965,13 @@ Configure gRPC server (synchronous, lazy initialization).
 **Parameters:**
 
 - `options.port` (number) - gRPC server port (default: 50051)
-- `options.host` (string) - Server host (default: '0.0.0.0')
-- `options.adapter` (string) - gRPC adapter ('grpc-js' or 'google-cloud-grpc')
+- `options.host` (string) - Server host (default: '0.0.0.0'; a warning is logged when the server listens on an address other than loopback without `credentials`)
+- `options.adapter` (string) - gRPC adapter (`'grpc-js'`, the only one shipped)
 - `options.enableHealthCheck` (boolean) - Enable health check service (default: true)
-- `options.enableReflection` (boolean) - Enable server reflection (default: false)
-- `options.maxReceiveMessageLength` (number) - Max message size
-- `options.maxSendMessageLength` (number) - Max message size
-- `options.credentials` - TLS credentials
+- `options.maxReceiveMessageLength` (number) - Max received message size in bytes (default: 4 MB)
+- `options.maxSendMessageLength` (number) - Max sent message size in bytes (default: 4 MB)
+- `options.credentials` - TLS credentials `{ privateKey, certChain, rootCerts, requireClientCert }` (PEM buffers); omit to listen in plaintext
+- `options.enableReflection`, `options.compression` - Accepted but not implemented: setting either logs a warning at start-up and has no effect
 
 **Returns:** `this` (chainable)
 
@@ -930,7 +983,6 @@ app.grpcInit({
   host: '0.0.0.0',
   adapter: 'grpc-js',
   enableHealthCheck: true,
-  enableReflection: true,
   maxReceiveMessageLength: 4 * 1024 * 1024, // 4MB
   maxSendMessageLength: 4 * 1024 * 1024,
 });
@@ -943,9 +995,9 @@ Register a gRPC service from a proto file.
 **Parameters:**
 
 - `protoPath` (string) - Path to .proto file
-- `serviceName` (string) - Name of the service
-- `implementation` (object) - Service method implementations
-- `packageName` (string, optional) - Package name if not in proto
+- `serviceName` (string) - Name of the service, with or without its package (`'UserService'` or `'user.UserService'`)
+- `implementation` (object) - Service method implementations, keyed by method name (`GetUser` or `getUser`)
+- `packageName` (string, optional) - Package name if not in proto. When the file defines a service of that name in more than one package, the package to take it from
 
 **Returns:** `Promise<void>`
 
@@ -974,23 +1026,26 @@ Create a gRPC client for calling remote services.
 **Parameters:**
 
 - `protoPath` (string) - Path to .proto file
-- `serviceName` (string) - Name of the service
+- `serviceName` (string) - Name of the service, with or without its package
 - `address` (string) - Server address (host:port)
 - `options` (object, optional) - Client options
-  - `credentials` - TLS credentials or 'insecure'
-  - `maxReceiveMessageLength` (number)
-  - `maxSendMessageLength` (number)
+  - `credentials` - TLS credentials `{ rootCerts, privateKey, certChain }` (PEM buffers); omit for a plaintext connection
+  - `maxReceiveMessageLength` (number) - defaults to the value given to `app.grpcInit()`
+  - `maxSendMessageLength` (number) - defaults to the value given to `app.grpcInit()`
+  - `channelOptions` (object) - grpc-js channel arguments, such as `{ 'grpc.keepalive_time_ms': 30000 }`
+  - `deadline`, `interceptors` - Accepted but not implemented: setting either logs a warning and has no effect. Pass them per call instead: `client.GetUser(request, { deadline })`
 
 **Returns:** `Promise<GrpcClient>`
 
 **Example:**
 
 ```typescript
-const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051', {
-  credentials: 'insecure',
-});
+const client = await app.createGrpcClient('./proto/users.proto', 'UserService', 'localhost:50051');
 
-// Call methods
+// Unary call: a promise without a callback
+const user = await client.GetUser({ id: '123' });
+
+// ...or grpc-js style, with a callback
 client.GetUser({ id: '123' }, (error, response) => {
   if (error) {
     console.error(error);
@@ -998,6 +1053,9 @@ client.GetUser({ id: '123' }, (error, response) => {
     console.log(response);
   }
 });
+
+// Release the connection when the client is no longer needed
+client.close();
 ```
 
 ### `app.startGrpc()`
@@ -1008,7 +1066,7 @@ Start the gRPC server manually. Called automatically by `app.listen()`.
 
 ### `app.stopGrpc()`
 
-Stop the gRPC server gracefully.
+Stop the gRPC server gracefully: it stops accepting new calls and waits for the calls in progress to finish, open streams included. `app.close()` calls it.
 
 **Returns:** `Promise<void>`
 
@@ -1016,7 +1074,7 @@ Stop the gRPC server gracefully.
 
 Get list of registered gRPC services.
 
-**Returns:** `string[]`
+**Returns:** `ServiceRegistration[]` (`{ serviceName, methods }`)
 
 ---
 
@@ -1024,16 +1082,16 @@ Get list of registered gRPC services.
 
 ### Connection Refused
 
-Check server is running and port is correct:
+Check server is running and port is correct. Server reflection is not implemented, so `grpcurl ... list` cannot discover the services; check the port instead:
 
 ```bash
-# Test with grpcurl
-grpcurl -plaintext localhost:50051 list
+# Is anything listening on the gRPC port?
+nc -z localhost 50051 && echo "port open"
 ```
 
 ### Proto Loading Errors
 
-Verify proto file path and syntax:
+Verify proto file path and syntax. Proto files are loaded with these `@grpc/proto-loader` options, which `app.grpcService()` does not let you change (see [Messages in JavaScript](#messages-in-javascript) for what they mean for your handlers):
 
 ```typescript
 const protoOptions = {

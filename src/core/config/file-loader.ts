@@ -1,10 +1,11 @@
 // Configuration File Loader - Load moro.config.js/ts files
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { createRequire } from 'module';
 import { AppConfig, DeepPartial } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { filePathToImportURL } from '../utilities/package-utils.js';
+import { foundThroughWorkingDirectory } from '../utilities/working-directory.js';
 
 const logger = createFrameworkLogger('ConfigFile');
 
@@ -23,6 +24,40 @@ const moduleRequire = createRequire(join(process.cwd(), 'index.js'));
  * as a clear warning — the pipeline then falls back to env vars + createApp().
  */
 const CONFIG_FILES = ['moro.config.cjs', 'moro.config.js', 'moro.config.ts'] as const;
+
+/**
+ * A configuration file that exists and could not be loaded, in production.
+ * `file` is its path and `cause` the original error.
+ */
+export class ConfigFileLoadError extends Error {
+  constructor(
+    public readonly file: string,
+    cause: unknown
+  ) {
+    super(
+      `Configuration file ${file} could not be loaded: ` +
+        `${cause instanceof Error ? cause.message : String(cause)}. ` +
+        'In production the app does not start without it: running on defaults would ' +
+        'drop the port, TLS and security settings the file was written to set.',
+      { cause }
+    );
+    this.name = 'ConfigFileLoadError';
+  }
+}
+
+/**
+ * A config file that is present but fails to load (a syntax error, an import
+ * that cannot be resolved, a TypeScript file with no loader) is logged. In
+ * production that is fatal; elsewhere the app starts without the file.
+ */
+function reportUnloadableConfigFile(configFile: string, error: unknown): null {
+  logger.error(`Failed to load configuration file ${configFile}: ${String(error)}`);
+  if (process.env.NODE_ENV === 'production') {
+    throw new ConfigFileLoadError(configFile, error);
+  }
+  logger.warn('Falling back to environment variable configuration');
+  return null;
+}
 
 /**
  * Find and load configuration from moro.config.cjs / moro.config.js (synchronously).
@@ -62,7 +97,7 @@ export function loadConfigFileSync(cwd: string = process.cwd()): DeepPartial<App
       return null;
     }
 
-    logger.info(`Configuration loaded from: ${configFile}`);
+    loadedFrom(configFile, cwd);
     return config;
   } catch (error) {
     const isEsmError =
@@ -81,8 +116,7 @@ export function loadConfigFileSync(cwd: string = process.cwd()): DeepPartial<App
           `moro.config.cjs and export with module.exports = { ... }.`
       );
     } else {
-      logger.error(`Failed to load configuration file ${configFile}:`, String(error));
-      logger.warn('Falling back to environment variable configuration');
+      return reportUnloadableConfigFile(configFile, error);
     }
 
     return null;
@@ -116,19 +150,33 @@ export async function loadConfigFile(
       return null;
     }
 
-    logger.info(`Configuration loaded from: ${configFile}`);
+    loadedFrom(configFile, cwd);
     return config;
   } catch (error) {
-    logger.error(`Failed to load configuration file ${configFile}:`, String(error));
-    logger.warn('Falling back to environment variable configuration');
-    return null;
+    return reportUnloadableConfigFile(configFile, error);
   }
 }
 
 /**
- * Find the first existing configuration file in the given directory
+ * The configuration file to load: the one `MORO_CONFIG_FILE` names, else the
+ * first of the supported names that exists in the given directory.
+ *
+ * `MORO_CONFIG_FILE` pins the file for a deployment: a path, absolute or
+ * relative to the working directory. Nothing is looked for anywhere else
+ * then, and a file that is not there is reported like one that cannot be
+ * loaded (fatal in production).
  */
 function findConfigFile(cwd: string): string | null {
+  const pinned = process.env.MORO_CONFIG_FILE;
+  if (pinned) {
+    const filePath = resolve(cwd, pinned);
+    if (existsSync(filePath)) return filePath;
+    return reportUnloadableConfigFile(
+      filePath,
+      new Error('MORO_CONFIG_FILE names a file that does not exist')
+    );
+  }
+
   for (const fileName of CONFIG_FILES) {
     const filePath = join(cwd, fileName);
     if (existsSync(filePath)) {
@@ -136,6 +184,19 @@ function findConfigFile(cwd: string): string | null {
     }
   }
   return null;
+}
+
+/** A file found by its name in `cwd`, not pinned: say so when the app was started elsewhere. */
+function loadedFrom(configFile: string, cwd: string): void {
+  logger.info(`Configuration loaded from: ${configFile}`);
+  if (process.env.MORO_CONFIG_FILE) return;
+  foundThroughWorkingDirectory(
+    logger,
+    'configuration file',
+    configFile,
+    cwd,
+    'set MORO_CONFIG_FILE to the path of the configuration file'
+  );
 }
 
 /**

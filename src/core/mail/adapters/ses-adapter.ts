@@ -1,7 +1,7 @@
 // AWS SES Adapter - Amazon Simple Email Service
 // ESM-first module with lazy loading
 
-import { BaseMailAdapter } from '../mail-adapter.js';
+import { BaseMailAdapter, quoteDisplayName } from '../mail-adapter.js';
 import type { MailOptions, MailResult, SESConnection } from '../types.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 import { createFrameworkLogger } from '../../logger/index.js';
@@ -172,8 +172,9 @@ export class SESAdapter extends BaseMailAdapter {
       return address;
     }
 
+    // SES takes Source and ReplyToAddresses only as strings
     if (address.name) {
-      return `"${address.name}" <${address.email}>`;
+      return `${quoteDisplayName(address.name)} <${address.email}>`;
     }
 
     return address.email;

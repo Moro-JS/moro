@@ -1,4 +1,5 @@
 // GraphQL.js Adapter - Default adapter using graphql-js
+import { createHash } from 'crypto';
 import { resolveUserPackage } from '../../utilities/package-utils.js';
 import { createFrameworkLogger } from '../../logger/index.js';
 import type {
@@ -10,8 +11,12 @@ import type {
 } from '../adapter.js';
 import type { GraphQLOptions, GraphQLContext } from '../types.js';
 import type { HttpRequest, HttpResponse } from '../../../types/http.js';
+import { checkQueryLimits, normalizeQueryLimit } from '../limits.js';
 
 const logger = createFrameworkLogger('GraphQLAdapter');
+
+/** Default cap on the number of compiled queries kept in the JIT cache. */
+const DEFAULT_JIT_CACHE_MAX_SIZE = 1000;
 
 /**
  * GraphQL.js adapter implementation
@@ -25,6 +30,11 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
   private jitCache = new Map<string, any>();
   private jitCacheTTL = 300000; // 5 minutes default
   private jitCacheTimeouts = new Map<string, NodeJS.Timeout>();
+  private jitCacheMaxSize = DEFAULT_JIT_CACHE_MAX_SIZE;
+  private debug = false;
+  private maxDepth: number | undefined;
+  private maxComplexity: number | undefined;
+  private rootValue: unknown = null;
   private contextFactory?: (
     req: HttpRequest,
     res: HttpResponse
@@ -52,6 +62,17 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
       }
 
       this.jitCacheTTL = options.jitCacheTTL || 300000; // 5 minutes default
+      if (
+        typeof options.jitCacheMaxSize === 'number' &&
+        Number.isFinite(options.jitCacheMaxSize) &&
+        options.jitCacheMaxSize >= 1
+      ) {
+        this.jitCacheMaxSize = Math.floor(options.jitCacheMaxSize);
+      }
+      this.debug = options.debug === true;
+      this.maxDepth = normalizeQueryLimit(options.maxDepth);
+      this.maxComplexity = normalizeQueryLimit(options.maxComplexity);
+      this.rootValue = options.rootValue === undefined ? null : options.rootValue;
 
       logger.info('GraphQL.js adapter initialized', 'Adapter', {
         jitEnabled: this.jitEnabled,
@@ -74,6 +95,21 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
       const { parse, validate } = this.graphql;
       const document = parse(query);
 
+      // Depth and complexity limits are checked first, in one walk of the
+      // document: one over a limit is refused before the costlier standard
+      // rules and never reaches execution.
+      if (this.maxDepth !== undefined || this.maxComplexity !== undefined) {
+        const limitErrors = checkQueryLimits(
+          document,
+          this.graphql.GraphQLError,
+          { maxDepth: this.maxDepth, maxComplexity: this.maxComplexity },
+          operationName
+        );
+        if (limitErrors.length > 0) {
+          return { errors: limitErrors };
+        }
+      }
+
       // Validate query
       const errors = validate(this.schema, document);
       if (errors.length > 0) {
@@ -82,7 +118,7 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
 
       // Execute with JIT if enabled
       if (this.jitEnabled && this.jitCompiler) {
-        return await this.executeWithJIT(document, operationName, variables, context);
+        return await this.executeWithJIT(query, document, operationName, variables, context);
       }
 
       // Standard execution
@@ -90,21 +126,27 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
       return await execute({
         schema: this.schema,
         document,
-        rootValue: null,
+        rootValue: this.rootValue,
         contextValue: context,
         variableValues: variables,
         operationName,
       });
     } catch (error) {
       logger.error('GraphQL execution error', 'Execution', { error });
-      return {
-        errors: [
-          {
-            message: error instanceof Error ? error.message : 'Unknown error',
-            extensions: { stack: error instanceof Error ? error.stack : undefined },
-          },
-        ],
-      };
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      // Stack traces carry absolute module paths: only attach them when the
+      // `debug` option was set, and never in production.
+      if (this.debug && process.env.NODE_ENV !== 'production') {
+        return {
+          errors: [
+            {
+              message,
+              extensions: { stack: error instanceof Error ? error.stack : undefined },
+            },
+          ],
+        };
+      }
+      return { errors: [{ message }] };
     }
   }
 
@@ -229,19 +271,51 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
     }
   }
 
+  /**
+   * Cache key for a compiled query. A compiled query is only valid for the
+   * exact document it was built from, so the key is a digest of the document
+   * source plus the selected operation name (never the operation name alone:
+   * two different documents may share a name, or have none).
+   */
+  private jitCacheKey(source: string, operationName: string | null | undefined): string {
+    return createHash('sha256')
+      .update(String(source))
+      .update('\0')
+      .update(operationName ? String(operationName) : '')
+      .digest('hex');
+  }
+
+  private evictJITEntry(cacheKey: string): void {
+    this.jitCache.delete(cacheKey);
+    const timeout = this.jitCacheTimeouts.get(cacheKey);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.jitCacheTimeouts.delete(cacheKey);
+    }
+  }
+
   private async executeWithJIT(
+    source: string,
     document: any,
     operationName: string | null | undefined,
     variables: Record<string, any> | null | undefined,
     context: GraphQLContext
   ): Promise<GraphQLResponse> {
-    const cacheKey = `${operationName || 'default'}`;
+    const cacheKey = this.jitCacheKey(source, operationName);
     let compiled = this.jitCache.get(cacheKey);
 
     if (!compiled) {
       compiled = this.jitCompiler.compileQuery(this.schema, document, operationName || undefined);
 
       if (this.jitCompiler.isCompiledQuery(compiled)) {
+        // Bounded cache: drop the oldest entries (Map iterates in insertion
+        // order) before adding a new one.
+        while (this.jitCache.size >= this.jitCacheMaxSize) {
+          const oldest = this.jitCache.keys().next();
+          if (oldest.done) break;
+          this.evictJITEntry(oldest.value);
+        }
+
         this.jitCache.set(cacheKey, compiled);
 
         // Clear any existing timeout
@@ -261,7 +335,7 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
     }
 
     if (this.jitCompiler.isCompiledQuery(compiled)) {
-      return await compiled.query(null, context, variables || {});
+      return await compiled.query(this.rootValue, context, variables || {});
     }
 
     // Fallback to standard execution
@@ -269,7 +343,7 @@ export class GraphQLJsAdapter implements GraphQLAdapter {
     return await execute({
       schema: this.schema,
       document,
-      rootValue: null,
+      rootValue: this.rootValue,
       contextValue: context,
       variableValues: variables,
       operationName,

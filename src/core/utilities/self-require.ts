@@ -9,5 +9,9 @@
 // supervisord, pm2, a subdirectory, …) — because the resolver walked up from
 // the cwd instead of from where moro is installed.
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 export const selfRequire: ReturnType<typeof createRequire> = createRequire(import.meta.url);
+
+/** The path of this file: somewhere inside the installed framework. */
+export const selfPath: string = fileURLToPath(import.meta.url);

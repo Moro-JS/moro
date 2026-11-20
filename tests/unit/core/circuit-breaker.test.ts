@@ -222,4 +222,117 @@ describe('CircuitBreaker', () => {
       await expect(circuitBreaker.execute(mockFn)).rejects.not.toThrow('original error');
     });
   });
+
+  const fail = async (): Promise<never> => {
+    throw new Error('fail');
+  };
+
+  describe('isOpen()', () => {
+    it('moves to HALF_OPEN once resetTimeout has elapsed', () => {
+      const breaker = new CircuitBreaker({ failureThreshold: 2, resetTimeout: 1000 });
+      const halfOpen = jest.fn();
+      breaker.on('halfOpen', halfOpen);
+
+      breaker.recordFailure();
+      breaker.recordFailure();
+      expect(breaker.isOpen()).toBe(true);
+
+      jest.advanceTimersByTime(999);
+      expect(breaker.isOpen()).toBe(true);
+      expect(breaker.getState()).toBe('OPEN');
+      expect(halfOpen).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(2);
+      expect(breaker.isOpen()).toBe(false);
+      expect(breaker.getState()).toBe('HALF_OPEN');
+      expect(halfOpen).toHaveBeenCalledTimes(1);
+
+      // Asking again does not re-emit
+      expect(breaker.isOpen()).toBe(false);
+      expect(halfOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets an isOpen()/recordSuccess() caller close the breaker', () => {
+      const breaker = new CircuitBreaker({ failureThreshold: 2, resetTimeout: 1000 });
+      breaker.recordFailure();
+      breaker.recordFailure();
+
+      jest.advanceTimersByTime(1001);
+      expect(breaker.isOpen()).toBe(false);
+      breaker.recordSuccess();
+      expect(breaker.getState()).toBe('CLOSED');
+      expect(breaker.getFailures()).toBe(0);
+    });
+
+    it('re-opens for a full resetTimeout when the probe fails', () => {
+      const breaker = new CircuitBreaker({ failureThreshold: 2, resetTimeout: 1000 });
+      breaker.recordFailure();
+      breaker.recordFailure();
+
+      jest.advanceTimersByTime(1001);
+      expect(breaker.isOpen()).toBe(false);
+      breaker.recordFailure();
+      expect(breaker.getState()).toBe('OPEN');
+      expect(breaker.isOpen()).toBe(true);
+
+      jest.advanceTimersByTime(999);
+      expect(breaker.isOpen()).toBe(true);
+      jest.advanceTimersByTime(2);
+      expect(breaker.isOpen()).toBe(false);
+    });
+
+    it('is false and has no side effect while CLOSED', () => {
+      const breaker = new CircuitBreaker({ failureThreshold: 2, resetTimeout: 1000 });
+      breaker.recordFailure();
+      expect(breaker.isOpen()).toBe(false);
+      expect(breaker.getState()).toBe('CLOSED');
+      expect(breaker.getFailures()).toBe(1);
+    });
+  });
+
+  describe('failed probe while HALF_OPEN', () => {
+    // The regime both framework configurations run in: the monitoring window
+    // is shorter than the reset timeout, so by the time the probe runs the
+    // earlier failures have left the window.
+    const options = { failureThreshold: 3, resetTimeout: 30000, monitoringPeriod: 10000 };
+
+    it('returns the breaker to OPEN when monitoringPeriod < resetTimeout', async () => {
+      const breaker = new CircuitBreaker(options);
+      const opened = jest.fn();
+      breaker.on('open', opened);
+
+      for (let i = 0; i < 3; i++) await expect(breaker.execute(fail)).rejects.toThrow('fail');
+      expect(breaker.getState()).toBe('OPEN');
+      expect(opened).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(30001);
+
+      // The probe runs and fails
+      const probe = jest.fn(fail);
+      await expect(breaker.execute(probe)).rejects.toThrow('fail');
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(breaker.getState()).toBe('OPEN');
+      expect(opened).toHaveBeenCalledTimes(2);
+
+      // Further calls are rejected without reaching the dependency
+      const next = jest.fn(fail);
+      for (let i = 0; i < 3; i++) {
+        await expect(breaker.execute(next)).rejects.toThrow('Circuit breaker is OPEN');
+      }
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('still closes on a successful probe', async () => {
+      const breaker = new CircuitBreaker(options);
+      for (let i = 0; i < 3; i++) await expect(breaker.execute(fail)).rejects.toThrow('fail');
+
+      jest.advanceTimersByTime(30001);
+      await expect(breaker.execute(async () => 'ok')).resolves.toBe('ok');
+      expect(breaker.getState()).toBe('CLOSED');
+
+      // A single later failure does not trip a closed breaker
+      await expect(breaker.execute(fail)).rejects.toThrow('fail');
+      expect(breaker.getState()).toBe('CLOSED');
+    });
+  });
 });

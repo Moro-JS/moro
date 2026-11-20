@@ -1,9 +1,10 @@
 // HTTP Range Requests Core Logic
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { createFrameworkLogger } from '../../../logger/index.js';
+import { assertRoot, locateFile, type DotfilePolicy } from '../../../http/utils/file-send.js';
+import { contentTypeForFile } from '../../../http/utils/mime-types.js';
 
 const logger = createFrameworkLogger('RangeMiddleware');
 
@@ -17,12 +18,22 @@ export interface RangeOptions {
    * A call can pass its own: `res.sendRange(file, { root })`.
    */
   root?: string;
+  /**
+   * What `res.sendRange()` does with a hidden path, as for `staticFiles`:
+   * `'ignore'` (the default) answers 404, `'deny'` 403, `'allow'` serves it.
+   * With a `root`, a path is hidden when any segment below the root starts
+   * with a dot, in the path as given or in the path it resolves to; without
+   * one, when the file's own name does. `.well-known` is never hidden.
+   */
+  dotfiles?: DotfilePolicy;
 }
 
 /** Second argument of `res.sendRange()`, when it is not an `fs.Stats`. */
 export interface SendRangeOptions {
   /** Confine this call to a directory; overrides the middleware's `root`. */
   root?: string;
+  /** Dotfile policy for this call; overrides the middleware's `dotfiles`. */
+  dotfiles?: DotfilePolicy;
 }
 
 interface ByteRange {
@@ -63,12 +74,14 @@ export class RangeCore {
   private maxRanges: number;
   private servesRanges: boolean;
   private root: string | undefined;
+  private dotfiles: DotfilePolicy;
 
   constructor(options: RangeOptions = {}) {
     // Checked at setup: a root that was meant to be set and came out empty
     // must not quietly turn into "no confinement".
-    if (options.root !== undefined) RangeCore.assertRoot(options.root);
+    if (options.root !== undefined) assertRoot(options.root, 'sendRange');
     this.root = options.root;
+    this.dotfiles = RangeCore.dotfilePolicy(options.dotfiles) ?? 'ignore';
     this.acceptRanges = options.acceptRanges || 'bytes';
     const maxRanges = Number(options.maxRanges);
     this.maxRanges = Number.isInteger(maxRanges) && maxRanges > 0 ? maxRanges : 1;
@@ -97,21 +110,30 @@ export class RangeCore {
     statsOrOptions?: any
   ): Promise<void> {
     let handle: fs.FileHandle | undefined;
+    // True once this call has put the file's Content-Type on the response
+    let typed = false;
     try {
       const isStats = !!statsOrOptions && typeof statsOrOptions.isFile === 'function';
-      const callRoot = !isStats && statsOrOptions ? statsOrOptions.root : undefined;
+      const callOptions = !isStats && statsOrOptions ? statsOrOptions : undefined;
+      const callRoot = callOptions !== undefined ? callOptions.root : undefined;
       const root = callRoot !== undefined ? callRoot : this.root;
+      const dotfiles =
+        (callOptions !== undefined ? RangeCore.dotfilePolicy(callOptions.dotfiles) : undefined) ??
+        this.dotfiles;
 
-      let filePath = requestedPath;
-      if (root !== undefined) {
-        RangeCore.assertRoot(root);
-        const confined = await RangeCore.resolveInRoot(root, requestedPath);
-        if (confined === null) {
-          this.sendNotFound(res);
-          return;
-        }
-        filePath = confined;
+      // Where the file may be served from: inside the root when there is
+      // one, and never a hidden path unless the policy allows it.
+      if (root !== undefined) assertRoot(root, 'sendRange');
+      const located = await locateFile(requestedPath, root, dotfiles);
+      if (located === 'forbidden') {
+        res.status(403).json({ success: false, error: 'Forbidden' });
+        return;
       }
+      if (located === 'not-found') {
+        this.sendNotFound(res);
+        return;
+      }
+      const filePath = located;
 
       // Checked before open(): opening a FIFO blocks until something writes to
       // it, and a directory opens fine and only fails on the first read.
@@ -134,6 +156,15 @@ export class RangeCore {
       const isHead = req.method === 'HEAD';
       res.setHeader('Accept-Ranges', this.acceptRanges);
 
+      // The file's own type, unless the handler has already said what it is,
+      // and never one the browser is left to guess from the bytes.
+      const getHeader = (res as any).getHeader;
+      if (typeof getHeader !== 'function' || !getHeader.call(res, 'Content-Type')) {
+        res.setHeader('Content-Type', contentTypeForFile(filePath));
+        typed = true;
+      }
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+
       // Range is defined for GET only, and is ignored when the representation
       // the client holds a piece of is no longer the current one.
       const rangeHeader = req.headers.range;
@@ -146,6 +177,8 @@ export class RangeCore {
           : null;
 
       if (parsed === 'unsatisfiable') {
+        // The body is a JSON error, not a piece of the file
+        if (typed) RangeCore.dropContentType(res);
         res.status(416);
         res.setHeader('Content-Range', `bytes */${fileSize}`);
         res.json({ success: false, error: 'Range not satisfiable' });
@@ -173,40 +206,19 @@ export class RangeCore {
         await this.sendMultipleRanges(handle, fileSize, parsed, res);
       }
     } catch (error) {
+      if (typed && !res.headersSent) RangeCore.dropContentType(res);
       this.sendFailure(res, error);
     } finally {
       if (handle) await handle.close().catch(() => undefined);
     }
   }
 
-  private static assertRoot(root: unknown): asserts root is string {
-    if (typeof root !== 'string' || root === '') {
-      throw new TypeError('sendRange: `root` must be a non-empty directory path');
-    }
+  private static dropContentType(res: HttpResponse): void {
+    if (typeof (res as any).removeHeader === 'function') (res as any).removeHeader('Content-Type');
   }
 
-  /**
-   * The real path of `filePath` below `root`, or null when it is not below it.
-   *
-   * Two checks. The lexical one turns `../` and absolute paths away without
-   * touching the filesystem outside the root. The second compares real paths,
-   * which catches a symlink inside the root that points out of it; the root
-   * is resolved the same way, so it may itself be a symlink (a `current`
-   * release link, `/tmp` on macOS). The trailing separator matters: a bare
-   * prefix test would let `/srv/videos-private` pass for root `/srv/videos`.
-   */
-  private static async resolveInRoot(root: string, filePath: string): Promise<string | null> {
-    if (typeof filePath !== 'string') return null;
-
-    const withSep = (dir: string) => (dir.endsWith(path.sep) ? dir : dir + path.sep);
-
-    const base = path.resolve(root);
-    const candidate = path.resolve(base, filePath);
-    if (!candidate.startsWith(withSep(base))) return null;
-
-    const realBase = await fs.realpath(base);
-    const real = await fs.realpath(candidate);
-    return real.startsWith(withSep(realBase)) ? real : null;
+  private static dotfilePolicy(value: unknown): DotfilePolicy | undefined {
+    return value === 'allow' || value === 'deny' || value === 'ignore' ? value : undefined;
   }
 
   private parseRangeHeader(header: string, fileSize: number): ParsedRange {
@@ -443,9 +455,14 @@ export class RangeCore {
     return filled === length ? buffer : buffer.subarray(0, filled);
   }
 
-  /** HTTP/2 responses are plain objects with no stream plumbing to write into. */
+  /**
+   * Whether the body is written in chunks with backpressure. The HTTP/2
+   * server's response (the one carrying its stream as `_stream`) is always
+   * answered from memory with a single end().
+   */
   private static canStream(res: HttpResponse): boolean {
     const writable = res as any;
+    if (writable._stream !== undefined) return false;
     return (
       typeof writable.write === 'function' &&
       typeof writable.on === 'function' &&

@@ -31,6 +31,23 @@ export function parseSizeToBytes(
 }
 
 /**
+ * server.timeouts.request when the configuration gives none (ms): how long a
+ * client may take to deliver one complete request. The same five minutes as
+ * Node's own `requestTimeout`, so every server agrees.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 300000;
+
+/**
+ * server.timeouts.idle on the HTTP/2 server and the native engine when the
+ * configuration gives none (ms). Above the 60 s idle timeout of the common
+ * load balancers, so the proxy is the side that retires an idle connection
+ * and never sends a request down one the server has just closed. The native
+ * engine gets it only when its idle timeout leaves a connection with a
+ * response still to deliver alone (capabilities.idleSparesDrainingResponse).
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 75000;
+
+/**
  * Flattened, size-resolved runtime limits passed from the framework to every
  * HTTP server. undefined = use that server's own documented default. Mirrors
  * the RuntimeLimits built in framework.ts (kept here so the servers can import
@@ -53,6 +70,7 @@ export interface HttpRuntimeLimits {
   wsBackpressureLimit?: number;
   writeHighWaterMark?: number;
   maxPendingBytes?: number;
+  responseBackpressureLimit?: number;
   multipart?: {
     maxParts?: number;
     maxPartHeaderBytes?: number;

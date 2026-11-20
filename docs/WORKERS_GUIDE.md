@@ -9,7 +9,7 @@ Complete guide to using Worker Threads in MoroJS for CPU-intensive operations.
 - [Worker Tasks](#worker-tasks)
 - [API Reference](#api-reference)
 - [Use Cases](#use-cases)
-- [Performance](#performance)
+- [Behavior](#behavior)
 - [Best Practices](#best-practices)
 - [Advanced Usage](#advanced-usage)
 - [Troubleshooting](#troubleshooting)
@@ -26,17 +26,16 @@ MoroJS includes built-in Worker Threads support for offloading CPU-intensive ope
 - **Task Queue** - Queues and distributes tasks across available workers
 - **Priority Levels** - Tasks can be marked as high, normal, or low priority
 - **Timeout Support** - Tasks can have configurable timeout limits
-- **Built-in Tasks** - Pre-configured tasks for common operations (JWT, crypto, compression)
+- **Built-in Tasks** - Pre-configured tasks for common operations (JWT, crypto, compression). The pool runs these task types only: a task with any other `type` rejects with `Unknown task type: <type>`
 
 ### When to Use Worker Threads
 
 **Good Use Cases:**
 
 - JWT token signing/verification
-- Password hashing (bcrypt, argon2)
+- Checksums and fingerprints (fast digests)
 - Data encryption/decryption
 - Large data transformations
-- Image/video processing
 - Complex calculations
 - Data compression/decompression
 
@@ -53,7 +52,7 @@ MoroJS includes built-in Worker Threads support for offloading CPU-intensive ope
 
 ### Installation
 
-Worker threads are built into Node.js 18+ and included in MoroJS core. No additional dependencies required.
+Worker threads are built into Node.js and included in MoroJS core. The pool itself needs no additional dependencies; the JWT helpers need the `jsonwebtoken` package and `transformJSON` needs `isolated-vm`.
 
 ### Basic Usage
 
@@ -63,43 +62,86 @@ import { createApp, getWorkerManager } from '@morojs/moro';
 const app = await createApp();
 const workers = getWorkerManager();
 
-// Execute a task on worker thread
-app.post('/api/hash', async (req, res) => {
+// Execute a task on worker thread: SHA-256 checksum of an uploaded document
+app.post('/api/checksum', async (req, res) => {
   const result = await workers.executeTask({
     id: `hash-${Date.now()}`,
     type: 'crypto:hash',
     data: {
-      input: req.body.password,
+      data: req.body.content,
       algorithm: 'sha256',
     },
   });
 
-  return { hash: result };
+  return { checksum: result };
 });
 
 app.listen(3000);
 ```
+
+> **`crypto:hash` is not a password hash.** It computes a single fast, unsalted digest, which is right for checksums and fingerprints and wrong for passwords. Store passwords with a key-derivation function — see [Password Hashing](#password-hashing).
 
 ### Configuration
 
 Configure worker thread pool on application startup:
 
 ```typescript
-import { createApp, WorkerManager } from '@morojs/moro';
+import { createApp, getWorkerManager, WorkerManager } from '@morojs/moro';
 
 const app = await createApp({
   workers: {
     count: 4, // Number of worker threads (default: CPU cores - 1)
-    maxQueueSize: 1000, // Maximum queued tasks (default: 1000)
+    maxQueueSize: 1000, // Maximum waiting tasks (default: 1000)
   },
 });
 
-// Or configure manually
-const workers = new WorkerManager({
+// Or configure the shared pool directly: the first call creates it, later
+// calls return the same pool and ignore their options
+const workers = getWorkerManager({
+  workerCount: 4,
+  maxQueueSize: 1000,
+});
+
+// Or create a separate pool of your own
+const ownPool = new WorkerManager({
   workerCount: 4,
   maxQueueSize: 1000,
 });
 ```
+
+The shared pool is the one `workerTasks`, `getWorkerManager()` and `app.executeOnWorker()` use, and its size is fixed by whichever call creates it. `createApp({ workers })` creates it in the background, so when you also call `getWorkerManager()` right after `createApp()`, pass it the same options.
+
+The pool is shut down when the last app that uses it is closed (`await app.close()`). Whoever asks for it after that gets a new one: an app created later, or one that first uses workers then, takes it over like the first. A bare `getWorkerManager()`, `executeOnWorker()` or `workerTasks` call made when no app holds a pool starts one too and its tasks run, but its idle threads do not keep the process alive, so code that outlived its app cannot stop the process from ending.
+
+### Memory limits per worker
+
+`resourceLimits` sets V8 limits for every thread of the pool. It is passed to Node's `new Worker()` as given and is not set by default.
+
+```typescript
+const app = await createApp({
+  workers: {
+    count: 4,
+    resourceLimits: {
+      maxOldGenerationSizeMb: 512, // main heap of each worker
+      maxYoungGenerationSizeMb: 64, // heap for short-lived objects
+      stackSizeMb: 4, // default stack size
+    },
+  },
+});
+
+// The same option on a pool of your own
+const ownPool = new WorkerManager({
+  workerCount: 2,
+  resourceLimits: { maxOldGenerationSizeMb: 256 },
+});
+```
+
+- **Without it**, each worker has the heap ceiling Node gives any thread of the process: the same as the main thread's, not a share of it. On a 64 GB machine with Node 24 that is a 4096 MB old generation, a 192 MB young generation and a 4 MB stack per worker. Inside a worker, `resourceLimits` from `node:worker_threads` reports the values in force.
+- **At a limit**, Node terminates that worker (`ERR_WORKER_OUT_OF_MEMORY`). The task it was running is rejected, the other workers and the main thread are not affected, and the pool starts a replacement with the same limits.
+- The limits cover the JavaScript heap only. Buffers and other memory outside the heap are not counted.
+- `--max-old-space-size` on the Node command line applies to worker threads too and takes precedence over `maxOldGenerationSizeMb`.
+
+Choose a limit above what your largest task needs: a task that reaches it is not retried.
 
 ---
 
@@ -114,13 +156,12 @@ MoroJS includes several pre-configured worker tasks:
 ```typescript
 import { workerTasks } from '@morojs/moro';
 
-// Verify JWT token
+// Verify JWT token (resolves to the decoded payload, rejects if the token is invalid)
 app.post('/api/auth/verify', async (req, res) => {
-  const result = await workerTasks.verifyJWT(req.body.token, process.env.JWT_SECRET);
-
-  if (result.valid) {
-    return { user: result.payload };
-  } else {
+  try {
+    const payload = await workerTasks.verifyJWT(req.body.token, process.env.JWT_SECRET);
+    return { user: payload };
+  } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
 });
@@ -139,35 +180,110 @@ app.post('/api/auth/login', async (req, res) => {
 });
 ```
 
+`options` are the `jsonwebtoken` options for `sign()` / `verify()` (`expiresIn`,
+`audience`, `issuer`, …). `verifyJWT` accepts HS256 tokens only unless you name
+the algorithms yourself, and refuses a PEM public key or certificate as the
+secret until you do:
+
+```typescript
+import { workerTasks } from '@morojs/moro';
+
+// Tokens signed with a private key: verify with the public key and say which algorithm
+const payload = await workerTasks.verifyJWT(token, process.env.JWT_PUBLIC_KEY, {
+  algorithms: ['RS256'],
+});
+```
+
+Without `algorithms`, a public key would be used as an HS256 secret, which
+anyone holding the public key can sign with; that call rejects with `JWT
+verification with a public key requires options.algorithms`.
+
 #### Cryptographic Operations
 
 ```typescript
-// Hash password
-app.post('/api/register', async (req, res) => {
-  const hash = await workerTasks.hashData(req.body.password, 'sha256');
+// Fingerprint a document (checksums, cache keys, deduplication)
+app.post('/api/documents', async (req, res) => {
+  const checksum = await workerTasks.hash(req.body.content, 'sha256');
 
-  const user = await createUser({
-    email: req.body.email,
-    password: hash,
+  const document = await saveDocument({
+    content: req.body.content,
+    checksum,
   });
 
-  return user;
+  return document;
 });
+
+// Encryption has no helper on workerTasks: run the built-in 'crypto:encrypt' and
+// 'crypto:decrypt' task types. The default algorithm is aes-256-cbc, so the key
+// must be 32 bytes. A random IV is generated for every call.
+const workers = getWorkerManager(); // import { getWorkerManager } from '@morojs/moro'
 
 // Encrypt sensitive data
 app.post('/api/secrets', async (req, res) => {
-  const encrypted = await workerTasks.encryptData(req.body.secret, process.env.ENCRYPTION_KEY);
+  const encrypted = await workers.executeTask<string>({
+    id: `encrypt-${Date.now()}`,
+    type: 'crypto:encrypt',
+    data: { data: req.body.secret, key: process.env.ENCRYPTION_KEY },
+  });
 
-  return { encrypted };
+  return { encrypted }; // "<iv hex>:<ciphertext hex>"
 });
 
 // Decrypt data
 app.get('/api/secrets/:id', async (req, res) => {
   const secret = await getSecret(req.params.id);
 
-  const decrypted = await workerTasks.decryptData(secret.data, process.env.ENCRYPTION_KEY);
+  const decrypted = await workers.executeTask<string>({
+    id: `decrypt-${req.params.id}`,
+    type: 'crypto:decrypt',
+    data: { data: secret.data, key: process.env.ENCRYPTION_KEY },
+  });
 
   return { secret: decrypted };
+});
+```
+
+#### Password Hashing
+
+Do not hash passwords with `workerTasks.hash` / `crypto:hash`. A plain SHA-256 digest is fast and unsalted, so equal passwords produce equal hashes and a leaked table can be brute-forced cheaply. Passwords need a deliberately slow, salted key-derivation function, and stored hashes must be compared in constant time.
+
+There is no built-in worker task for this, and none is needed: Node's asynchronous `crypto.scrypt` already runs on the libuv thread pool, so it does not block the event loop.
+
+```typescript
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+
+const scryptAsync = promisify(scrypt);
+const KEY_LENGTH = 64;
+
+// Stored format: "<salt hex>:<derived key hex>". Every password gets its own random salt.
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = (await scryptAsync(password, salt, KEY_LENGTH)) as Buffer;
+  return `${salt.toString('hex')}:${key.toString('hex')}`;
+}
+
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [saltHex, keyHex] = stored.split(':');
+  if (!saltHex || !keyHex) return false;
+
+  const expected = Buffer.from(keyHex, 'hex');
+  if (expected.length !== KEY_LENGTH) return false;
+
+  const actual = (await scryptAsync(password, Buffer.from(saltHex, 'hex'), KEY_LENGTH)) as Buffer;
+  // Constant-time comparison: never compare hashes with === / !==.
+  return timingSafeEqual(actual, expected);
+}
+```
+
+```typescript
+app.post('/api/register', async (req, res) => {
+  const user = await createUser({
+    email: req.body.email,
+    password: await hashPassword(req.body.password),
+  });
+
+  return { id: user.id, email: user.email };
 });
 ```
 
@@ -178,18 +294,20 @@ app.get('/api/secrets/:id', async (req, res) => {
 app.get('/api/export', async (req, res) => {
   const data = await getLargeDataset();
 
-  const compressed = await workerTasks.compressData(JSON.stringify(data));
+  // Formats: 'gzip' (default), 'deflate', 'brotli'. Resolves to a Buffer.
+  const compressed = await workerTasks.compress(JSON.stringify(data));
 
   res.setHeader('Content-Encoding', 'gzip');
   res.setHeader('Content-Type', 'application/json');
   return compressed;
 });
 
-// Decompress data
+// Decompress data (here the client sends the gzip bytes base64-encoded in a JSON body)
 app.post('/api/import', async (req, res) => {
-  const decompressed = await workerTasks.decompressData(req.body.data);
+  // Takes a Buffer or Uint8Array and resolves to a Buffer
+  const decompressed = await workerTasks.decompress(Buffer.from(req.body.data, 'base64'));
 
-  const data = JSON.parse(decompressed);
+  const data = JSON.parse(decompressed.toString('utf8'));
   await importData(data);
 
   return { success: true, records: data.length };
@@ -199,19 +317,26 @@ app.post('/api/import', async (req, res) => {
 #### Heavy Computation
 
 ```typescript
-// Process complex calculation
+// Run the built-in CPU-bound routine: { iterations } resolves to { result, iterations }
 app.post('/api/calculate', async (req, res) => {
-  const result = await workerTasks.heavyComputation(req.body.operation, req.body.params);
+  const result = await workerTasks.heavyComputation({ iterations: 1_000_000 });
 
   return { result };
 });
 
-// Transform large JSON
+// Transform large JSON. The transformer is sent to the worker as source text:
+// it receives the whole value and cannot use anything defined outside its own
+// body. transformJSON requires the optional `isolated-vm` package
+// (npm install isolated-vm): the transformer runs inside an isolate with no
+// access to Node.js APIs. Without the package the call is rejected at once
+// with an error that names it, and the transformer is not run.
 app.post('/api/transform', async (req, res) => {
-  const transformed = await workerTasks.transformJSON(req.body.data, item => ({
-    ...item,
-    computed: expensiveTransform(item),
-  }));
+  const transformed = await workerTasks.transformJSON(req.body.data, (rows: any[]) =>
+    rows.map(row => ({
+      ...row,
+      total: row.price * row.quantity,
+    }))
+  );
 
   return transformed;
 });
@@ -219,7 +344,7 @@ app.post('/api/transform', async (req, res) => {
 
 ### Task Priority
 
-Control task execution order with priorities:
+Priority orders the tasks that are waiting for a worker. Each worker runs one task at a time; when every worker is busy, waiting tasks are dispatched highest priority first, and first in, first out within the same priority:
 
 ```typescript
 import { getWorkerManager } from '@morojs/moro';
@@ -230,7 +355,7 @@ const workers = getWorkerManager();
 await workers.executeTask({
   id: 'critical-task',
   type: 'crypto:hash',
-  data: { input: 'critical-data' },
+  data: { data: 'critical-data' },
   priority: 'high', // 'high' | 'normal' | 'low'
 });
 
@@ -238,7 +363,7 @@ await workers.executeTask({
 await workers.executeTask({
   id: 'normal-task',
   type: 'crypto:hash',
-  data: { input: 'normal-data' },
+  data: { data: 'normal-data' },
   priority: 'normal',
 });
 
@@ -246,7 +371,7 @@ await workers.executeTask({
 await workers.executeTask({
   id: 'background-task',
   type: 'crypto:hash',
-  data: { input: 'background-data' },
+  data: { data: 'background-data' },
   priority: 'low',
 });
 ```
@@ -258,8 +383,8 @@ Set timeout for long-running tasks:
 ```typescript
 await workers.executeTask({
   id: 'long-task',
-  type: 'heavy:computation',
-  data: { operation: 'complex-calculation' },
+  type: 'computation:heavy',
+  data: { iterations: 50_000_000 },
   timeout: 30000, // 30 seconds
 });
 ```
@@ -277,7 +402,13 @@ Main class for managing worker threads.
 ```typescript
 new WorkerManager(options?: {
   workerCount?: number;    // Number of workers (default: CPUs - 1)
-  maxQueueSize?: number;   // Max queued tasks (default: 1000)
+  maxQueueSize?: number;   // Max waiting tasks (default: 1000); beyond it executeTask rejects with 'Worker queue is full'
+  resourceLimits?: {       // V8 limits per worker, passed to new Worker() (default: not set)
+    maxOldGenerationSizeMb?: number;
+    maxYoungGenerationSizeMb?: number;
+    codeRangeSizeMb?: number;
+    stackSizeMb?: number;
+  };
 })
 ```
 
@@ -305,15 +436,18 @@ Get worker pool statistics.
 
 ```typescript
 getStats(): {
-  workers: number;
-  queueSize: number;
-  activeTasks: number;
+  workerCount: number; // live worker threads
+  busyWorkers: number; // workers with a dispatched task that has not settled
+  idleWorkers: number;
+  activeTasks: number; // submitted tasks that have not settled (queued + running)
+  queuedTasks: number; // tasks waiting for a worker
+  isShuttingDown: boolean;
 }
 ```
 
 ##### shutdown()
 
-Gracefully shutdown worker pool.
+Shut down the worker pool: tasks that have not settled are rejected with `Worker manager shutting down` and the threads are terminated. The manager stays shut down; the next `getWorkerManager()` call returns a new one.
 
 ```typescript
 await shutdown(): Promise<void>
@@ -326,37 +460,40 @@ Pre-configured task helpers for common operations.
 ```typescript
 import { workerTasks } from '@morojs/moro';
 
-// JWT operations
-workerTasks.verifyJWT(token, secret, options?): Promise<JWTResult>
+// JWT operations (require the `jsonwebtoken` package)
+workerTasks.verifyJWT(token, secret, options?): Promise<any> // decoded payload; rejects if invalid; HS256 unless options.algorithms
 workerTasks.signJWT(payload, secret, options?): Promise<string>
 
 // Cryptography
-workerTasks.hashData(input, algorithm): Promise<string>
-workerTasks.encryptData(data, key): Promise<string>
-workerTasks.decryptData(data, key): Promise<string>
+workerTasks.hash(data, algorithm?): Promise<string> // fast digest (default 'sha256') — not for passwords
+// Encryption has no helper: use the 'crypto:encrypt' / 'crypto:decrypt' task types
+// with executeTask (see Cryptographic Operations)
 
-// Compression
-workerTasks.compressData(data): Promise<Buffer>
-workerTasks.decompressData(data): Promise<string>
+// Compression: `format` is 'gzip' (default), 'deflate' or 'brotli'
+workerTasks.compress(data, { format? }): Promise<Buffer> // data: string | Buffer | Uint8Array
+// `maxOutputLength` caps the decompressed size in bytes (default 256 MiB);
+// larger output rejects with "Decompressed data exceeds the ... byte limit".
+workerTasks.decompress(data, { format?, maxOutputLength? }): Promise<Buffer> // data: Buffer | Uint8Array
 
 // Computation
-workerTasks.heavyComputation(operation, params): Promise<any>
-workerTasks.transformJSON(data, transformer): Promise<any>
+workerTasks.heavyComputation(data): Promise<any>
+workerTasks.transformJSON(data, transformer): Promise<any> // requires the `isolated-vm` package
 ```
 
 ### Global Helpers
 
 ```typescript
-import { getWorkerManager, executeOnWorker } from '@morojs/moro';
+import { createApp, getWorkerManager } from '@morojs/moro';
 
 // Get singleton worker manager
 const workers = getWorkerManager();
 
-// Execute task directly
-const result = await executeOnWorker({
+// Execute task directly from the app (runs on the same pool)
+const app = await createApp();
+const result = await app.executeOnWorker({
   id: 'task-1',
   type: 'crypto:hash',
-  data: { input: 'test' },
+  data: { data: 'test', algorithm: 'sha256' },
 });
 ```
 
@@ -375,6 +512,7 @@ const app = await createApp();
 app.post('/api/login', async (req, res) => {
   const user = await db.users.findOne({ email: req.body.email });
 
+  // verifyPassword: the scrypt + timingSafeEqual helper from "Password Hashing" above
   if (!user || !(await verifyPassword(req.body.password, user.password))) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
@@ -397,13 +535,15 @@ app.get('/api/profile', async (req, res) => {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  const result = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
-
-  if (!result.valid) {
+  // Resolves to the decoded payload, rejects if the token is invalid
+  let payload;
+  try {
+    payload = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
+  } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
 
-  const user = await db.users.findOne({ id: result.payload.userId });
+  const user = await db.users.findOne({ id: payload.userId });
   return user;
 });
 ```
@@ -415,67 +555,42 @@ app.get('/api/profile', async (req, res) => {
 app.get('/api/export', async (req, res) => {
   const data = await db.collection.find().toArray();
 
-  // Transform and compress on worker thread
-  const processed = await workerTasks.transformJSON(data, item => ({
-    id: item._id.toString(),
-    ...item,
-    exportedAt: new Date(),
-  }));
+  // Transform and compress on worker thread.
+  // The transformer receives the whole array and must be self-contained;
+  // transformJSON requires the optional `isolated-vm` package.
+  const processed = await workerTasks.transformJSON(data, (rows: any[]) =>
+    rows.map(row => ({
+      ...row,
+      exportedAt: Date.now(),
+    }))
+  );
 
-  const compressed = await workerTasks.compressData(JSON.stringify(processed));
+  const compressed = await workerTasks.compress(JSON.stringify(processed));
 
   res.setHeader('Content-Type', 'application/gzip');
   res.setHeader('Content-Disposition', 'attachment; filename="export.json.gz"');
   return compressed;
 });
 
-// Import with decompression
+// Import with decompression (the upload is sent as application/gzip, so req.body is a Buffer)
 app.post('/api/import', async (req, res) => {
   // Decompress on worker thread
-  const decompressed = await workerTasks.decompressData(req.body);
+  const decompressed = await workerTasks.decompress(req.body);
 
-  const data = JSON.parse(decompressed);
+  const data = JSON.parse(decompressed.toString('utf8'));
 
   // Validate and transform
-  const validated = await workerTasks.transformJSON(data, item => ({
-    ...item,
-    importedAt: new Date(),
-    status: 'active',
-  }));
+  const validated = await workerTasks.transformJSON(data, (rows: any[]) =>
+    rows.map(row => ({
+      ...row,
+      importedAt: Date.now(),
+      status: 'active',
+    }))
+  );
 
   await db.collection.insertMany(validated);
 
   return { success: true, imported: validated.length };
-});
-```
-
-### Image Processing
-
-```typescript
-// Resize image on worker thread
-app.post('/api/images/resize', async (req, res) => {
-  const result = await workerTasks.heavyComputation('image:resize', {
-    image: req.body.image,
-    width: req.body.width,
-    height: req.body.height,
-  });
-
-  return { image: result };
-});
-
-// Generate thumbnails
-app.post('/api/images/thumbnails', async (req, res) => {
-  const tasks = req.body.images.map((image, i) => ({
-    id: `thumbnail-${i}`,
-    type: 'image:thumbnail',
-    data: { image, size: 150 },
-    priority: 'normal',
-  }));
-
-  const workers = getWorkerManager();
-  const thumbnails = await Promise.all(tasks.map(task => workers.executeTask(task)));
-
-  return { thumbnails };
 });
 ```
 
@@ -494,19 +609,29 @@ app.post('/api/analytics/process', async (req, res) => {
     batches.push(events.slice(i, i + batchSize));
   }
 
-  const workers = getWorkerManager();
+  // Count events per type, one batch per worker task.
+  // transformJSON requires the optional `isolated-vm` package.
   const results = await Promise.all(
-    batches.map((batch, i) =>
-      workers.executeTask({
-        id: `analytics-batch-${i}`,
-        type: 'analytics:process',
-        data: { events: batch },
-        priority: 'low', // Background processing
-      })
+    batches.map(batch =>
+      workerTasks.transformJSON(batch, (rows: any[]) =>
+        rows.reduce(
+          (counts, event) => {
+            counts[event.type] = (counts[event.type] || 0) + 1;
+            return counts;
+          },
+          {} as Record<string, number>
+        )
+      )
     )
   );
 
-  const aggregated = results.reduce((acc, r) => ({ ...acc, ...r }), {});
+  // Merge the per-batch counts
+  const aggregated: Record<string, number> = {};
+  for (const counts of results) {
+    for (const [type, count] of Object.entries<number>(counts)) {
+      aggregated[type] = (aggregated[type] || 0) + count;
+    }
+  }
 
   return { processed: events.length, results: aggregated };
 });
@@ -557,11 +682,14 @@ Worker threads use additional memory per worker:
 
 - **Base overhead**: ~10MB per worker
 - **Task data**: Varies by task
+- **Heap ceiling**: each worker can grow to the same heap limit as the main thread unless `resourceLimits` is set (see [Memory limits per worker](#memory-limits-per-worker))
 - **Recommended**: Leave 1 CPU core for main thread
 
 ```typescript
 // Optimal configuration
-const cpuCount = require('os').cpus().length;
+import { cpus } from 'node:os';
+
+const cpuCount = cpus().length;
 
 const workers = new WorkerManager({
   workerCount: Math.max(1, cpuCount - 1), // Leave 1 for main thread
@@ -577,8 +705,8 @@ const workers = new WorkerManager({
 
 ```typescript
 // ✅ Good: CPU-intensive
-await workerTasks.hashData(password, 'sha256');
-await workerTasks.compressData(largeData);
+await workerTasks.hash(fileContents, 'sha256'); // checksum — passwords use scrypt, see Password Hashing
+await workerTasks.compress(largeData);
 await workerTasks.heavyComputation(complexCalc);
 
 // ❌ Bad: I/O operations (already non-blocking)
@@ -591,22 +719,25 @@ await fetch('https://api.example.com'); // Already non-blocking
 ```typescript
 // High priority: User-facing operations
 await workers.executeTask({
+  id: 'verify-1',
   type: 'jwt:verify',
-  data: { token },
+  data: { token, secret: process.env.JWT_SECRET },
   priority: 'high',
 });
 
 // Normal priority: Regular operations
 await workers.executeTask({
+  id: 'hash-1',
   type: 'crypto:hash',
-  data: { input },
+  data: { data: input, algorithm: 'sha256' },
   priority: 'normal',
 });
 
 // Low priority: Background tasks
 await workers.executeTask({
-  type: 'analytics:process',
-  data: { events },
+  id: 'background-1',
+  type: 'computation:heavy',
+  data: { iterations: 50_000_000 },
   priority: 'low',
 });
 ```
@@ -617,12 +748,13 @@ await workers.executeTask({
 try {
   const result = await workers.executeTask({
     id: 'task-1',
-    type: 'heavy:computation',
-    data: { operation: 'complex' },
+    type: 'computation:heavy',
+    data: { iterations: 50_000_000 },
     timeout: 10000, // 10 seconds
   });
 } catch (error) {
-  if (error.message.includes('timeout')) {
+  // A timed-out task rejects with "Task <id> timed out"
+  if (error.message.includes('timed out')) {
     console.error('Task timed out');
     return res.status(504).json({ error: 'Processing timeout' });
   }
@@ -637,7 +769,7 @@ try {
 const tasks = items.map((item, i) => ({
   id: `task-${i}`,
   type: 'crypto:hash',
-  data: { input: item.password },
+  data: { data: item.content, algorithm: 'sha256' },
   priority: 'normal',
 }));
 
@@ -652,11 +784,11 @@ const results = await Promise.all(tasks.map(task => workers.executeTask(task)));
 setInterval(() => {
   const stats = workers.getStats();
 
-  if (stats.queueSize > 500) {
+  if (stats.queuedTasks > 500) {
     console.warn('Worker queue is getting large:', stats);
   }
 
-  if (stats.activeTasks === stats.workers) {
+  if (stats.idleWorkers === 0) {
     console.log('All workers are busy');
   }
 }, 10000);
@@ -685,29 +817,6 @@ process.on('SIGTERM', async () => {
 
 ## Advanced Usage
 
-### Custom Worker Tasks
-
-Create custom tasks by extending the worker implementation:
-
-```typescript
-// Define custom task type
-const CUSTOM_TASKS = {
-  IMAGE_RESIZE: 'custom:image-resize',
-  PDF_GENERATE: 'custom:pdf-generate',
-};
-
-// Execute custom task
-await workers.executeTask({
-  id: 'custom-1',
-  type: CUSTOM_TASKS.IMAGE_RESIZE,
-  data: {
-    image: imageBuffer,
-    width: 800,
-    height: 600,
-  },
-});
-```
-
 ### Task Queue Management
 
 ```typescript
@@ -718,7 +827,7 @@ const workers = getWorkerManager();
 // Check queue before adding tasks
 const stats = workers.getStats();
 
-if (stats.queueSize < 800) {
+if (stats.queuedTasks < 800) {
   // Queue has capacity
   await workers.executeTask(task);
 } else {
@@ -735,7 +844,7 @@ if (stats.queueSize < 800) {
 // Adjust workers based on load
 function adjustWorkers(load: number) {
   const optimal = Math.ceil(load / 100);
-  const cpuCount = require('os').cpus().length;
+  const cpuCount = cpus().length; // import { cpus } from 'node:os'
   const workerCount = Math.min(optimal, cpuCount - 1);
 
   return new WorkerManager({ workerCount });
@@ -758,15 +867,16 @@ try {
   const result = await workers.executeTask({
     id: 'task-1',
     type: 'crypto:hash',
-    data: { input: 'test' },
+    data: { data: 'test', algorithm: 'sha256' },
   });
 } catch (error) {
-  if (error.code === 'WORKER_ERROR') {
-    console.error('Worker task failed:', error.message);
-  } else if (error.code === 'QUEUE_FULL') {
+  // Worker errors are plain Error objects: tell them apart by message
+  if (error.message === 'Worker queue is full') {
     console.error('Worker queue is full');
-  } else if (error.code === 'TIMEOUT') {
+  } else if (error.message.endsWith('timed out')) {
     console.error('Task timed out');
+  } else {
+    console.error('Worker task failed:', error.message);
   }
 
   throw error;
@@ -787,11 +897,13 @@ try {
 2. Limit queue size
 3. Process smaller batches
 4. Add task timeouts
+5. Cap each worker's heap with `resourceLimits`
 
 ```typescript
 const workers = new WorkerManager({
   workerCount: 2, // Reduce workers
   maxQueueSize: 500, // Limit queue
+  resourceLimits: { maxOldGenerationSizeMb: 512 }, // A worker that reaches it is replaced
 });
 ```
 
@@ -807,15 +919,16 @@ const workers = new WorkerManager({
 
 ```typescript
 await workers.executeTask({
-  type: 'heavy:computation',
-  data: { operation: 'complex' },
+  id: 'long-task',
+  type: 'computation:heavy',
+  data: { iterations: 50_000_000 },
   timeout: 30000, // Increase timeout
 });
 ```
 
 ### Queue Overflow
 
-**Symptoms:** Queue size exceeds limit
+**Symptoms:** `executeTask` rejects with `Worker queue is full`
 
 **Solutions:**
 
@@ -824,9 +937,10 @@ await workers.executeTask({
 3. Implement backpressure
 
 ```typescript
+const MAX_QUEUE_SIZE = 1000; // the maxQueueSize the pool was created with
 const stats = workers.getStats();
 
-if (stats.queueSize >= stats.maxQueueSize * 0.8) {
+if (stats.queuedTasks >= MAX_QUEUE_SIZE * 0.8) {
   // Queue is 80% full - implement backpressure
   return res.status(503).json({
     error: 'Service busy',
@@ -846,17 +960,16 @@ if (stats.queueSize >= stats.maxQueueSize * 0.8) {
 3. Monitor worker health
 
 ```typescript
-// Validate task data
-if (!task.data || !task.data.input) {
+// Validate task data before submitting it (here: a 'crypto:hash' task)
+if (!task.data || typeof task.data.data !== 'string') {
   throw new Error('Invalid task data');
 }
 
-// Monitor worker health
+// Monitor worker health (a crashed worker is restarted automatically)
 setInterval(() => {
   const stats = workers.getStats();
-  if (stats.workers === 0) {
-    console.error('All workers crashed!');
-    // Restart workers
+  if (stats.workerCount === 0) {
+    console.error('No live workers!');
   }
 }, 5000);
 ```
@@ -869,9 +982,33 @@ setInterval(() => {
 
 ```typescript
 import { createApp, workerTasks } from '@morojs/moro';
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { z } from 'zod';
 
 const app = await createApp();
+
+// Passwords: salted scrypt + constant-time compare (see "Password Hashing").
+// crypto.scrypt runs on the libuv thread pool, so it needs no worker task.
+const scryptAsync = promisify(scrypt);
+const KEY_LENGTH = 64;
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = (await scryptAsync(password, salt, KEY_LENGTH)) as Buffer;
+  return `${salt.toString('hex')}:${key.toString('hex')}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [saltHex, keyHex] = stored.split(':');
+  if (!saltHex || !keyHex) return false;
+
+  const expected = Buffer.from(keyHex, 'hex');
+  if (expected.length !== KEY_LENGTH) return false;
+
+  const actual = (await scryptAsync(password, Buffer.from(saltHex, 'hex'), KEY_LENGTH)) as Buffer;
+  return timingSafeEqual(actual, expected);
+}
 
 // Registration with password hashing
 app
@@ -883,8 +1020,8 @@ app
     })
   )
   .handler(async (req, res) => {
-    // Hash password on worker thread
-    const hash = await workerTasks.hashData(req.body.password, 'sha256');
+    // Salted scrypt hash (off the event loop via the libuv thread pool)
+    const hash = await hashPassword(req.body.password);
 
     const user = await db.users.create({
       email: req.body.email,
@@ -915,10 +1052,8 @@ app
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password on worker thread
-    const hash = await workerTasks.hashData(req.body.password, 'sha256');
-
-    if (hash !== user.password) {
+    // Verify against the stored scrypt hash in constant time
+    if (!(await verifyPassword(req.body.password, user.password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -938,14 +1073,15 @@ app.get('/api/profile', async (req, res) => {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  // Verify on worker thread
-  const result = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
-
-  if (!result.valid) {
+  // Verify on worker thread (resolves to the decoded payload, rejects if invalid)
+  let payload;
+  try {
+    payload = await workerTasks.verifyJWT(token, process.env.JWT_SECRET);
+  } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
 
-  const user = await db.users.findOne({ id: result.payload.userId });
+  const user = await db.users.findOne({ id: payload.userId });
   return user;
 });
 

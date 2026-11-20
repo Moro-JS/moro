@@ -14,8 +14,13 @@ import { UnifiedRouter } from './unified-router.js';
 export class Router {
   private logger = createFrameworkLogger('Router');
 
-  // Delegate to shared UnifiedRouter singleton for actual routing
-  private unifiedRouter = UnifiedRouter.getInstance();
+  // The router that does the actual routing: the one given, else the current
+  // app's
+  private unifiedRouter: UnifiedRouter;
+
+  constructor(unifiedRouter?: UnifiedRouter) {
+    this.unifiedRouter = unifiedRouter ?? UnifiedRouter.getInstance();
+  }
 
   // Maintain route definitions for backward compatibility (getRoutes())
   private routes: RouteDefinition[] = [];

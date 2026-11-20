@@ -29,20 +29,59 @@ export function extractTokenFromMetadata(metadata: GrpcMetadata): string | null 
 }
 
 /**
+ * Normalise a roles/permissions value to a list of strings.
+ * An array is kept as is (string elements only); a string is split on commas
+ * and whitespace; anything else is an empty list.
+ */
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof value === 'string') {
+    return value.split(/[\s,]+/).filter(Boolean);
+  }
+  return [];
+}
+
+/**
  * gRPC authentication middleware
- * Verifies JWT tokens from gRPC metadata
+ * Verifies bearer tokens from gRPC metadata with the supplied `verify`
+ * function. `verify` must resolve to the authenticated user; a falsy result
+ * or a rejection denies the call.
+ *
+ * Token verification from `secret` alone is not implemented: without a
+ * `verify` function no token can be checked, so every call that needs or
+ * presents a token is rejected as UNAUTHENTICATED.
  */
 export function grpcAuth(options: {
   secret?: string;
   verify?: (token: string) => Promise<any>;
   required?: boolean;
 }) {
+  const verify = typeof options?.verify === 'function' ? options.verify : null;
+
+  // Fail closed when there is nothing to verify a token with
+  let misconfiguration: string | null = null;
+  if (!verify) {
+    if (options?.secret) {
+      misconfiguration =
+        'grpcAuth: verification from `secret` is not implemented; supply a `verify` function. ' +
+        'Calls are rejected as UNAUTHENTICATED until one is configured.';
+      logger.error(misconfiguration, 'Auth');
+    } else {
+      misconfiguration =
+        'grpcAuth: no `verify` function configured; tokens cannot be verified. ' +
+        'Calls are rejected as UNAUTHENTICATED until one is configured.';
+      logger.warn(misconfiguration, 'Auth');
+    }
+  }
+
   return async (call: GrpcCall, callback?: GrpcCallback) => {
     try {
       const token = extractTokenFromMetadata(call.metadata);
 
       if (!token) {
-        if (options.required !== false) {
+        if (options?.required !== false) {
           const error: any = new Error('Unauthenticated: No token provided');
           error.code = 16; // UNAUTHENTICATED
           throw error;
@@ -50,16 +89,20 @@ export function grpcAuth(options: {
         return;
       }
 
-      // Verify token
-      let user: any;
+      if (!verify) {
+        logger.error(misconfiguration as string, 'Auth');
+        const error: any = new Error('Unauthenticated: Token verification is not configured');
+        error.code = 16; // UNAUTHENTICATED
+        throw error;
+      }
 
-      if (options.verify) {
-        user = await options.verify(token);
-      } else if (options.secret) {
-        // Simple JWT verification (requires jsonwebtoken package)
-        // This is a placeholder - full implementation would use jwt library
-        logger.warn('Token verification not fully implemented', 'Auth');
-        user = { token };
+      // Verify token
+      const user = await verify(token);
+
+      if (!user) {
+        const error: any = new Error('Unauthenticated: Invalid token');
+        error.code = 16; // UNAUTHENTICATED
+        throw error;
       }
 
       // Attach user to call context
@@ -105,7 +148,9 @@ export function grpcRequirePermission(permission: string | string[]) {
     }
 
     const requiredPermissions = Array.isArray(permission) ? permission : [permission];
-    const userPermissions = user.permissions || [];
+    // Exact match only: a string value is split into a list first, so one
+    // permission name can never satisfy another that merely contains it.
+    const userPermissions = toStringList(user.permissions);
 
     const hasPermission = requiredPermissions.some((perm: string) =>
       userPermissions.includes(perm)
@@ -147,7 +192,8 @@ export function grpcRequireRole(role: string | string[]) {
     }
 
     const requiredRoles = Array.isArray(role) ? role : [role];
-    const userRoles = user.roles || [user.role];
+    // Exact match only (see grpcRequirePermission)
+    const userRoles = toStringList(user.roles || [user.role]);
 
     const hasRole = requiredRoles.some((r: string) => userRoles.includes(r));
 

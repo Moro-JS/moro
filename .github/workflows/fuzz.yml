@@ -36,10 +36,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -51,26 +51,52 @@ jobs:
 
       # A new seed each night; deterministic within a run so a failure is
       # reproducible from the value echoed below.
-      - name: Choose seed
+      #
+      # The workflow_dispatch inputs are free-form strings, so they are passed in
+      # through `env:` (never interpolated into the script text, where they would
+      # be parsed as shell) and must be plain decimal integers before any use.
+      - name: Choose seed and validate inputs
         id: seed
+        shell: bash
+        env:
+          INPUT_SEED: ${{ inputs.seed }}
+          INPUT_RUNS: ${{ inputs.runs }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [ -n "${{ inputs.seed }}" ]; then
-            SEED="${{ inputs.seed }}"
+          if [ -n "${INPUT_SEED}" ]; then
+            if [[ ! "${INPUT_SEED}" =~ ^[0-9]+$ ]]; then
+              echo "::error::Input 'seed' must be a decimal integer (^[0-9]+$)."
+              exit 1
+            fi
+            SEED="${INPUT_SEED}"
           else
-            SEED=$(( ${{ github.run_number }} * 2654435761 % 2147483647 ))
+            SEED=$(( RUN_NUMBER * 2654435761 % 2147483647 ))
           fi
-          echo "value=$SEED" >> "$GITHUB_OUTPUT"
-          echo "Fuzzing with MORO_FUZZ_SEED=$SEED"
+
+          # Scheduled runs have no inputs; fall back to the dispatch default.
+          RUNS="${INPUT_RUNS:-500000}"
+          if [[ ! "${RUNS}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Input 'runs' must be a decimal integer (^[0-9]+$)."
+            exit 1
+          fi
+
+          echo "value=${SEED}" >> "$GITHUB_OUTPUT"
+          echo "runs=${RUNS}" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing with MORO_FUZZ_SEED=${SEED} MORO_FUZZ_RUNS=${RUNS}"
 
       - name: Run deep fuzz
         run: npx jest --testPathPatterns=fuzz --testTimeout=1800000
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           MORO_FUZZ_SEED: ${{ steps.seed.outputs.value }}
-          MORO_FUZZ_RUNS: ${{ inputs.runs || '500000' }}
+          MORO_FUZZ_RUNS: ${{ steps.seed.outputs.runs }}
 
+      # Only the validated values from the seed step are echoed, again via env.
       - name: Report reproduction command on failure
-        if: failure()
+        if: failure() && steps.seed.outputs.value != ''
+        env:
+          FUZZ_SEED: ${{ steps.seed.outputs.value }}
+          FUZZ_RUNS: ${{ steps.seed.outputs.runs }}
         run: |
           echo "::error::Fuzz failure. Reproduce with:"
-          echo "::error::MORO_FUZZ_SEED=${{ steps.seed.outputs.value }} MORO_FUZZ_RUNS=${{ inputs.runs || '500000' }} npm run test:fuzz"
+          echo "::error::MORO_FUZZ_SEED=${FUZZ_SEED} MORO_FUZZ_RUNS=${FUZZ_RUNS} npm run test:fuzz"

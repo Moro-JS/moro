@@ -6,6 +6,8 @@ import { DiscoveryOptions } from '../../types/discovery.js';
 import { ModuleDefaultsConfig } from '../../types/config.js';
 import { createFrameworkLogger } from '../logger/index.js';
 import { filePathToImportURL } from '../utilities/package-utils.js';
+import { foundThroughWorkingDirectory } from '../utilities/working-directory.js';
+import { compareNames, findModuleFiles, matchesModulePattern } from './module-files.js';
 
 export class ModuleDiscovery {
   private baseDir: string;
@@ -57,7 +59,8 @@ export class ModuleDiscovery {
         return modules;
       }
 
-      const items = readdirSync(fullPath);
+      // In the order of the names, whatever order the directory lists them in
+      const items = readdirSync(fullPath).sort(compareNames);
 
       for (const item of items) {
         const itemPath = join(fullPath, item);
@@ -116,7 +119,7 @@ export class ModuleDiscovery {
   // Recursively scan directories for module files
   private scanDirectory(dir: string, files: string[]): void {
     try {
-      const items = readdirSync(dir);
+      const items = readdirSync(dir).sort(compareNames);
 
       for (const item of items) {
         const fullPath = join(dir, item);
@@ -218,7 +221,11 @@ export class ModuleDiscovery {
     config: ModuleDefaultsConfig['autoDiscovery']
   ): Promise<ModuleConfig[]> {
     const modules: ModuleConfig[] = [];
-    const fullPath = join(this.baseDir, searchPath);
+    // An absolute path is the directory itself, wherever the process was
+    // started; a relative one is looked up from the base directory (the
+    // working directory unless the caller gave another)
+    const pinned = isAbsolute(searchPath);
+    const fullPath = pinned ? searchPath : join(this.baseDir, searchPath);
 
     try {
       const stat = statSync(fullPath);
@@ -230,8 +237,19 @@ export class ModuleDiscovery {
       return modules;
     }
 
+    this.discoveryLogger.debug(`Scanning for modules in ${fullPath}`, 'MODULE_DISCOVERY');
+    if (!pinned) {
+      foundThroughWorkingDirectory(
+        this.discoveryLogger,
+        'module directory',
+        fullPath,
+        this.baseDir,
+        'give modules.autoDiscovery.paths absolute paths'
+      );
+    }
+
     try {
-      const files = await this.findMatchingFilesWithGlob(
+      const files = this.findDiscoveryFiles(
         fullPath,
         config.patterns,
         config.ignorePatterns,
@@ -275,155 +293,24 @@ export class ModuleDiscovery {
     return modules;
   }
 
-  // Find files matching patterns with ignore support
-  private findMatchingFiles(
-    basePath: string,
-    config: ModuleDefaultsConfig['autoDiscovery'],
-    currentDepth: number = 0
+  // The files of one scanned directory that discovery loads, as paths relative
+  // to the base directory, in load order. The patterns are matched against
+  // the path below the scanned directory and the result is ordered by that
+  // path (module-files.ts has the rules); an ignore pattern is then tested
+  // against each file's path relative to the base directory. The same walk
+  // runs on every Node.js version, in and out of CI.
+  private findDiscoveryFiles(
+    scanned: string,
+    patterns: string[],
+    ignorePatterns: string[],
+    maxDepth: number
   ): string[] {
-    const files: string[] = [];
-
-    if (currentDepth >= config.maxDepth) {
-      return files;
-    }
-
-    try {
-      const items = readdirSync(basePath);
-
-      for (const item of items) {
-        const fullPath = join(basePath, item);
-        const relativePath = relative(this.baseDir, fullPath);
-
-        // Check ignore patterns
-        if (this.shouldIgnore(relativePath, config.ignorePatterns)) {
-          continue;
-        }
-
-        const stat = statSync(fullPath);
-
-        if (stat.isDirectory() && config.recursive) {
-          files.push(...this.findMatchingFiles(fullPath, config, currentDepth + 1));
-        } else if (stat.isFile()) {
-          // Check if file matches any pattern
-          if (this.matchesPatterns(relativePath, config.patterns)) {
-            files.push(fullPath);
-          }
-        }
-      }
-    } catch {
-      // Directory not accessible, skip
-    }
-
-    return files;
+    return findModuleFiles(scanned, patterns, { maxDepth })
+      .map(below => relative(this.baseDir, join(scanned, below)))
+      .filter(file => !this.shouldIgnore(file, ignorePatterns));
   }
 
-  // Use native Node.js glob to find matching files
-  private async findMatchingFilesWithGlob(
-    searchPath: string,
-    patterns: string[],
-    ignorePatterns: string[],
-    maxDepth: number = 5
-  ): Promise<string[]> {
-    // Force fallback in CI environments or if Node.js version is uncertain
-    const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
-
-    if (isCI) {
-      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
-    }
-
-    const allFiles: string[] = [];
-
-    try {
-      // Try to use native fs.glob if available (Node.js 20+)
-      const { glob } = await import('fs/promises');
-
-      // Check if glob is actually a function and test it
-      if (typeof glob !== 'function') {
-        return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
-      }
-
-      // Test glob with a simple pattern first
-      try {
-        const testIterator = glob(join(searchPath, '*'));
-        let testCount = 0;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        for await (const _ of testIterator) {
-          testCount++;
-          if (testCount > 0) break; // Just test that it works
-        }
-      } catch {
-        return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
-      }
-
-      for (const pattern of patterns) {
-        const fullPattern = join(searchPath, pattern);
-        try {
-          // fs.glob returns an AsyncIterator, need to collect results
-          const globIterator = glob(fullPattern);
-          const files: string[] = [];
-
-          for await (const file of globIterator) {
-            const filePath = typeof file === 'string' ? file : (file as any).name || String(file);
-            const relativePath = relative(this.baseDir, filePath);
-
-            // Check if file should be ignored and within max depth
-            if (
-              !this.shouldIgnore(relativePath, ignorePatterns) &&
-              this.isWithinMaxDepth(relativePath, searchPath, maxDepth)
-            ) {
-              files.push(relativePath);
-            }
-          }
-
-          allFiles.push(...files);
-        } catch (error) {
-          // If any glob call fails, fall back to manual discovery
-          this.discoveryLogger.warn(`Glob pattern failed: ${pattern}`, String(error));
-          return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
-        }
-      }
-    } catch {
-      // fs.glob not available, fall back to manual file discovery
-      this.discoveryLogger.debug('Native fs.glob not available, using fallback');
-      return this.findMatchingFilesFallback(searchPath, patterns, ignorePatterns, maxDepth);
-    }
-
-    return [...new Set(allFiles)]; // Remove duplicates
-  }
-
-  // Fallback for Node.js versions without fs.glob
-  private async findMatchingFilesFallback(
-    searchPath: string,
-    patterns: string[],
-    ignorePatterns: string[],
-    maxDepth: number = 5
-  ): Promise<string[]> {
-    const config = {
-      patterns,
-      ignorePatterns,
-      maxDepth,
-      recursive: true,
-    } as ModuleDefaultsConfig['autoDiscovery'];
-
-    // Handle both absolute and relative paths
-    const fullSearchPath = isAbsolute(searchPath) ? searchPath : join(this.baseDir, searchPath);
-
-    // Check if search path exists
-    try {
-      const { access } = await import('fs/promises');
-      await access(fullSearchPath);
-    } catch {
-      return [];
-    }
-
-    // Get files and convert to relative paths
-    const files = this.findMatchingFiles(fullSearchPath, config);
-    const relativeFiles = files.map(file => relative(this.baseDir, file));
-
-    return relativeFiles;
-  }
-
-  // Simple pattern matching for fallback (basic glob support)
+  // The matching of ignore patterns, kept as it has always been
   private matchesSimplePattern(path: string, pattern: string): boolean {
     try {
       // Normalize path separators
@@ -453,19 +340,6 @@ export class ModuleDiscovery {
   // Check if path should be ignored
   private shouldIgnore(path: string, ignorePatterns: string[]): boolean {
     return ignorePatterns.some(pattern => this.matchesSimplePattern(path, pattern));
-  }
-
-  // Check if path matches any of the patterns
-  private matchesPatterns(path: string, patterns: string[]): boolean {
-    return patterns.some(pattern => this.matchesSimplePattern(path, pattern));
-  }
-
-  // Check if file is within max depth (for glob results)
-  private isWithinMaxDepth(relativePath: string, searchPath: string, maxDepth: number): boolean {
-    // Count directory separators to determine depth
-    const pathFromSearch = relative(searchPath, join(this.baseDir, relativePath));
-    const depth = pathFromSearch.split('/').length - 1; // -1 because file itself doesn't count as depth
-    return depth <= maxDepth;
   }
 
   // Remove duplicate modules
@@ -623,7 +497,7 @@ export class ModuleDiscovery {
 
         // Watch all configured paths
         config.paths.forEach(searchPath => {
-          const fullPath = join(this.baseDir, searchPath);
+          const fullPath = isAbsolute(searchPath) ? searchPath : join(this.baseDir, searchPath);
 
           try {
             if (statSync(fullPath).isDirectory() && !watchedPaths.has(fullPath)) {
@@ -633,7 +507,7 @@ export class ModuleDiscovery {
                 fullPath,
                 { recursive: config.recursive },
                 (eventType: string, filename: string | null) => {
-                  if (!filename || !this.matchesPatterns(filename, config.patterns)) return;
+                  if (!filename || !matchesModulePattern(filename, config.patterns)) return;
                   void (async () => {
                     this.discoveryLogger.info(`Module file changed: ${filename}`);
                     const modules = await this.discoverModulesAdvanced(config);

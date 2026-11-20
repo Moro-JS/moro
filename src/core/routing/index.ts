@@ -43,6 +43,21 @@ export interface AuthConfig {
   roles?: string[];
   permissions?: string[];
   optional?: boolean;
+  /**
+   * Sign-in is required, which it already is unless `optional` is true. With
+   * a `validator` it makes a denial of a request that has no authenticated
+   * user a 401 instead of a 403. `required: false` does not make sign-in
+   * optional: use `optional: true`.
+   */
+  required?: boolean;
+  /**
+   * A check of this request beyond roles and permissions (for example that
+   * the signed-in user owns the record named in the path). Called with the
+   * request after the sign-in, role and permission checks; may return a
+   * promise. A falsy result or a throw denies the request: 403, or 401 when
+   * the request has no authenticated user and `required` is true.
+   */
+  validator?: (req: HttpRequest) => unknown;
 }
 
 export interface RateLimitConfig {
@@ -53,9 +68,13 @@ export interface RateLimitConfig {
 }
 
 export interface CacheConfig {
-  ttl: number;
-  key?: string;
+  /** Seconds a stored response is served for. Left out: `modules.cache.defaultTtl`. */
+  ttl?: number;
+  /** A fixed key, or a function of the request. Used exactly as given. */
+  key?: string | ((req: HttpRequest) => string);
   tags?: string[];
+  /** The response is identical for every signed-in user; share one entry. */
+  shared?: boolean;
 }
 
 export interface MiddlewarePhases {
@@ -90,8 +109,8 @@ export const EXECUTION_PHASES = [
   'auth',
   'validation',
   'transform',
-  'cache',
   'after',
+  'cache',
   'handler',
 ] as const;
 
@@ -144,14 +163,19 @@ export interface CompiledRoute {
  */
 export class IntelligentRouteBuilder implements RouteBuilder {
   private schema: Partial<RouteSchema>;
-  private router = UnifiedRouter.getInstance();
+  private router: UnifiedRouter;
 
-  constructor(method: HttpMethod, path: string) {
+  /**
+   * @param router The router the route is registered on. Left out, it is the
+   *   current app's (see createRoute).
+   */
+  constructor(method: HttpMethod, path: string, router?: UnifiedRouter) {
     this.schema = {
       method,
       path,
       middleware: {} as MiddlewarePhases,
     };
+    this.router = router ?? UnifiedRouter.getInstance();
   }
 
   validate(config: ValidationConfig): RouteBuilder {
@@ -289,9 +313,15 @@ export class IntelligentRouteBuilder implements RouteBuilder {
  * Just stores schema for documentation purposes
  */
 export class ExecutableRoute implements CompiledRoute {
-  constructor(public readonly schema: RouteSchema) {
-    // Register with UnifiedRouter
-    UnifiedRouter.getInstance().registerRoute(schema);
+  /**
+   * @param router The router the route is registered on. Left out, it is the
+   *   current app's (see defineRoute).
+   */
+  constructor(
+    public readonly schema: RouteSchema,
+    router?: UnifiedRouter
+  ) {
+    (router ?? UnifiedRouter.getInstance()).registerRoute(schema);
   }
 
   async execute(_req: HttpRequest, _res: HttpResponse): Promise<void> {
@@ -305,10 +335,20 @@ export class ExecutableRoute implements CompiledRoute {
 
 // ===== FACTORY FUNCTIONS (Backward Compatibility) =====
 
+/**
+ * A route builder that is not called on an app. The route is registered on
+ * the current app: the one whose route files are being loaded
+ * (`app.loadRoutes`, file-based routing), otherwise the app created most
+ * recently that has not been closed. Called before any app exists, the route
+ * waits and the first app created serves it. With several apps in a process,
+ * register on the app itself (`app.get(path)`, `app.route(schema)`) wherever
+ * the app is at hand: that never depends on which app is current.
+ */
 export function createRoute(method: HttpMethod, path: string): RouteBuilder {
   return new IntelligentRouteBuilder(method, path);
 }
 
+/** Schema-first form of createRoute(): registered on the current app. */
 export function defineRoute(schema: RouteSchema): CompiledRoute {
   return new ExecutableRoute(schema);
 }

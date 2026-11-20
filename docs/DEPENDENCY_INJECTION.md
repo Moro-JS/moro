@@ -193,12 +193,27 @@ container.register(
     };
   },
   true
-); // true = singleton
+); // true = singleton, which is also what you get without it
 
 // Resolve and use the service
 const logger = container.resolve('logger');
 logger.log('Hello from DI!');
 ```
+
+A service registered with `container.register(name, factory)` is a singleton: the factory runs once, on the first `resolve`, and every later `resolve` returns that instance, however many services the container holds. The optional third argument names the lifetime:
+
+```typescript
+// One instance for the app: the default, the same as `true` or { lifetime: 'singleton' }
+container.register('settings', () => ({ startedAt: Date.now() }));
+
+// A new instance on every resolve
+container.register('requestId', () => crypto.randomUUID(), { lifetime: 'transient' });
+
+container.resolve('settings') === container.resolve('settings'); // true
+container.resolve('requestId') === container.resolve('requestId'); // false
+```
+
+The third argument may still be a boolean. `true` registers a singleton, and so does `false`: a boolean never makes a service transient, and the container logs one warning the first time it is given `false`. Write `{ lifetime: 'transient' }` when you want a new instance on every resolve.
 
 ### Class-Based Services
 
@@ -252,7 +267,7 @@ container
 
 ### 2. Transient
 
-New instance created every time it's requested.
+New instance created every time it's resolved, through the basic container (`container.resolve()`) or the enhanced one (`enhanced.resolve()`, `enhanced.resolveSync()` or a typed reference).
 
 ```typescript
 container
@@ -261,42 +276,59 @@ container
   .factory(() => crypto.randomUUID())
   .transient()
   .build();
+
+// The same lifetime through the basic container
+container.register('traceId', () => crypto.randomUUID(), { lifetime: 'transient' });
 ```
 
 **Use case:** Request-specific data, unique identifiers, temporary objects.
 
+**Transient is never the default.** A service registered without a lifetime (`container.register(name, factory)`, or a builder chain with no scope call) is a singleton. Ask for a transient service by name: `{ lifetime: 'transient' }` on the basic container, `.transient()` on the builder, or `enhanced.transient(name, factory)`.
+
 ### 3. Request Scope
 
-One instance per HTTP request.
+One instance per `requestId` in the context you pass to `enhanced.resolve()`.
 
 ```typescript
 container
   .getEnhanced()
   .register('requestContext')
   .factory((deps, context) => ({
-    userId: context?.userId,
+    requestId: context?.requestId,
     timestamp: Date.now(),
   }))
-  .scoped('request')
+  .requestScoped()
   .build();
 ```
 
 **Use case:** Request-scoped services, user context, per-request state.
 
+The container does not know about HTTP requests: the request id is the one you pass (see [Request Context](#request-context)).
+
+- Resolved without a `requestId` (no context, or `container.resolve(name)`), a request-scoped service is one instance shared by every such caller. A warning is logged the first time this happens for a service.
+- The instances of a request are kept until you call `enhanced.clearRequestScope(requestId)`. The framework does not call it when a response ends; scopes left behind are removed after 30 minutes without use.
+
 ### 4. Module Scope
 
-One instance per module.
+One instance per `moduleId` in the context you pass to `enhanced.resolve()`.
 
 ```typescript
 container
   .getEnhanced()
   .register('moduleCache')
   .factory(() => new Map())
-  .scoped('module')
+  .moduleScoped()
   .build();
+
+// Each module id gets its own instance
+const userCache = await container.getEnhanced().resolve('moduleCache', {
+  context: { moduleId: 'users', metadata: {}, timestamp: Date.now() },
+});
 ```
 
 **Use case:** Module-specific services, isolated state per module.
+
+Resolved without a `moduleId`, a module-scoped service is one instance shared by every such caller.
 
 ## Service Registration
 
@@ -317,49 +349,56 @@ enhanced
       },
     };
   })
-  .dependencies(['mailer'])
+  .dependsOn('mailer')
   .singleton()
-  .tags(['email', 'messaging'])
+  .tags('email', 'messaging')
   .build();
 ```
 
 ### With Lifecycle Hooks
 
 ```typescript
+const db = {
+  connection: null,
+  async connect() {
+    // Connect to database
+  },
+  async disconnect() {
+    // Close connection
+  },
+};
+
 enhanced
   .register('databaseConnection')
-  .factory(() => {
-    return {
-      connection: null,
-      async connect() {
-        // Connect to database
-      },
-      async disconnect() {
-        // Close connection
-      },
-    };
+  .factory(() => db)
+  // Runs when the service is first created by `await enhanced.resolve(...)`
+  .onInit(async () => {
+    await db.connect();
   })
-  .lifecycle({
-    init: async () => {
-      const db = container.resolve('databaseConnection');
-      await db.connect();
-    },
-    dispose: async () => {
-      const db = container.resolve('databaseConnection');
-      await db.disconnect();
-    },
-    healthCheck: async () => {
-      const db = container.resolve('databaseConnection');
-      return db.connection !== null;
-    },
+  // Runs from `await enhanced.dispose()`
+  .onDispose(async () => {
+    await db.disconnect();
   })
+  // Reported by `await enhanced.healthCheck()`
+  .healthCheck(async () => db.connection !== null)
   .singleton()
   .build();
 ```
 
+When the hooks run:
+
+- `onInit` runs when `await enhanced.resolve()` creates the instance. `resolveSync()` and `container.resolve()` create it without running the hook.
+- `onDispose` runs from `await enhanced.dispose()`, for singleton services. It does not run for request- or module-scoped services: `dispose()`, `clearRequestScope()` and `clearModuleScope()` drop those instances without calling it.
+- `app.close()` does not dispose the container. Call `enhanced.dispose()` yourself when shutting down (see [Lifecycle Management](#4-lifecycle-management)).
+- After `dispose()`, resolving a service builds a new instance.
+
 ### With Timeout
 
+Wrap the factory with `withTimeout()` to limit how long creation may take:
+
 ```typescript
+import { withTimeout } from '@morojs/moro';
+
 enhanced
   .register('externalApi')
   .factory(async () => {
@@ -367,11 +406,17 @@ enhanced
     const response = await fetch('https://api.example.com/config');
     return await response.json();
   })
-  .timeout(5000) // 5 second timeout
-  .fallback(() => ({ default: 'config' })) // Fallback if timeout
+  .compose(withTimeout(5000)) // Fail creation after 5 seconds
+  .fallback(() => ({ default: 'config' })) // Used when creation fails or times out
   .singleton()
   .build();
+
+const config = await enhanced.resolve('externalApi');
 ```
+
+`.compose()` wraps the factory set before it, so call it after `.factory()`. The fallback is used by `await enhanced.resolve()`; `resolveSync()` and `container.resolve()` do not use it.
+
+The builder also has a `.timeout(ms)` method. It records the value in the service metadata and does not time anything: creation is not interrupted and the fallback is not triggered by it.
 
 ## Dependency Resolution
 
@@ -410,7 +455,7 @@ enhanced
       },
     };
   })
-  .dependencies(['configService'])
+  .dependsOn('configService')
   .singleton()
   .build();
 
@@ -437,15 +482,15 @@ enhanced
       },
     };
   })
-  .dependencies(['emailService'])
-  .optional(['smsService'])
+  .dependsOn('emailService')
+  .optionalDependsOn('smsService')
   .singleton()
   .build();
 ```
 
 ## Module Services
 
-Services can be registered within modules for better organization:
+Register a module's services on the app container and resolve them in its handlers:
 
 ```typescript
 import { defineModule } from '@morojs/moro';
@@ -462,27 +507,20 @@ class UserService {
   }
 }
 
+// Module services with DI: one instance for the app (a singleton, the default lifetime)
+const container = app.getContainer();
+container.register('userService', () => new UserService(container.resolve('database')), true);
+
 export const userModule = defineModule({
   name: 'user',
   version: '1.0.0',
-
-  // Module services with DI
-  services: [
-    {
-      name: 'userService',
-      implementation: UserService,
-      dependencies: ['database'],
-      singleton: true,
-    },
-  ],
 
   routes: [
     {
       method: 'GET',
       path: '/users/:id',
       handler: async (req, res) => {
-        // Access container through req
-        const userService = req.app.getContainer().resolve('userService');
+        const userService = container.resolve<UserService>('userService');
         const user = await userService.findById(req.params.id);
         res.json(user);
       },
@@ -544,6 +582,13 @@ Both patterns allow you to:
 - Add custom initialization logic
 - Modify dependencies before creation
 
+The container tells the two patterns apart by what an interceptor does, not by how its parameters are named, so renaming them (or a bundler doing so) changes nothing:
+
+- an interceptor that calls its fourth argument, or returns anything other than a function, follows pattern 2;
+- an interceptor that returns a function without calling its fourth argument follows pattern 1.
+
+This is worked out the first time an interceptor runs, by calling it as pattern 2. A pattern 1 interceptor is then called again with its real arguments, so on that first run it is called twice (only its returned factory from the second call is used). Keep the work of a pattern 1 interceptor inside the factory it returns, as in the example above.
+
 ### Service Decorators
 
 Wrap services with additional functionality:
@@ -588,19 +633,19 @@ Organize services with tags for batch resolution:
 enhanced
   .register('postgresPlugin')
   .factory(() => new PostgresPlugin())
-  .tags(['plugin', 'database'])
+  .tags('plugin', 'database')
   .singleton()
   .build();
 
 enhanced
   .register('redisPlugin')
   .factory(() => new RedisPlugin())
-  .tags(['plugin', 'cache'])
+  .tags('plugin', 'cache')
   .singleton()
   .build();
 
 // Resolve all services with specific tag
-const plugins = enhanced.resolveByTag('plugin');
+const plugins = await enhanced.resolveByTag('plugin');
 for (const plugin of plugins) {
   await plugin.initialize();
 }
@@ -617,13 +662,15 @@ enhanced
     await connection.connect();
     return connection;
   })
-  .dependencies(['config'])
+  .dependsOn('config')
   .singleton()
   .build();
 
 // Resolve with async support
 const db = await enhanced.resolve('database');
 ```
+
+Callers that resolve a singleton, request- or module-scoped service while it is still being created wait for that one creation: the factory runs once and they all receive the same instance. If the creation fails, they all receive the error, nothing is kept, and the next `resolve()` runs the factory again.
 
 ### Request Context
 
@@ -632,11 +679,14 @@ Pass context through the DI system:
 ```typescript
 // Middleware to provide request context
 app.use(async (req, res, next) => {
+  const requestId = crypto.randomUUID();
   req.context = {
-    requestId: crypto.randomUUID(),
-    userId: req.user?.id,
-    startTime: Date.now(),
+    requestId,
+    metadata: { userId: req.user?.id },
+    timestamp: Date.now(),
   };
+  // Release this request's scoped instances once the response is out
+  res.on('finish', () => enhanced.clearRequestScope(requestId));
   next();
 });
 
@@ -648,7 +698,7 @@ enhanced
       console.log(`[${context?.requestId}] ${message}`);
     },
   }))
-  .scoped('request')
+  .requestScoped()
   .build();
 
 // Use in route
@@ -666,11 +716,11 @@ app.get('/data', async (req, res) => {
 ### 1. Use Singletons for Shared Resources
 
 ```typescript
-// Good: Singleton for database connection
+// Good: Singleton for database connection (the default lifetime; `true` says it out loud)
 container.register('database', () => createConnection(), true);
 
-// Bad: Transient for database (creates many connections)
-container.register('database', () => createConnection(), false);
+// Bad: Transient for database (a new connection on every resolve)
+container.register('database', () => createConnection(), { lifetime: 'transient' });
 ```
 
 ### 2. Inject Dependencies, Don't Import
@@ -720,18 +770,16 @@ container.register('emailService', () => emailService, true);
 
 ```typescript
 // Always provide cleanup for resources
+const queue = new QueueConnection();
+
 enhanced
   .register('queueConnection')
-  .factory(() => new QueueConnection())
-  .lifecycle({
-    init: async () => {
-      const queue = container.resolve('queueConnection');
-      await queue.connect();
-    },
-    dispose: async () => {
-      const queue = container.resolve('queueConnection');
-      await queue.disconnect();
-    },
+  .factory(() => queue)
+  .onInit(async () => {
+    await queue.connect();
+  })
+  .onDispose(async () => {
+    await queue.disconnect();
   })
   .singleton()
   .build();
@@ -762,7 +810,7 @@ class MockEmailService {
   }
 }
 
-// In tests
+// In tests: registering a name again replaces the service, also after it was resolved
 const container = app.getContainer();
 container.register('emailService', () => new MockEmailService(), true);
 
@@ -773,6 +821,8 @@ expect(emailService.emails).toHaveLength(1);
 ```
 
 ### 6. Avoid Circular Dependencies
+
+Services that depend on each other through `dependsOn()` cannot be created. Resolving one of them fails with an error that names the cycle, for example `Circular dependency detected: serviceA -> serviceB -> serviceA`. A cycle that passes through `optionalDependsOn()` or through a service with a `fallback()` is not reported as an error; a warning naming it is logged instead.
 
 ```typescript
 // Bad: Circular dependency
@@ -874,14 +924,14 @@ enhanced
 enhanced
   .register('database')
   .factory(deps => new DatabaseService(deps.config))
-  .dependencies(['config'])
+  .dependsOn('config')
   .singleton()
   .build();
 
 enhanced
   .register('userRepository')
   .factory(deps => new UserRepository(deps.database))
-  .dependencies(['database'])
+  .dependsOn('database')
   .singleton()
   .build();
 
@@ -894,7 +944,7 @@ enhanced
 enhanced
   .register('userService')
   .factory(deps => new UserService(deps.userRepository, deps.emailService))
-  .dependencies(['userRepository', 'emailService'])
+  .dependsOn('userRepository', 'emailService')
   .singleton()
   .build();
 
@@ -913,31 +963,35 @@ console.log('Server running with DI on port 3000');
 
 ### Container Methods
 
-- `register<T>(name: string, factory: () => T, singleton?: boolean): void` - Register a service
-- `resolve<T>(name: string): T` - Resolve a service
+- `register<T>(name: string, factory: () => T, lifetime?: boolean | { lifetime?: 'singleton' | 'transient' }): void` - Register a service. It is a singleton (the factory runs once) unless `{ lifetime: 'transient' }` is passed; a boolean, `true` or `false`, registers a singleton. Registering a name again replaces it
+- `resolve<T>(name: string): T` - Resolve a service synchronously: the one instance of a singleton, a new instance of a [transient](#2-transient) service
 - `has(name: string): boolean` - Check if service exists
 - `getEnhanced(): FunctionalContainer` - Get enhanced container
 
 ### Enhanced Container Methods
 
-- `register<T>(name: string): ServiceRegistrationBuilder<T>` - Start fluent registration
+- `register<T>(name: string): ServiceRegistrationBuilder<T>` - Start fluent registration (a singleton unless the chain sets another scope)
+- `singleton<T>(name: string, factory): TypedServiceReference<T>` / `transient<T>(name: string, factory): TypedServiceReference<T>` - Register with that scope in one call
 - `resolve<T>(name: string, options?): Promise<T>` - Resolve service with options
 - `resolveSync<T>(name: string, context?): T` - Synchronous resolution
-- `resolveByTag(tag: string): any[]` - Resolve all services with tag
-- `dispose(): Promise<void>` - Dispose all services
+- `resolveByTag(tag: string): Promise<any[]>` - Resolve all services with tag
+- `clearRequestScope(requestId: string): void` - Drop a request's scoped instances (no `onDispose`)
+- `healthCheck(): Promise<Record<string, boolean>>` - Run service health checks
+- `dispose(): Promise<void>` - Run `onDispose` for singleton services and drop every stored instance
 
 ### ServiceRegistrationBuilder Methods
 
 - `.factory(fn)` - Set factory function
-- `.dependencies(deps[])` - Required dependencies
-- `.optional(deps[])` - Optional dependencies
-- `.singleton()` - Singleton scope
+- `.dependsOn(...deps)` - Required dependencies
+- `.optionalDependsOn(...deps)` - Optional dependencies
+- `.singleton()` - Singleton scope (the default)
 - `.transient()` - Transient scope
-- `.scoped(scope)` - Custom scope
-- `.tags(tags[])` - Add tags
-- `.lifecycle(hooks)` - Add lifecycle hooks
-- `.timeout(ms)` - Set timeout
-- `.fallback(fn)` - Set fallback
+- `.requestScoped()` / `.moduleScoped()` - Request or module scope
+- `.tags(...tags)` - Add tags
+- `.onInit(fn)` / `.onDispose(fn)` / `.healthCheck(fn)` - Add lifecycle hooks
+- `.compose(...fns)` - Wrap the factory, e.g. `withTimeout(ms)`
+- `.timeout(ms)` - Record a timeout in the service metadata (nothing is timed; use `withTimeout`)
+- `.fallback(fn)` - Value used when creation fails in `await enhanced.resolve()`
 - `.interceptor(fn)` - Add interceptor
 - `.decorator(fn)` - Add decorator
 - `.build()` - Build and register

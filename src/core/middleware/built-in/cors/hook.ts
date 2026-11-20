@@ -1,7 +1,8 @@
 // CORS Hook - MiddlewareInterface for global registration
 import { MiddlewareInterface, HookContext } from '../../../../types/hooks.js';
 import { createFrameworkLogger } from '../../../logger/index.js';
-import { CORSCore, type CORSOptions } from './core.js';
+import { CORSCore, registerCORSHook, type CORSOptions } from './core.js';
+import { applyGlobalHelmet } from '../helmet/core.js';
 
 const logger = createFrameworkLogger('CorsMiddleware');
 
@@ -34,10 +35,17 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
 
     const config = { ...options, ...middlewareOptions };
     const corsCore = new CORSCore(config);
+    // Known to the hook manager's server: a response answered ahead of this
+    // hook (a configured rate limit's 429) is given this CORS's headers
+    if (hooks !== null && typeof hooks === 'object') registerCORSHook(hooks, corsCore);
 
     hooks.before('request', async (context: HookContext) => {
       const request = context.request as any;
       const response = context.response as any;
+
+      // Answered by a hook that ran before this one: there is nothing left to
+      // add, and a response that has been sent takes no more headers
+      if (response.headersSent) return;
 
       // Apply CORS headers to all requests (now async to support origin functions)
       const isAllowed = await corsCore.applyCORS(response, request);
@@ -48,6 +56,9 @@ export const cors = (options: CORSOptions = {}): MiddlewareInterface => ({
           origin: request.headers?.origin,
           path: request.path,
         });
+        // Answered ahead of function middleware: carry the application's
+        // helmet headers, as every other response does
+        applyGlobalHelmet(request, response);
         response.status(403).end();
         // Set headersSent for custom response wrappers (the engine, HTTP/2) and mocks that support it
         // Node.js native ServerResponse has a read-only headersSent getter

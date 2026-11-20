@@ -10,8 +10,6 @@ MoroJS uses a consistent `Init` pattern for all system configuration methods. Th
 
 ```typescript
 // Required await - poor DX
-await app.grpc({ port: 50051 });
-await app.mail({ adapter: 'console' });
 await app.queue('emails', { adapter: 'bull' });
 ```
 
@@ -91,7 +89,6 @@ app.grpcInit({
   host: '0.0.0.0',
   adapter: 'grpc-js',
   enableHealthCheck: true,
-  enableReflection: true,
 });
 
 // Register services
@@ -153,17 +150,13 @@ If you have existing code using the old pattern, you can migrate easily:
 
 ```typescript
 // Old
-await app.grpc({ port: 50051 });
-await app.mail({ adapter: 'console' });
 await app.queue('emails', { adapter: 'memory' });
 
 // New
-app.grpcInit({ port: 50051 });
-app.mailInit({ adapter: 'console' });
 app.queueInit('emails', { adapter: 'memory' });
 ```
 
-The old methods are marked as `@deprecated` but still work for backwards compatibility.
+The old `app.queue()` method is marked as `@deprecated` but still works for backwards compatibility.
 
 ## Complete Example
 

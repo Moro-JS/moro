@@ -88,7 +88,7 @@ app
 
    // After
    app.post('/users').body(schema).rateLimit(config).handler(handler);
-   // CORS and helmet are enabled by default
+   // CORS and helmet are opt-in: createApp({ cors: true, helmet: true })
    ```
 
 3. **Replace custom validation with MoroJS validation (Zod is optional):**
@@ -201,7 +201,7 @@ app
 
    // After
    import { createApp } from '@morojs/moro';
-   const app = await createApp({ logging: true });
+   const app = await createApp({ logger: { level: 'info' } });
    ```
 
 2. **Convert JSON Schema to MoroJS validation (Zod is optional):**
@@ -249,7 +249,7 @@ app
    app
      .post('/users')
      .body(userSchema)
-     .auth({ required: true })
+     .auth({}) // any signed-in user; add roles / permissions to narrow it
      .rateLimit({ requests: 10, window: 60000 })
      .handler(async (req, res) => {
        return { user: req.body }; // Fully typed!
@@ -407,12 +407,14 @@ app
      }
    }
 
-   // After - Built into route definition
+   // After - a guard is standard middleware attached to the route
    app
      .get('/protected')
-     .auth({
-       required: true,
-       validator: req => validateUser(req.headers.authorization),
+     .before((req, res, next) => {
+       if (!validateUser(req.headers.authorization)) {
+         return res.status(401).json({ error: 'Unauthorized' });
+       }
+       next();
      })
      .handler(protectedHandler);
    ```
@@ -594,22 +596,23 @@ export default NextAuth({
 
 ```typescript
 // ✅ MoroJS - Framework agnostic, built-in features
-import { createApp, z } from '@morojs/moro';
-import { createAuthMiddleware } from '@auth/morojs';
-import Google from '@auth/core/providers/google';
+import { createApp, createAuthMiddleware, z } from '@morojs/moro';
 
 const app = await createApp();
 
-// Built-in authentication
-app.use(
+// Built-in authentication: sign-in on Better Auth (npm install better-auth),
+// served under /api/auth
+await app.use(
   createAuthMiddleware({
     providers: [
-      Google({
+      {
+        id: 'google',
         clientId: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      }),
+      },
     ],
     secret: process.env.AUTH_SECRET,
+    baseURL: process.env.BASE_URL,
   })
 );
 
@@ -622,7 +625,7 @@ app
       email: z.string().email(),
     })
   )
-  .auth({ required: true })
+  .auth({})
   .handler(async (req, res) => {
     return { success: true, user: req.body };
   });
@@ -655,12 +658,13 @@ app
      providers: [GoogleProvider({ ... })],
    });
 
-   // After (MoroJS + Auth.js)
-   import { createAuthMiddleware } from '@auth/morojs';
-   import Google from '@auth/core/providers/google';
+   // After (MoroJS + Better Auth)
+   import { createAuthMiddleware } from '@morojs/moro';
 
-   app.use(createAuthMiddleware({
-     providers: [Google({ ... })],
+   await app.use(createAuthMiddleware({
+     providers: [{ id: 'google', clientId: '...', clientSecret: '...' }],
+     secret: process.env.AUTH_SECRET,
+     baseURL: process.env.BASE_URL,
    }));
    ```
 
@@ -670,14 +674,14 @@ app
    // Node.js
    app.listen(3000);
 
-   // Vercel Edge
+   // Vercel Edge (createAppEdge)
    export default app.getHandler();
 
-   // AWS Lambda
-   export const handler = app.getLambdaHandler();
+   // AWS Lambda (createAppLambda)
+   export const handler = app.getHandler();
 
-   // Cloudflare Workers
-   export default app.getWorkerHandler();
+   // Cloudflare Workers (createAppWorker)
+   export default { fetch: app.getHandler() };
    ```
 
 ---
@@ -843,7 +847,6 @@ app.use(rateLimit(config));
 const app = await createApp({
   cors: true,
   helmet: true,
-  rateLimit: config,
 });
 
 // Or use middleware explicitly
@@ -890,7 +893,7 @@ const db = new MySQLAdapter(config);
 app.database(db);
 
 app.get('/users', async (req, res) => {
-  const users = await req.database.query('SELECT * FROM users');
+  const users = await db.query('SELECT * FROM users');
   return { users };
 });
 ```
@@ -907,6 +910,9 @@ Support for multiple validation libraries with a unified interface. All validati
 
 ```typescript
 import { createApp, z, joi, yup, classValidator } from '@morojs/moro';
+import Joi from 'joi';
+import * as Yup from 'yup';
+import { validate, IsString, MinLength } from 'class-validator';
 
 const app = await createApp();
 
@@ -914,18 +920,18 @@ const app = await createApp();
 app
   .post('/users')
   .body(z.object({ name: z.string() })) // Zod (optional)
-  .query(joi.object({ page: joi.number() })) // Joi (optional)
-  .params(yup.object({ id: yup.string() })) // Yup (optional)
+  .query(joi(Joi.object({ page: Joi.number() }))) // Joi (optional): wrap a Joi schema
+  .params(yup(Yup.object({ id: Yup.string() }))) // Yup (optional): wrap a Yup schema
   .handler(createUser);
 
-// Or use class-validator (optional)
+// Or use class-validator (optional): pass its validate() as the second argument
 class CreateUserDto {
   @IsString()
   @MinLength(2)
   name: string;
 }
 
-app.post('/users').body(classValidator(CreateUserDto)).handler(createUser);
+app.post('/users').body(classValidator(CreateUserDto, validate)).handler(createUser);
 
 // Or use no validation at all - framework works without any validation libraries!
 app.post('/users').handler(createUser);
@@ -933,35 +939,36 @@ app.post('/users').handler(createUser);
 
 ### 2. Enterprise Authentication
 
-Complete Auth.js integration with native MoroJS adapter:
+Sign-in and sessions on Better Auth through the native MoroJS adapter (`npm install better-auth`):
 
 ```typescript
-import { createApp } from '@morojs/moro';
-import { createAuthMiddleware } from '@auth/morojs';
-import { providers } from '@auth/core';
+import { createApp, createAuthMiddleware } from '@morojs/moro';
 
 const app = await createApp();
 
-app.use(
+await app.use(
   createAuthMiddleware({
     providers: [
-      providers.GitHub({
+      {
+        id: 'github',
         clientId: process.env.GITHUB_CLIENT_ID,
         clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      }),
-      providers.Google({
+      },
+      {
+        id: 'google',
         clientId: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      }),
+      },
     ],
     secret: process.env.AUTH_SECRET,
+    baseURL: process.env.BASE_URL,
   })
 );
 
 // Automatic authentication
 app
   .get('/protected')
-  .auth({ required: true })
+  .auth({})
   .handler((req, res) => {
     return { user: req.auth.user };
   });
@@ -984,11 +991,11 @@ export default edgeApp.getHandler();
 
 // AWS Lambda
 const lambdaApp = await createAppLambda();
-export const handler = lambdaApp.getLambdaHandler();
+export const handler = lambdaApp.getHandler();
 
 // Cloudflare Workers
 const workerApp = await createAppWorker();
-export default workerApp.getWorkerHandler();
+export default { fetch: workerApp.getHandler() };
 ```
 
 ### 4. WebSocket Support
@@ -998,28 +1005,23 @@ Built-in WebSocket support with multiple adapters:
 ```typescript
 import { createApp, SocketIOAdapter, WSAdapter } from '@morojs/moro';
 
-const app = await createApp();
-
 // Socket.IO adapter
-app.websocket(
-  '/socket.io',
-  new SocketIOAdapter({
-    cors: { origin: '*' },
-  })
-);
+const app = await createApp({
+  websocket: {
+    adapter: new SocketIOAdapter(),
+    options: { cors: { origin: '*' } },
+  },
+});
 
-// Native WebSocket adapter
-app.websocket('/ws', new WSAdapter());
+// Or the `ws` adapter
+// const app = await createApp({ websocket: { adapter: new WSAdapter() } });
 
-// WebSocket routes
-app
-  .websocket('/chat')
-  .auth({ required: true })
-  .handler((socket, req) => {
-    socket.on('message', data => {
-      socket.broadcast.emit('message', data);
-    });
-  });
+// WebSocket handlers: one namespace, one function per event
+app.websocket('/chat', {
+  message: (socket, data) => {
+    socket.broadcast.emit('message', data);
+  },
+});
 ```
 
 ### 5. Database Integration
@@ -1044,20 +1046,27 @@ app.database(
 // PostgreSQL
 app.database(
   new PostgreSQLAdapter({
-    connectionString: 'postgresql://user:password@localhost:5432/myapp',
+    host: 'localhost',
+    port: 5432,
+    user: 'user',
+    password: 'password',
+    database: 'myapp',
   })
 );
 
 // MongoDB
 app.database(
   new MongoDBAdapter({
-    uri: 'mongodb://localhost:27017/myapp',
+    url: 'mongodb://localhost:27017/myapp',
   })
 );
 
-// Use in routes
+// Use in routes: keep a reference to the adapter you registered
+const db = new MySQLAdapter({ host: 'localhost', user: 'root', database: 'myapp' });
+app.database(db);
+
 app.get('/users').handler(async (req, res) => {
-  const users = await req.database.query('SELECT * FROM users');
+  const users = await db.query('SELECT * FROM users');
   return { users };
 });
 ```
@@ -1070,7 +1079,7 @@ Automatic middleware ordering and optimization:
 app
   .post('/users')
   .body(userSchema) // Validation middleware
-  .auth({ required: true }) // Authentication middleware
+  .auth({}) // Authentication middleware
   .rateLimit({ requests: 10, window: 60000 }) // Rate limiting
   .cache({ ttl: 300 }) // Caching
   .handler(createUser); // Handler
@@ -1104,14 +1113,14 @@ export default defineModule({
   ],
   sockets: [
     {
-      path: '/users',
+      event: 'user-status',
       handler: userSocketHandler,
     },
   ],
 });
 
 // Auto-discover modules
-app.autoDiscover('./modules');
+app.initModules({ paths: ['./modules'] });
 ```
 
 ### 8. Event System
@@ -1119,13 +1128,13 @@ app.autoDiscover('./modules');
 Enterprise-grade event bus for microservices:
 
 ```typescript
-import { createApp, MoroEventBus } from '@morojs/moro';
+import { createApp } from '@morojs/moro';
 
 const app = await createApp();
 
-// Global event bus
-app.eventBus.on('user.created', event => {
-  console.log('User created:', event.payload);
+// Global event bus: listeners receive { context, data }
+app.events.on('user.created', event => {
+  console.log('User created:', event.data);
 });
 
 // Emit events
@@ -1133,7 +1142,7 @@ app.post('/users').handler(async (req, res) => {
   const user = await createUser(req.body);
 
   // Emit event
-  app.eventBus.emit('user.created', {
+  app.events.emit('user.created', {
     userId: user.id,
     timestamp: new Date(),
   });
@@ -1154,19 +1163,16 @@ module.exports = {
     host: 'localhost',
   },
   database: {
-    type: 'postgresql',
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
+    url: process.env.DATABASE_URL,
   },
-  auth: {
-    providers: ['github', 'google'],
-    secret: process.env.AUTH_SECRET,
+  performance: {
+    clustering: { enabled: true, workers: 4 },
   },
 };
 
 // Environment variables override config file
-// CLUSTERING_ENABLED=true
-// CLUSTER_WORKERS=4
+// PORT=8080
+// HOST=0.0.0.0
 ```
 
 ### 10. Performance Optimizations
@@ -1182,11 +1188,14 @@ const app = await createApp({
     },
     compression: {
       enabled: true,
+      level: 6,
       threshold: 1024,
     },
     circuitBreaker: {
       enabled: true,
-      timeout: 5000,
+      failureThreshold: 5,
+      resetTimeout: 30000,
+      monitoringPeriod: 10000,
     },
   },
 });

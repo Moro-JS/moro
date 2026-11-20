@@ -52,6 +52,10 @@ export function createCompressionMiddleware(options: CompressionOptions = {}): M
     const useCompression = (res as any)._useCompression;
     if (native !== undefined && typeof useCompression === 'function') {
       useCompression.call(res, native);
+    } else if ((res as any)._sentWholeByPlatform === true) {
+      // Serverless runtimes hand the finished response to the platform, which
+      // compresses it; there is no write path here to wrap, with or without a
+      // `filter`.
     } else if (core.shouldCompress(req, res)) {
       core.wrapResponse(req, res);
     }

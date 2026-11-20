@@ -14,10 +14,13 @@ import type {
   BulkJobData,
   QueueConnectionConfig,
   JobContext,
+  QueueRetentionOptions,
 } from '../types.js';
+import { JobRetention } from './retention.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../../logger/index.js';
+import { decodeJobMessage } from './job-message.js';
 
 const logger = createFrameworkLogger('RabbitMQQueue');
 
@@ -66,9 +69,29 @@ export class RabbitMQAdapter extends QueueAdapter {
   private static readonly RECONNECT_BASE_DELAY_MS = 1000;
   private static readonly RECONNECT_MAX_DELAY_MS = 30000;
 
-  constructor(connectionConfig: QueueConnectionConfig = {}) {
+  private retention: JobRetention;
+
+  constructor(connectionConfig: QueueConnectionConfig = {}, retention?: QueueRetentionOptions) {
     super();
     this.connectionConfig = connectionConfig;
+    this.retention = new JobRetention(retention);
+  }
+
+  /** Count a stored record among the jobs of this queue that have not finished. */
+  private trackJob(queueName: string, jobId: string): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.track(queueName, jobId, store);
+  }
+
+  /** A job finished for good: keep its record among the most recent ones. */
+  private retainFinished(
+    queueName: string,
+    jobId: string,
+    outcome: 'completed' | 'failed',
+    ownSetting: unknown
+  ): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.finished(queueName, jobId, outcome, ownSetting, store);
   }
 
   /**
@@ -100,14 +123,23 @@ export class RabbitMQAdapter extends QueueAdapter {
   }
 
   /**
-   * Build the AMQP connection URL from config
+   * Build the AMQP connection URL from config. The username and password are
+   * percent-encoded: a credential containing `@`, `:`, `/`, `#`, `?` or `%`
+   * would otherwise end the userinfo early or be read as another part of the
+   * URL. amqplib decodes them back before authenticating.
    */
   private buildConnectionUrl(): string {
+    const { amqps, tls, vhost } = this.connectionConfig;
+    // TLS when asked for by name, or when TLS options were given
+    const secure = amqps === true || (tls !== undefined && tls !== false && tls !== null);
     const host = this.connectionConfig.host || 'localhost';
-    const port = this.connectionConfig.port || 5672;
-    const username = this.connectionConfig.username || 'guest';
-    const password = this.connectionConfig.password || 'guest';
-    return `amqp://${username}:${password}@${host}:${port}`;
+    const port = this.connectionConfig.port || (secure ? 5671 : 5672);
+    const username = encodeURIComponent(this.connectionConfig.username || 'guest');
+    const password = encodeURIComponent(this.connectionConfig.password || 'guest');
+    // The virtual host is one path segment: a name containing "/" (the
+    // default vhost is "/") has to be percent-encoded to stay one
+    const path = typeof vhost === 'string' ? `/${encodeURIComponent(vhost)}` : '';
+    return `${secure ? 'amqps' : 'amqp'}://${username}:${password}@${host}:${port}${path}`;
   }
 
   /**
@@ -116,7 +148,13 @@ export class RabbitMQAdapter extends QueueAdapter {
   private async establishConnection(): Promise<void> {
     const url = this.buildConnectionUrl();
 
-    this.connection = await this.amqp.connect(url);
+    // TLS options go to amqplib as its socket options (it hands them to
+    // tls.connect); a connection configured without them is opened as before
+    const { tls } = this.connectionConfig;
+    this.connection =
+      tls !== null && typeof tls === 'object'
+        ? await this.amqp.connect(url, tls)
+        : await this.amqp.connect(url);
     this.registerConnectionHandlers(this.connection);
 
     this.channel = await this.connection.createChannel();
@@ -307,6 +345,7 @@ export class RabbitMQAdapter extends QueueAdapter {
     // Store job metadata
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.jobStore.get(queueName)!.set(jobId, job);
+    this.trackJob(queueName, jobId);
 
     // Prepare message
     const message = {
@@ -412,104 +451,191 @@ export class RabbitMQAdapter extends QueueAdapter {
           return;
         }
 
+        // amqplib ignores the promise returned here, so a rejection would
+        // surface as an unhandled rejection and take the process down.
         try {
-          const message = JSON.parse(msg.content.toString());
-          const { jobId, data, options } = message;
-
-          const storedJob = this.jobStore.get(queueName)?.get(jobId);
-          if (!storedJob) {
-            // Job not found, acknowledge and skip
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            this.channel!.ack(msg);
-            return;
-          }
-
-          storedJob.processedOn = Date.now();
-
-          // Create job context
-          const jobContext: JobContext = {
-            id: jobId,
-            name: queueName,
-            data,
-            progress: storedJob.progress,
-            attemptsMade: storedJob.attemptsMade,
-            timestamp: storedJob.timestamp,
-            processedOn: storedJob.processedOn,
-            finishedOn: storedJob.finishedOn,
-            failedReason: storedJob.failedReason,
-            opts: options,
-            updateProgress: async (progress: number) => {
-              storedJob.progress = progress;
-            },
-            log: (message: string) => {
-              logger.debug(`[Job ${jobId}] ${message}`);
-            },
-          };
-
-          // Execute handler
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const result = await handler(jobContext);
-
-          // Mark as completed
-          storedJob.finishedOn = Date.now();
-          storedJob.progress = 100;
-
-          // Acknowledge message
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          this.channel!.ack(msg);
-
-          // Auto-remove if configured
-          if (options.removeOnComplete) {
-            setTimeout(
-              () => {
-                this.jobStore.get(queueName)?.delete(jobId);
-              },
-              typeof options.removeOnComplete === 'number' ? options.removeOnComplete : 0
-            );
-          }
+          await this.handleMessage(queueName, msg, handler);
         } catch (error) {
-          const message = JSON.parse(msg.content.toString());
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { jobId, data, options } = message;
-
-          const storedJob = this.jobStore.get(queueName)?.get(jobId);
-          if (storedJob) {
-            storedJob.attemptsMade++;
-            storedJob.failedReason = error instanceof Error ? error.message : String(error);
-            storedJob.finishedOn = Date.now();
-
-            // Check if we should retry
-            const maxAttempts = options.attempts || 1;
-            if (storedJob.attemptsMade < maxAttempts) {
-              // Reject and requeue
-              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-              this.channel!.nack(msg, false, true);
-            } else {
-              // Max attempts reached, move to DLQ or acknowledge
-              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-              this.channel!.ack(msg);
-
-              // Auto-remove if configured
-              if (options.removeOnFail) {
-                setTimeout(
-                  () => {
-                    this.jobStore.get(queueName)?.delete(jobId);
-                  },
-                  typeof options.removeOnFail === 'number' ? options.removeOnFail : 0
-                );
-              }
-            }
-          } else {
-            // Job not found, acknowledge
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            this.channel!.ack(msg);
-          }
+          logger.error(
+            `Unexpected error handling a message on queue ${queueName}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
         }
       },
       { noAck: false }
     );
 
     this.consumerTags.set(queueName, consumer.consumerTag);
+  }
+
+  /**
+   * Handle one delivered message: decode it, run the handler, and settle the
+   * delivery (ack, re-publish for another attempt, or dead-letter).
+   */
+  private async handleMessage(
+    queueName: string,
+    msg: any,
+    handler: JobHandler<any, any>
+  ): Promise<void> {
+    // Decode once. A payload that is not a JSON job object can never be
+    // processed: reject it without requeue (it goes to the queue's dead-letter
+    // exchange when one is configured) instead of crashing or redelivering.
+    const decoded = decodeJobMessage(msg.content, msg.properties?.messageId);
+    if (!decoded) {
+      logger.error(
+        `Rejecting malformed message on queue ${queueName} without requeue: not a JSON job message`
+      );
+      this.settle(queueName, channel => channel.nack(msg, false, false));
+      return;
+    }
+
+    const { jobId, data, options } = decoded;
+
+    // The message is the source of truth for the job. A job published by
+    // another process, or before this consumer restarted, is not in the
+    // in-memory store: rebuild the record from the message instead of
+    // acknowledging it unprocessed.
+    if (!this.jobStore.has(queueName)) {
+      this.jobStore.set(queueName, new Map());
+    }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const store = this.jobStore.get(queueName)!;
+    let storedJob = store.get(jobId);
+    if (!storedJob) {
+      storedJob = {
+        id: jobId,
+        name: queueName,
+        data,
+        options,
+        attemptsMade: decoded.attemptsMade,
+        timestamp: decoded.timestamp,
+        progress: 0,
+      };
+      store.set(jobId, storedJob);
+      this.trackJob(queueName, jobId);
+    } else if (decoded.attemptsMade > storedJob.attemptsMade) {
+      // The attempt count travels with the message (see the retry path below)
+      storedJob.attemptsMade = decoded.attemptsMade;
+    }
+    const job = storedJob;
+
+    try {
+      job.processedOn = Date.now();
+
+      // Create job context
+      const jobContext: JobContext = {
+        id: jobId,
+        name: queueName,
+        data,
+        progress: job.progress,
+        attemptsMade: job.attemptsMade,
+        timestamp: job.timestamp,
+        processedOn: job.processedOn,
+        finishedOn: job.finishedOn,
+        failedReason: job.failedReason,
+        opts: options,
+        updateProgress: async (progress: number) => {
+          job.progress = progress;
+        },
+        log: (message: string) => {
+          logger.debug(`[Job ${jobId}] ${message}`);
+        },
+      };
+
+      // Execute handler
+      await handler(jobContext);
+    } catch (error) {
+      job.attemptsMade++;
+      job.failedReason = error instanceof Error ? error.message : String(error);
+      job.finishedOn = Date.now();
+
+      // Check if we should retry
+      const maxAttempts = options.attempts || 1;
+      if (job.attemptsMade < maxAttempts) {
+        // Re-publish the job with its attempt count, then acknowledge this
+        // delivery. A plain nack/requeue redelivers the identical message, so
+        // the count would live only in this process's memory and be lost
+        // across a restart or to another consumer.
+        const retryBody = Buffer.from(
+          JSON.stringify({ ...decoded.body, jobId, attemptsMade: job.attemptsMade })
+        );
+        const retryOptions: any = {
+          persistent: true,
+          priority: options.priority || 0,
+          messageId: jobId,
+        };
+        if (msg.properties?.headers) {
+          retryOptions.headers = msg.properties.headers;
+        }
+        const republished = this.settle(queueName, channel => {
+          channel.sendToQueue(queueName, retryBody, retryOptions);
+          channel.ack(msg);
+        });
+        if (!republished) {
+          // Channel gone: the unacknowledged delivery is returned to the queue
+          // by the broker and will be redelivered after reconnect.
+          logger.warn(`Could not re-publish job ${jobId} on queue ${queueName} for retry`);
+        }
+      } else {
+        // Max attempts reached, move to DLQ or acknowledge
+        this.settle(queueName, channel => channel.ack(msg));
+
+        // Auto-remove if configured
+        if (options.removeOnFail) {
+          setTimeout(
+            () => {
+              this.jobStore.get(queueName)?.delete(jobId);
+            },
+            typeof options.removeOnFail === 'number' ? options.removeOnFail : 0
+          );
+        }
+        this.retainFinished(queueName, jobId, 'failed', options.removeOnFail);
+      }
+      return;
+    }
+
+    // Mark as completed
+    job.finishedOn = Date.now();
+    job.progress = 100;
+
+    // Acknowledge message
+    this.settle(queueName, channel => channel.ack(msg));
+
+    // Auto-remove if configured
+    if (options.removeOnComplete) {
+      setTimeout(
+        () => {
+          this.jobStore.get(queueName)?.delete(jobId);
+        },
+        typeof options.removeOnComplete === 'number' ? options.removeOnComplete : 0
+      );
+    }
+    this.retainFinished(queueName, jobId, 'completed', options.removeOnComplete);
+  }
+
+  /**
+   * Run an ack/nack/publish against the current channel. Returns false (and
+   * logs) when the channel is gone or the operation throws; the broker then
+   * redelivers the unacknowledged message once the consumer is back.
+   */
+  private settle(queueName: string, operation: (channel: AMQPChannel) => void): boolean {
+    const channel = this.channel;
+    if (!channel) {
+      logger.warn(`Cannot settle a message on queue ${queueName}: channel is closed`);
+      return false;
+    }
+    try {
+      operation(channel);
+      return true;
+    } catch (error) {
+      logger.error(
+        `Failed to settle a message on queue ${queueName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return false;
+    }
   }
 
   /**
@@ -575,6 +701,7 @@ export class RabbitMQAdapter extends QueueAdapter {
   async removeJob(queueName: string, jobId: string): Promise<void> {
     this.ensureReady();
     this.jobStore.get(queueName)?.delete(jobId);
+    this.retention.forget(queueName, jobId);
   }
 
   /**
@@ -593,6 +720,7 @@ export class RabbitMQAdapter extends QueueAdapter {
     storedJob.processedOn = undefined;
     storedJob.finishedOn = undefined;
     storedJob.progress = 0;
+    this.trackJob(queueName, jobId);
 
     // Re-add to queue
     await this.addJob(queueName, storedJob.data, storedJob.options);
@@ -676,6 +804,7 @@ export class RabbitMQAdapter extends QueueAdapter {
 
     for (const jobId of jobsToRemove) {
       jobs.delete(jobId);
+      this.retention.forget(queueName, jobId);
     }
   }
 
@@ -695,6 +824,7 @@ export class RabbitMQAdapter extends QueueAdapter {
 
     // Clear job store
     this.jobStore.delete(queueName);
+    this.retention.clear(queueName);
     this.processors.delete(queueName);
     this.queueConcurrency.delete(queueName);
   }
@@ -715,6 +845,7 @@ export class RabbitMQAdapter extends QueueAdapter {
     await this.cleanupConnection();
 
     this.jobStore.clear();
+    this.retention.clear();
     this.processors.clear();
     this.queueConcurrency.clear();
     this.isReady = false;

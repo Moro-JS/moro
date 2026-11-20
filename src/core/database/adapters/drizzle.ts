@@ -20,6 +20,120 @@ async function getDrizzleOrm() {
   return drizzleOrm;
 }
 
+/**
+ * Refuse an update/delete with no conditions. Drizzle treats `.where(undefined)`
+ * as "no WHERE clause", so an empty `where` object would touch every row of the
+ * table. The other SQL adapters fail on the same input (the database rejects
+ * their statement); this keeps the shared adapter contract fail-closed.
+ */
+function assertNonEmptyWhere(
+  operation: 'update' | 'delete',
+  table: string,
+  where: Record<string, any>
+): void {
+  if (!where || typeof where !== 'object' || Object.keys(where).length === 0) {
+    throw new Error(
+      `Drizzle ${operation} on "${table}" requires a non-empty where object; ` +
+        'refusing to affect every row. Use query() for an intentional full-table statement.'
+    );
+  }
+}
+
+/**
+ * Where the placeholders of a SQL text are. Quoted strings and identifiers,
+ * comments and PostgreSQL dollar-quoted bodies are skipped, so a `$1` or `?`
+ * inside one is left alone.
+ */
+function findPlaceholders(text: string): {
+  dollar: Array<{ start: number; end: number; index: number }>;
+  question: number[];
+} {
+  const dollar: Array<{ start: number; end: number; index: number }> = [];
+  const question: number[] = [];
+  const length = text.length;
+  let i = 0;
+  while (i < length) {
+    const ch = text[i];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      // Quoted: runs to the closing quote; a doubled quote is an escaped one
+      i++;
+      while (i < length) {
+        if (text[i] === ch) {
+          if (text[i + 1] === ch) i++;
+          else break;
+        }
+        i++;
+      }
+      i++;
+    } else if (ch === '-' && text[i + 1] === '-') {
+      const eol = text.indexOf('\n', i);
+      i = eol === -1 ? length : eol + 1;
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2);
+      i = close === -1 ? length : close + 2;
+    } else if (ch === '$') {
+      const numbered = /^\$(\d+)/.exec(text.slice(i, i + 8));
+      const tag = numbered ? null : /^\$[A-Za-z_]*\$/.exec(text.slice(i, i + 66));
+      if (numbered) {
+        dollar.push({ start: i, end: i + numbered[0].length, index: Number(numbered[1]) });
+        i += numbered[0].length;
+      } else if (tag) {
+        const close = text.indexOf(tag[0], i + tag[0].length);
+        i = close === -1 ? length : close + tag[0].length;
+      } else {
+        i++;
+      }
+    } else {
+      if (ch === '?') question.push(i);
+      i++;
+    }
+  }
+  return { dollar, question };
+}
+
+/**
+ * What to hand to Drizzle's execute() for a SQL text and its parameters.
+ *
+ * execute() takes one argument, a `sql` object that carries its own
+ * parameters; a second argument is ignored. The text is therefore split at
+ * its placeholders (`$1`, `$2`, ... or `?`) and rebuilt as a `sql` object with
+ * each value bound, which Drizzle then renders in the placeholder style of
+ * the database it is connected to. A text with no parameters, or whose
+ * placeholders do not line up with them, goes to execute() unchanged.
+ */
+async function toExecutable(text: string, params?: any[]): Promise<any> {
+  if (!params || params.length === 0) return text;
+
+  const { dollar, question } = findPlaceholders(text);
+  let slots: Array<{ start: number; end: number; value: any }>;
+  if (dollar.length > 0) {
+    if (dollar.some(slot => slot.index < 1 || slot.index > params.length)) return text;
+    slots = dollar.map(slot => ({
+      start: slot.start,
+      end: slot.end,
+      value: params[slot.index - 1],
+    }));
+  } else if (question.length > 0 && question.length === params.length) {
+    slots = question.map((start, n) => ({ start, end: start + 1, value: params[n] }));
+  } else {
+    return text;
+  }
+
+  const { sql: sqlTag } = await getDrizzleOrm();
+  const strings: string[] = [];
+  const values: any[] = [];
+  let from = 0;
+  for (const slot of slots) {
+    strings.push(text.slice(from, slot.start));
+    // param() binds the value as one parameter (a bare array would be spread
+    // into a list of parameters)
+    values.push(typeof sqlTag.param === 'function' ? sqlTag.param(slot.value) : slot.value);
+    from = slot.end;
+  }
+  strings.push(text.slice(from));
+  return sqlTag(strings, ...values);
+}
+
 interface DrizzleConfig {
   database: any; // Drizzle database instance
   schema?: any; // Optional schema for additional type safety
@@ -65,7 +179,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     try {
       // Using Drizzle's execute method for raw SQL
-      const result = await this.db.execute(sql, params);
+      const result = await this.db.execute(await toExecutable(sql, params));
 
       // Handle different result formats from different drivers
       if (Array.isArray(result)) {
@@ -123,6 +237,8 @@ export class DrizzleAdapter implements DatabaseAdapter {
     where: Record<string, any>
   ): Promise<T> {
     try {
+      assertNonEmptyWhere('update', table, where);
+
       if (this.schema && this.schema[table]) {
         // Use schema-based update
         try {
@@ -176,6 +292,8 @@ export class DrizzleAdapter implements DatabaseAdapter {
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
     try {
+      assertNonEmptyWhere('delete', table, where);
+
       if (this.schema && this.schema[table]) {
         // Use schema-based delete
         try {
@@ -277,7 +395,7 @@ class DrizzleTransaction implements DatabaseTransaction {
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
     try {
-      const result = await this.tx.execute(sql, params);
+      const result = await this.tx.execute(await toExecutable(sql, params));
 
       if (Array.isArray(result)) {
         return result;
@@ -322,6 +440,8 @@ class DrizzleTransaction implements DatabaseTransaction {
     data: Record<string, any>,
     where: Record<string, any>
   ): Promise<T> {
+    assertNonEmptyWhere('update', table, where);
+
     if (this.schema && this.schema[table]) {
       try {
         const { eq, and } = await getDrizzleOrm();
@@ -370,6 +490,8 @@ class DrizzleTransaction implements DatabaseTransaction {
   }
 
   async delete(table: string, where: Record<string, any>): Promise<number> {
+    assertNonEmptyWhere('delete', table, where);
+
     if (this.schema && this.schema[table]) {
       try {
         const { eq, and } = await getDrizzleOrm();

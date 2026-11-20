@@ -31,8 +31,47 @@ function normalizeRoute(route: ModuleRoute | CompiledRoute): ModuleRoute {
   };
 }
 
+// The keys defineModule() reads. Anything else on the definition is not copied
+// to the module it returns.
+const MODULE_DEFINITION_KEYS = new Set([
+  'name',
+  'version',
+  'config',
+  'routes',
+  'sockets',
+  'dependencies',
+  'middleware',
+]);
+const reportedIgnoredKeys = new Set<string>();
+
+// Name the keys defineModule() is about to leave out, once per module.
+function warnIgnoredDefinitionKeys(definition: ModuleDefinition): void {
+  const given = definition as unknown as Record<string, unknown>;
+  const ignored = Object.keys(given).filter(
+    key => !MODULE_DEFINITION_KEYS.has(key) && given[key] !== undefined
+  );
+  if (ignored.length === 0) return;
+
+  const id = `${definition.name}@${definition.version}:${ignored.join(',')}`;
+  if (reportedIgnoredKeys.has(id)) return;
+  reportedIgnoredKeys.add(id);
+
+  const names = ignored.map(key => `'${key}'`).join(', ');
+  createFrameworkLogger('Modules').warn(
+    `defineModule('${definition.name}'): ${names} ${ignored.length > 1 ? 'are' : 'is'} not read ` +
+      `and ${ignored.length > 1 ? 'are' : 'is'} left out of the module. A module definition takes ` +
+      'name, version, config, routes, sockets, dependencies and middleware.' +
+      (ignored.includes('services')
+        ? " Register services on the container instead: app.getContainer().register('name', factory)."
+        : ''),
+    'defineModule'
+  );
+}
+
 // Module Definition Function
 export function defineModule(definition: ModuleDefinition): ModuleConfig {
+  warnIgnoredDefinitionKeys(definition);
+
   const moduleConfig: ModuleConfig = {
     name: definition.name,
     version: definition.version,

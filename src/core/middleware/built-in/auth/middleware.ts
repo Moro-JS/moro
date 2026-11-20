@@ -1,90 +1,48 @@
 // Auth Middleware - Standard (req, res, next) middleware function
 import { StandardMiddleware } from '../../../../types/hooks.js';
 import { HttpRequest, HttpResponse } from '../../../../types/http.js';
-import { AuthCore } from './core.js';
-import { AuthOptions } from '../../../../types/auth.js';
-import { createFrameworkLogger } from '../../../logger/index.js';
-
-const logger = createFrameworkLogger('AuthMiddleware');
+import { AuthCore, type AuthMiddlewareOptions } from './core.js';
 
 /**
- * Create Auth middleware for use in middleware chains
+ * The `(req, res, next)` form of `auth(options)`, for a middleware chain.
+ *
+ * Internal: `@morojs/moro` does not export this function. The
+ * `createAuthMiddleware` the package exports is the Better Auth adapter's
+ * (core/auth/morojs-adapter), which is installed with `app.use()` and mounts
+ * the sign-in routes on the app; the public form of this one is
+ * `app.use(auth(options))`.
+ *
+ * Both run the same AuthCore as `auth()`: a Bearer token is verified, a
+ * Better Auth session is recognised when sign-in is configured, and
+ * `req.auth` is set. Having no app to mount routes on, it answers the sign-in
+ * routes itself when the request reaches it.
  *
  * @example
  * ```ts
- * import { createAuthMiddleware, providers } from '@/middleware/built-in/auth';
+ * import { createAuthMiddleware } from '@/middleware/built-in/auth';
  *
- * const authMw = createAuthMiddleware({
- *   secret: process.env.AUTH_SECRET,
- *   providers: [
- *     providers.google({
- *       clientId: process.env.GOOGLE_CLIENT_ID,
- *       clientSecret: process.env.GOOGLE_CLIENT_SECRET
- *     })
- *   ]
- * });
- *
+ * const authMw = createAuthMiddleware({ secret: process.env.AUTH_SECRET });
  * app.use(authMw);
  * ```
  */
-export function createAuthMiddleware(options: AuthOptions): StandardMiddleware {
+export function createAuthMiddleware(options: AuthMiddlewareOptions = {}): StandardMiddleware {
   const authCore = new AuthCore(options);
-  let initialized = false;
+  let ready: Promise<void> | undefined;
 
   return async (req: HttpRequest, res: HttpResponse, next: () => Promise<void>) => {
     // Initialize on first request
-    if (!initialized) {
-      await authCore.initialize();
-      initialized = true;
+    if (ready === undefined) ready = authCore.initialize();
+    await ready;
+
+    // The sign-in routes, when Better Auth serves them
+    if (authCore.isAuthRoute(req as any)) {
+      await authCore.handleAuthRoute(req, res);
+      return;
     }
 
-    const reqAny = req as any;
-
-    // Handle Better Auth API routes first
-    if (authCore.isAuthRoute(reqAny.url)) {
-      const response = await authCore.handleAuthRoute(req, res);
-      if (response) {
-        return response;
-      }
-    }
-
-    // Extract and verify JWT token
-    const {
-      token,
-      session: tokenSession,
-      error,
-    } = await authCore.verifyToken(req.headers?.authorization);
-
-    // Handle JWT errors for API requests
-    if (error) {
-      const errorResponse = authCore.handleJWTError(error, req, res);
-      if (errorResponse) {
-        return errorResponse;
-      }
-    }
-
-    // Get session from cookie if no token session
-    let session = tokenSession;
-    if (!session) {
-      session = await authCore.getSession(req);
-    }
-
-    // Create and attach auth request object
-    const authRequest = authCore.createAuthRequest(session, token || undefined);
-    reqAny.auth = authRequest;
-
-    if (authRequest.isAuthenticated) {
-      logger.debug('User authenticated', 'Authentication', {
-        userId: authRequest.user?.id,
-        provider: authRequest.user?.provider || 'unknown',
-      });
-    }
+    // Bearer token or session: sets req.auth, or answers 401 itself
+    if (await authCore.authenticate(req, res)) return;
 
     await next();
-
-    // Update session after response
-    if (authRequest.session) {
-      await authCore.updateSession(authRequest.session);
-    }
   };
 }

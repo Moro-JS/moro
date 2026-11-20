@@ -5,6 +5,8 @@ import { Moro as MoroCore } from './core/framework.js';
 import type { WebSocketNamespaceOptions } from './core/networking/websocket-adapter.js';
 import type { SSLConfigInput } from './core/http/utils/ssl-config.js';
 import { HttpRequest, HttpResponse } from './core/http/index.js';
+import type { Middleware } from './types/http.js';
+import { clearRepresentationHeaders } from './core/http/utils/response-headers.js';
 import { ModuleConfig, InternalRouteDefinition } from './types/module.js';
 import { MoroOptions } from './types/core.js';
 import { ModuleDefaultsConfig } from './types/config.js';
@@ -13,12 +15,13 @@ import { createFrameworkLogger, applyLoggingConfiguration } from './core/logger/
 import { Logger } from './types/logger.js';
 import { MiddlewareManager, MIDDLEWARE_FACTORY } from './core/middleware/index.js';
 import { IntelligentRoutingManager } from './core/routing/app-integration.js';
-import { RouteSchema, StaticBody } from './core/routing/index.js';
+import { RouteSchema, StaticBody, type ParamEcho } from './core/routing/index.js';
 import {
   UnifiedRouter,
   RouteBuilder as UnifiedRouteBuilder,
+  warnUncalledGuard,
 } from './core/routing/unified-router.js';
-import { PathMatcher } from './core/routing/path-matcher.js';
+import { PathMatcher, LITERAL_DOT, hasExtendedSyntax } from './core/routing/path-matcher.js';
 import { AppDocumentationManager, DocsConfig } from './core/docs/index.js';
 import { EventEmitter } from 'events';
 import { requireBuiltin } from './core/utilities/builtin.js';
@@ -33,18 +36,26 @@ import {
   ThreadClusterWorker,
   computeWorkerCount,
   isUserTunedYoungGen,
+  nextRestartDelay,
   resolveClusterTransport,
   threadWorkerInfo,
   YOUNG_GEN_MB_FOR_SEMI_SPACE_4,
+  type RestartState,
   type ThreadWorkerInfo,
 } from './core/cluster/thread-cluster.js';
-import { normalizeValidationError } from './core/validation/schema-interface.js';
 import { buildModuleBasePath } from './core/utilities/module-path.js';
-import { filePathToImportURL, loadNativeEngine } from './core/utilities/package-utils.js';
+import { logErrorLines } from './core/utilities/log-error-lines.js';
+import {
+  engineBinaryNote,
+  filePathToImportURL,
+  isPackageAvailable,
+  loadNativeEngine,
+} from './core/utilities/package-utils.js';
 // Configuration System Integration
-import { initializeConfig, initializeConfigAsync, type AppConfig } from './core/config/index.js';
+import { createAppConfig, createAppConfigAsync, type AppConfig } from './core/config/index.js';
 // Runtime System Integration
 import { RuntimeAdapter, RuntimeType, createRuntimeAdapter } from './core/runtime/index.js';
+import { runGlobalMiddleware } from './core/runtime/base-adapter.js';
 // Job System Integration
 import {
   JobScheduler,
@@ -64,7 +75,11 @@ import type {
   LeaderElectionOptions,
 } from './core/jobs/index.js';
 // Worker Threads Integration (optional - lazy loaded when needed)
-import { WorkerThreadsFacade, type WorkerTask } from './core/workers/index.js';
+import {
+  WorkerThreadsFacade,
+  setConfiguredWorkerPoolOptions,
+  type WorkerTask,
+} from './core/workers/index.js';
 // GraphQL System Integration (lazy loaded)
 import type { GraphQLOptions } from './core/graphql/types.js';
 // gRPC System Integration (lazy loaded)
@@ -111,7 +126,7 @@ export class RouteGroup {
   get(path: string): UnifiedRouteBuilder;
   get(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   get(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -125,7 +140,7 @@ export class RouteGroup {
   post(path: string): UnifiedRouteBuilder;
   post(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   post(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -139,7 +154,7 @@ export class RouteGroup {
   put(path: string): UnifiedRouteBuilder;
   put(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   put(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -153,7 +168,7 @@ export class RouteGroup {
   delete(path: string): UnifiedRouteBuilder;
   delete(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   delete(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -167,7 +182,7 @@ export class RouteGroup {
   patch(path: string): UnifiedRouteBuilder;
   patch(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   patch(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -181,7 +196,7 @@ export class RouteGroup {
   head(path: string): UnifiedRouteBuilder;
   head(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   head(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -195,7 +210,7 @@ export class RouteGroup {
   options(path: string): UnifiedRouteBuilder;
   options(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   options(path: string, ...args: any[]): UnifiedRouteBuilder | this {
@@ -209,7 +224,7 @@ export class RouteGroup {
   /** Register a handler for all HTTP methods on the given path (Express-compatible). */
   all(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this {
     this.app.all(this.prefixPath(path), handler, options);
@@ -220,6 +235,184 @@ export class RouteGroup {
     const nested = new RouteGroup(this.prefixPath(prefix), this.app);
     callback(nested);
     return this;
+  }
+}
+
+// The options app.METHOD(path, handler, options) takes. Each one is applied
+// as the chain builder's method of the same name applies it.
+const DIRECT_FORM_OPTIONS = new Set([
+  'validation',
+  'rateLimit',
+  'auth',
+  'cache',
+  'middleware',
+  'description',
+  'tags',
+]);
+
+// `validation` in the direct form: the { body, query, params, headers }
+// object the builder's .validate() takes, or a schema on its own, which
+// validates the body.
+function directFormValidation(validation: any): any {
+  if (validation === undefined || validation === null) return undefined;
+  if (
+    typeof validation.parseAsync === 'function' ||
+    typeof validation.safeParse === 'function' ||
+    typeof validation.parse === 'function'
+  ) {
+    return { body: validation };
+  }
+  return validation;
+}
+
+// What a legacy direct route answers when its handler failed. In production
+// (NODE_ENV, the rule the validation and template errors follow) that is the
+// generic body the router sends for a failed handler; the error's own text,
+// which can carry file paths or an upstream service's message, goes to the
+// log only. Outside production the response is what it always was.
+function directRouteFailureBody(error: unknown, req: HttpRequest): Record<string, unknown> {
+  if (process.env.NODE_ENV !== 'production') {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    };
+  }
+  return { success: false, error: 'Internal server error', requestId: req.requestId };
+}
+
+// The headers of a param(name) reply the native engine sends by itself
+const PARAM_ECHO_HEADERS: readonly string[] = ['content-type', 'text/plain; charset=utf-8'];
+
+// What was handed to app.use(), for the error that refuses it.
+function describeUseArgument(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'function') {
+    return `the function '${value.name || 'anonymous'}', which declares ${value.length} parameter${value.length === 1 ? '' : 's'}`;
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value as object);
+    return `an object with ${keys.length > 0 ? `the keys ${keys.slice(0, 5).join(', ')}` : 'no keys'}`;
+  }
+  return typeof value === 'string' ? `the string '${value}'` : `a ${typeof value}`;
+}
+
+/**
+ * The error for an app.use() call that matches no shape it can register.
+ * Names what was passed and the form that works.
+ */
+function describeUnregisteredUse(first: unknown, second: unknown): string {
+  const refused = 'app.use(): cannot register ';
+  if (typeof first === 'string') {
+    return (
+      refused +
+      `${describeUseArgument(second)} at the prefix '${first}'. ` +
+      `app.use(prefix, x) takes a (req, res, next) middleware function or a createRouter() instance. ` +
+      `A hook-based built-in from the \`middleware\` namespace (rateLimit, cors, cache, ...) ` +
+      `installs for every request and cannot be mounted at a prefix: ` +
+      `scope it on the routes themselves (for example .rateLimit() on a route).`
+    );
+  }
+  if (typeof first === 'function' && first.length === 2) {
+    return (
+      refused +
+      `${describeUseArgument(first)}. That is neither middleware (req, res, next) nor an ` +
+      `app plugin (app). Declare all three middleware parameters, without default values ` +
+      `or rest syntax.`
+    );
+  }
+  return (
+    refused +
+    `${describeUseArgument(first)}. app.use() takes a (req, res, next) function, ` +
+    `a middleware object from the \`middleware\` namespace, or a createRouter() instance.`
+  );
+}
+
+/**
+ * `fn` for the requests at or under `prefix` only: '/admin' covers '/admin',
+ * '/admin/' and '/admin/users', and not '/administrator'. The match is on
+ * req.path as it arrived, case-sensitive like route paths, and the request
+ * is passed on unchanged: req.url and req.path keep the prefix. The wrapper
+ * declares the parameters `fn` does, because the server tells error
+ * middleware (err, req, res, next) from ordinary middleware by that count.
+ */
+function mountAtPrefix(prefix: string, fn: (...args: any[]) => any): (...args: any[]) => any {
+  const rooted = prefix.startsWith('/') ? prefix : `/${prefix}`;
+  const base = rooted.endsWith('/') ? rooted.slice(0, -1) : rooted;
+  // '/' (and '') cover every path
+  if (base === '') return fn;
+  const under = base + '/';
+  const covers = (path: unknown): boolean =>
+    typeof path === 'string' && (path === base || path.startsWith(under));
+
+  if (fn.length >= 4) {
+    return function prefixedErrorMiddleware(err: any, req: any, res: any, next: any) {
+      if (covers(req.path)) return fn(err, req, res, next);
+      next(err);
+    };
+  }
+  return function prefixedMiddleware(req: any, res: any, next: any) {
+    if (covers(req.path)) return fn(req, res, next);
+    next();
+  };
+}
+
+// Route files are loaded for one app at a time (see Moro.loadRoutes): the end
+// of the load in progress, and the app it is for.
+let routeLoadTail: Promise<void> = Promise.resolve();
+let routeLoadOwner: Moro | null = null;
+// A route file that waits for another app's routes to load would wait for
+// itself. Past this long the wait is given up, with a warning, instead of
+// leaving listen() pending for ever.
+const ROUTE_LOAD_WAIT_MS = 30000;
+
+function waitForRouteLoad(ahead: Promise<void>, logger: Logger): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const giveUp = new Promise<void>(resolve => {
+    timer = setTimeout(() => {
+      logger.warn(
+        `Waited ${ROUTE_LOAD_WAIT_MS / 1000}s for another app's route files to finish loading; ` +
+          "loading this app's routes now. A route file that registers through getApp() or " +
+          'createRoute() while both loads run may register on the other app: register on the ' +
+          'app itself there.',
+        'RouteLoader'
+      );
+      resolve();
+    }, ROUTE_LOAD_WAIT_MS);
+    timer.unref?.();
+  });
+  return Promise.race([ahead, giveUp]).finally(() => clearTimeout(timer));
+}
+
+// Run `load` (the import of an app's route files) with that app as the
+// current app, after any other app's load in progress has finished.
+async function loadRoutesAsCurrentApp(
+  app: Moro,
+  router: UnifiedRouter,
+  logger: Logger,
+  load: () => Promise<void>
+): Promise<void> {
+  // A route file of this app that loads more of this app's routes
+  if (routeLoadOwner === app) return load();
+
+  // One app's route files at a time: "the current app" is one process-wide
+  // answer, so two apps loading side by side would register on each other.
+  const ahead = routeLoadTail;
+  let done!: () => void;
+  routeLoadTail = new Promise<void>(resolve => {
+    done = resolve;
+  });
+  await waitForRouteLoad(ahead, logger);
+
+  const outerOwner = routeLoadOwner;
+  routeLoadOwner = app;
+  const leave = UnifiedRouter.enterLoading(router);
+  try {
+    await load();
+  } finally {
+    leave();
+    routeLoadOwner = outerOwner;
+    done();
   }
 }
 
@@ -241,7 +434,8 @@ export class Moro extends EventEmitter {
   private eventBus!: MoroEventBus;
   // Application logger
   private logger!: Logger;
-  // Unified routing system (singleton - shared across all routers)
+  // This app's router: its routes, and the rate-limit counters and cached
+  // responses of the routes that declare them
   private unifiedRouter!: UnifiedRouter;
   // Legacy intelligent routing (kept for backward compatibility, now a facade)
   private intelligentRouting!: IntelligentRoutingManager;
@@ -262,7 +456,13 @@ export class Moro extends EventEmitter {
     handlers: Record<string, CallableFunction>;
     options?: WebSocketNamespaceOptions;
     processed: boolean;
+    // The adapter could not take the namespace yet when app.websocket() ran
+    heldForAdapter?: boolean;
   }> = [];
+  // False until the WebSocket adapter's asynchronous start-up has finished
+  private websocketSetupSettled = false;
+  // Whether a `websocket` option / config asked for WebSockets at all
+  private websocketRequested = false;
   // Job scheduling system
   private jobScheduler?: JobScheduler;
   private jobHealthChecker?: JobHealthChecker;
@@ -282,11 +482,20 @@ export class Moro extends EventEmitter {
   private queueInitialized = false;
   private queueInitPromise?: Promise<void> | undefined; // Track initialization promise
   private queueConfigs: Map<string, any> = new Map(); // Store queue configs for lazy initialization
+  // Registration in progress per queue name (settles either way, never rejects)
+  private queueRegistrations: Map<string, Promise<void>> = new Map();
+  // Why a queue's registration failed; rethrown when that queue is used
+  private queueRegistrationErrors: Map<string, unknown> = new Map();
+  // Queues the application attached a processor to through processQueue()
+  private queueProcessorNames: Set<string> = new Set();
   // Worker threads system (lazy loaded facade)
   private workerFacade: WorkerThreadsFacade;
   // Mail system (lazy loaded)
   private mailManager?: any; // Use any to avoid import dependency
   private mailInitialized = false;
+  private mailInitPromise?: Promise<void> | undefined; // One initialisation for concurrent first uses
+  // Emails sent in parallel from the in-memory queue the framework registers for mail
+  private static readonly MAIL_QUEUE_CONCURRENCY = 3;
   private mailConfig?: any; // Store config for lazy initialization
   // User-registered shutdown hooks (run during close())
   private closeHooks: Array<() => any | Promise<any>> = [];
@@ -319,7 +528,7 @@ export class Moro extends EventEmitter {
 
     // Use pre-loaded config (from async createApp factory) when available,
     // otherwise fall back to synchronous loading (env vars + options, no file)
-    this.config = preloadedConfig ?? initializeConfig(options);
+    this.config = preloadedConfig ?? createAppConfig(options);
 
     // Apply final config logging (this includes normalized logger → logging conversion)
     // Always apply this as it's the authoritative merged config
@@ -329,9 +538,11 @@ export class Moro extends EventEmitter {
       this.logger = createFrameworkLogger('App');
     }
 
-    // NOW initialize routing systems AFTER logger is configured
-    this.unifiedRouter = UnifiedRouter.getInstance();
-    this.intelligentRouting = new IntelligentRoutingManager();
+    // NOW initialize routing systems AFTER logger is configured. The router is
+    // this app's own, and from here on the current one: what
+    // UnifiedRouter.getInstance() and the standalone route builders use.
+    this.unifiedRouter = UnifiedRouter.createForApp(this, this.config);
+    this.intelligentRouting = new IntelligentRoutingManager(this.unifiedRouter);
 
     this.logger.info(
       `Configuration system initialized: ${process.env.NODE_ENV || 'development'}:${this.config.server.port}`
@@ -355,7 +566,19 @@ export class Moro extends EventEmitter {
       config: this.config,
     };
 
-    this.coreFramework = new MoroCore(frameworkOptions);
+    this.coreFramework = new MoroCore(frameworkOptions, this.unifiedRouter);
+
+    // Same condition the core uses to decide whether to set an adapter up
+    this.websocketRequested = !!(
+      this.config.websocket.enabled ||
+      (frameworkOptions.websocket && typeof frameworkOptions.websocket === 'object')
+    );
+    const markWebSocketSetupSettled = () => {
+      this.websocketSetupSettled = true;
+    };
+    void this.coreFramework
+      .ensureWebSocketReady()
+      .then(markWebSocketSetupSettled, markWebSocketSetupSettled);
 
     // Initialize middleware system
     this.middlewareManager = new MiddlewareManager();
@@ -372,6 +595,11 @@ export class Moro extends EventEmitter {
       // the hook manager too for 'error' hooks to observe them.
       this.unifiedRouter.setHookManager((this.middlewareManager as any).hooks);
     }
+
+    // Configuration sections that switch on a built-in (global rate limit,
+    // CSP, session, CSRF): registered here, ahead of anything the
+    // application adds to the hook system.
+    this.coreFramework.installConfiguredMiddleware(this.middlewareManager);
 
     // Configure HTTP server performance based on config
     if (httpServer && httpServer.configurePerformance) {
@@ -399,8 +627,21 @@ export class Moro extends EventEmitter {
               ...(le?.heartbeatInterval !== undefined
                 ? { heartbeatInterval: le.heartbeatInterval }
                 : {}),
+              ...(le?.redisClient ? { redisClient: le.redisClient } : {}),
             }
           : undefined;
+
+      // The 'redis' strategy takes its lock through a client the application
+      // supplies. Without one no instance can become leader.
+      if (leaderElectionOptions?.strategy === 'redis' && !leaderElectionOptions.redisClient) {
+        this.logger.warn(
+          "jobs.leaderElection.strategy is 'redis' but no Redis client was given: no instance can " +
+            'become leader, so no scheduled job will run. Pass a connected client with ' +
+            "createApp({ jobs: { leaderElection: { strategy: 'redis', redisClient } } }), " +
+            "or use the 'file' strategy.",
+          'Jobs'
+        );
+      }
 
       const jobs = this.config.jobs;
       const jobSchedulerOptions: JobSchedulerOptions = {
@@ -440,7 +681,14 @@ export class Moro extends EventEmitter {
         ...(options.workers.maxQueueSize !== undefined
           ? { maxQueueSize: options.workers.maxQueueSize }
           : {}),
+        ...(options.workers.resourceLimits !== undefined
+          ? { resourceLimits: options.workers.resourceLimits }
+          : {}),
       };
+      // The pool itself is created in the background below; record the options
+      // now so that a getWorkerManager() or executeOnWorker() call made before
+      // that finishes builds the pool as configured, not with the defaults.
+      setConfiguredWorkerPoolOptions(workerOptions);
       void this.workerFacade.ensureInitialized(workerOptions).then(() => {
         this.logger.info('Worker thread pool initialized', 'Workers', workerOptions);
       });
@@ -502,12 +750,12 @@ export class Moro extends EventEmitter {
   get(path: string): UnifiedRouteBuilder;
   get(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   get(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -521,12 +769,12 @@ export class Moro extends EventEmitter {
   post(path: string): UnifiedRouteBuilder;
   post(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   post(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -540,12 +788,12 @@ export class Moro extends EventEmitter {
   put(path: string): UnifiedRouteBuilder;
   put(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   put(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -559,12 +807,12 @@ export class Moro extends EventEmitter {
   delete(path: string): UnifiedRouteBuilder;
   delete(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   delete(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -578,12 +826,12 @@ export class Moro extends EventEmitter {
   patch(path: string): UnifiedRouteBuilder;
   patch(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   patch(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -597,12 +845,12 @@ export class Moro extends EventEmitter {
   head(path: string): UnifiedRouteBuilder;
   head(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   head(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -614,12 +862,12 @@ export class Moro extends EventEmitter {
   options(path: string): UnifiedRouteBuilder;
   options(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this;
   options(
     path: string,
-    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler?: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): UnifiedRouteBuilder | this {
     if (handler !== undefined) {
@@ -635,7 +883,7 @@ export class Moro extends EventEmitter {
    */
   all(
     path: string,
-    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody,
+    handler: ((req: HttpRequest, res: HttpResponse) => any) | StaticBody | ParamEcho,
     options?: any
   ): this {
     const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
@@ -674,10 +922,22 @@ export class Moro extends EventEmitter {
    * //   auth/
    * //     index.ts        → loaded
    * //     actions.ts      → ignored (imported by index.ts)
+   *
+   * While the files load, this app is the current app: a route file that
+   * registers through `getApp()` or a standalone builder (`createRoute`)
+   * registers on the app that loads it, whichever app was created last. A
+   * file is evaluated once per process (the module cache), so a directory
+   * belongs to the first app that loads it.
    */
   async loadRoutes(dir: string): Promise<void> {
+    return loadRoutesAsCurrentApp(this, this.unifiedRouter, this.logger, () =>
+      this.loadRouteFiles(dir)
+    );
+  }
+
+  private async loadRouteFiles(dir: string): Promise<void> {
     const { readdirSync, statSync } = await import('fs');
-    const { join, extname, resolve } = await import('path');
+    const { join, extname, resolve, isAbsolute } = await import('path');
     const { filePathToImportURL } = await import('./core/utilities/package-utils.js');
 
     const fullPath = resolve(dir);
@@ -685,9 +945,25 @@ export class Moro extends EventEmitter {
 
     let items: string[];
     try {
-      items = readdirSync(fullPath);
+      // Loaded in the order of the names (by UTF-16 code unit, so upper case
+      // first), whatever order the file system lists the directory in
+      const { compareNames } = await import('./core/modules/module-files.js');
+      items = readdirSync(fullPath).sort(compareNames);
     } catch {
       return;
+    }
+
+    this.logger.debug(`Loading route files from ${fullPath}`, 'RouteLoader');
+    if (!isAbsolute(dir)) {
+      const { foundThroughWorkingDirectory } =
+        await import('./core/utilities/working-directory.js');
+      foundThroughWorkingDirectory(
+        this.logger,
+        'route directory',
+        fullPath,
+        process.cwd(),
+        'give routing.paths (or app.loadRoutes()) absolute paths'
+      );
     }
 
     for (const item of items) {
@@ -783,6 +1059,31 @@ export class Moro extends EventEmitter {
       return this;
     }
 
+    // `app.use(pathPrefix, fn)` — standard (req, res, next) middleware for the
+    // requests at or under the prefix. Anything else after a prefix cannot be
+    // mounted there, and saying nothing would leave a guard that never runs.
+    if (typeof middlewareOrFunction === 'string') {
+      warnUncalledGuard(config, `app.use('${middlewareOrFunction}')`);
+      if (
+        typeof config !== 'function' ||
+        config.length < 3 ||
+        (config as any)[MIDDLEWARE_FACTORY]
+      ) {
+        throw new Error(describeUnregisteredUse(middlewareOrFunction, config));
+      }
+      this.coreFramework.addMiddleware(mountAtPrefix(middlewareOrFunction, config));
+      void this.eventBus.emit('middleware:registered', {
+        type: 'standard',
+        middleware: config,
+        prefix: middlewareOrFunction,
+      });
+      return this;
+    }
+
+    // An auth guard factory passed uncalled (app.use(requireAuth) instead of
+    // app.use(requireAuth())) protects nothing; say so.
+    warnUncalledGuard(middlewareOrFunction, 'app.use()');
+
     // Built-in factory passed uncalled (app.use(middleware.helmet) instead of
     // app.use(middleware.helmet())). The arity dispatch below would misroute it
     // as an app-plugin and silently discard the result — fail loudly instead.
@@ -829,6 +1130,8 @@ export class Moro extends EventEmitter {
         'Middleware'
       );
       this.middlewareManager.install(middlewareOrFunction, config);
+      // A middleware that also serves routes (auth) is handed the app for it
+      middlewareOrFunction[Symbol.for('morojs.middleware.appInstall')]?.(this);
       return this;
     }
 
@@ -837,11 +1140,11 @@ export class Moro extends EventEmitter {
       middleware: middlewareOrFunction,
       config,
     });
-    this.logger.debug(
-      'Advanced middleware integration - enhanced capabilities loading...',
-      'Middleware'
-    );
-    return this;
+    // Nothing above recognised the argument, so nothing can be registered.
+    // Refuse it: when the argument was meant to be a guard, a silent no-op
+    // leaves the routes behind it unprotected with no sign that anything is
+    // wrong.
+    throw new Error(describeUnregisteredUse(middlewareOrFunction, config));
   }
 
   // Plugin compatibility layer - unified middleware interface
@@ -970,15 +1273,32 @@ export class Moro extends EventEmitter {
     options: WebSocketNamespaceOptions = {}
   ) {
     // Queue the registration to be processed after adapter initialization
-    const registration = { namespace, handlers, options, processed: false };
+    const registration: (typeof this.queuedWebSocketRegistrations)[number] = {
+      namespace,
+      handlers,
+      options,
+      processed: false,
+    };
     this.queuedWebSocketRegistrations.push(registration);
 
     // Try to process immediately if adapter is already ready
     const adapter = this.coreFramework.getWebSocketAdapter();
     if (adapter && !registration.processed) {
-      // Adapter is ready, process immediately
-      this.processWebSocketRegistration(namespace, handlers, adapter, options);
-      registration.processed = true;
+      if (this.websocketSetupSettled) {
+        // Adapter is ready, process immediately
+        this.processWebSocketRegistration(namespace, handlers, adapter, options);
+        registration.processed = true;
+      } else if (this.processWebSocketRegistration(namespace, handlers, adapter, options, true)) {
+        // The adapter object exists but its asynchronous start-up is still
+        // running. Adapters that take namespaces straight away (ws, the
+        // engine) are registered now, as above.
+        registration.processed = true;
+      } else {
+        // The adapter cannot create a namespace until it has started (the
+        // Socket.IO server is built during start-up): keep the registration
+        // queued; it is applied when the server starts.
+        registration.heldForAdapter = true;
+      }
     }
     // Otherwise, it will be processed when the server starts
 
@@ -989,11 +1309,21 @@ export class Moro extends EventEmitter {
     namespace: string,
     handlers: Record<string, CallableFunction>,
     adapter: any,
-    options: WebSocketNamespaceOptions = {}
-  ) {
+    options: WebSocketNamespaceOptions = {},
+    // true while the adapter is still starting: an adapter that cannot create
+    // the namespace yet makes this return false instead of throwing
+    adapterStillStarting = false
+  ): boolean {
+    let ns: any;
+    try {
+      ns = adapter.createNamespace(namespace, options);
+    } catch (error) {
+      if (adapterStillStarting) return false;
+      this.emit('websocket:registering', { namespace, handlers });
+      throw error;
+    }
     this.emit('websocket:registering', { namespace, handlers });
 
-    const ns = adapter.createNamespace(namespace, options);
     const raw = options.raw === true;
     const isFrame = (v: unknown): v is string | Buffer | ArrayBuffer | Uint8Array =>
       typeof v === 'string' ||
@@ -1007,10 +1337,21 @@ export class Moro extends EventEmitter {
 
         if (event === 'connection') {
           // The documented `connection: socket => ...` hook runs once per
-          // socket at open (it is not a client-sendable event name).
-          Promise.resolve()
-            .then(() => handler(socket))
-            .catch((error: any) => this.emit('websocket:error', { namespace, event, error }));
+          // socket at open (it is not a client-sendable event name). It is
+          // called here, synchronously, so it has run before the first frame
+          // is dispatched: a client can send a frame in the same segment as
+          // its handshake, and a hook deferred to a later tick would let a
+          // message handler answer a socket the hook was about to close.
+          const hookFailed = (error: any) =>
+            this.emit('websocket:error', { namespace, event, error });
+          try {
+            const pending = handler(socket);
+            if (typeof pending?.then === 'function') {
+              (pending as Promise<unknown>).then(undefined, hookFailed);
+            }
+          } catch (error) {
+            hookFailed(error);
+          }
           return;
         }
 
@@ -1035,7 +1376,19 @@ export class Moro extends EventEmitter {
           // A raw peer has no envelope to carry an error object; the
           // failure is surfaced through the websocket:error event only.
           if (raw) return;
-          const errorResponse = { success: false, error: error?.message };
+          this.logger.error('WebSocket handler error', 'WebSocket', {
+            namespace,
+            event,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // What the handler threw is the application's own text (a driver
+          // message, a path, a query). In production the client is told only
+          // that the event failed; the error itself is in the log line and
+          // the websocket:error event above.
+          const errorResponse = {
+            success: false,
+            error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error?.message,
+          };
           if (callback) callback(errorResponse);
           else socket.emit('error', errorResponse);
         };
@@ -1073,6 +1426,7 @@ export class Moro extends EventEmitter {
     });
 
     this.emit('websocket:registered', { namespace, handlers });
+    return true;
   }
 
   private async processQueuedWebSocketRegistrations() {
@@ -1085,16 +1439,32 @@ export class Moro extends EventEmitter {
     const unprocessedRegistrations = this.queuedWebSocketRegistrations.filter(r => !r.processed);
 
     if (!adapter && unprocessedRegistrations.length > 0) {
+      const namespaces = unprocessedRegistrations.map(r => `'${r.namespace}'`).join(', ');
+      // The first line is matched by listen() to treat this as fatal.
+      if (!this.websocketRequested) {
+        throw new Error(
+          'WebSocket features require a WebSocket adapter.\n\n' +
+            `app.websocket() was called for ${namespaces}, but WebSockets are not enabled, ` +
+            'so no adapter was set up. WebSockets are off until the app is created with a ' +
+            '`websocket` option:\n\n' +
+            '  const app = await createApp({ websocket: { enabled: true } });\n\n' +
+            'or, in moro.config.js:\n\n' +
+            '  export default { websocket: { enabled: true } };\n\n' +
+            'The native engine (the default) then serves WebSockets on the HTTP port; ' +
+            'nothing else needs installing.'
+        );
+      }
       throw new Error(
         'WebSocket features require a WebSocket adapter.\n\n' +
-          'Option 1: Install socket.io (auto-detected):\n' +
-          '  npm install socket.io\n' +
-          '  const app = new Moro({ websocket: {} });\n\n' +
-          'Option 2: Configure a specific adapter:\n' +
+          `app.websocket() was called for ${namespaces} and WebSockets are enabled, but no ` +
+          `adapter could be set up on the '${this.engine.server}' HTTP server ` +
+          '(the WebSocket warning logged at start-up gives the reason).\n\n' +
+          'Option 1: Use the native engine (the default), which serves WebSockets itself.\n\n' +
+          'Option 2: On the Node.js server, install socket.io or ws (auto-detected):\n' +
+          '  npm install socket.io\n\n' +
+          'Option 3: Pass an adapter:\n' +
           "  import { SocketIOAdapter } from '@morojs/moro';\n" +
-          '  const app = new Moro({ websocket: { adapter: new SocketIOAdapter() } });\n\n' +
-          'Option 3: Enable in config file (moro.config.js):\n' +
-          '  export default { websocket: { enabled: true } };'
+          '  const app = await createApp({ websocket: { adapter: new SocketIOAdapter() } });'
       );
     }
 
@@ -1102,12 +1472,26 @@ export class Moro extends EventEmitter {
       // Process all unprocessed registrations
       for (const registration of this.queuedWebSocketRegistrations) {
         if (!registration.processed) {
-          this.processWebSocketRegistration(
-            registration.namespace,
-            registration.handlers,
-            adapter,
-            registration.options
-          );
+          try {
+            this.processWebSocketRegistration(
+              registration.namespace,
+              registration.handlers,
+              adapter,
+              registration.options
+            );
+          } catch (error) {
+            if (!registration.heldForAdapter) throw error;
+            // The registration waited for an adapter that then failed to
+            // start. app.websocket() would have thrown; fail the start the
+            // same way a missing adapter does.
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(
+              'WebSocket features require a WebSocket adapter.\n\n' +
+                `app.websocket() was called for '${registration.namespace}', but the configured ` +
+                `adapter did not start: ${reason} ` +
+                '(the WebSocket warning logged at start-up gives the cause).'
+            );
+          }
           registration.processed = true;
         }
       }
@@ -1159,8 +1543,13 @@ export class Moro extends EventEmitter {
       host = this.config.server.host;
     }
 
+    // listen(0), written out, asks the operating system for a free port (read
+    // it back with app.address()). A port of 0 that merely came out of the
+    // configuration is still "no port given".
+    const ephemeralPort = portOrCallback === 0;
+
     // Validate that we have a valid port
-    if (!port || typeof port !== 'number') {
+    if (!ephemeralPort && (!port || typeof port !== 'number')) {
       throw new Error(
         'Port not specified and not found in configuration. Please provide a port number or configure it in moro.config.js/ts'
       );
@@ -1168,6 +1557,12 @@ export class Moro extends EventEmitter {
 
     // Check if clustering is enabled for massive performance gains
     if (this.config.performance?.clustering?.enabled) {
+      if (ephemeralPort) {
+        throw new Error(
+          'listen(0) cannot be used with performance.clustering: every worker would be given a ' +
+            'different port by the operating system. Pass a fixed port number.'
+        );
+      }
       // Worker threads (engine backend, POSIX, engine >= 1.1.6) or node:cluster
       // processes - startWithClustering picks and logs the transport.
       this.startWithClustering(port, host as string, callback);
@@ -1199,15 +1594,19 @@ export class Moro extends EventEmitter {
       this.registerDirectRoutes();
     }
 
+    const requestedPort = port;
     const startServer = () => {
       const actualCallback = () => {
+        // After listen(0) the port to report is the one that was bound.
+        const port = ephemeralPort ? (this.address()?.port ?? 0) : requestedPort;
         const displayHost = host || 'localhost';
         const serverKind = this.engine;
         this.logger.info('Moro Server Started', 'Server');
         this.logger.info(`Runtime: ${this.runtimeType}`, 'Server');
         this.logger.info(
           `HTTP engine: ${serverKind.server}` +
-            (serverKind.enginePackage ? ` (${serverKind.enginePackage})` : ''),
+            (serverKind.enginePackage ? ` (${serverKind.enginePackage})` : '') +
+            engineBinaryNote(serverKind.engineBinary),
           'Server'
         );
         this.logger.info(`HTTP API: http://${displayHost}:${port}`, 'Server');
@@ -1237,13 +1636,13 @@ export class Moro extends EventEmitter {
 
         // Initialize GraphQL if configured
         this.ensureGraphQLInitialized().catch(error => {
-          this.logger.error(`Failed to initialize GraphQL: ${error}`, 'GraphQL');
+          logErrorLines(this.logger, 'Failed to initialize GraphQL', error, 'GraphQL');
         });
 
         // Start gRPC server if initialized
         if (this.grpcManager && !this.grpcStarted) {
           this.startGrpc().catch(error => {
-            this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+            logErrorLines(this.logger, 'Failed to start gRPC server', error, 'GRPC');
           });
         }
 
@@ -1294,6 +1693,25 @@ export class Moro extends EventEmitter {
         this.logger.error(`Failed to start server on port ${port}: ${message}`, 'Framework');
         this.emit('error', error);
       });
+  }
+
+  /**
+   * The address the HTTP server is bound to, in the shape of Node's
+   * `server.address()`, or `null` while the app is not listening (before the
+   * listen callback, after close(), and in the primary of a cluster, where
+   * the workers hold the port). After `listen(0)` this is where the port the
+   * operating system chose is read.
+   *
+   * @example
+   * app.listen(0, () => {
+   *   const { port } = app.address()!;
+   * });
+   */
+  address(): { address: string; family: string; port: number } | null {
+    const server = (this.coreFramework as any)?.httpServer?.getServer?.();
+    const bound = typeof server?.address === 'function' ? server.address() : null;
+    if (!bound || typeof bound !== 'object' || typeof bound.port !== 'number') return null;
+    return { address: String(bound.address), family: String(bound.family), port: bound.port };
   }
 
   // Public method to manually initialize auto-discovery
@@ -1443,6 +1861,45 @@ export class Moro extends EventEmitter {
     this.logger.debug('Auto-discovery initialization completed', 'AutoDiscovery');
   }
 
+  // An error the global middleware chain ended with on a getHandler()
+  // runtime, answered the way the servers answer it: the application's error
+  // handler first, then 413 / 400 for a body error and the generic 500.
+  private async answerGlobalMiddlewareError(
+    error: unknown,
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<void> {
+    const statusCode = (error as any)?.statusCode;
+    if (statusCode === 413 && !res.headersSent) {
+      res.status(413).json({ success: false, error: 'Request entity too large' });
+      return;
+    }
+    this.logger.error('Request error', 'RequestHandler', {
+      error: error instanceof Error ? error.message : String(error),
+      requestId: req.requestId,
+      method: req.method,
+      path: req.path,
+    });
+    if (this.errorHandler && !res.headersSent) {
+      try {
+        await this.errorHandler(error, req, res);
+      } catch (handlerErr) {
+        this.logger.error('Error handler itself threw', 'RequestHandler', {
+          error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+        });
+      }
+    }
+    if (res.headersSent) return;
+    // What a middleware had set described the body it meant to send
+    clearRepresentationHeaders(res as any);
+    const badRequest = statusCode === 400;
+    res.status(badRequest ? 400 : 500).json({
+      success: false,
+      error: badRequest ? 'Invalid request body' : 'Internal server error',
+      requestId: req.requestId,
+    });
+  }
+
   // Get handler for non-Node.js runtimes
   getHandler() {
     // Ensure auto-discovery is complete for non-Node.js runtimes
@@ -1459,10 +1916,44 @@ export class Moro extends EventEmitter {
     // 'response' hooks are awaited before returning — post-return work would
     // be frozen or dropped by the platform.
     const hookManager = this.middlewareManager.getHookManager();
+    // The global middleware chain: the functions registered with app.use(fn)
+    // and the config-driven ones (helmet, CORS, compression, request logging).
+    // It is kept by the server object, which exists on every runtime, and is
+    // read per request so middleware registered after getHandler() runs too.
+    // It runs where the servers run it: after the request hooks, before the
+    // documentation routes and the router.
+    const httpServer = (this.coreFramework as any).httpServer;
     const handler = async (req: HttpRequest, res: HttpResponse) => {
       try {
         if (hookManager.hasHooks('request')) {
+          // A hook that answers the request itself (a rate limit's 429, a
+          // CSRF 403) does so before the global middleware has run, and gives
+          // its answer the application's helmet and CORS headers by asking
+          // the response for its server. The servers' own responses carry
+          // that reference; the ones these runtimes create are given it
+          // here, and only for an app that has a request hook at all.
+          if ((res as any)._server === undefined) (res as any)._server = httpServer;
           await hookManager.execute('request', { request: req, response: res });
+          if (res.headersSent) return;
+        }
+
+        const globalMiddleware: Middleware[] | undefined = httpServer?.globalMiddleware;
+        if (globalMiddleware !== undefined && globalMiddleware.length > 0) {
+          try {
+            const chain = runGlobalMiddleware(globalMiddleware, req, res);
+            if (chain) await chain;
+          } catch (error) {
+            if (hookManager.hasHooks('error')) {
+              try {
+                await hookManager.execute('error', { request: req, response: res, error });
+              } catch (hookError: any) {
+                this.logger.error(`Error hook error: ${hookError?.message || hookError}`, 'Hooks');
+              }
+            }
+            await this.answerGlobalMiddlewareError(error, req, res);
+            return;
+          }
+          // A middleware answered the request itself (a guard, a preflight)
           if (res.headersSent) return;
         }
 
@@ -1577,11 +2068,13 @@ export class Moro extends EventEmitter {
         (res as any).json(result);
       }
     } catch (error) {
+      this.logger.error('Route execution error', 'RequestHandler', {
+        error: error instanceof Error ? error.message : String(error),
+        route: `${route.method} ${route.path}`,
+        requestId: req.requestId,
+      });
       if (!(res as any).headersSent) {
-        (res as any).status(500).json({
-          success: false,
-          error: error instanceof Error ? error.message : 'Internal server error',
-        });
+        (res as any).status(500).json(directRouteFailureBody(error, req));
       }
     }
   }
@@ -1633,10 +2126,14 @@ export class Moro extends EventEmitter {
   // Convert path to regex (simplified version)
   private pathToRegex(path: string): { pattern: RegExp; paramNames: string[] } {
     const paramNames: string[] = [];
-    const regexPath = path.replace(/\//g, '\\/').replace(/:([^/]+)/g, (match, paramName) => {
-      paramNames.push(paramName);
-      return '([^/]+)';
-    });
+    const regexPath = path
+      .replace(/\//g, '\\/')
+      .replace(/:([^/]+)/g, (match, paramName) => {
+        paramNames.push(paramName);
+        return '([^/]+)';
+      })
+      // A dot in the fixed text of a path is a dot, as in PathMatcher
+      .replace(LITERAL_DOT, '\\.');
 
     return {
       pattern: new RegExp(`^${regexPath}$`),
@@ -1703,29 +2200,67 @@ export class Moro extends EventEmitter {
   private addRoute(
     method: string,
     path: string,
-    handler: ((req: any, res: any) => any | Promise<any>) | string | Buffer,
+    handler: ((req: any, res: any) => any | Promise<any>) | string | Buffer | ParamEcho,
     options: any = {}
   ) {
+    if (options === null || typeof options !== 'object') {
+      // app.get(path, middleware, handler): the second function is in the
+      // place of the options object, so it would be dropped and the first one
+      // run as the handler. Say so instead of dropping it silently.
+      if (typeof options === 'function') {
+        this.logger.warn(
+          `${method.toUpperCase()} ${path}: the third argument is a function and will NOT run. ` +
+            `app.${method.toLowerCase()}(path, handler, options) takes one handler; pass middleware as ` +
+            `{ middleware: [fn] } or with the builder: app.${method.toLowerCase()}(path).before(fn).handler(handler).`,
+          'Router'
+        );
+      }
+      options = {};
+    }
+
+    // An option this form does not have is not applied by anything. Name it
+    // here, once, instead of leaving it silently inert.
+    const unknown = Object.keys(options).filter(key => !DIRECT_FORM_OPTIONS.has(key));
+    if (unknown.length > 0) {
+      this.logger.warn(
+        `${method.toUpperCase()} ${path}: route option${unknown.length > 1 ? 's' : ''} ` +
+          `${unknown.map(key => `'${key}'`).join(', ')} ${unknown.length > 1 ? 'are' : 'is'} not known ` +
+          `and will NOT be applied. app.${method.toLowerCase()}(path, handler, options) takes ` +
+          `${[...DIRECT_FORM_OPTIONS].join(', ')}.`,
+        'Router'
+      );
+    }
+
+    // The options are the route's schema: the unified router applies each of
+    // them on this route as it does for the chain builder (rate limit, auth,
+    // validation, the route's middleware, cache, then the handler). A route
+    // with no options stays on the router's fast path.
+    const schema: RouteSchema = {
+      method: method as any,
+      path,
+      handler: handler as any,
+      middleware: options.middleware || [],
+    };
+    const validation = directFormValidation(options.validation);
+    if (validation !== undefined) schema.validation = validation;
+    if (options.rateLimit) schema.rateLimit = options.rateLimit;
+    if (options.auth) schema.auth = options.auth;
+    if (options.cache) schema.cache = options.cache;
+    if (options.description !== undefined) schema.description = options.description;
+    if (options.tags !== undefined) schema.tags = options.tags;
+
     // A literal body - app.get('/', '') - is the same route the builder's
     // .handler('') registers: the unified router turns it into a handler and,
     // with nothing else configured, a reply the native engine answers itself.
     // It never enters the legacy direct-route table, whose wrapper would
     // call it as a function.
     if (typeof handler !== 'function') {
-      this.unifiedRouter.registerRoute({
-        method: method as any,
-        path,
-        handler: handler as any,
-        validation: options.validation,
-        rateLimit: options.rateLimit,
-        cache: options.cache,
-        middleware: options.middleware,
-      });
+      this.unifiedRouter.registerRoute(schema);
       return this;
     }
 
     // Register with unified router (primary routing system)
-    this.unifiedRouter.addRoute(method as any, path, handler as any, options.middleware || []);
+    const registered = this.unifiedRouter.registerRoute(schema);
 
     // Also store in legacy routes array for backward compatibility
     const handlerName = `handler_${this.routes.length}`;
@@ -1737,6 +2272,9 @@ export class Moro extends EventEmitter {
       rateLimit: options.rateLimit,
       cache: options.cache,
       middleware: options.middleware,
+      // What the server's own route table runs before the handler when it is
+      // the one that matched (see registerDirectRoutes)
+      registered,
     };
 
     this.routes.push(route);
@@ -1751,6 +2289,9 @@ export class Moro extends EventEmitter {
   }
 
   private organizeRouteForLookup(route: any): void {
+    // A route with optional parameters or a wildcard is matched by the
+    // unified router alone, on every runtime
+    if (hasExtendedSyntax(route.path)) return;
     if (!route.path.includes(':')) {
       // Static route - add to static map for O(1) lookup
       const staticKey = `${route.method}:${route.path}`;
@@ -1774,6 +2315,9 @@ export class Moro extends EventEmitter {
   private attachUnifiedRouter(): void {
     const httpServer = (this.coreFramework as any).httpServer;
 
+    // Listening (again): this app counts as open when the current app is chosen
+    UnifiedRouter.setClosed(this.unifiedRouter, false);
+
     if (httpServer && typeof httpServer.setRouterHandler === 'function') {
       const router = this.unifiedRouter;
       httpServer.setRouterHandler((req: HttpRequest, res: HttpResponse) =>
@@ -1782,9 +2326,13 @@ export class Moro extends EventEmitter {
 
       // A server that answers fixed replies itself (MoroEngineServer on an
       // engine with capabilities.staticRoutes) gets every route whose handler
-      // is a literal body, so those requests never enter JS. The route's
-      // handler stays registered: it answers HEAD, and everything on servers
-      // without the capability.
+      // is a literal body. The server decides whether the engine answers
+      // them: only while it has no global middleware and no request or
+      // response hook, so that an app.use() guard, a hook, or config-driven
+      // CORS / helmet / request logging is in front of these routes exactly
+      // as it is in front of every other one, whenever it was registered.
+      // The route's handler stays registered: it answers then, and it
+      // answers HEAD and everything on servers without the capability.
       if (typeof httpServer.setStaticRoute === 'function') {
         for (const schema of router.getAllRoutes()) {
           const fixed = schema.static;
@@ -1800,21 +2348,30 @@ export class Moro extends EventEmitter {
         }
       }
       // Same for param(name) handlers on bare single-parameter routes: the
-      // engine echoes the segment itself (engine >= 1.1.9).
+      // engine echoes the segment itself (engine >= 1.1.9). The body is
+      // whatever the client put in the URL, so the reply always declares a
+      // type: left without one, a browser works the type out from the bytes
+      // and could render a segment that looks like markup.
       if (typeof httpServer.setParamRoute === 'function') {
-        for (const schema of router.getAllRoutes()) {
-          const echo = schema.paramEcho;
-          if (echo) {
-            httpServer.setParamRoute(
-              schema.method,
-              echo.prefix,
-              echo.suffix,
-              echo.status,
-              echo.headers
-            );
-          }
-        }
+        this.handParamEchoRoutes(httpServer, router);
       }
+      // A route registered after listen() is handed over the same way, and
+      // takes back an echo route it shadows.
+      UnifiedRouter.setRouteListener(router, schema => {
+        const fixed = schema.static;
+        if (fixed && typeof httpServer.setStaticRoute === 'function') {
+          httpServer.setStaticRoute(
+            schema.method,
+            schema.path,
+            fixed.status,
+            fixed.headers,
+            fixed.body
+          );
+        }
+        if (typeof httpServer.setParamRoute === 'function') {
+          this.handParamEchoRoutes(httpServer, router);
+        }
+      });
       return;
     }
 
@@ -1840,104 +2397,106 @@ export class Moro extends EventEmitter {
     );
   }
 
+  // Echo routes the server was given, as "METHOD path"
+  private paramEchoKeys = new Set<string>();
+
+  // Hand the server every param() echo route it can answer by itself. The
+  // engine matches a param route by prefix and suffix alone, ahead of the
+  // router, so an echo route is left to the router whenever another route of
+  // the same method could match one of its paths: a literal '/user/me'
+  // beside '/user/:id' must reach its own handler. One that was handed over
+  // and is shadowed now (a route registered after listen()) is taken back.
+  private handParamEchoRoutes(httpServer: any, router: UnifiedRouter): void {
+    const all = router.getAllRoutes();
+    // Segment by segment: a parameter matches any segment, a wildcard the
+    // rest of the path, and trailing optional parameters may be absent.
+    const segmentsOverlap = (a: string, b: string): boolean => {
+      const sa = a.split('/');
+      const sb = b.split('/');
+      for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
+        const x = sa[i];
+        const y = sb[i];
+        if (x === undefined || y === undefined) {
+          return (x === undefined ? sb : sa).slice(i).every(seg => seg.endsWith('?'));
+        }
+        if (x.startsWith('*') || y.startsWith('*')) return true;
+        if (x !== y && !x.startsWith(':') && !y.startsWith(':')) return false;
+      }
+      return true;
+    };
+    const wanted = all.filter(
+      schema =>
+        schema.paramEcho !== undefined &&
+        !all.some(
+          other =>
+            other !== schema &&
+            other.method === schema.method &&
+            segmentsOverlap(schema.path, other.path)
+        )
+    );
+    const keys = new Set(wanted.map(schema => `${schema.method} ${schema.path}`));
+    for (const key of this.paramEchoKeys) {
+      if (!keys.has(key)) {
+        // The engine has no per-route removal: clear, then hand back the rest
+        if (typeof httpServer.clearParamRoutes === 'function') httpServer.clearParamRoutes();
+        break;
+      }
+    }
+    for (const schema of wanted) {
+      const echo = schema.paramEcho as NonNullable<typeof schema.paramEcho>;
+      httpServer.setParamRoute(
+        schema.method,
+        echo.prefix,
+        echo.suffix,
+        echo.status,
+        echo.headers ?? PARAM_ECHO_HEADERS
+      );
+    }
+    this.paramEchoKeys = keys;
+  }
+
   private registerDirectRoutes() {
     // Register routes directly with the HTTP server for optimal performance
     // This provides the intuitive developer experience users expect
     for (const route of this.routes) {
       const handler = this.routeHandlers[route.handler];
       if (!handler) continue;
+      // A route with optional parameters or a wildcard is matched by the
+      // unified router alone: one matcher, so one answer on every server
+      if (hasExtendedSyntax(route.path)) continue;
 
       // Get direct access to the HTTP server through the core framework
       const httpServer = (this.coreFramework as any).httpServer;
 
-      // Create a wrapper handler that handles validation, rate limiting, and return values
+      // What the route declared in the direct form: its middleware, rate
+      // limit, auth, validation and cache. The unified router runs them on the
+      // canonical URL; this table is reached for the variants only the server
+      // matches (a trailing slash on the Node servers), and must run the same
+      // phases, in the same order, before the handler.
+      const registered = route.registered;
+
+      // Create a wrapper handler that runs those phases and handles return values
       const wrappedHandler = async (req: any, res: any) => {
         try {
           // Enhance request with events property for direct routes
           req.events = this.eventBus;
 
-          // Universal validation middleware (works with any ValidationSchema)
-          if (route.validation) {
+          if (registered) {
+            // The server matched this URL by dropping its trailing slash. The
+            // phases see the path without it, so the rate-limit counter and
+            // the cache entry are the ones the canonical URL uses and the
+            // slash form is not a second allowance.
+            const sentPath = req.path;
+            const slashForm =
+              typeof sentPath === 'string' && sentPath.length > 1 && sentPath.endsWith('/');
+            if (slashForm) req.path = sentPath.slice(0, -1);
             try {
-              const validated = await route.validation.parseAsync(req.body);
-              req.body = validated;
-            } catch (error: any) {
-              // Handle universal validation errors using the new error handler
-              const normalizedError = normalizeValidationError(error);
-              const errors = normalizedError.issues.map((issue: any) => ({
-                field: issue.path.length > 0 ? issue.path.join('.') : 'body',
-                message: issue.message,
-                code: issue.code,
-                path: issue.path,
-              }));
-
-              // Get global validation error handler
-              let globalHandler;
-              try {
-                const { getGlobalConfig } = await import('./core/config/index.js');
-                const config = getGlobalConfig();
-                globalHandler = config.modules.validation.onError;
-              } catch {
-                globalHandler = undefined;
-              }
-
-              // Use route-level or global error handler
-              const handler = route.onValidationError || globalHandler;
-              if (handler) {
-                try {
-                  const errorResponse = handler(errors, {
-                    request: {
-                      method: req.method || 'UNKNOWN',
-                      path: req.path || req.url || '',
-                      url: req.url || '',
-                      headers: req.headers || {},
-                    },
-                    field: 'body',
-                  });
-
-                  if (errorResponse.headers) {
-                    Object.entries(errorResponse.headers).forEach(([key, value]) => {
-                      res.setHeader(key, value);
-                    });
-                  }
-
-                  res.status(errorResponse.status).json(errorResponse.body);
-                  return;
-                } catch {
-                  // Fallback if handler throws
-                  res.status(500).json({
-                    success: false,
-                    error: 'Internal error while handling validation error',
-                    requestId: req.requestId,
-                  });
-                  return;
-                }
-              }
-
-              // Default error response if no handler
-              res.status(400).json({
-                success: false,
-                error: 'Validation failed',
-                details: errors,
-                requestId: req.requestId,
-              });
-              return;
+              const pending = this.unifiedRouter.runRoutePhases(registered, req, res);
+              if (pending) await pending;
+            } finally {
+              if (slashForm) req.path = sentPath;
             }
-          }
-
-          // Rate limiting middleware
-          if (route.rateLimit) {
-            const clientId = req.ip || req.connection?.remoteAddress || 'unknown';
-            const key = `${route.method}:${route.path}:${clientId}`;
-
-            if (!this.checkRateLimit(key, route.rateLimit)) {
-              res.status(429).json({
-                success: false,
-                error: 'Rate limit exceeded',
-                retryAfter: Math.ceil(route.rateLimit.window / 1000),
-              });
-              return;
-            }
+            if (res.headersSent) return;
           }
 
           // Execute the actual handler
@@ -1960,11 +2519,13 @@ export class Moro extends EventEmitter {
               });
             }
           }
+          this.logger.error('Route execution error', 'RequestHandler', {
+            error: error instanceof Error ? error.message : String(error),
+            route: `${route.method} ${route.path}`,
+            requestId: req.requestId,
+          });
           if (!res.headersSent) {
-            res.status(500).json({
-              success: false,
-              error: error instanceof Error ? error.message : 'Internal server error',
-            });
+            res.status(500).json(directRouteFailureBody(error, req));
           }
         }
       };
@@ -2016,6 +2577,35 @@ export class Moro extends EventEmitter {
 
     if (!autoDiscoveryConfig.enabled) {
       return;
+    }
+
+    // Three auto-discovery settings are accepted but do not do what their
+    // names say. Say so once at start-up instead of leaving an app without
+    // routes, or with modules it meant to leave out.
+    if (autoDiscoveryConfig.recursive === false) {
+      this.logger.warn(
+        'modules.autoDiscovery.recursive: false is not applied: a pattern that contains `**` ' +
+          'reaches every directory under a path, down to maxDepth. To load only the files ' +
+          'directly in each path, set maxDepth: 0 or use patterns without `**`.',
+        'ModuleDiscovery'
+      );
+    }
+    if (autoDiscoveryConfig.loadingStrategy === 'lazy') {
+      this.logger.warn(
+        "modules.autoDiscovery.loadingStrategy 'lazy' is not applied: discovered modules are " +
+          "recorded but never loaded, so none of their routes is served. Use 'eager' (the " +
+          "default) or 'conditional' to serve module routes.",
+        'ModuleDiscovery'
+      );
+    }
+    if (autoDiscoveryConfig.watchForChanges) {
+      this.logger.warn(
+        'modules.autoDiscovery.watchForChanges does not reload modules: a changed module file ' +
+          "is detected and a 'modules:changed' event is emitted, but the running routes stay as " +
+          'loaded. Restart the process to pick up the change (for example run it under ' +
+          '`node --watch` or `tsx watch`).',
+        'ModuleDiscovery'
+      );
     }
 
     this.moduleDiscovery = new ModuleDiscovery(process.cwd());
@@ -2253,10 +2843,65 @@ export class Moro extends EventEmitter {
 
   private threadCluster: ThreadClusterPrimary | undefined = undefined;
 
+  // Process transport: stops the worker processes within a deadline. Set by
+  // startProcessPrimary(), used (and cleared) by close().
+  private stopProcessWorkers: ((deadlineMs?: number) => Promise<void>) | undefined = undefined;
+
+  // listen() has started this instance as a cluster primary or a cluster
+  // worker; cleared by close().
+  private clusterStarted = false;
+
+  // The SIGINT/SIGTERM listeners of the cluster primary, kept so the thread
+  // transport's can be taken off again when it falls back to processes.
+  private clusterSignalHandlers: Array<[NodeJS.Signals, () => void]> = [];
+
+  private static clusteringModeWarned = false;
+
+  // Graceful shutdown of a cluster primary, the same for both transports:
+  // close() stops the workers (each drains its server through its own
+  // close()) and then the primary's own services; a second signal exits at
+  // once.
+  private installClusterSignalHandlers(): void {
+    this.removeClusterSignalHandlers();
+    let shuttingDown = false;
+    const gracefulShutdown = () => {
+      if (shuttingDown) {
+        process.exit(0);
+        return;
+      }
+      shuttingDown = true;
+      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
+      Moro.holdEventLoopUntilExit();
+      this.close()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+    };
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+      process.on(signal, gracefulShutdown);
+      this.clusterSignalHandlers.push([signal, gracefulShutdown]);
+    }
+  }
+
+  private removeClusterSignalHandlers(): void {
+    for (const [signal, handler] of this.clusterSignalHandlers) {
+      process.removeListener(signal, handler);
+    }
+    this.clusterSignalHandlers = [];
+  }
+
   // Entry point for performance.clustering: decides whether THIS instance is
   // a worker (thread or process) or the primary, and which transport the
   // primary uses. Config keys are unchanged; the transport is automatic.
   private startWithClustering(port: number, host?: string, callback?: () => void): void {
+    // A second listen() must not start a second set of workers (or, in a
+    // worker, a second listener): the same answer the server gives when it
+    // is already listening.
+    if (this.clusterStarted) {
+      this.logger.warn('Server is already listening', 'Listen');
+      return;
+    }
+    this.clusterStarted = true;
+
     const { count: workerCount, detail } = computeWorkerCount(this.config.performance?.clustering);
     const tinfo = threadWorkerInfo();
     if (tinfo) {
@@ -2268,6 +2913,18 @@ export class Moro extends EventEmitter {
       return;
     }
     this.logger.info(detail, 'Cluster');
+    if (
+      (this.config.performance?.clustering as { mode?: string } | undefined)?.mode === 'proxy' &&
+      !Moro.clusteringModeWarned
+    ) {
+      Moro.clusteringModeWarned = true;
+      this.logger.warn(
+        "performance.clustering.mode: 'proxy' is not applied. Workers always bind the port " +
+          'themselves (worker threads with SO_REUSEPORT, or node:cluster worker processes); ' +
+          'the setting has no effect.',
+        'Cluster'
+      );
+    }
     const engineKind = this.engine;
     const transport = resolveClusterTransport({
       platform: process.platform,
@@ -2299,7 +2956,7 @@ export class Moro extends EventEmitter {
     });
     if (this.grpcManager && !this.grpcStarted) {
       this.startGrpc().catch(error => {
-        this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+        logErrorLines(this.logger, 'Failed to start gRPC server', error, 'GRPC');
       });
     }
   }
@@ -2338,6 +2995,10 @@ export class Moro extends EventEmitter {
       );
       const primary = this.threadCluster;
       this.threadCluster = undefined;
+      // The process transport installs its own. Left in place, this
+      // transport's listeners would answer the signal as well, find no
+      // thread to wait for and exit the primary under the worker processes.
+      this.removeClusterSignalHandlers();
       void primary?.shutdown(1000).finally(() => {
         this.startProcessPrimary(workerCount, port, host, callback);
       });
@@ -2373,20 +3034,7 @@ export class Moro extends EventEmitter {
 
     // Graceful shutdown: drain every worker thread (each closes its server),
     // then the primary's own services; a second signal exits at once.
-    let shuttingDown = false;
-    const gracefulShutdown = (code: number) => {
-      if (shuttingDown) {
-        process.exit(code);
-        return;
-      }
-      shuttingDown = true;
-      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
-      this.close()
-        .then(() => process.exit(code))
-        .catch(() => process.exit(1));
-    };
-    process.on('SIGINT', () => gracefulShutdown(0));
-    process.on('SIGTERM', () => gracefulShutdown(0));
+    this.installClusterSignalHandlers();
   }
 
   private startProcessPrimary(
@@ -2429,87 +3077,136 @@ export class Moro extends EventEmitter {
     process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
     process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size by disabling color codes
 
-    // Graceful shutdown: SIGTERM every worker (each stops accepting, drains
-    // its in-flight responses, then exits), wait for their exits up to a
-    // bounded deadline, and only then exit. Exiting right after the kill
-    // used to close the cluster IPC channel, and a node:cluster worker whose
-    // primary disappears exits immediately - cutting the very responses the
-    // worker was draining. A second signal while draining exits at once.
-    let shuttingDown = false;
-    const gracefulShutdown = () => {
-      if (shuttingDown) process.exit(0);
-      shuttingDown = true;
-      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
+    // One slot per configured worker. A slot whose worker died is forked
+    // again after the delay the thread transport uses (nextRestartDelay), and
+    // never while the cluster is stopping.
+    const slots = new Map<number, { slot: number; startedAt: number }>();
+    const backoff = new Map<number, RestartState>();
+    const restartTimers = new Set<ReturnType<typeof setTimeout>>();
+    const onWorkerMessage = this.handleWorkerMessage.bind(this);
+    let nextSlot = workerCount;
+    let stopping = false;
 
-      if (this.clusterWorkers.size === 0) {
-        nodeCluster().removeAllListeners();
-        process.exit(0);
-      }
-      const pending = new Set<number>(this.clusterWorkers.keys());
-      const timer = setTimeout(() => {
-        this.logger.warn(
-          `Shutdown deadline reached; terminating ${pending.size} worker process(es)`,
-          'Cluster'
-        );
-        for (const pid of pending) this.clusterWorkers.get(pid)?.kill('SIGKILL');
-        finish();
-      }, 3000);
-      const finish = () => {
-        clearTimeout(timer);
-        nodeCluster().removeAllListeners();
-        process.exit(0);
-      };
-      for (const [pid, worker] of this.clusterWorkers) {
-        worker.removeAllListeners(); // no restart on these exits
-        worker.once('exit', () => {
-          pending.delete(pid);
-          if (pending.size === 0) finish();
-        });
-        worker.kill('SIGTERM');
-      }
-    };
-
-    // Handle process signals for graceful shutdown
-    process.on('SIGINT', gracefulShutdown);
-    process.on('SIGTERM', gracefulShutdown);
-
-    // Fork workers with basic tracking
-    for (let i = 0; i < workerCount; i++) {
+    const forkWorker = (slot: number, verb: 'started' | 'restarted') => {
       const worker = nodeCluster().fork();
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      this.clusterWorkers.set(worker.process.pid!, worker);
-      this.logger.info(`Worker ${worker.process.pid} started`, 'Cluster');
+      const pid = worker.process.pid!;
+      this.clusterWorkers.set(pid, worker);
+      slots.set(pid, { slot, startedAt: Date.now() });
+      this.logger.info(`Worker ${pid} ${verb}`, 'Cluster');
 
       // Handle individual worker messages
-      worker.on('message', this.handleWorkerMessage.bind(this));
-    }
+      worker.on('message', onWorkerMessage);
+    };
+
+    const scheduleRestart = (slot: number, aliveMs: number, why: string) => {
+      const state = backoff.get(slot) ?? { restarts: 0, lastStart: 0 };
+      const delay = nextRestartDelay(state, aliveMs, Date.now());
+      backoff.set(slot, state);
+      this.logger.warn(`${why}. Restarting in ${delay} ms...`, 'Cluster');
+      // Referenced on purpose: with every worker down, this timer is what
+      // keeps the primary alive until the next attempt.
+      const timer = setTimeout(() => {
+        restartTimers.delete(timer);
+        if (stopping) return;
+        try {
+          forkWorker(slot, 'restarted');
+        } catch (error) {
+          scheduleRestart(
+            slot,
+            0,
+            `Worker restart failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }, delay);
+      restartTimers.add(timer);
+    };
 
     // Primary-only services start once the first worker is serving.
     let servicesStarted = false;
-    nodeCluster().on('listening', () => {
+    const onListening = () => {
       if (servicesStarted) return;
       servicesStarted = true;
       this.startPrimaryServices();
-    });
+    };
 
-    // Simple worker exit handling
-    nodeCluster().on('exit', (worker: any, code: number, signal: string) => {
+    const onExit = (worker: any, code: number, signal: string) => {
       const pid = worker.process.pid;
       this.clusterWorkers.delete(pid);
+      const known = slots.get(pid);
+      slots.delete(pid);
+      if (stopping) return;
 
       if (code !== 0 && !worker.exitedAfterDisconnect) {
-        this.logger.warn(
-          `Worker ${pid} died unexpectedly (${signal || code}). Restarting...`,
-          'Cluster'
+        scheduleRestart(
+          known ? known.slot : nextSlot++,
+          known ? Date.now() - known.startedAt : 0,
+          `Worker ${pid} died unexpectedly (${signal || code})`
         );
-
-        // Simple restart
-        const newWorker = nodeCluster().fork();
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.clusterWorkers.set(newWorker.process.pid!, newWorker);
-        this.logger.info(`Worker ${newWorker.process.pid} restarted`, 'Cluster');
       }
-    });
+    };
+
+    // Stop every worker: SIGTERM (each stops accepting, drains its in-flight
+    // responses through its own close(), then exits), wait for the exits up
+    // to the deadline, SIGKILL whatever is left. The primary must outlive
+    // them: a node:cluster worker whose primary disappears exits at once,
+    // cutting the very responses it was draining.
+    this.stopProcessWorkers = (deadlineMs = 3000) => {
+      stopping = true;
+      for (const timer of restartTimers) clearTimeout(timer);
+      restartTimers.clear();
+      nodeCluster().removeListener('listening', onListening);
+
+      const workers = Array.from(this.clusterWorkers);
+      return new Promise<void>(resolve => {
+        const pending = new Set<number>(workers.map(([pid]) => pid));
+        let deadline: ReturnType<typeof setTimeout> | undefined = undefined;
+        let killGrace: ReturnType<typeof setTimeout> | undefined = undefined;
+        const finish = () => {
+          clearTimeout(deadline);
+          clearTimeout(killGrace);
+          nodeCluster().removeListener('exit', onExit);
+          // onExit is gone before it has seen the last of these exits
+          for (const [pid] of workers) {
+            this.clusterWorkers.delete(pid);
+            slots.delete(pid);
+          }
+          resolve();
+        };
+        if (pending.size === 0) {
+          finish();
+          return;
+        }
+        deadline = setTimeout(() => {
+          this.logger.warn(
+            `Shutdown deadline reached; terminating ${pending.size} worker process(es)`,
+            'Cluster'
+          );
+          for (const pid of pending) this.clusterWorkers.get(pid)?.kill('SIGKILL');
+          // SIGKILL cannot be refused; the exits follow at once. The short
+          // wait only keeps a lost 'exit' event from holding close() open.
+          killGrace = setTimeout(finish, 500);
+        }, deadlineMs);
+        for (const [pid, worker] of workers) {
+          worker.once('exit', () => {
+            pending.delete(pid);
+            if (pending.size === 0) finish();
+          });
+          worker.kill('SIGTERM');
+        }
+      });
+    };
+
+    // SIGINT/SIGTERM: close() - the workers above, then the job scheduler
+    // (which releases the leader lock), the onClose hooks and the rest - and
+    // only then exit.
+    this.installClusterSignalHandlers();
+
+    // Fork workers with basic tracking
+    for (let i = 0; i < workerCount; i++) forkWorker(i, 'started');
+
+    nodeCluster().on('listening', onListening);
+    nodeCluster().on('exit', onExit);
 
     // Master process callback
     if (callback) callback();
@@ -2550,10 +3247,12 @@ export class Moro extends EventEmitter {
     // Optimize garbage collection for workers
     // eslint-disable-next-line no-undef
     if ((global as any).gc) {
-      setInterval(() => {
+      const gcTimer = setInterval(() => {
         // eslint-disable-next-line no-undef
         if ((global as any).gc) (global as any).gc();
       }, 60000); // GC every 60 seconds (less frequent)
+      // Housekeeping only: it must not be what keeps a closed worker alive
+      gcTimer.unref();
     }
 
     let tcw: ThreadClusterWorker | null = null;
@@ -2567,23 +3266,31 @@ export class Moro extends EventEmitter {
         await this.close();
       });
     } else {
-      // Graceful shutdown for worker
+      // Graceful shutdown for worker: the same close() the single-process
+      // and worker-thread paths run (onClose hooks, in-flight requests,
+      // subsystems), then exit.
+      let closing = false;
       const workerShutdown = () => {
+        // Ctrl-C reaches the worker twice, once from the terminal and once
+        // as the primary's SIGTERM: the second one changes nothing.
+        if (closing) return;
+        closing = true;
         this.logger.info(`${label} shutting down gracefully...`, 'Worker');
+
+        // The primary kills a worker that has not exited 3 s after it asked;
+        // a worker signalled directly holds itself to the same bound. The
+        // timer is referenced, so close() is not cut short by an event loop
+        // that happens to empty before it has finished.
+        setTimeout(() => process.exit(0), 3000);
 
         // Clean up event listeners
         this.eventBus.removeAllListeners();
         this.removeAllListeners();
 
-        // Close server gracefully
-        if (this.coreFramework) {
-          const server = (this.coreFramework as any).server;
-          if (server) {
-            server.close(() => {
-              process.exit(0);
-            });
-          }
-        }
+        this.close().then(
+          () => process.exit(0),
+          () => process.exit(1)
+        );
       };
 
       // Handle worker shutdown signals
@@ -2635,7 +3342,7 @@ export class Moro extends EventEmitter {
       });
       // GraphQL registers HTTP/WS routes on this app: every worker.
       this.ensureGraphQLInitialized().catch(error => {
-        this.logger.error(`Failed to initialize GraphQL: ${error}`, 'GraphQL');
+        logErrorLines(this.logger, 'Failed to initialize GraphQL', error, 'GraphQL');
       });
       tcw?.ready(port);
     };
@@ -2696,8 +3403,9 @@ export class Moro extends EventEmitter {
 
   // Simple worker message handler
   private handleWorkerMessage(message: any): void {
-    // Handle inter-worker communication if needed
-    if (message.type === 'health-check') {
+    // Handle inter-worker communication if needed. A worker can send any
+    // value, null included (process.send(null)).
+    if (message?.type === 'health-check') {
       // Worker health check response
       return;
     }
@@ -2723,6 +3431,16 @@ export class Moro extends EventEmitter {
   private static globalSignalsInstalled = false;
   private static globalShuttingDown = false;
 
+  // A shutdown that ends in process.exit() must reach it. close() waits on
+  // timers that do not hold the event loop (the job scheduler polls a running
+  // job that way), and once the listener and the workers are gone nothing
+  // else may: Node would then exit with close() half done - the leader lock
+  // not released, queues and mail not shut down. One referenced timer keeps
+  // the loop alive until the handler's own process.exit().
+  private static holdEventLoopUntilExit(): void {
+    setInterval(() => {}, 0x7fffffff);
+  }
+
   private static installGlobalShutdownSignals(): void {
     if (Moro.globalSignalsInstalled) return;
     Moro.globalSignalsInstalled = true;
@@ -2735,6 +3453,7 @@ export class Moro extends EventEmitter {
         return;
       }
       Moro.globalShuttingDown = true;
+      Moro.holdEventLoopUntilExit();
       const instances = Array.from(Moro.activeInstances);
       instances[0]?.logger.info(`Received ${signal}, shutting down gracefully...`, 'Server');
       Promise.allSettled(instances.map(inst => inst.close()))
@@ -2787,6 +3506,7 @@ export class Moro extends EventEmitter {
       return;
     }
     this.isShuttingDown = true;
+    Moro.holdEventLoopUntilExit();
     this.close()
       .then(() => process.exit(code))
       .catch(() => process.exit(1));
@@ -2804,6 +3524,12 @@ export class Moro extends EventEmitter {
 
   async close(): Promise<void> {
     this.logger.debug('Closing Moro application...');
+
+    // No longer the current app while another one is open; this router's
+    // rate-limit counters go with the listener. Routes registered from here
+    // on are handed to the server at the next listen().
+    UnifiedRouter.setClosed(this.unifiedRouter, true);
+    UnifiedRouter.setRouteListener(this.unifiedRouter, undefined);
 
     // Detach our process signal listeners so repeated create/close cycles
     // (tests, or a host that spins up many apps) don't leak process listeners.
@@ -2832,6 +3558,18 @@ export class Moro extends EventEmitter {
         this.logger.error(`Error shutting down cluster worker threads: ${String(err)}`);
       }
     }
+
+    // Cluster worker processes, the same way and within the same deadline.
+    if (this.stopProcessWorkers) {
+      const stopWorkers = this.stopProcessWorkers;
+      this.stopProcessWorkers = undefined;
+      try {
+        await stopWorkers();
+      } catch (err) {
+        this.logger.error(`Error shutting down cluster worker processes: ${String(err)}`);
+      }
+    }
+    this.clusterStarted = false;
 
     // Shutdown worker threads first (fastest)
     try {
@@ -2898,24 +3636,34 @@ export class Moro extends EventEmitter {
           // server; the engine backend ignores the optional calls.)
           server?.closeIdleConnections?.();
           this.coreFramework.stopTlsWatch();
-          await Promise.race([
-            new Promise<void>(resolve => {
-              httpServer.close(() => {
-                resolve();
-              });
-            }),
-            new Promise<void>(resolve => {
-              const timer = setTimeout(() => {
-                try {
-                  server?.closeAllConnections?.();
-                } catch {
-                  // best-effort force-close
-                }
-                resolve();
-              }, 2000); // 2 second grace period
-              timer.unref(); // Don't keep process alive
-            }),
-          ]);
+          // The engine server reports the close through a callback; the
+          // Node http and HTTP/2 servers take no callback and return a
+          // promise. Whichever this server offers settles the wait. The
+          // deadline timer stays referenced until then: were it the only
+          // thing left, an unreferenced one would let the process exit with
+          // this await still pending.
+          let deadline: ReturnType<typeof setTimeout> | undefined = undefined;
+          try {
+            await Promise.race([
+              new Promise<void>(resolve => {
+                const closed = () => resolve();
+                const returned = httpServer.close(closed);
+                if (typeof returned?.then === 'function') returned.then(closed, closed);
+              }),
+              new Promise<void>(resolve => {
+                deadline = setTimeout(() => {
+                  try {
+                    server?.closeAllConnections?.();
+                  } catch {
+                    // best-effort force-close
+                  }
+                  resolve();
+                }, 2000); // 2 second grace period
+              }),
+            ]);
+          } finally {
+            clearTimeout(deadline);
+          }
         } else {
           // Server was never started, just skip close
           this.logger.debug('HTTP server was never started, skipping close');
@@ -3237,9 +3985,72 @@ export class Moro extends EventEmitter {
     // Store config and trigger initialization immediately
     this.graphqlConfig = options;
     this.graphqlInitPromise = this.initializeGraphQL(options);
+    // A failure is logged where it happens and still reaches whoever awaits
+    // the promise (listen(), getGraphQLSchema(), a GraphQL request). It must
+    // not also end the process as an unhandled rejection.
+    this.graphqlInitPromise.catch(() => {});
+    this.serveGraphQL(options);
     void this.eventBus.emit('graphql:configured', { options });
 
     return this;
+  }
+
+  /**
+   * Answer HTTP requests for the GraphQL endpoint configured with
+   * graphqlInit(). Registered in the same tick as graphqlInit(); a request
+   * that arrives while the schema is still being built waits for it.
+   */
+  private serveGraphQL(options: GraphQLOptions): void {
+    const graphqlPath = options.path || '/graphql';
+    const playgroundPath = options.playgroundPath || `${graphqlPath}/playground`;
+    const enablePlayground =
+      options.enablePlayground !== false && process.env.NODE_ENV !== 'production';
+
+    (this.middlewareManager as any).hooks.before('request', async (context: any) => {
+      const req = context.request;
+      const res = context.response;
+      // Answered by a hook that ran before this one: nothing left to do
+      if (res.headersSent) return;
+
+      const wantsPlayground =
+        enablePlayground && req.path === playgroundPath && req.method === 'GET';
+      if (!wantsPlayground && req.path !== graphqlPath) {
+        return; // Not a GraphQL request
+      }
+
+      let ready = true;
+      try {
+        await this.graphqlInitPromise;
+      } catch {
+        // Logged by initializeGraphQL(); the reason is not sent to clients.
+        ready = false;
+      }
+      const core = this.graphqlCore;
+      if (!ready || !core) {
+        res.status(500).json({ errors: [{ message: 'GraphQL is not available' }] });
+        return;
+      }
+
+      if (wantsPlayground) {
+        res.setHeader('Content-Type', 'text/html');
+        res.status(200).send(core.getPlaygroundHTML());
+        return;
+      }
+
+      if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+      }
+
+      if (req.method !== 'GET' && req.method !== 'POST') {
+        res.status(405).json({
+          errors: [{ message: 'GraphQL only supports GET and POST requests' }],
+        });
+        return;
+      }
+
+      await core.handleRequest(req, res);
+    });
   }
 
   /**
@@ -3286,15 +4097,12 @@ export class Moro extends EventEmitter {
   }
 
   /**
-   * Check if GraphQL package is available
+   * Check if GraphQL package is available: resolved from the application's
+   * directory, which is where the GraphQL adapter loads it from. (`require`
+   * does not exist in an ES module, which is what the published build is.)
    */
   private isGraphQLAvailable(): boolean {
-    try {
-      require.resolve('graphql');
-      return true;
-    } catch {
-      return false;
-    }
+    return isPackageAvailable('graphql');
   }
 
   /**
@@ -3449,8 +4257,7 @@ export class Moro extends EventEmitter {
    *   port: 50051,
    *   host: '0.0.0.0',
    *   adapter: 'grpc-js',
-   *   enableHealthCheck: true,
-   *   enableReflection: true
+   *   enableHealthCheck: true
    * });
    * ```
    */
@@ -3503,7 +4310,7 @@ export class Moro extends EventEmitter {
 
         this.logger.info('gRPC system initialized', 'GRPC');
       } catch (error) {
-        this.logger.error(`Failed to initialize gRPC: ${error}`, 'GRPC');
+        logErrorLines(this.logger, 'Failed to initialize gRPC', error, 'GRPC');
         throw error;
       }
     })();
@@ -3589,7 +4396,7 @@ export class Moro extends EventEmitter {
         this.logger.info('gRPC server started successfully', 'GRPC');
       }
     } catch (error) {
-      this.logger.error(`Failed to start gRPC server: ${error}`, 'GRPC');
+      logErrorLines(this.logger, 'Failed to start gRPC server', error, 'GRPC');
       throw error;
     }
   }
@@ -3701,6 +4508,10 @@ export class Moro extends EventEmitter {
   queueInit(name: string, options: any): this {
     // Initialize queue manager on first call
     if (!this.queueInitialized && !this.queueInitPromise) {
+      // A new queue system: nothing recorded for an earlier one applies to it
+      this.queueRegistrations = new Map();
+      this.queueRegistrationErrors = new Map();
+      this.queueProcessorNames = new Set();
       this.queueInitPromise = (async () => {
         try {
           this.logger.info('Initializing queue system', 'QUEUE');
@@ -3717,31 +4528,63 @@ export class Moro extends EventEmitter {
 
     // Store config to register after initialization
     this.queueConfigs.set(name, options);
+    this.queueRegistrationErrors.delete(name);
     this.logger.debug(`Queue "${name}" configured`, 'QUEUE');
 
-    // Register queue async (manager will be ready)
-    if (this.queueInitPromise) {
-      this.queueInitPromise
-        .then(async () => {
-          if (this.queueManager) {
-            await this.queueManager.registerQueue(name, options);
-            this.logger.info(`Queue "${name}" registered with ${options.adapter} adapter`, 'QUEUE');
-          }
-        })
-        .catch(error => {
-          this.logger.error(`Failed to register queue "${name}": ${error}`, 'QUEUE');
-        });
-    }
+    // Register the queue once the manager is ready. The promise is kept so
+    // that the first use of the queue can wait for it: adapters that connect
+    // to a broker (bull, RabbitMQ, Kafka, SQS) finish registering later than
+    // the manager itself is created.
+    const managerReady = this.queueInitPromise ?? Promise.resolve();
+    const registration: Promise<void> = managerReady
+      .then(async () => {
+        if (this.queueManager) {
+          await this.queueManager.registerQueue(name, options);
+          this.logger.info(`Queue "${name}" registered with ${options.adapter} adapter`, 'QUEUE');
+        }
+      })
+      .catch(error => {
+        this.logger.error(`Failed to register queue "${name}": ${error}`, 'QUEUE');
+        // A queue that could not be registered does not exist: forget its
+        // name and keep the reason for whoever uses it next. (A second
+        // queueInit() for a name that is already registered fails too; that
+        // queue is working and stays.)
+        if (
+          this.queueRegistrations.get(name) === registration &&
+          !this.queueManager?.hasQueue(name)
+        ) {
+          this.queueConfigs.delete(name);
+          this.queueRegistrationErrors.set(name, error);
+        }
+      })
+      .finally(() => {
+        if (this.queueRegistrations.get(name) === registration) {
+          this.queueRegistrations.delete(name);
+        }
+      });
+    this.queueRegistrations.set(name, registration);
 
     return this;
   }
 
   /**
-   * Ensure queue system is initialized
+   * Ensure the queue system is initialized and, when a queue is named, that
+   * its registration has finished. A registration that failed is reported
+   * here with its original error.
    */
-  private async ensureQueueInitialized(): Promise<void> {
+  private async ensureQueueInitialized(queueName?: string): Promise<void> {
     if (this.queueInitPromise) {
       await this.queueInitPromise;
+    }
+    if (queueName === undefined) return;
+
+    const registration = this.queueRegistrations.get(queueName);
+    if (registration) {
+      await registration;
+    }
+    const failure = this.queueRegistrationErrors.get(queueName);
+    if (failure !== undefined) {
+      throw failure;
     }
   }
 
@@ -3786,8 +4629,8 @@ export class Moro extends EventEmitter {
    * ```
    */
   async addToQueue<T = any>(queueName: string, data: T, options?: any): Promise<any> {
-    // Ensure queue system is initialized
-    await this.ensureQueueInitialized();
+    // Ensure queue system is initialized and this queue is registered
+    await this.ensureQueueInitialized(queueName);
 
     if (!this.queueManager) {
       throw new Error(
@@ -3813,8 +4656,8 @@ export class Moro extends EventEmitter {
     queueName: string,
     jobs: Array<{ data: T; options?: any }>
   ): Promise<any[]> {
-    // Ensure queue system is initialized
-    await this.ensureQueueInitialized();
+    // Ensure queue system is initialized and this queue is registered
+    await this.ensureQueueInitialized(queueName);
 
     if (!this.queueManager) {
       throw new Error(
@@ -3846,16 +4689,28 @@ export class Moro extends EventEmitter {
     concurrencyOrHandler: number | ((job: any) => Promise<R>),
     handler?: (job: any) => Promise<R>
   ): Promise<void> {
-    // Ensure queue system is initialized
-    await this.ensureQueueInitialized();
+    // Recorded before anything is awaited, so that mail set up at the same
+    // moment sees that this queue has the application's own processor.
+    const alreadyAttached = this.queueProcessorNames.has(queueName);
+    this.queueProcessorNames.add(queueName);
 
-    if (!this.queueManager) {
-      throw new Error(
-        `Queue "${queueName}" not initialized. Call app.queueInit('${queueName}', options) first.`
-      );
+    try {
+      // Ensure queue system is initialized and this queue is registered
+      await this.ensureQueueInitialized(queueName);
+
+      if (!this.queueManager) {
+        throw new Error(
+          `Queue "${queueName}" not initialized. Call app.queueInit('${queueName}', options) first.`
+        );
+      }
+
+      await this.queueManager.processQueue(queueName, concurrencyOrHandler, handler);
+    } catch (error) {
+      if (!alreadyAttached) {
+        this.queueProcessorNames.delete(queueName);
+      }
+      throw error;
     }
-
-    return await this.queueManager.processQueue(queueName, concurrencyOrHandler, handler);
   }
 
   /**
@@ -4033,7 +4888,8 @@ export class Moro extends EventEmitter {
   }
 
   /**
-   * Lazy initialize mail system on first use
+   * Lazy initialize mail system on first use. Concurrent first uses share one
+   * initialisation; a failed one is retried by the next use.
    */
   private async ensureMailInitialized(): Promise<void> {
     if (this.mailInitialized) {
@@ -4047,6 +4903,19 @@ export class Moro extends EventEmitter {
       );
     }
 
+    if (!this.mailInitPromise) {
+      const attempt: Promise<void> = this.initializeMail().finally(() => {
+        if (this.mailInitPromise === attempt) {
+          this.mailInitPromise = undefined;
+        }
+      });
+      this.mailInitPromise = attempt;
+    }
+
+    return this.mailInitPromise;
+  }
+
+  private async initializeMail(): Promise<void> {
     try {
       this.logger.info('Initializing mail system', 'Mail');
 
@@ -4055,29 +4924,8 @@ export class Moro extends EventEmitter {
 
       await this.mailManager.initialize();
 
-      if (this.mailConfig.queue?.enabled && this.queueManager) {
-        this.mailManager.setQueueManager(this.queueManager);
-
-        const queueName = this.mailConfig.queue.name || 'emails';
-
-        if (!this.queueManager.hasQueue(queueName)) {
-          this.queueConfigs.set(queueName, {
-            adapter: 'memory',
-            concurrency: this.mailConfig.queue.attempts || 3,
-          });
-          await this.ensureQueueInitialized();
-
-          await this.processQueue(queueName, async (job: any) => {
-            if (this.mailManager) {
-              // deliver() bypasses the queue check; send() would re-enqueue the
-              // job forever and never actually transmit the email.
-              return await this.mailManager.deliver(job.data);
-            }
-            throw new Error('Mail manager not initialized');
-          });
-        }
-
-        this.logger.info(`Mail queue "${queueName}" configured`, 'Mail');
+      if (this.mailConfig.queue?.enabled) {
+        await this.connectMailQueue(this.mailConfig.queue.name || 'emails');
       }
 
       this.mailInitialized = true;
@@ -4086,6 +4934,68 @@ export class Moro extends EventEmitter {
       this.logger.error(`Failed to initialize mail system: ${error}`, 'Mail');
       throw error;
     }
+  }
+
+  /**
+   * Route mail through the named queue (`mailInit({ queue: { enabled: true } })`).
+   *
+   * - The application registered the queue: it is used as registered, with
+   *   its adapter and concurrency, and the delivering processor is attached
+   *   unless the application attached its own with processQueue().
+   * - The application uses queues but not this one: an in-memory queue is
+   *   registered for mail.
+   * - The application has no queue system at all: mail is sent directly, as
+   *   it always has been in that case, and a warning says so.
+   */
+  private async connectMailQueue(queueName: string): Promise<void> {
+    const queuesInUse =
+      this.queueInitPromise !== undefined ||
+      this.queueManager !== undefined ||
+      this.hasQueue(queueName);
+    if (!queuesInUse) {
+      this.logger.warn(
+        `Mail queue "${queueName}" is enabled but this app has no queue system, so mail is sent ` +
+          `directly, not queued. Call app.queueInit('${queueName}', { adapter: 'memory' }) (or ` +
+          'another adapter) before the first send to queue it.',
+        'Mail'
+      );
+      return;
+    }
+
+    // Waits for a registration the application started; rethrows its error
+    // if it failed, instead of quietly queueing in memory.
+    await this.ensureQueueInitialized(queueName);
+
+    if (!this.hasQueue(queueName)) {
+      this.queueInit(queueName, {
+        adapter: 'memory',
+        concurrency: Moro.MAIL_QUEUE_CONCURRENCY,
+      });
+      await this.ensureQueueInitialized(queueName);
+    }
+
+    this.mailManager.setQueueManager(this.queueManager);
+
+    if (!this.queueProcessorNames.has(queueName)) {
+      // Straight to the manager: this is the framework's processor, not one
+      // the application attached. With no concurrency argument the queue's
+      // own `concurrency` option applies.
+      await this.queueManager.processQueue(queueName, async (job: any) => {
+        if (!this.mailManager) {
+          throw new Error('Mail manager not initialized');
+        }
+        // deliver() bypasses the queue check; send() would re-enqueue the
+        // job forever and never actually transmit the email.
+        const result = await this.mailManager.deliver(job.data);
+        if (result && result.success === false) {
+          // A failed delivery fails the job, so the queue retries it.
+          throw new Error(result.error || 'Mail delivery failed');
+        }
+        return result;
+      });
+    }
+
+    this.logger.info(`Mail queue "${queueName}" configured`, 'Mail');
   }
 
   /**
@@ -4191,13 +5101,27 @@ export class Moro extends EventEmitter {
 }
 
 let currentApp: Moro | null = null;
+// The apps the factories below created: the ones getApp() may return
+const factoryApps = new WeakSet<Moro>();
+
+function registerFactoryApp(app: Moro): Moro {
+  factoryApps.add(app);
+  currentApp = app;
+  return app;
+}
 
 /**
  * Get the current Moro application instance.
  *
- * Returns the app created by the most recent createApp() call.
+ * Returns the app created by the most recent createApp() call (or
+ * createAppNode(), createAppEdge(), createAppLambda(), createAppWorker()).
  * Use this in standalone route files so they can register routes
  * without needing the app to be passed in.
+ *
+ * With several apps in one process: inside a route file that an app is
+ * loading (`app.loadRoutes()`, file-based routing) it is that app; otherwise
+ * the most recently created app that has not been closed, and once every app
+ * has been closed, the most recently created one.
  *
  * @example
  * // routes/health.routes.ts
@@ -4212,6 +5136,10 @@ export function getApp(): Moro {
   if (!currentApp) {
     throw new Error('No app instance available. Call createApp() before getApp().');
   }
+  // The app whose router is the current one: the app loading its route files,
+  // or an older one that is still open when the newest has been closed.
+  const routed = UnifiedRouter.currentOwner();
+  if (routed !== currentApp && routed instanceof Moro && factoryApps.has(routed)) return routed;
   return currentApp;
 }
 
@@ -4242,10 +5170,8 @@ function applyEarlyLogLevel(options?: MoroOptions): void {
 
 export async function createApp(options?: MoroOptions): Promise<Moro> {
   applyEarlyLogLevel(options);
-  const config = await initializeConfigAsync(options);
-  const app = new Moro(options, config);
-  currentApp = app;
-  return app;
+  const config = await createAppConfigAsync(options);
+  return registerFactoryApp(new Moro(options, config));
 }
 
 /**
@@ -4255,8 +5181,8 @@ export async function createApp(options?: MoroOptions): Promise<Moro> {
 export async function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'node' as const } };
   applyEarlyLogLevel(mergedOptions);
-  const config = await initializeConfigAsync(mergedOptions);
-  return new Moro(mergedOptions, config);
+  const config = await createAppConfigAsync(mergedOptions);
+  return registerFactoryApp(new Moro(mergedOptions, config));
 }
 
 /**
@@ -4266,8 +5192,8 @@ export async function createAppNode(options?: Omit<MoroOptions, 'runtime'>): Pro
 export async function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'vercel-edge' as const } };
   applyEarlyLogLevel(mergedOptions);
-  const config = await initializeConfigAsync(mergedOptions);
-  return new Moro(mergedOptions, config);
+  const config = await createAppConfigAsync(mergedOptions);
+  return registerFactoryApp(new Moro(mergedOptions, config));
 }
 
 /**
@@ -4277,8 +5203,8 @@ export async function createAppEdge(options?: Omit<MoroOptions, 'runtime'>): Pro
 export async function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'aws-lambda' as const } };
   applyEarlyLogLevel(mergedOptions);
-  const config = await initializeConfigAsync(mergedOptions);
-  return new Moro(mergedOptions, config);
+  const config = await createAppConfigAsync(mergedOptions);
+  return registerFactoryApp(new Moro(mergedOptions, config));
 }
 
 /**
@@ -4288,6 +5214,6 @@ export async function createAppLambda(options?: Omit<MoroOptions, 'runtime'>): P
 export async function createAppWorker(options?: Omit<MoroOptions, 'runtime'>): Promise<Moro> {
   const mergedOptions = { ...options, runtime: { type: 'cloudflare-workers' as const } };
   applyEarlyLogLevel(mergedOptions);
-  const config = await initializeConfigAsync(mergedOptions);
-  return new Moro(mergedOptions, config);
+  const config = await createAppConfigAsync(mergedOptions);
+  return registerFactoryApp(new Moro(mergedOptions, config));
 }

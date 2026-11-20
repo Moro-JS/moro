@@ -18,6 +18,8 @@ export type JobStatus = 'waiting' | 'active' | 'completed' | 'failed' | 'delayed
  */
 export type BackoffStrategy = 'fixed' | 'exponential' | 'linear';
 
+type TlsConnectionOptions = import('tls').ConnectionOptions;
+
 /**
  * Queue adapter connection configuration
  */
@@ -31,6 +33,44 @@ export interface QueueConnectionConfig {
   groupId?: string;
   region?: string;
   queueUrl?: string;
+
+  /**
+   * Bull and RabbitMQ: TLS options for the connection (`ca`, `cert`, `key`,
+   * `servername`, `rejectUnauthorized`, ...), as Node's `tls.connect()` takes
+   * them. For RabbitMQ, `true` or an options object also selects `amqps`.
+   */
+  tls?: boolean | TlsConnectionOptions;
+
+  /** RabbitMQ: connect over TLS (`amqps://`; the default port becomes 5671). */
+  amqps?: boolean;
+  /** RabbitMQ: the virtual host to open. Default: the broker's default (`/`). */
+  vhost?: string;
+
+  /** Kafka: the client id sent to the brokers. Default: `morojs-queue`. */
+  clientId?: string;
+  /** Kafka: `true` for TLS with the system CAs, or TLS options; passed to kafkajs as `ssl`. */
+  ssl?: boolean | TlsConnectionOptions;
+  /**
+   * Kafka: SASL authentication, passed to kafkajs as `sasl`, for example
+   * `{ mechanism: 'scram-sha-256', username, password }`.
+   */
+  sasl?: { mechanism: string; [key: string]: any };
+
+  /** SQS: the account id in a queue URL built from the queue name. Default: `000000000000`. */
+  accountId?: string;
+  /**
+   * SQS: a custom service endpoint (LocalStack, ElasticMQ, a VPC endpoint).
+   * Without `queueUrl`, queue URLs are then built under this endpoint.
+   */
+  endpoint?: string;
+  /**
+   * SQS: credentials, or a provider function, passed to the AWS SDK client.
+   * Default: the SDK's own credential chain.
+   */
+  credentials?:
+    | { accessKeyId: string; secretAccessKey: string; sessionToken?: string }
+    | ((...args: any[]) => Promise<any>);
+
   [key: string]: any;
 }
 
@@ -91,6 +131,24 @@ export interface DefaultJobOptions {
 }
 
 /**
+ * How many job records a queue keeps once a job has finished, for jobs that
+ * do not set removeOnComplete / removeOnFail themselves. Older records are
+ * removed. `Infinity` keeps every record; `0` keeps none.
+ */
+export interface QueueRetentionOptions {
+  /** Completed jobs kept per queue. Default: the last 1000. */
+  completed?: number;
+  /** Failed jobs kept per queue. Default: the last 5000. */
+  failed?: number;
+  /**
+   * RabbitMQ, Kafka and SQS adapters: local records kept per queue for jobs
+   * this process added and has not seen finish (the broker holds the job
+   * itself). Default: the last 10000.
+   */
+  unfinished?: number;
+}
+
+/**
  * Queue configuration options
  */
 export interface QueueOptions {
@@ -100,6 +158,7 @@ export interface QueueOptions {
   retry?: RetryConfig;
   deadLetterQueue?: DeadLetterQueueConfig;
   defaultJobOptions?: DefaultJobOptions;
+  retention?: QueueRetentionOptions;
   prefix?: string;
   limiter?: {
     max: number;

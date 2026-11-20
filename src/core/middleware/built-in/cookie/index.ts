@@ -9,6 +9,7 @@ export {
   signCookieValue,
   unsignCookieValue,
   type CookieOptions,
+  type CookieSecret,
 } from './core.js';
 
 // Middleware (for middleware chains)

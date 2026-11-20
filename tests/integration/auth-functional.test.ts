@@ -213,20 +213,21 @@ describe('Auth Middleware Functional Tests', () => {
 
       await expect(middleware.install!(mockHooks)).resolves.not.toThrow();
 
-      // Verify hooks were registered
+      // Verify hooks were registered: one request hook, and nothing that
+      // would run after every response
       expect(mockHooks.before).toHaveBeenCalledWith('request', expect.any(Function));
-      expect(mockHooks.after).toHaveBeenCalledWith('response', expect.any(Function));
+      expect(mockHooks.after).not.toHaveBeenCalled();
     });
 
-    it('should throw error when no providers are configured', async () => {
+    it('should install with no providers, for an API that only verifies Bearer tokens', async () => {
       const middleware = auth({
         providers: [],
         secret: 'test-secret',
       });
 
-      await expect(middleware.install!(mockHooks)).rejects.toThrow(
-        'At least one authentication provider must be configured'
-      );
+      await expect(middleware.install!(mockHooks)).resolves.toBeUndefined();
+      await expect(auth({ secret: 'test-secret' }).install!(mockHooks)).resolves.toBeUndefined();
+      expect(mockHooks.before).toHaveBeenCalledTimes(2);
     });
 
     it('should install with custom callbacks and events', async () => {

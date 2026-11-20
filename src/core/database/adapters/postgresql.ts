@@ -1,7 +1,7 @@
 // Database PostgreSQL Adapter
 import { DatabaseAdapter, DatabaseTransaction } from '../../../types/database.js';
 import { createFrameworkLogger } from '../../logger/index.js';
-import { resolveUserPackage } from '../../utilities/package-utils.js';
+import { importDriver, tlsSocketOptions } from './driver-support.js';
 import {
   quoteIdentifier as qi,
   quoteColumns,
@@ -39,32 +39,28 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   private async initialize(config: PostgreSQLConfig): Promise<void> {
-    try {
-      const pgPath = resolveUserPackage('pg');
-      const pg = await import(pgPath);
-      const { Pool } = pg.default;
-      this.pool = new Pool({
-        host: config.host || 'localhost',
-        port: config.port || 5432,
-        user: config.user || 'postgres',
-        password: config.password || '',
-        database: config.database || 'moro_app',
-        max: config.connectionLimit || 10,
-        ssl: typeof config.ssl === 'object' ? { ...config.ssl } : config.ssl || false,
-      });
+    const pg = await importDriver(
+      'pg',
+      'pg package is required for PostgreSQL adapter. Install it with: npm install pg'
+    );
+    const { Pool } = pg.default;
+    this.pool = new Pool({
+      host: config.host || 'localhost',
+      port: config.port || 5432,
+      user: config.user || 'postgres',
+      password: config.password || '',
+      database: config.database || 'moro_app',
+      max: config.connectionLimit || 10,
+      ssl: typeof config.ssl === 'object' ? tlsSocketOptions(config.ssl) : config.ssl || false,
+    });
 
-      this.pool.on('error', (err: Error) => {
-        this.logger.error('PostgreSQL pool error', 'Pool', {
-          error: err.message,
-        });
+    this.pool.on('error', (err: Error) => {
+      this.logger.error('PostgreSQL pool error', 'Pool', {
+        error: err.message,
       });
+    });
 
-      this.logger.info('PostgreSQL adapter initialized', 'PostgreSQL');
-    } catch {
-      throw new Error(
-        'pg package is required for PostgreSQL adapter. Install it with: npm install pg'
-      );
-    }
+    this.logger.info('PostgreSQL adapter initialized', 'PostgreSQL');
   }
 
   async connect(): Promise<void> {

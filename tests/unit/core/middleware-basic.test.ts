@@ -121,6 +121,70 @@ describe('Container Higher-Order Functions', () => {
 
       expect(mockFactory).toHaveBeenCalledTimes(2);
     });
+
+    // The cache is private to the wrapper: count its entries by handing it a
+    // Map that reports its own size
+    const withObservedCache = (create: () => any) => {
+      const observed = { size: 0 };
+      const RealMap = globalThis.Map;
+      class ObservedMap extends RealMap {
+        set(key: any, value: any) {
+          super.set(key, value);
+          observed.size = this.size;
+          return this;
+        }
+        delete(key: any) {
+          const deleted = super.delete(key);
+          observed.size = this.size;
+          return deleted;
+        }
+      }
+      globalThis.Map = ObservedMap as any;
+      try {
+        return { wrappedFactory: create(), observed };
+      } finally {
+        globalThis.Map = RealMap;
+      }
+    };
+    const requestContext = (requestId: string) => ({ ...createMockContext(), requestId });
+
+    it('should drop entries once they have expired', async () => {
+      const mockFactory = jest.fn().mockImplementation(() => ({}));
+      const { wrappedFactory, observed } = withObservedCache(() => withCaching(10)(mockFactory));
+
+      for (let i = 0; i < 100; i++) {
+        await wrappedFactory({}, requestContext(`req-${i}`));
+      }
+      await new Promise(resolve => setTimeout(resolve, 30));
+
+      // The next creation finds the hundred expired entries and removes them
+      const last = await wrappedFactory({}, requestContext('req-last'));
+      expect(observed.size).toBe(1);
+      expect(await wrappedFactory({}, requestContext('req-last'))).toBe(last);
+
+      // An expired entry is built again, not served
+      await new Promise(resolve => setTimeout(resolve, 30));
+      await wrappedFactory({}, requestContext('req-last'));
+      expect(mockFactory).toHaveBeenCalledTimes(102);
+      expect(observed.size).toBe(1);
+    });
+
+    it('should keep a bounded number of entries and the ones still in use', async () => {
+      const mockFactory = jest.fn().mockImplementation(() => ({}));
+      const { wrappedFactory, observed } = withObservedCache(() => withCaching(60000)(mockFactory));
+
+      const shared = await wrappedFactory({}, { metadata: {}, timestamp: Date.now() });
+      for (let i = 0; i < 3000; i++) {
+        await wrappedFactory({}, requestContext(`req-${i}`));
+        if (i % 100 === 0) {
+          // Still read while other requests come and go
+          expect(await wrappedFactory({}, { metadata: {}, timestamp: Date.now() })).toBe(shared);
+        }
+      }
+
+      expect(observed.size).toBe(1000);
+      expect(mockFactory).toHaveBeenCalledTimes(3001);
+    });
   });
 
   describe('withRetry', () => {
@@ -246,6 +310,21 @@ describe('Container Higher-Order Functions', () => {
 
       await expect(wrappedFactory({}, createMockContext())).rejects.toThrow('Factory error');
       expect(mockFactory).toHaveBeenCalledTimes(1);
+    });
+
+    it('should leave no timer behind once the factory has settled', async () => {
+      jest.useFakeTimers();
+      try {
+        const fast = withTimeout(60000)(jest.fn().mockResolvedValue('fast-service'));
+        expect(await fast({}, createMockContext())).toBe('fast-service');
+        expect(jest.getTimerCount()).toBe(0);
+
+        const failing = withTimeout(60000)(jest.fn().mockRejectedValue(new Error('Factory error')));
+        await expect(failing({}, createMockContext())).rejects.toThrow('Factory error');
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

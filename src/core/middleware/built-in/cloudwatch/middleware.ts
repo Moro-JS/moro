@@ -5,6 +5,7 @@
 // as real metrics automatically — no AWS SDK, credentials, or network calls.
 // See: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html
 import { Middleware } from '../../../../types/http.js';
+import { normalizeMethodLabel } from '../prometheus/method-label.js';
 
 export interface CloudWatchOptions {
   /** CloudWatch metric namespace (default 'MoroJS') */
@@ -41,7 +42,9 @@ export function buildEmfRecord(
         },
       ],
     },
-    Method: request.method,
+    // A dimension value is a metric of its own (and billed as one): only the
+    // registered HTTP methods get theirs, everything else is OTHER
+    Method: normalizeMethodLabel(request.method),
     Status: String(statusCode),
     ...options.dimensions,
     RequestCount: 1,

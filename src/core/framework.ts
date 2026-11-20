@@ -8,6 +8,20 @@ import { MoroHttpServer, HttpRequest, HttpResponse } from './http/index.js';
 import { MoroEngineServer } from './http/moro-engine-server.js';
 import { MoroHttp2Server, Http2ServerOptions } from './http/http2-server.js';
 import { Router } from './routing/router.js';
+import { hasExtendedSyntax } from './routing/path-matcher.js';
+import {
+  isStrictMiddlewareEnabled,
+  strictMiddlewareList,
+  strictNamedMiddleware,
+} from './routing/strict-middleware.js';
+import {
+  UnifiedRouter,
+  isNextError,
+  runAuthValidator,
+  warnUncalledGuards,
+  warnUnsupportedAuthKeys,
+} from './routing/unified-router.js';
+import { normalizeAuthList } from './middleware/built-in/auth/helpers.js';
 import { Container, buildModuleBasePath } from './utilities/index.js';
 import { ModuleLoader } from './modules/index.js';
 import { WebSocketManager } from './networking/websocket-manager.js';
@@ -19,18 +33,28 @@ import {
   getEngineTlsInfo,
   getNativeEngineTlsNote,
   setNativeEngineTlsLibrary,
+  engineBinaryNote,
   NativeEngineLoadResult,
   type EngineTlsInfo,
 } from './utilities/package-utils.js';
 import { parseSizeToBytes, type HttpRuntimeLimits } from './http/utils/size.js';
 import {
+  engineUnappliedSSLKeys,
   normalizeSSLConfig,
   sslForEngine,
   sslForNode,
   sslIsComplete,
+  TLS_POLICY_KEYS,
   type NormalizedSSLConfig,
   type SSLConfigInput,
 } from './http/utils/ssl-config.js';
+import { clientAddress, compileTrustProxy } from './http/utils/trust-proxy.js';
+import {
+  helmetOptionsFromConfig,
+  installConfiguredMiddleware,
+  type ConfiguredMiddleware,
+} from './config/configured-middleware.js';
+import type { MiddlewareManager } from './middleware/index.js';
 import { MoroEventBus } from './events/index.js';
 import { createFrameworkLogger, logger as globalLogger } from './logger/index.js';
 import { ModuleConfig, InternalRouteDefinition } from '../types/module.js';
@@ -39,8 +63,24 @@ import {
   WebSocketAdapter,
   WebSocketAdapterOptions,
   mergeWebSocketConfig,
+  wantsWebSocketCompression,
 } from './networking/websocket-adapter.js';
 import { cors, helmet, compression, MIDDLEWARE_FACTORY } from './middleware/built-in/index.js';
+
+// A client-supplied x-request-id is echoed into error bodies and log lines, so
+// it is taken only when it looks like an id: 1-128 characters from the set
+// that UUIDs, ULIDs, nanoid/base64 ids and trace ids are written in. Anything
+// else gets a generated id, the same as a request without the header.
+const CLIENT_REQUEST_ID = /^[A-Za-z0-9._:+/=-]{1,128}$/;
+
+// An error that says the request was at fault: it carries a 4xx `status` or
+// `statusCode`. A module route's circuit breaker does not count these.
+function isClientError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const status =
+    (error as { status?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
 
 /**
  * Which HTTP server actually booted, and why, when the native engine was
@@ -52,6 +92,11 @@ export interface ServerKind {
   /** Package backing the native engine ('@morojs/engine') */
   enginePackage?: string;
   engineVersion?: string | undefined;
+  /**
+   * The native binary the engine was told to load through the
+   * `MORO_ENGINE_BINARY` environment variable, when that override is in force
+   */
+  engineBinary?: string;
   /** Present when the native engine was requested but the Node server booted */
   fallbackReason?: string | undefined;
   /** Protocols the booted server can speak (observability for app.engine). */
@@ -135,11 +180,20 @@ export class Moro extends EventEmitter {
   private tlsMaterialHash: string | undefined;
   // WebSocket initialization promise to handle async adapter detection
   private websocketSetupPromise: Promise<void> | null = null;
+  /** The built-ins installed from configuration sections, once the app set them up */
+  private configuredMiddleware: ConfiguredMiddleware | undefined;
+  /** The app's router: module routes, their rate limits and their cache live on it */
+  private router: UnifiedRouter;
 
-  constructor(options: MoroOptions = {}) {
+  /**
+   * @param router The router of the app this core belongs to. The app passes
+   *   its own; left out, it is the current app's (UnifiedRouter.getInstance()).
+   */
+  constructor(options: MoroOptions = {}, router?: UnifiedRouter) {
     super();
     this.options = options;
     this.config = options.config || {};
+    this.router = router ?? UnifiedRouter.getInstance();
 
     // Configure global logger based on options
     if (options.logger !== undefined) {
@@ -182,6 +236,13 @@ export class Moro extends EventEmitter {
     );
     const engineChoice = this.resolveEngineMode(options);
     const rt = this.buildRuntimeLimits();
+    // The WebSocket settings, when WebSockets are enabled in config OR
+    // options. Read here as well as for setupWebSockets() below: the engine
+    // takes websocket.compression when its server is created.
+    const wsConfig =
+      this.config.websocket.enabled || (options.websocket && typeof options.websocket === 'object')
+        ? mergeWebSocketConfig(this.config.websocket, options.websocket)
+        : undefined;
 
     if (engineChoice.kind === 'engine') {
       try {
@@ -199,6 +260,7 @@ export class Moro extends EventEmitter {
           // balance accepts across them (Windows is gated to Node earlier).
           reusePort: this.config.performance?.clustering?.enabled === true,
           lendBodies: this.config.server?.lendBodies === true,
+          wsCompression: wantsWebSocketCompression(wsConfig),
           ...(caps ? { capabilities: caps } : {}),
           ...(engineChoice.h2 ? { http2Settings: this.resolveH2Settings(options) } : {}),
         });
@@ -211,6 +273,9 @@ export class Moro extends EventEmitter {
           server: 'engine',
           enginePackage: engineChoice.engine.source,
           engineVersion: engineChoice.engine.version,
+          ...(engineChoice.engine.binaryOverride
+            ? { engineBinary: engineChoice.engine.binaryOverride }
+            : {}),
           protocols: engineChoice.h2 && caps?.http2 ? ['h2', 'http/1.1'] : ['http/1.1'],
           ...(engineTls ? { tls: engineTls } : {}),
         };
@@ -225,11 +290,24 @@ export class Moro extends EventEmitter {
               'TLS'
             );
           }
+          // Policy keys the engine has no option for are named, once, so a
+          // policy that is configured and absent is never silent.
+          const unapplied = engineUnappliedSSLKeys(ssl, caps?.tlsPolicy === true);
+          if (unapplied.length > 0) {
+            this.logger.warn(
+              `server.ssl.${unapplied.join(', server.ssl.')} ${unapplied.length > 1 ? 'are' : 'is'} ` +
+                `NOT applied by the native engine: its TLS listener runs without ` +
+                `${unapplied.length > 1 ? 'them' : 'it'}. The Node.js server applies every ` +
+                `server.ssl key (server.engine: 'node').`,
+              'TLS'
+            );
+          }
         }
         this.logger.info(
           `HTTP engine: ${engineChoice.engine.source}` +
             (engineChoice.engine.version ? ` v${engineChoice.engine.version}` : '') +
-            ` (native, Node ABI ${process.versions.modules})`,
+            ` (native, Node ABI ${process.versions.modules})` +
+            engineBinaryNote(engineChoice.engine.binaryOverride),
           'ServerInit'
         );
       } catch (error) {
@@ -258,12 +336,11 @@ export class Moro extends EventEmitter {
       const http2Options: Http2ServerOptions = this.resolveH2Settings(options);
 
       // SSL now flows from the unified config (either shape) as well as the
-      // legacy options.https, via the normalizer.
+      // legacy options.https, via the normalizer: the certificate material
+      // and every policy option (client certificates, version bounds, cipher
+      // policy), exactly as the HTTPS server gets them.
       if (ssl) {
-        const nodeSsl = sslForNode(ssl);
-        http2Options.key = nodeSsl.key;
-        http2Options.cert = nodeSsl.cert;
-        if (nodeSsl.ca) http2Options.ca = nodeSsl.ca as any;
+        Object.assign(http2Options, sslForNode(ssl));
       }
 
       this.httpServer = new MoroHttp2Server({
@@ -274,7 +351,10 @@ export class Moro extends EventEmitter {
       });
       this.server = (this.httpServer as MoroHttp2Server).getServer();
       this.usingHttp2 = true;
-      this.engineInfo = { server: 'http2', protocols: ['h2', 'http/1.1'] };
+      // This server only handles HTTP/2 streams: a cleartext listener takes
+      // prior-knowledge h2 and answers an HTTP/1.1 request with HTTP/2 frames,
+      // and on TLS an HTTP/1.1 client is never answered. Report what it speaks.
+      this.engineInfo = { server: 'http2', protocols: ['h2'] };
       this.logger.info('HTTP/2 server created with native adapter', 'ServerInit');
     } else {
       // Use standard HTTP/1.1 (Node), now with optional in-process HTTPS.
@@ -290,7 +370,9 @@ export class Moro extends EventEmitter {
         // The default engine simply not being installed is expected (it is an
         // optional dependency) - only an EXPLICIT engine choice that cannot be
         // honored deserves warn-level noise on every boot.
-        const message = `Native engine unavailable, using Node.js http.Server - ${engineChoice.fallbackReason}`;
+        // Worded for both cases: the engine could not be loaded, or the app
+        // chose something (an adapter, a platform) that needs the Node server
+        const message = `Using the Node.js http server instead of the native engine: ${engineChoice.fallbackReason}`;
         if (engineChoice.explicitEngine) {
           this.logger.warn(message, 'ServerInit');
         } else {
@@ -303,14 +385,9 @@ export class Moro extends EventEmitter {
     this.moduleLoader = new ModuleLoader(this.container);
 
     // Setup WebSocket adapter if enabled in config OR options
-    if (
-      this.config.websocket.enabled ||
-      (options.websocket && typeof options.websocket === 'object')
-    ) {
+    if (wsConfig) {
       // Store the promise so we can await it before using websockets
-      this.websocketSetupPromise = this.setupWebSockets(
-        mergeWebSocketConfig(this.config.websocket, options.websocket)
-      );
+      this.websocketSetupPromise = this.setupWebSockets(wsConfig);
     }
 
     // Initialize enterprise event bus
@@ -332,21 +409,57 @@ export class Moro extends EventEmitter {
     return this;
   }
 
+  /**
+   * Install the built-ins the configuration enables as request hooks
+   * (security.rateLimit.global, security.csp, modules.session,
+   * security.csrf), on the app's middleware manager. Called once by the app
+   * when its hook system exists; see config/configured-middleware.ts.
+   */
+  installConfiguredMiddleware(manager: MiddlewareManager): ConfiguredMiddleware {
+    this.configuredMiddleware = installConfiguredMiddleware(this.config, manager);
+    return this.configuredMiddleware;
+  }
+
   private setupCore() {
+    // The store behind route caching takes its size and the lifetime of a
+    // route that names none from modules.cache. Nothing is cached because of
+    // that section: only a route that declares caching is.
+    const routeCache = this.config.modules?.cache;
+    this.router.configureCache({
+      maxEntries: routeCache?.maxSize,
+      defaultTtl: routeCache?.defaultTtl,
+    });
+
+    // The server knows its app's router, so that code which runs inside a
+    // request (a rate limiter naming the matched route, a validation error
+    // looking for the app's handler) reaches this app's router through the
+    // request instead of asking which app is current.
+    this.httpServer.router = this.router;
+
     // PERFORMANCE FIX: Only apply middleware if enabled in config OR options
 
     // Security - check config enabled property OR options.security.*.enabled === true
     if (this.config.security.helmet.enabled || this.options.security?.helmet?.enabled === true) {
-      this.httpServer.use(helmet());
+      // security.helmet's own keys choose the headers; with security.csp
+      // enabled the Content-Security-Policy header is that section's.
+      this.httpServer.use(
+        helmet(
+          helmetOptionsFromConfig(
+            this.config.security.helmet,
+            this.config.security.csp?.enabled === true
+          )
+        )
+      );
     }
 
     if (this.config.security.cors.enabled || this.options.security?.cors?.enabled === true) {
+      // The merged configuration (file, environment, options) is what applies.
+      // An object given as the `cors` shorthand is laid over it so keys the
+      // configuration does not carry still reach the middleware.
       const corsOptions =
-        typeof this.options.cors === 'object'
-          ? this.options.cors
-          : this.config.security.cors
-            ? this.config.security.cors
-            : {};
+        typeof this.options.cors === 'object' && this.options.cors !== null
+          ? { ...(this.config.security.cors ?? {}), ...this.options.cors }
+          : (this.config.security.cors ?? {});
       this.httpServer.use(cors(corsOptions));
     }
 
@@ -356,11 +469,9 @@ export class Moro extends EventEmitter {
       this.options.performance?.compression?.enabled === true
     ) {
       const compressionOptions =
-        typeof this.options.compression === 'object'
-          ? this.options.compression
-          : this.config.performance.compression
-            ? this.config.performance.compression
-            : {};
+        typeof this.options.compression === 'object' && this.options.compression !== null
+          ? { ...(this.config.performance.compression ?? {}), ...this.options.compression }
+          : (this.config.performance.compression ?? {});
       this.httpServer.use(compression(compressionOptions));
     }
 
@@ -371,6 +482,14 @@ export class Moro extends EventEmitter {
     // Configure request tracking (ID generation) in HTTP server
     if (this.httpServer.setRequestTracking) {
       this.httpServer.setRequestTracking(this.config.server.requestTracking.enabled);
+    }
+
+    // server.trustProxy, compiled once. Absent, the servers derive req.ip,
+    // req.ips, req.protocol and req.hostname as they did before the setting
+    // existed; nothing is read per request for it either way.
+    const proxyTrust = compileTrustProxy(this.config.server?.trustProxy);
+    if (proxyTrust !== undefined) {
+      this.httpServer.setTrustProxy(proxyTrust);
     }
 
     // Request logging middleware - separate from request tracking (ID generation)
@@ -398,7 +517,7 @@ export class Moro extends EventEmitter {
         this.websocketAdapter = new EngineWebSocketAdapter();
         await this.websocketAdapter.initialize(this.httpServer, wsConfig.options);
         this.websocketManager = new WebSocketManager(this.websocketAdapter, this.container);
-        if (wsConfig.compression) this.websocketAdapter.setCompression(true);
+        if (wantsWebSocketCompression(wsConfig)) this.websocketAdapter.setCompression(true);
         if (wsConfig.customIdGenerator)
           this.websocketAdapter.setCustomIdGenerator(wsConfig.customIdGenerator);
         this.logger.info(
@@ -415,8 +534,15 @@ export class Moro extends EventEmitter {
         this.websocketAdapter = (await this.detectWebSocketAdapter()) || undefined;
       }
 
+      // websocket.compression reaches an adapter among its options, where it
+      // is read while the adapter creates its server: neither Socket.IO nor
+      // `ws` can be given permessage-deflate afterwards.
+      const compression = wantsWebSocketCompression(wsConfig);
       if (this.websocketAdapter) {
-        await this.websocketAdapter.initialize(this.server, wsConfig.options);
+        await this.websocketAdapter.initialize(
+          this.server,
+          compression ? { ...wsConfig.options, compression: true } : wsConfig.options
+        );
 
         this.logger.info(
           `WebSocket adapter initialized: ${this.websocketAdapter.getAdapterName()}`,
@@ -428,11 +554,20 @@ export class Moro extends EventEmitter {
       if (this.websocketAdapter) {
         this.websocketManager = new WebSocketManager(this.websocketAdapter, this.container);
 
-        if (wsConfig.compression) {
+        if (compression) {
           this.websocketAdapter.setCompression(true);
         }
         if (wsConfig.customIdGenerator) {
           this.websocketAdapter.setCustomIdGenerator(wsConfig.customIdGenerator);
+        }
+        // server.trustProxy decides the address a connection reports
+        // (socket.ip), as it decides req.ip. (The engine adapter reads the
+        // setting from its server.)
+        const proxyTrust = this.httpServer.proxyTrust;
+        if (proxyTrust !== undefined && this.websocketAdapter.setClientAddressResolver) {
+          this.websocketAdapter.setClientAddressResolver((peer, forwardedFor) =>
+            clientAddress(peer, forwardedFor, proxyTrust)
+          );
         }
       }
     } catch (error) {
@@ -644,31 +779,36 @@ export class Moro extends EventEmitter {
         return new service.implementation(...dependencies);
       };
 
-      this.container.register(service.name, factory, service.singleton || false);
+      // A module service is one instance for the app, with or without
+      // `singleton` in its definition: route and socket handlers resolve it by
+      // name on every call and get the same object.
+      this.container.register(service.name, factory, { lifetime: 'singleton' });
     }
 
     // Register functional route handlers if they exist
     if (config.routeHandlers) {
       for (const [name, handler] of Object.entries(config.routeHandlers)) {
-        this.container.register(name, () => handler, false);
+        this.container.register(name, () => handler, { lifetime: 'singleton' });
       }
     }
 
     // Register functional socket handlers if they exist
     if (config.socketHandlers) {
       for (const [name, handler] of Object.entries(config.socketHandlers)) {
-        this.container.register(name, () => handler, false);
+        this.container.register(name, () => handler, { lifetime: 'singleton' });
       }
     }
   }
 
   private async createModuleRouter(config: ModuleConfig, moduleEventBus: any): Promise<Router> {
-    const router = new Router();
+    const router = new Router(this.router);
 
     this.logger.debug(`Creating router for module: ${config.name}`, 'Router');
     this.logger.debug(`Module has ${config.routes?.length || 0} routes`, 'Router');
 
     if (!config.routes) return router;
+
+    warnUncalledGuards((config as any).middleware, `Module '${config.name}' middleware`);
 
     // Calculate basePath for this module
     const basePath = buildModuleBasePath(
@@ -684,6 +824,18 @@ export class Moro extends EventEmitter {
       );
       const handler = await this.createResilientHandler(route, config, moduleEventBus);
       const method = route.method.toLowerCase() as keyof Router;
+
+      warnUncalledGuards(
+        (route as any).middleware,
+        `Module '${config.name}' route ${route.method} ${route.path}`
+      );
+
+      if ((route as any).auth) {
+        warnUnsupportedAuthKeys(
+          (route as any).auth,
+          `Module '${config.name}' route ${route.method} ${route.path}`
+        );
+      }
 
       // Transform path: module root '/' becomes the basePath, other paths are appended
       const routePath = route.path === '/' ? '' : route.path;
@@ -705,14 +857,47 @@ export class Moro extends EventEmitter {
   ) {
     const handlerKey = `${config.name}.${route.handler}`;
 
+    // The module's middleware and the route's own. With
+    // routing.strictMiddleware their three-parameter functions are put under
+    // the strict contract here, once; without it these are the lists as given.
+    let moduleMiddleware = config.middleware;
+    let routeMiddleware = route.middleware;
+    if (isStrictMiddlewareEnabled(this.config)) {
+      const where = `${route.method} ${route.path} of module '${config.name}'`;
+      moduleMiddleware = strictMiddlewareList(moduleMiddleware, where);
+      routeMiddleware = strictMiddlewareList(routeMiddleware, where);
+      this.strictNamedMiddleware = true;
+    }
+
+    // What the route declares, resolved once here so that a route without
+    // them does nothing for them per request.
+    const rateLimitConfig = route.rateLimit || undefined;
+    const cacheConfig = route.cache || undefined;
+    const routeAuth = (route as any).auth;
+    const authValidator =
+      typeof routeAuth?.validator === 'function' ? routeAuth.validator : undefined;
+    // With no auth middleware installed (no req.auth) and nothing but the
+    // validator to check, the validator is the whole check.
+    const authValidatorOnly =
+      authValidator !== undefined && !routeAuth.roles?.length && !routeAuth.permissions?.length;
+    // undefined unless performance.circuitBreaker.enabled is set
+    const circuitBreaker = this.getCircuitBreaker(handlerKey);
+    const circuitRetryAfter = String(
+      Math.max(1, Math.ceil((this.config.performance?.circuitBreaker?.resetTimeout ?? 0) / 1000))
+    );
+
     return async (req: HttpRequest, res: HttpResponse) => {
-      const requestId = req.headers['x-request-id'] || crypto.randomBytes(8).toString('hex');
+      const clientRequestId = req.headers['x-request-id'];
+      const requestId =
+        typeof clientRequestId === 'string' && CLIENT_REQUEST_ID.test(clientRequestId)
+          ? clientRequestId
+          : crypto.randomBytes(8).toString('hex');
 
       try {
         // Apply module-level middleware first
-        if (config.middleware && config.middleware.length > 0) {
+        if (moduleMiddleware && moduleMiddleware.length > 0) {
           const moduleMiddlewareExecuted = await this.executeModuleMiddleware(
-            config.middleware,
+            moduleMiddleware,
             req,
             res
           );
@@ -723,9 +908,9 @@ export class Moro extends EventEmitter {
         }
 
         // Apply route-level middleware
-        if (route.middleware && route.middleware.length > 0) {
+        if (routeMiddleware && routeMiddleware.length > 0) {
           const routeMiddlewareExecuted = await this.executeModuleMiddleware(
-            route.middleware,
+            routeMiddleware,
             req,
             res
           );
@@ -763,12 +948,19 @@ export class Moro extends EventEmitter {
           throw new Error(`Handler ${route.handler} is not a function`);
         }
 
+        // The route's rate limit, ahead of auth and validation as on routes
+        // registered on the app
+        if (rateLimitConfig) {
+          await this.router.checkRateLimit(req, res, rateLimitConfig);
+          if (res.headersSent) return;
+        }
+
         // Check authentication if auth configuration is provided
         if ((route as any).auth) {
           const auth = (req as any).auth;
           const authConfig = (route as any).auth;
 
-          if (!auth) {
+          if (!auth && !authValidatorOnly) {
             res.status(401);
             res.json({
               success: false,
@@ -779,7 +971,7 @@ export class Moro extends EventEmitter {
           }
 
           // Check authentication requirement (default is required unless optional: true)
-          if (!authConfig.optional && !auth.isAuthenticated) {
+          if (auth && !authConfig.optional && !auth.isAuthenticated) {
             res.status(401);
             res.json({
               success: false,
@@ -790,7 +982,7 @@ export class Moro extends EventEmitter {
           }
 
           // Skip further checks if not authenticated but optional
-          if (!auth.isAuthenticated && authConfig.optional) {
+          if (!auth || (!auth.isAuthenticated && authConfig.optional)) {
             // Continue to handler
           } else if (auth.isAuthenticated) {
             const user = auth.user;
@@ -798,7 +990,10 @@ export class Moro extends EventEmitter {
             // Check roles if specified
             if (authConfig.roles && authConfig.roles.length > 0) {
               const userRoles = user?.roles || [];
-              const hasRole = authConfig.roles.some((role: string) => userRoles.includes(role));
+              // Compared entry by entry: on a string, includes() is a substring
+              // test, and 'not-an-admin' would satisfy 'admin'.
+              const roleList = normalizeAuthList(userRoles);
+              const hasRole = authConfig.roles.some((role: string) => roleList.includes(role));
 
               if (!hasRole) {
                 res.status(403);
@@ -815,8 +1010,9 @@ export class Moro extends EventEmitter {
             // Check permissions if specified
             if (authConfig.permissions && authConfig.permissions.length > 0) {
               const userPermissions = user?.permissions || [];
+              const permissionList = normalizeAuthList(userPermissions);
               const hasPermission = authConfig.permissions.every((permission: string) =>
-                userPermissions.includes(permission)
+                permissionList.includes(permission)
               );
 
               if (!hasPermission) {
@@ -830,6 +1026,14 @@ export class Moro extends EventEmitter {
                 return;
               }
             }
+          }
+
+          // The route's own check of this request (for example that the user
+          // owns the record), for a request that passed the checks above
+          if (authValidator !== undefined) {
+            const pending = runAuthValidator(authConfig, req, res);
+            if (pending) await pending;
+            if (res.headersSent) return;
           }
         }
 
@@ -968,9 +1172,40 @@ export class Moro extends EventEmitter {
           });
         }
 
-        // Execute with circuit breaker
-        const circuitBreaker = this.getCircuitBreaker(handlerKey);
-        const result = await circuitBreaker.execute(() => handler(requestToUse, res));
+        // The route's cache, once every guard above has let the request
+        // through: a stored response is served here, and on a miss the
+        // handler's JSON reply is stored on its way out.
+        if (cacheConfig) {
+          if (await this.router.tryCache(req, res, cacheConfig)) return;
+        }
+
+        // The handler. With performance.circuitBreaker.enabled it runs behind
+        // a breaker of its own: an open breaker answers 503 without running
+        // it, and only server-side failures count towards opening one - an
+        // error the handler throws (unless it carries a 4xx status) or a 5xx
+        // it answers with. What a client can cause at will does not.
+        let result: any;
+        if (circuitBreaker === undefined) {
+          result = await handler(requestToUse, res);
+        } else {
+          if (circuitBreaker.isOpen()) {
+            res.setHeader('Retry-After', circuitRetryAfter);
+            res.status(503).json({
+              success: false,
+              error: 'Service temporarily unavailable',
+              requestId,
+            });
+            return;
+          }
+          try {
+            result = await handler(requestToUse, res);
+          } catch (handlerError) {
+            if (!isClientError(handlerError)) circuitBreaker.recordFailure();
+            throw handlerError;
+          }
+          if (res.statusCode >= 500) circuitBreaker.recordFailure();
+          else circuitBreaker.recordSuccess();
+        }
 
         // For functional handlers, ensure the response is sent
         if (useEnhancedReq && result !== undefined && result !== null && !res.headersSent) {
@@ -987,7 +1222,11 @@ export class Moro extends EventEmitter {
           handlerKey,
           stack: error.stack,
         });
-        if (!res.headersSent) {
+        // An application that registered an error handler answers this error
+        // itself, as it does for a route registered on the app: the error is
+        // rethrown unanswered and the server offers it to that handler before
+        // its own default. With no error handler the answer is the 500 below.
+        if (!res.headersSent && !this.hasErrorHandler()) {
           res.status(500).json({
             success: false,
             error: 'Internal server error',
@@ -997,6 +1236,12 @@ export class Moro extends EventEmitter {
         throw error;
       }
     };
+  }
+
+  // Whether app.setErrorHandler() was called. The handler is kept by the
+  // server, which is what calls it; every server keeps it under this name.
+  private hasErrorHandler(): boolean {
+    return typeof (this.httpServer as any)?.errorHandler === 'function';
   }
 
   /**
@@ -1025,6 +1270,9 @@ export class Moro extends EventEmitter {
           // Name refers to a hook-based middleware already installed globally —
           // it runs through the hook pipeline, nothing to execute per-route.
           continue;
+        }
+        if (this.strictNamedMiddleware) {
+          resolvedMiddleware = strictNamedMiddleware(resolvedMiddleware);
         }
       } else if (typeof mw === 'function') {
         if ((mw as any)[MIDDLEWARE_FACTORY]) {
@@ -1071,16 +1319,29 @@ export class Moro extends EventEmitter {
             (res as any).on('finish', done);
           }
 
-          const result = resolvedMiddleware(req, res, done);
+          const fail = (error: unknown) => {
+            if (!settled) {
+              settled = true;
+              if (typeof (res as any).removeListener === 'function') {
+                (res as any).removeListener('finish', done);
+              }
+              reject(error);
+            }
+          };
+
+          // The standard (req, res, next) contract: next(err) aborts the chain
+          // and goes to the error path. It must never reach the handler - that
+          // is how a guard denies a request.
+          const next = (err?: unknown) => {
+            if (isNextError(err)) fail(err);
+            else done();
+          };
+
+          const result = resolvedMiddleware(req, res, next);
 
           // Handle async middleware
           if (result && typeof result.then === 'function') {
-            result.then(done).catch((error: any) => {
-              if (!settled) {
-                settled = true;
-                reject(error);
-              }
-            });
+            result.then(() => done(), fail);
           }
         });
 
@@ -1100,6 +1361,11 @@ export class Moro extends EventEmitter {
 
     return true; // Continue to handler
   }
+
+  // routing.strictMiddleware is on and a module was loaded: a middleware a
+  // module names by string is put under the strict contract when it is
+  // resolved (the lists of functions are done when the module is loaded)
+  private strictNamedMiddleware = false;
 
   // String middleware names resolved once per framework instance. Unresolvable
   // names cache their Error so every request fails fast with the same message
@@ -1194,6 +1460,9 @@ export class Moro extends EventEmitter {
     for (const route of routes) {
       // Routes already have full paths, no need to transform
       const fullPath = route.path;
+      // A route with optional parameters or a wildcard is matched by the
+      // unified router alone: one matcher, so one answer on every server
+      if (hasExtendedSyntax(fullPath)) continue;
       const method = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete' | 'patch';
 
       this.logger.debug(`Registering module route: ${route.method} ${fullPath}`, 'Router');
@@ -1239,6 +1508,10 @@ export class Moro extends EventEmitter {
     }
 
     const namespace = this.websocketAdapter.createNamespace(`/${config.name}`);
+
+    // Module socket handlers get a circuit breaker only when
+    // performance.circuitBreaker.enabled is set
+    this.websocketManager.setCircuitBreakerOptions(this.config.performance?.circuitBreaker);
 
     for (const wsConfig of config.websockets || []) {
       await this.websocketManager.registerHandler(namespace, wsConfig, config);
@@ -1297,9 +1570,7 @@ export class Moro extends EventEmitter {
       next = {
         // operator policy carries over...
         passphrase: current.passphrase,
-        minVersion: current.minVersion,
-        requestCert: current.requestCert,
-        rejectUnauthorized: current.rejectUnauthorized,
+        ...Object.fromEntries(TLS_POLICY_KEYS.map(key => [key, current[key]])),
         // ...as does the CA when the update names none
         ...(hasCa ? {} : { ca: current.ca, caFile: current.caFile }),
         // and the update's own fields win (undefined entries dropped so they
@@ -1636,6 +1907,7 @@ export class Moro extends EventEmitter {
     const wsBackpressureLimit = size(limits.wsBackpressureLimit);
     const writeHighWaterMark = size(limits.writeHighWaterMark);
     const maxPendingBytes = size(limits.maxPendingBytes);
+    const responseBackpressureLimit = size(limits.responseBackpressureLimit);
     return {
       maxBodySize: parseSizeToBytes(s.bodySizeLimit ?? '10mb'),
       maxUploadSize: parseSizeToBytes(s.maxUploadSize ?? '100mb'),
@@ -1653,6 +1925,7 @@ export class Moro extends EventEmitter {
       ...(wsBackpressureLimit !== undefined ? { wsBackpressureLimit } : {}),
       ...(writeHighWaterMark !== undefined ? { writeHighWaterMark } : {}),
       ...(maxPendingBytes !== undefined ? { maxPendingBytes } : {}),
+      ...(responseBackpressureLimit !== undefined ? { responseBackpressureLimit } : {}),
       multipart: {
         maxParts: multipart.maxParts,
         maxFiles: multipart.maxFiles,
@@ -1662,24 +1935,33 @@ export class Moro extends EventEmitter {
     };
   }
 
-  private getCircuitBreaker(key: string): CircuitBreaker {
+  // The circuit breaker of one module route handler, or undefined when
+  // performance.circuitBreaker.enabled is not set (the default): module
+  // routes then run with no breaker at all. Thresholds come from the same
+  // config section.
+  private getCircuitBreaker(key: string): CircuitBreaker | undefined {
+    const settings = this.config.performance?.circuitBreaker;
+    if (!settings || settings.enabled !== true) return undefined;
     if (!this.circuitBreakers.has(key)) {
       this.circuitBreakers.set(
         key,
         new CircuitBreaker({
-          failureThreshold: 5,
-          resetTimeout: 30000,
-          monitoringPeriod: 10000,
+          failureThreshold: settings.failureThreshold ?? 5,
+          resetTimeout: settings.resetTimeout ?? 60000,
+          monitoringPeriod: settings.monitoringPeriod ?? 10000,
         })
       );
     }
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return this.circuitBreakers.get(key)!;
+    return this.circuitBreakers.get(key);
   }
 
   listen(port: number, callback?: () => void): void;
   listen(port: number, host: string, callback?: () => void): void;
   listen(port: number, host?: string | (() => void), callback?: () => void): void {
+    // Built-ins enabled in the configuration are created now, so what they
+    // report (a missing secret, an unreachable store) is said at start-up
+    this.configuredMiddleware?.ready();
+
     // Certificate watching (server.ssl.watch) starts once the listener is up
     const userCb = typeof host === 'function' ? host : callback;
     const onListening = () => {

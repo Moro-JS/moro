@@ -13,7 +13,7 @@ import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { loadNativeEngine } from '../../src/core/utilities/package-utils.js';
 import { closeApp, createTestPort } from '../setup.js';
-import { fixture, fixturePath, httpsRequest } from '../utils/tls-client.js';
+import { fixture, fixturePath, httpsRequest, tlsProbe } from '../utils/tls-client.js';
 
 const listen = (app: any, port: number) =>
   new Promise<void>(resolve => app.listen(port, () => resolve()));
@@ -148,6 +148,38 @@ function suite(engine: 'node' | 'moro') {
     await fs.promises.rename(path.join(dir, 'server.key.tmp'), keyFile());
     await fs.promises.rename(path.join(dir, 'server.crt.tmp'), certFile());
     expect(await waitForFingerprint(port, ALT_FP)).toBe(ALT_FP);
+  });
+
+  it('keeps the cipher policy and the client-certificate requirement across a reload', async () => {
+    const port = await boot({
+      ca: [fixture('ca.pem'), fixture('selfsigned.pem')],
+      requestCert: true,
+      rejectUnauthorized: true,
+      // Not what either server picks by default
+      ciphers: 'ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305',
+    });
+    const client = { key: fixture('selfsigned.key'), cert: fixture('selfsigned.pem') };
+    const probes = async () => ({
+      withoutCertificate: (await tlsProbe(port)).ok,
+      withCertificate: (await tlsProbe(port, client)).ok,
+      tls12Cipher: (await tlsProbe(port, { ...client, maxVersion: 'TLSv1.2' })).cipher,
+    });
+
+    expect(await probes()).toEqual({
+      withoutCertificate: false,
+      withCertificate: true,
+      tls12Cipher: 'ECDHE-ECDSA-CHACHA20-POLY1305',
+    });
+
+    // The new certificate has an RSA key; the policy is not part of the update
+    await app.reloadTLS({ key: fixture('rsa.key'), cert: fixture('rsa.pem') });
+
+    expect(await servedFingerprint(port)).toBe(fingerprintOf(fixture('rsa.pem')));
+    expect(await probes()).toEqual({
+      withoutCertificate: false,
+      withCertificate: true,
+      tls12Cipher: 'ECDHE-RSA-CHACHA20-POLY1305',
+    });
   });
 
   it('rejects on an app that was not started with TLS', async () => {

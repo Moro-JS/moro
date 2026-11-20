@@ -14,10 +14,13 @@ import type {
   BulkJobData,
   QueueConnectionConfig,
   JobContext,
+  QueueRetentionOptions,
 } from '../types.js';
+import { JobRetention } from './retention.js';
 import { isPackageAvailable, resolveUserPackage } from '../../utilities/package-utils.js';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../../logger/index.js';
+import { decodeJobMessage } from './job-message.js';
 
 const logger = createFrameworkLogger('SQSQueue');
 
@@ -82,9 +85,29 @@ export class SQSAdapter extends QueueAdapter {
   private pollingState: Map<string, PollingState> = new Map();
   private queueUrls: Map<string, string> = new Map();
 
-  constructor(connectionConfig: QueueConnectionConfig = {}) {
+  private retention: JobRetention;
+
+  constructor(connectionConfig: QueueConnectionConfig = {}, retention?: QueueRetentionOptions) {
     super();
     this.connectionConfig = connectionConfig;
+    this.retention = new JobRetention(retention);
+  }
+
+  /** Count a stored record among the jobs of this queue that have not finished. */
+  private trackJob(queueName: string, jobId: string): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.track(queueName, jobId, store);
+  }
+
+  /** A job finished for good: keep its record among the most recent ones. */
+  private retainFinished(
+    queueName: string,
+    jobId: string,
+    outcome: 'completed' | 'failed',
+    ownSetting: unknown
+  ): void {
+    const store = this.jobStore.get(queueName);
+    if (store) this.retention.finished(queueName, jobId, outcome, ownSetting, store);
   }
 
   /**
@@ -112,9 +135,13 @@ export class SQSAdapter extends QueueAdapter {
       this.ReceiveMessageCommand = sqsModule.ReceiveMessageCommand;
       this.DeleteMessageCommand = sqsModule.DeleteMessageCommand;
 
-      // Create SQS client
+      // Create SQS client. A custom endpoint and explicit credentials are
+      // passed on only when set; without them the SDK resolves both itself.
+      const { endpoint, credentials } = this.connectionConfig;
       this.client = new this.SQSClient({
         region: this.connectionConfig.region || 'us-east-1',
+        ...(endpoint !== undefined && { endpoint }),
+        ...(credentials !== undefined && { credentials }),
       });
 
       this.isReady = true;
@@ -130,10 +157,16 @@ export class SQSAdapter extends QueueAdapter {
    */
   private getQueueUrl(queueName: string): string {
     if (!this.queueUrls.has(queueName)) {
-      // Try to get from config, otherwise construct default
+      // Try to get from config, otherwise construct default: under a custom
+      // endpoint when one is configured, else under the region's public one
+      const { endpoint } = this.connectionConfig;
+      const base =
+        typeof endpoint === 'string' && endpoint
+          ? endpoint.replace(/\/+$/, '')
+          : `https://sqs.${this.connectionConfig.region || 'us-east-1'}.amazonaws.com`;
       const url =
         this.connectionConfig.queueUrl ||
-        `https://sqs.${this.connectionConfig.region || 'us-east-1'}.amazonaws.com/${this.connectionConfig.accountId || '000000000000'}/${queueName}`;
+        `${base}/${this.connectionConfig.accountId || '000000000000'}/${queueName}`;
       this.queueUrls.set(queueName, url);
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -170,6 +203,7 @@ export class SQSAdapter extends QueueAdapter {
     // Store job metadata
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     this.jobStore.get(queueName)!.set(jobId, job);
+    this.trackJob(queueName, jobId);
 
     // Prepare message
     const message = {
@@ -240,6 +274,7 @@ export class SQSAdapter extends QueueAdapter {
 
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       this.jobStore.get(queueName)!.set(jobId, job);
+      this.trackJob(queueName, jobId);
 
       const message = {
         jobId,
@@ -382,6 +417,7 @@ export class SQSAdapter extends QueueAdapter {
     }
 
     this.jobStore.get(queueName)?.delete(jobId);
+    this.retention.forget(queueName, jobId);
   }
 
   /**
@@ -400,6 +436,7 @@ export class SQSAdapter extends QueueAdapter {
     storedJob.processedOn = undefined;
     storedJob.finishedOn = undefined;
     storedJob.progress = 0;
+    this.trackJob(queueName, jobId);
     storedJob.receiptHandle = undefined;
 
     // Re-add to queue
@@ -478,6 +515,7 @@ export class SQSAdapter extends QueueAdapter {
 
     for (const jobId of jobsToRemove) {
       jobs.delete(jobId);
+      this.retention.forget(queueName, jobId);
     }
   }
 
@@ -494,6 +532,7 @@ export class SQSAdapter extends QueueAdapter {
     // To delete the queue, use AWS console or CLI
 
     this.jobStore.delete(queueName);
+    this.retention.clear(queueName);
     this.processors.delete(queueName);
     this.queueUrls.delete(queueName);
   }
@@ -508,6 +547,7 @@ export class SQSAdapter extends QueueAdapter {
     }
 
     this.jobStore.clear();
+    this.retention.clear();
     this.processors.clear();
     this.queueUrls.clear();
     this.client = null;
@@ -610,10 +650,34 @@ export class SQSAdapter extends QueueAdapter {
       return;
     }
 
-    try {
-      const body = JSON.parse(message.Body);
-      const { jobId, data, options, timestamp } = body;
+    // Decode once. A body that is not a JSON job object can never be processed
+    // and would otherwise be redelivered until it expires: log it and delete it.
+    const decoded = decodeJobMessage(message?.Body, message?.MessageId);
+    if (!decoded) {
+      logger.error(
+        `Deleting malformed message ${String(message?.MessageId)} from queue ${queueName}: not a JSON job message`
+      );
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        await this.client!.send(
+          new this.DeleteMessageCommand({
+            QueueUrl: this.getQueueUrl(queueName),
+            ReceiptHandle: message?.ReceiptHandle,
+          })
+        );
+      } catch (error) {
+        logger.error(
+          `Failed to delete malformed message from queue ${queueName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+      return;
+    }
 
+    const { jobId, data, options, timestamp } = decoded;
+
+    try {
       // The SQS message body is the source of truth for the job. In the normal
       // topology producers and consumers are separate processes (or the
       // consumer restarted after enqueue), so this consumer's in-memory
@@ -626,14 +690,15 @@ export class SQSAdapter extends QueueAdapter {
           id: jobId,
           name: queueName,
           data,
-          options: options || {},
+          options,
           attemptsMade: 0,
-          timestamp: timestamp || Date.now(),
+          timestamp,
           progress: 0,
         };
         this.ensureJobStore(queueName);
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         this.jobStore.get(queueName)!.set(jobId, storedJob);
+        this.trackJob(queueName, jobId);
       }
 
       storedJob.receiptHandle = message.ReceiptHandle;
@@ -684,10 +749,8 @@ export class SQSAdapter extends QueueAdapter {
           typeof options.removeOnComplete === 'number' ? options.removeOnComplete : 0
         );
       }
+      this.retainFinished(queueName, jobId, 'completed', options.removeOnComplete);
     } catch (error) {
-      const body = JSON.parse(message.Body);
-      const { jobId, options } = body;
-
       const storedJob = this.jobStore.get(queueName)?.get(jobId);
       if (storedJob) {
         storedJob.attemptsMade++;
@@ -715,6 +778,7 @@ export class SQSAdapter extends QueueAdapter {
               typeof options.removeOnFail === 'number' ? options.removeOnFail : 0
             );
           }
+          this.retainFinished(queueName, jobId, 'failed', options.removeOnFail);
         }
       }
     }
