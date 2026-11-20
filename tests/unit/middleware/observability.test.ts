@@ -144,6 +144,14 @@ describe('Error tracker middleware', () => {
     url: string
   ): { metadata: Record<string, any>; passedOn: unknown } {
     const entries: Array<Record<string, any>> = [];
+    // The test setup may run the logger at 'fatal' with its methods mocked
+    // (CI and coverage runs); the tracker logs at 'error' through a child
+    // logger, so open the level for this capture and put everything back.
+    const level = logger.getLevel();
+    const methods = (['debug', 'info', 'warn', 'error', 'fatal'] as const).map(
+      name => [name, logger[name]] as const
+    );
+    logger.setLevel('error');
     logger.addOutput({
       name: 'error-tracker-capture',
       write: (entry: any) => {
@@ -166,6 +174,8 @@ describe('Error tracker middleware', () => {
     } finally {
       logger.removeOutput('error-tracker-capture');
       stderr.mockRestore();
+      logger.setLevel(level);
+      for (const [name, method] of methods) (logger as any)[name] = method;
     }
     expect(entries).toHaveLength(1);
     return { metadata: entries[0] as Record<string, any>, passedOn };
