@@ -1,3 +1,16 @@
+## [1.9.1] - 2026-11-23
+
+### Added
+
+- A `HEAD` request with no `head()` route of its own is answered from the GET route, on every server: the handler and its middleware run, and the response carries the GET's status and headers, `Content-Length` included, and no body. `req.method` is `'HEAD'`. It used to be a 404. Register `app.head(path, ...)` to answer it differently.
+- `server.limits.allowNonAsciiTarget` (default `false`): with `@morojs/engine` 1.2.2 a request whose path or query holds raw bytes of 0x80 and above (UTF-8 sent without percent-encoding) is answered 400; `true` takes such requests as before and hands the bytes over undecoded. Browsers, `fetch` and HTTP libraries percent-encode, and a route registered as `/café` matches `/caf%C3%A9` as before.
+
+### Changed
+
+- `OPTIONS *` that no middleware answers is a 204 with `Allow: GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS`. It used to be a 404.
+- On the native engine, a request with a method no route can be registered for (`TRACE`, `PROPFIND`, a made-up one) that no middleware answers is a 501 with `{"success":false,"error":"Not implemented"}`. It used to be a 404. The Node server's parser refuses a method it does not know before the app sees it, as before.
+- On the Node server, `res.send()` for a `HEAD` request sends the `Content-Length` of the body it leaves out.
+
 ## [1.9.0] - 2026-11-20
 
 ### Added
