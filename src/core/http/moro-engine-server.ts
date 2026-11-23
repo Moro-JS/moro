@@ -70,6 +70,12 @@ import { LazyEventEmitter } from './utils/lazy-event-emitter.js';
 import { InflightRegistry } from './utils/inflight-registry.js';
 import { parseRawQueryString } from './utils/query-parser.js';
 import { PathMatcher } from '../routing/path-matcher.js';
+import {
+  ALLOWED_METHODS,
+  NOT_FOUND_BODY,
+  NOT_IMPLEMENTED_BODY,
+  unroutedStatus,
+} from './utils/unrouted.js';
 
 /** Engine method table - onRequest's methodIdx indexes into this */
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'OTHER'] as const;
@@ -2514,6 +2520,11 @@ export class MoroEngineServer {
     if (caps?.responseLimits && limits?.responseBackpressureLimit !== undefined) {
       serveOptions.responseBackpressureLimit = limits.responseBackpressureLimit;
     }
+    // server.limits.allowNonAsciiTarget: handed over only when set. An
+    // engine before 1.2.2 does not read it and takes such targets anyway.
+    if (limits?.allowNonAsciiTarget !== undefined) {
+      serveOptions.allowNonAsciiTarget = limits.allowNonAsciiTarget;
+    }
     // TLS: gated on the engine's own capability flag (caps.tls), not a version
     // number, so a mismatched engine build is never handed an ssl option it
     // can't parse.
@@ -3125,14 +3136,26 @@ export class MoroEngineServer {
     if (httpRes) httpRes._handleWritable();
   }
 
+  // The reply to a request no route and no middleware answered (unroutedStatus).
+  private answerUnrouted(httpReq: EngineRequest, httpRes: EngineResponse): void {
+    const status = unroutedStatus(httpReq.method, httpReq.path);
+    if (status === 404) {
+      httpRes._sendConstantJson(404, NOT_FOUND_BODY);
+    } else if (status === 501) {
+      httpRes._sendConstantJson(501, NOT_IMPLEMENTED_BODY);
+    } else {
+      httpRes.setHeader('Allow', ALLOWED_METHODS);
+      httpRes.statusCode = 204;
+      httpRes.end();
+    }
+  }
+
   // Router-miss continuation shared by the sync fast path: direct-route
   // fallback, then 404 - with the same error shaping as handleRequest.
   private async finishUnrouted(httpReq: EngineRequest, httpRes: EngineResponse): Promise<void> {
     try {
       if (await this.dispatchDirectRoute(httpReq, httpRes)) return;
-      if (!httpRes.headersSent && !httpRes.writableEnded) {
-        httpRes._sendConstantJson(404, '{"success":false,"error":"Not found"}');
-      }
+      if (!httpRes.headersSent && !httpRes.writableEnded) this.answerUnrouted(httpReq, httpRes);
     } catch (error) {
       await this.handleDispatchError(error, httpReq, httpRes);
     }
@@ -3214,9 +3237,7 @@ export class MoroEngineServer {
       if (await this.dispatchDirectRoute(httpReq, httpRes)) return;
 
       // No route matched
-      if (!httpRes.headersSent && !httpRes.writableEnded) {
-        httpRes._sendConstantJson(404, '{"success":false,"error":"Not found"}');
-      }
+      if (!httpRes.headersSent && !httpRes.writableEnded) this.answerUnrouted(httpReq, httpRes);
     } catch (error) {
       await this.handleDispatchError(error, httpReq, httpRes);
     }

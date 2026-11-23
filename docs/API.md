@@ -298,6 +298,23 @@ const edgeApp = await createAppEdge();
 
 ### HTTP Methods
 
+Routes are registered with `app.get`, `post`, `put`, `delete`, `patch`,
+`head` and `options`. A request that no route and no middleware answers gets:
+
+- **A `HEAD` request: the GET route's answer without the body.** When no
+  `head()` route is registered for the path, the GET route runs, middleware
+  included, and the response carries the status and headers the GET would
+  have, `Content-Length` among them, and no body. `req.method` is `'HEAD'`,
+  so a handler that must not do its work for a HEAD can tell. Register
+  `app.head(path, ...)` to answer it differently.
+- **`OPTIONS *`: `204` with `Allow: GET, HEAD, POST, PUT, DELETE, PATCH,
+OPTIONS`**, the methods routes can be registered for.
+- **Any other method (`TRACE`, `PROPFIND`, a made-up one): `501 Not
+Implemented`** on the native engine. The Node server's parser refuses a
+  method it does not know with a 400 before the app sees it. Middleware that
+  serves such a method (`app.use()` answering `PURGE`, say) runs first.
+- **Otherwise `404`.**
+
 #### app.get(path, handler?, options?)
 
 Register a GET route.
@@ -849,7 +866,7 @@ native engine (`@morojs/engine` >= 1.1.6) answers it itself: no call into JS,
 no routing and no header building per request. With any of those configured,
 or on the Node and HTTP/2 servers, an equivalent handler sends
 the same bytes after that configuration has run. HEAD against a literal GET
-still reaches the handler, so method policy stays in JS. Routes registered
+still reaches the router, which answers it from that route (see below). Routes registered
 after `listen()` keep working through the handler until the next `listen()`.
 
 The engine answers a literal or `param()` route itself only while the app has

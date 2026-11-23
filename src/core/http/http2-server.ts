@@ -19,6 +19,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { Socket } from 'net';
 import { createRequire } from 'module';
 import { isMultipartMediaType } from './utils/body-type.js';
+import { ALLOWED_METHODS, NOT_IMPLEMENTED_BODY, unroutedStatus } from './utils/unrouted.js';
 import { promisify } from 'util';
 import { createFrameworkLogger } from '../logger/index.js';
 import {
@@ -48,6 +49,8 @@ import {
   locationHeaderValue,
 } from './utils/response-headers.js';
 import { MoroHttpServer, MoroIncomingMessage, MoroServerResponse } from './http-server.js';
+
+const NOT_IMPLEMENTED_BUFFER = Buffer.from(NOT_IMPLEMENTED_BODY);
 
 // What this server's res.json() can produce, in preference order.
 const HTTP2_JSON_ENCODINGS: Encoding[] = ['gzip', 'deflate'];
@@ -1030,10 +1033,20 @@ export class MoroHttp2Server {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const route = this.findRoute(method || MoroHttp2Server.METHOD_GET, httpReq.path!);
       if (!route) {
-        httpRes.statusCode = 404;
+        // The reply to a request nothing answered (unroutedStatus).
+        const status = unroutedStatus(method, httpReq.path);
+        if (status === 204) {
+          httpRes.statusCode = 204;
+          httpRes.setHeader('Allow', ALLOWED_METHODS);
+          httpRes.end();
+          return;
+        }
+        const body =
+          status === 501 ? NOT_IMPLEMENTED_BUFFER : MoroHttp2Server.RESPONSE_TEMPLATES.notFound;
+        httpRes.statusCode = status;
         httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
-        httpRes.setHeader('Content-Length', MoroHttp2Server.RESPONSE_TEMPLATES.notFound.length);
-        httpRes.end(MoroHttp2Server.RESPONSE_TEMPLATES.notFound);
+        httpRes.setHeader('Content-Length', body.length);
+        httpRes.end(body);
         return;
       }
 

@@ -1,6 +1,7 @@
 // src/core/http-server.ts
 import type { IncomingMessage, ServerResponse, Server } from 'http';
 import { isMultipartMediaType } from './utils/body-type.js';
+import { ALLOWED_METHODS, NOT_IMPLEMENTED_BODY, unroutedStatus } from './utils/unrouted.js';
 import type { Server as HttpsServer } from 'https';
 import { createRequire } from 'module';
 import { promisify } from 'util';
@@ -41,6 +42,8 @@ import {
 } from '../../types/http.js';
 import { PathMatcher, literalPathPattern } from '../routing/path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
+
+const NOT_IMPLEMENTED_BUFFER = Buffer.from(NOT_IMPLEMENTED_BODY);
 
 // `node:https` and `node:zlib` are resolved on first use rather than at import
 // time. This module is on every app's startup path, but plaintext HTTP apps
@@ -686,6 +689,17 @@ export class MoroServerResponse extends http.ServerResponse {
       } else {
         this.setHeader('Content-Type', 'application/octet-stream');
       }
+    }
+
+    // A HEAD carries the Content-Length its GET would (RFC 9110 §9.3.2). Node
+    // derives the header from the body it is given, and for a HEAD it is
+    // given none it will send, so it is stated here.
+    if (
+      (this as any).req?.method === 'HEAD' &&
+      !this.hasHeader('Content-Length') &&
+      !this.hasHeader('Transfer-Encoding')
+    ) {
+      this.setHeader('Content-Length', Buffer.byteLength(data));
     }
 
     this.end(data);
@@ -1733,11 +1747,21 @@ export class MoroHttpServer {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const route = this.findRoute(req.method!, httpReq.path);
     if (!route) {
-      // 404 response with pre-compiled buffer
-      httpRes.statusCode = 404;
+      // The reply to a request nothing answered (unroutedStatus); the 404 is
+      // a pre-compiled buffer.
+      const status = unroutedStatus(req.method, httpReq.path);
+      if (status === 204) {
+        httpRes.statusCode = 204;
+        httpRes.setHeader('Allow', ALLOWED_METHODS);
+        httpRes.end();
+        return;
+      }
+      const body =
+        status === 501 ? NOT_IMPLEMENTED_BUFFER : MoroHttpServer.RESPONSE_TEMPLATES.notFound;
+      httpRes.statusCode = status;
       httpRes.setHeader('Content-Type', 'application/json; charset=utf-8');
-      httpRes.setHeader('Content-Length', MoroHttpServer.RESPONSE_TEMPLATES.notFound.length);
-      httpRes.end(MoroHttpServer.RESPONSE_TEMPLATES.notFound);
+      httpRes.setHeader('Content-Length', body.length);
+      httpRes.end(body);
       return;
     }
 

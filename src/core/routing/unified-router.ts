@@ -1411,6 +1411,33 @@ export class UnifiedRouter {
     ) as HttpMethod;
     const path = req.path;
 
+    const handled = this.dispatch(method, path, req, res);
+    if (handled !== null) return handled;
+
+    // A HEAD with no route of its own is answered from the GET route (RFC
+    // 9110 §9.3.2: the same header fields a GET would get, and no content).
+    // The handler runs as it would for the GET and sees req.method 'HEAD';
+    // every server sends the headers it produces, Content-Length included,
+    // and drops the body.
+    if (method === 'HEAD') {
+      const viaGet = this.dispatch('GET', path, req, res);
+      if (viaGet !== null) return viaGet;
+    }
+
+    // No route found. A request target with no leading slash is refused as
+    // the Node servers' parser refuses it, instead of going on as a 404.
+    if (path.charCodeAt(0) !== 47) return this.refuseTargetWithoutSlash(path, res);
+    return false;
+  }
+
+  // The route registered for this method and path, run. null when there is
+  // none.
+  private dispatch(
+    method: HttpMethod,
+    path: string,
+    req: HttpRequest,
+    res: HttpResponse
+  ): Promise<boolean> | boolean | null {
     // FAST PATH 1: Try static route Map lookup first (fastest possible - no string concat)
     const methodMap = this.staticRoutesByMethod.get(method);
     if (methodMap) {
@@ -1501,18 +1528,16 @@ export class UnifiedRouter {
       return this.runRoute(route, req, res, radixResult.params);
     }
 
-    // No route found. A request target with no leading slash is refused as
-    // the Node servers' parser refuses it, instead of going on as a 404.
-    if (path.charCodeAt(0) !== 47) return this.refuseTargetWithoutSlash(path, res);
-    return false;
+    return null;
   }
 
   // 'admin/users/1' in the request line. Node's HTTP parser answers 400 before
   // the framework sees the request; a server that hands such a target on (the
   // native engine) gets the same status here. '*' (OPTIONS *) and an
-  // absolute-form target are valid request targets that have no route, and
-  // stay a 404. (Both servers route an http or https absolute-form target by
-  // its path, so that one arrives here as a path.)
+  // absolute-form target are valid request targets that have no route: they
+  // go on to the server's reply for an unrouted request (unroutedStatus).
+  // (Both servers route an http or https absolute-form target by its path,
+  // so that one arrives here as a path.)
   private refuseTargetWithoutSlash(path: string, res: HttpResponse): boolean {
     if (path === '*' || path.includes('://') || res.headersSent) return false;
     res.status(400).json({ success: false, error: 'Bad request' });
@@ -1531,7 +1556,9 @@ export class UnifiedRouter {
     const staticRoute = this.staticRoutesByMethod.get(upper)?.get(path);
     if (staticRoute !== undefined) return staticRoute.schema.path;
     const dynamic = this.radixRouter.findRoute(upper, path);
-    return dynamic ? (dynamic.handler as InternalRoute).schema.path : undefined;
+    if (dynamic) return (dynamic.handler as InternalRoute).schema.path;
+    // As handleRequest dispatches it: a HEAD without a route is the GET's.
+    return upper === 'HEAD' ? this.matchRoute('GET', path) : undefined;
   }
 
   // ===== Route Execution =====

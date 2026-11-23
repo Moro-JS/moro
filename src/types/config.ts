@@ -147,6 +147,17 @@ export interface ServerLimitsConfig {
    * 300 s is closed by the engine either way. Native engine only.
    */
   responseBackpressureLimit?: number | string;
+  /**
+   * Take a request whose path or query holds bytes of 0x80 and above (UTF-8
+   * sent without percent-encoding) and hand them to the application
+   * undecoded, as every release before 1.9.1 did. By default such a request
+   * is answered 400 by the native engine: a request-target is ASCII (RFC
+   * 3986), browsers and HTTP libraries percent-encode what is not, and raw
+   * high bytes are where an overlong UTF-8 form of `/` or `.` gets past a
+   * path check that runs before decoding. Native engine only (engine 1.2.2
+   * or later); the Node server takes such bytes either way.
+   */
+  allowNonAsciiTarget?: boolean;
 }
 
 export interface Http2SettingsConfig {

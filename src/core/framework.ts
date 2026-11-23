@@ -1926,6 +1926,9 @@ export class Moro extends EventEmitter {
       ...(writeHighWaterMark !== undefined ? { writeHighWaterMark } : {}),
       ...(maxPendingBytes !== undefined ? { maxPendingBytes } : {}),
       ...(responseBackpressureLimit !== undefined ? { responseBackpressureLimit } : {}),
+      ...(limits.allowNonAsciiTarget !== undefined
+        ? { allowNonAsciiTarget: limits.allowNonAsciiTarget }
+        : {}),
       multipart: {
         maxParts: multipart.maxParts,
         maxFiles: multipart.maxFiles,

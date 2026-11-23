@@ -71,6 +71,8 @@ export interface HttpRuntimeLimits {
   writeHighWaterMark?: number;
   maxPendingBytes?: number;
   responseBackpressureLimit?: number;
+  /** server.limits.allowNonAsciiTarget (engine allowNonAsciiTarget). */
+  allowNonAsciiTarget?: boolean;
   multipart?: {
     maxParts?: number;
     maxPartHeaderBytes?: number;

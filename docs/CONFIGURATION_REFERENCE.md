@@ -373,8 +373,16 @@ uncaught exception or unhandled promise rejection.
 passed through to the engine: `maxHeaderSize`, `maxHeaders` (100),
 `wsMaxMessageSize` ('16mb'), `wsBackpressureLimit` ('1mb', 0=unlimited),
 `writeHighWaterMark` ('256kb'), `maxPendingBytes`,
-`responseBackpressureLimit` (not set), and
+`responseBackpressureLimit` (not set), `allowNonAsciiTarget` (false), and
 `multipart: { maxParts (1000), maxPartHeaderBytes ('16kb'), maxFiles, maxFileSize }`.
+
+`allowNonAsciiTarget` (native engine, `@morojs/engine` 1.2.2 or later): a
+request whose path or query holds a byte of 0x80 or above, which is UTF-8
+sent without percent-encoding, is answered 400. A URL is ASCII; browsers,
+`fetch` and HTTP libraries send `/caf%C3%A9`, and a route registered as
+`/café` matches that as before. Set it to `true` if you serve clients that
+send such paths raw: the bytes then reach the app undecoded, as they did
+before 1.9.1. The Node server takes them either way.
 
 `responseBackpressureLimit` (native engine; a size such as `'16mb'` or a
 number of bytes) is how much response data one connection may have queued and

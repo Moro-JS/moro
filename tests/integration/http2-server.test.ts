@@ -1021,7 +1021,7 @@ describe('HTTP/2 server end to end', () => {
         ['GET', '/json', 200],
         ['POST', '/json', 200],
         ['PUT', '/json', 201],
-        ['HEAD', '/json', 404],
+        ['HEAD', '/json', 200], // answered from the GET route, without its body
         ['GET', '/send', 200],
         ['POST', '/send', 200],
         ['GET', '/end', 200],

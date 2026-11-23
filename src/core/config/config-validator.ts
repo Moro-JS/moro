@@ -468,6 +468,12 @@ function validateServerLimits(config: any, path: string) {
   if (config.maxHeaders !== undefined) {
     result.maxHeaders = validateNumber(config.maxHeaders, `${path}.maxHeaders`, { min: 1 });
   }
+  if (config.allowNonAsciiTarget !== undefined) {
+    result.allowNonAsciiTarget = validateBoolean(
+      config.allowNonAsciiTarget,
+      `${path}.allowNonAsciiTarget`
+    );
+  }
   if (config.multipart !== undefined) {
     const m = config.multipart;
     if (typeof m !== 'object' || m === null) {
