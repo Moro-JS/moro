@@ -1,3 +1,16 @@
+## [1.9.2] - 2026-11-25
+
+### Added
+
+- Clustered apps in one process share one set of workers. The first app with `performance.clustering` to listen starts the workers and each later one adds its listener to them, so two clustered apps of four workers run four workers, not eight. Nothing is configured. Each app is served by the number of workers it asks for, and the set is as large as the largest count. `app.close()` on one app closes its port in every worker and leaves the others serving; the app can listen again; the workers stop when the last clustered app is closed. If one of the apps can only cluster as worker processes (`engine: 'node'`), all of them do. Measured on Linux: two apps of two workers each load the entry in two worker threads where they loaded it in four (190 MB to 136 MB resident), and four listeners of twelve workers each idle at 416 MB in one process where four processes held 1.67 GB.
+- Start-up memory is given back. On `@morojs/engine` 1.2.3 or later, a quarter of a second after an isolate's first server is listening, Moro asks the engine for one memory-reducing collection of that isolate's heap. Measured with six clustered workers: 227 MB resident when idle before, 150 MB after, about 13 MB a worker. The collection is synchronous (9 to 17 ms for the framework and a forty-route application), runs once per isolate, and only on a heap of 64 MB or less. `MORO_STARTUP_TRIM=0` turns it off.
+
+### Fixed
+
+- Two clustered apps in one process each started their own workers, and every one of those workers served both apps: twice the workers and their memory, and on worker processes a worker that died was started again once per app.
+- On SIGINT or SIGTERM a process with several clustered apps exited as soon as the first app had closed, cutting the others' shutdown short. Every app is closed before the process exits.
+- A worker process with several clustered apps exited when the first of them had closed.
+
 ## [1.9.1] - 2026-11-23
 
 ### Added
