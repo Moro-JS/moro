@@ -9,6 +9,10 @@ import { describe, it, expect } from '@jest/globals';
 import { EventEmitter } from 'events';
 import {
   ThreadClusterPrimary,
+  ClusterWorkerHub,
+  ClusterWorkerApp,
+  processWorkerInfo,
+  type WorkerLink,
   CLUSTER_CHANNEL,
   nextRestartDelay,
   computeWorkerCount,
@@ -534,6 +538,354 @@ describe('thread-cluster', () => {
       expect(warnings[0]).toContain('terminating 2 worker thread(s)');
       expect(warnings[0]).toContain('1 had closed and were kept alive by');
       expect(spawned.every(w => w.terminated)).toBe(true);
+    });
+  });
+
+  describe('ThreadClusterPrimary, several apps on one set of workers', () => {
+    const fromPrimary = (w: FakeWorker) => w.posted.filter(m => m.type !== 'ping');
+
+    it('hands every worker the listeners and their worker counts, current at each spawn', () => {
+      const listeners: Record<number, number> = { 3000: 2 };
+      const { primary, spawned, clock } = primaryWith({ listeners: () => listeners });
+      primary.start();
+      expect(spawned[0].options.workerData[WORKER_DATA_KEY]).toEqual({
+        index: 0,
+        workers: 2,
+        listeners: { 3000: 2 },
+      });
+
+      listeners[3001] = 1;
+      spawned[0].ready();
+      spawned[0].emit('exit', 1);
+      clock.advance(200);
+      expect(spawned[2].options.workerData[WORKER_DATA_KEY].listeners).toEqual({
+        3000: 2,
+        3001: 1,
+      });
+      // A copy: what the group changes later is not changed under a worker.
+      expect(spawned[2].options.workerData[WORKER_DATA_KEY].listeners).not.toBe(listeners);
+    });
+
+    it('reports every listener that becomes ready, and onReady still once', () => {
+      const seen: Array<[number, number]> = [];
+      const { primary, spawned, events } = primaryWith({
+        onListening: (port: number, threadId: number) => seen.push([port, threadId]),
+      });
+      primary.start();
+      spawned[0].ready(3000);
+      spawned[0].ready(3001);
+      spawned[1].ready(3000);
+      expect(events).toEqual(['ready']);
+      expect(seen).toEqual([
+        [3000, spawned[0].threadId],
+        [3001, spawned[0].threadId],
+        [3000, spawned[1].threadId],
+      ]);
+      expect(primary.listening(3001)).toBe(true);
+      expect(primary.listening(3002)).toBe(false);
+    });
+
+    it('grow() adds worker slots and never shrinks', () => {
+      const { primary, spawned } = primaryWith();
+      primary.start();
+      primary.grow(4);
+      expect(primary.size).toBe(4);
+      expect(spawned.map(w => w.options.workerData[WORKER_DATA_KEY].index)).toEqual([0, 1, 2, 3]);
+      expect(spawned[3].options.workerData[WORKER_DATA_KEY].workers).toBe(4);
+      primary.grow(2);
+      expect(primary.size).toBe(4);
+      expect(spawned).toHaveLength(4);
+    });
+
+    it('closePort() asks the workers that serve the port and resolves when each has closed it', async () => {
+      const { primary, spawned } = primaryWith();
+      primary.start();
+      spawned[0].ready(3000);
+      spawned[0].ready(3001);
+      spawned[1].ready(3001);
+
+      let done = false;
+      const closing = primary.closePort(3000).then(() => (done = true));
+      expect(fromPrimary(spawned[0])).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'close', port: 3000 },
+      ]);
+      // The second worker never served the port: it is not asked.
+      expect(fromPrimary(spawned[1])).toEqual([]);
+
+      spawned[0].send({ type: 'closed', port: 3001 });
+      await Promise.resolve();
+      expect(done).toBe(false);
+      spawned[0].send({ type: 'closed', port: 3000 });
+      await closing;
+      expect(primary.listening(3000)).toBe(false);
+      expect(primary.listening(3001)).toBe(true);
+      // Closing one listener is not the worker finishing.
+      expect([...primary.workers.values()].every(r => !r.closed)).toBe(true);
+    });
+
+    it('closePort() counts a worker that exits as closed, and gives up at the deadline', async () => {
+      const { primary, spawned, clock } = primaryWith();
+      primary.start();
+      spawned[0].ready(3000);
+      spawned[1].ready(3000);
+
+      const first = primary.closePort(3000);
+      spawned[0].send({ type: 'closed', port: 3000 });
+      spawned[1].emit('exit', 1);
+      await first;
+
+      clock.advance(200);
+      spawned[2].ready(3000);
+      let done = false;
+      const second = primary.closePort(3000, 500).then(() => (done = true));
+      await Promise.resolve();
+      expect(done).toBe(false);
+      clock.advance(500);
+      await second;
+      expect(done).toBe(true);
+    });
+
+    it('closePort() resolves at once when no worker serves the port', async () => {
+      const { primary } = primaryWith();
+      primary.start();
+      await primary.closePort(3000);
+    });
+
+    it('a worker that reports a closed port ready is told to close it', () => {
+      const listeners: Record<number, number> = { 3000: 2, 3001: 1 };
+      const { primary, spawned } = primaryWith({ listeners: () => listeners });
+      primary.start();
+      // Beyond the app's count.
+      spawned[1].ready(3001);
+      expect(fromPrimary(spawned[1])).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'close', port: 3001 },
+      ]);
+      // Closed while the worker was starting.
+      listeners[3000] = 0;
+      spawned[0].ready(3000);
+      expect(fromPrimary(spawned[0])).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'close', port: 3000 },
+      ]);
+      spawned[0].ready(3001);
+      expect(fromPrimary(spawned[0])).toHaveLength(1);
+    });
+
+    it('openPort() asks the first `count` workers that do not serve the port', () => {
+      const { primary, spawned } = primaryWith({ workerCount: 3 });
+      primary.start();
+      spawned[0].ready(3000);
+      spawned[0].ready(3001);
+      spawned[1].ready(3000);
+      spawned[2].ready(3000);
+      primary.openPort(3001, 2);
+      expect(fromPrimary(spawned[0])).toEqual([]);
+      expect(fromPrimary(spawned[1])).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'open', port: 3001 },
+      ]);
+      expect(fromPrimary(spawned[2])).toEqual([]);
+    });
+
+    it("one app's bind failure in a worker that serves another is reported with its port and the worker is kept", () => {
+      const fatals: any[] = [];
+      const { primary, spawned, clock } = primaryWith({
+        onFatal: (err: any, kind: string) => fatals.push([kind, err.code, err.port]),
+      });
+      primary.start();
+      spawned[0].ready(3000);
+      spawned[0].send({ type: 'fatal', code: 'EADDRINUSE', message: 'in use', port: 3001 });
+      expect(fatals).toEqual([['bind', 'EADDRINUSE', 3001]]);
+
+      // The listener that is serving has no failed start to report.
+      spawned[0].send({ type: 'fatal', code: 'EADDRINUSE', message: 'in use', port: 3000 });
+      expect(fatals).toHaveLength(1);
+
+      // The worker goes on being supervised: it is restarted when it dies.
+      spawned[0].emit('exit', 1);
+      clock.advance(200);
+      expect(spawned).toHaveLength(3);
+    });
+  });
+
+  describe('ClusterWorkerHub (the worker side)', () => {
+    function hubWith(info: any = { index: 0, workers: 2 }) {
+      const posted: any[] = [];
+      let deliver: (m: unknown) => void = () => {};
+      let listens = 0;
+      let released = 0;
+      const link: WorkerLink = {
+        id: 7,
+        post: m => void posted.push(m),
+        listen: fn => {
+          listens++;
+          deliver = fn;
+        },
+        release: () => void released++,
+      };
+      const hub = new ClusterWorkerHub(info, link, logger);
+      const say = (body: any) => deliver({ channel: CLUSTER_CHANNEL, ...body });
+      const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+      const app = (port: number) => {
+        const calls: string[] = [];
+        const a = new ClusterWorkerApp(hub, port, logger);
+        a.active = true;
+        a.onClose(async final => {
+          calls.push(final ? 'close-final' : 'close');
+          await Promise.resolve();
+        });
+        a.onReopen(() => {
+          calls.push('reopen');
+          a.active = true;
+        });
+        return { a, calls };
+      };
+      const raw = (message: unknown) => deliver(message);
+      return { hub, posted, say, raw, flush, app, stats: () => ({ listens, released }) };
+    }
+
+    it('every worker serves an app the primary listed for it, and only the first n one configured for n', () => {
+      const one = hubWith({ index: 1, workers: 4, listeners: { 3000: 4, 3001: 1 } }).hub;
+      expect(one.shouldListen(3000, 4)).toBe(true);
+      expect(one.shouldListen(3001, 1)).toBe(false);
+      // The primary's count outranks the app's own.
+      expect(one.shouldListen(3001, 8)).toBe(false);
+      // Not listed (the app joined after this worker started): its own count.
+      expect(one.shouldListen(3002, 2)).toBe(true);
+      expect(one.shouldListen(3002, 1)).toBe(false);
+      // One clustered app, the set its size: every worker.
+      expect(
+        hubWith({ index: 3, workers: 4, listeners: { 3000: 4 } }).hub.shouldListen(3000, 4)
+      ).toBe(true);
+    });
+
+    it('answers a ping once for every app, with their requests in flight added up', async () => {
+      const { say, posted, app, flush, stats } = hubWith();
+      app(3000).a.inflightProvider(() => 2);
+      app(3001).a.inflightProvider(() => 3);
+      expect(stats().listens).toBe(1);
+      say({ type: 'ping' });
+      await flush();
+      expect(posted).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'pong', threadId: 7, inflight: 5 },
+      ]);
+    });
+
+    it("ignores messages that are not the cluster's", async () => {
+      const { raw, posted, app, flush } = hubWith();
+      const one = app(3000);
+      raw({ type: 'shutdown' });
+      raw({ type: 'close', port: 3000 });
+      raw(null);
+      raw('shutdown');
+      await flush();
+      expect(one.calls).toEqual([]);
+      expect(posted).toEqual([]);
+    });
+
+    it("'shutdown' closes every app for good, then reports and lets go of the channel once", async () => {
+      const { say, posted, app, flush, stats } = hubWith();
+      const one = app(3000);
+      const two = app(3001);
+      say({ type: 'shutdown' });
+      say({ type: 'shutdown' });
+      await flush();
+      expect(one.calls).toEqual(['close-final']);
+      expect(two.calls).toEqual(['close-final']);
+      expect(posted).toEqual([{ channel: CLUSTER_CHANNEL, type: 'closed', threadId: 7 }]);
+      expect(stats().released).toBe(1);
+    });
+
+    it("'close' closes one app and the worker serves on; 'open' has it listen again", async () => {
+      const { hub, say, posted, app, flush, stats } = hubWith();
+      const one = app(3000);
+      const two = app(3001);
+      say({ type: 'close', port: 3000 });
+      await flush();
+      expect(one.calls).toEqual(['close']);
+      expect(two.calls).toEqual([]);
+      expect(one.a.active).toBe(false);
+      expect(posted).toEqual([
+        { channel: CLUSTER_CHANNEL, type: 'closed', threadId: 7, port: 3000 },
+      ]);
+      expect(stats().released).toBe(0);
+      // An app that asks now is told the primary's last word.
+      expect(hub.shouldListen(3000, 2)).toBe(false);
+
+      say({ type: 'open', port: 3000 });
+      await flush();
+      expect(one.calls).toEqual(['close', 'reopen']);
+      expect(hub.shouldListen(3000, 2)).toBe(true);
+      // Already listening: nothing more to do.
+      say({ type: 'open', port: 3000 });
+      await flush();
+      expect(one.calls).toEqual(['close', 'reopen']);
+    });
+
+    it("'open' for an app that has not reached listen() yet is remembered", async () => {
+      const { hub, say, app, flush } = hubWith({ index: 1, workers: 2, listeners: { 3001: 0 } });
+      app(3000);
+      expect(hub.shouldListen(3001, 2)).toBe(false);
+      say({ type: 'open', port: 3001 });
+      await flush();
+      expect(hub.shouldListen(3001, 2)).toBe(true);
+    });
+
+    it("a 'shutdown' that arrives while one app is closing waits for it and closes the rest", async () => {
+      const { say, posted, app, flush } = hubWith();
+      const one = app(3000);
+      const two = app(3001);
+      say({ type: 'close', port: 3000 });
+      say({ type: 'shutdown' });
+      await flush();
+      expect(one.calls).toEqual(['close']);
+      expect(two.calls).toEqual(['close-final']);
+      expect(posted.map(m => [m.type, m.port])).toEqual([
+        ['closed', 3000],
+        ['closed', undefined],
+      ]);
+    });
+
+    it('an app that failed to start reports it with its port; the worker is done only when no app is left serving', () => {
+      const { posted, app, stats } = hubWith();
+      const one = app(3000);
+      const two = app(3001);
+      two.a.fatal('EADDRINUSE', 'could not bind port 3001');
+      two.a.close();
+      expect(posted).toEqual([
+        {
+          channel: CLUSTER_CHANNEL,
+          type: 'fatal',
+          threadId: 7,
+          code: 'EADDRINUSE',
+          message: 'could not bind port 3001',
+          port: 3001,
+        },
+      ]);
+      expect(stats().released).toBe(0);
+
+      one.a.fatal('EACCES', 'no');
+      one.a.close();
+      expect(posted[posted.length - 1]).toEqual({
+        channel: CLUSTER_CHANNEL,
+        type: 'closed',
+        threadId: 7,
+      });
+      expect(stats().released).toBe(1);
+    });
+  });
+
+  describe('processWorkerInfo', () => {
+    it('reads what the primary put in the environment of a worker process', () => {
+      expect(processWorkerInfo('{"index":2,"workers":4,"listeners":{"3000":4}}')).toEqual({
+        index: 2,
+        workers: 4,
+        listeners: { 3000: 4 },
+      });
+    });
+    it('is null without the mark, or with one that is not ours', () => {
+      expect(processWorkerInfo(undefined)).toBeNull();
+      expect(processWorkerInfo('')).toBeNull();
+      expect(processWorkerInfo('not json')).toBeNull();
+      expect(processWorkerInfo('{"workers":4}')).toBeNull();
     });
   });
 

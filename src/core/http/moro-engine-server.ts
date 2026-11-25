@@ -1835,6 +1835,62 @@ export class EngineResponse extends LazyEventEmitter {
  * Bridges @morojs/engine with Moro's HTTP abstractions. Duck-typed to the
  * surface framework.ts/moro.ts use on every HTTP server.
  */
+// What start-up leaves behind. An isolate that has just loaded the framework
+// and the application holds about as much free heap as live heap (24 MB of
+// heap for 14 MB of it live, measured on a clustered worker), and V8 gives
+// none of it back while the server is quiet: every worker keeps it for good.
+// So once per isolate, a moment after its first server is listening, the
+// engine is asked for one memory-reducing collection (engine.trimMemory(),
+// @morojs/engine 1.2.3). The heap grows again as load needs it.
+//
+// Only a small heap is trimmed: the collection is synchronous and its cost
+// grows with what is live, so an application that loads hundreds of
+// megabytes at start-up would pay a long pause for a saving that is small
+// beside its heap (the framework and a forty-route application: 9 to 17 ms).
+// It runs a quarter of a second after the first listen(): after the
+// start-up that is still running when listen() returns, before a client
+// that waited for the port has had time to send much.
+// MORO_STARTUP_TRIM=0 turns it off.
+const STARTUP_TRIM_DELAY_MS = 250;
+const STARTUP_TRIM_MAX_HEAP = 64 * 1024 * 1024;
+let startupTrimScheduled = false;
+
+/** @internal Injection points for the unit test. */
+export interface StartupTrimDeps {
+  setTimer?: (fn: () => void, ms: number) => { unref?: () => void } | unknown;
+  heapTotal?: () => number;
+  env?: Record<string, string | undefined>;
+}
+
+/**
+ * Schedule this isolate's one start-up trim. Returns true when it was
+ * scheduled by this call.
+ * @internal
+ */
+export function scheduleStartupTrim(
+  engine: { trimMemory?: () => void },
+  deps: StartupTrimDeps = {}
+): boolean {
+  if (startupTrimScheduled || typeof engine.trimMemory !== 'function') return false;
+  startupTrimScheduled = true;
+  if ((deps.env ?? process.env).MORO_STARTUP_TRIM === '0') return false;
+  const heapTotal = deps.heapTotal ?? (() => process.memoryUsage().heapTotal);
+  const timer = (deps.setTimer ?? setTimeout)(() => {
+    try {
+      if (heapTotal() <= STARTUP_TRIM_MAX_HEAP) engine.trimMemory?.();
+    } catch {
+      // Housekeeping: never an error the application sees
+    }
+  }, STARTUP_TRIM_DELAY_MS);
+  (timer as { unref?: () => void } | null)?.unref?.();
+  return true;
+}
+
+/** @internal */
+export function resetStartupTrimForTesting(): void {
+  startupTrimScheduled = false;
+}
+
 export class MoroEngineServer {
   /** @internal read by EngineRequest/EngineResponse for lazy fetchers */
   _engine: any;
@@ -3606,6 +3662,7 @@ export class MoroEngineServer {
       this.port = typeof actualPort === 'number' ? actualPort : port;
       this.host = boundHost;
       this.isListening = true;
+      scheduleStartupTrim(this._engine);
       this.logger.info(`Moro engine HTTP server listening on ${boundHost}:${this.port}`, 'Listen');
       if (cb) cb();
     } catch (error) {

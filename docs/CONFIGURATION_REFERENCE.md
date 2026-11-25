@@ -1366,6 +1366,7 @@ Off by default. With `enabled: true`, every module route handler and every modul
 - A worker that dies is started again after 200 ms; the delay doubles with each further restart of that worker up to 5 seconds and returns to 200 ms once a worker has stayed up for a minute. A worker that exits with code 0 is not restarted.
 - On SIGINT/SIGTERM every worker runs its own `app.close()` (requests in flight get 2 seconds) and the primary waits up to 3 seconds for the workers before it ends them.
 - `app.listen(0)` is refused: every worker would be given a different port.
+- Several clustered apps in one process share one set of workers. Each app is served by the number of workers it asks for, and the set is as large as the largest count: with `workers: 2` on one app and `workers: 8` on another, the process runs eight workers and the first app listens in two of them. See [Several apps in one process](./API.md#several-apps-in-one-process).
 
 The measurements behind these are in the [Performance Guide](./PERFORMANCE.md#what-clustering-shares-and-what-it-does-not).
 

@@ -32,17 +32,15 @@ import { requireBuiltin } from './core/utilities/builtin.js';
 const nodeCluster = () => requireBuiltin<(typeof import('cluster'))['default']>('cluster');
 const wt = () => requireBuiltin<typeof import('worker_threads')>('worker_threads');
 import {
-  ThreadClusterPrimary,
-  ThreadClusterWorker,
+  ClusterWorkerApp,
+  clusterWorkerHub,
   computeWorkerCount,
-  isUserTunedYoungGen,
-  nextRestartDelay,
   resolveClusterTransport,
   threadWorkerInfo,
-  YOUNG_GEN_MB_FOR_SEMI_SPACE_4,
-  type RestartState,
+  type ClusterWorkerHub,
   type ThreadWorkerInfo,
 } from './core/cluster/thread-cluster.js';
+import { joinCluster, leaveCluster, type ClusterMember } from './core/cluster/cluster-group.js';
 import { buildModuleBasePath } from './core/utilities/module-path.js';
 import { logErrorLines } from './core/utilities/log-error-lines.js';
 import {
@@ -2839,55 +2837,23 @@ export class Moro extends EventEmitter {
    * - Node.js Cluster Documentation: https://nodejs.org/api/cluster.html
    * - BetterStack Node.js Clustering: https://betterstack.com/community/guides/scaling-nodejs/node-clustering/
    */
-  private clusterWorkers = new Map<number, any>();
-
-  private threadCluster: ThreadClusterPrimary | undefined = undefined;
-
-  // Process transport: stops the worker processes within a deadline. Set by
-  // startProcessPrimary(), used (and cleared) by close().
-  private stopProcessWorkers: ((deadlineMs?: number) => Promise<void>) | undefined = undefined;
+  // This app's membership of the process's cluster (core/cluster/cluster-group.ts):
+  // set by listen() in the primary, cleared by close(). The workers are the
+  // process's, shared by every clustered app in it.
+  private clusterMember: ClusterMember | undefined = undefined;
 
   // listen() has started this instance as a cluster primary or a cluster
   // worker; cleared by close().
   private clusterStarted = false;
 
-  // The SIGINT/SIGTERM listeners of the cluster primary, kept so the thread
-  // transport's can be taken off again when it falls back to processes.
-  private clusterSignalHandlers: Array<[NodeJS.Signals, () => void]> = [];
+  // A worker process: the SIGINT/SIGTERM listeners of this instance are on.
+  private workerSignalsInstalled = false;
+
+  // The clustered apps of this worker process that a signal has yet to
+  // close: the process exits when the last of them has.
+  private static processWorkerApps = new Set<Moro>();
 
   private static clusteringModeWarned = false;
-
-  // Graceful shutdown of a cluster primary, the same for both transports:
-  // close() stops the workers (each drains its server through its own
-  // close()) and then the primary's own services; a second signal exits at
-  // once.
-  private installClusterSignalHandlers(): void {
-    this.removeClusterSignalHandlers();
-    let shuttingDown = false;
-    const gracefulShutdown = () => {
-      if (shuttingDown) {
-        process.exit(0);
-        return;
-      }
-      shuttingDown = true;
-      this.logger.info('Gracefully shutting down cluster...', 'Cluster');
-      Moro.holdEventLoopUntilExit();
-      this.close()
-        .then(() => process.exit(0))
-        .catch(() => process.exit(1));
-    };
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-      process.on(signal, gracefulShutdown);
-      this.clusterSignalHandlers.push([signal, gracefulShutdown]);
-    }
-  }
-
-  private removeClusterSignalHandlers(): void {
-    for (const [signal, handler] of this.clusterSignalHandlers) {
-      process.removeListener(signal, handler);
-    }
-    this.clusterSignalHandlers = [];
-  }
 
   // Entry point for performance.clustering: decides whether THIS instance is
   // a worker (thread or process) or the primary, and which transport the
@@ -2904,12 +2870,24 @@ export class Moro extends EventEmitter {
 
     const { count: workerCount, detail } = computeWorkerCount(this.config.performance?.clustering);
     const tinfo = threadWorkerInfo();
-    if (tinfo) {
-      this.startClusterWorker({ kind: 'thread', info: tinfo }, port, host);
-      return;
-    }
-    if (nodeCluster().isWorker) {
-      this.startClusterWorker({ kind: 'process' }, port, host);
+    if (tinfo || nodeCluster().isWorker) {
+      // A worker runs the whole entry script, so it has every app of the
+      // process; the worker with index n serves the apps that are configured
+      // for more than n workers (with one clustered app: every worker).
+      const hub = clusterWorkerHub(this.logger);
+      if (hub && !hub.shouldListen(port, workerCount)) {
+        const dormant = new ClusterWorkerApp(hub, port, this.logger);
+        dormant.onReopen(() => this.listen(port, host as string));
+        this.clusterStarted = false;
+        this.logger.debug(`Worker ${hub.id} does not serve port ${port}`, 'Worker');
+        return;
+      }
+      this.startClusterWorker(
+        tinfo ? { kind: 'thread', info: tinfo } : { kind: 'process' },
+        hub,
+        port,
+        host
+      );
       return;
     }
     this.logger.info(detail, 'Cluster');
@@ -2934,15 +2912,24 @@ export class Moro extends EventEmitter {
       enginePackage: engineKind.enginePackage,
       workerThreadsCapable: loadNativeEngine()?.capabilities?.workerThreads === true,
     });
-    if (transport.kind === 'threads') {
-      this.startThreadPrimary(transport.entry, workerCount, port, host, callback);
-      return;
-    }
-    this.logger.info(
-      `Clustering: ${workerCount} worker processes (node:cluster; ${transport.reason})`,
-      'Cluster'
-    );
-    this.startProcessPrimary(workerCount, port, host, callback);
+    // The workers are the process's: the first clustered app to listen
+    // starts them, and every other one joins them.
+    const member: ClusterMember = {
+      port,
+      workerCount,
+      transport,
+      engineLabel: `${engineKind.enginePackage}${engineKind.engineVersion ? ` v${engineKind.engineVersion}` : ''}`,
+      logger: this.logger,
+      callback,
+      startServices: () => this.startPrimaryServices(),
+      // Surfaced like the single-process path does (Node's server
+      // convention; rethrows without a listener).
+      bindFailed: error => void this.emit('error', error),
+      workerMessage: message => this.handleWorkerMessage(message),
+      close: () => this.close(),
+    };
+    this.clusterMember = member;
+    joinCluster(member);
   }
 
   // Services that must run exactly ONCE per cluster, in the primary: the job
@@ -2961,257 +2948,6 @@ export class Moro extends EventEmitter {
     }
   }
 
-  private startThreadPrimary(
-    entry: string,
-    workerCount: number,
-    port: number,
-    host: string | undefined,
-    callback?: () => void
-  ): void {
-    // The libuv threadpool is process-wide and sized once at first use;
-    // the process path set this per worker process. Only if the operator
-    // did not choose a size.
-    if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '64';
-    // Same young-generation bound the process path applies through execArgv
-    // (see YOUNG_GEN_MB_FOR_SEMI_SPACE_4), unless the operator tuned GC.
-    const resourceLimits = isUserTunedYoungGen()
-      ? undefined
-      : { maxYoungGenerationSizeMb: YOUNG_GEN_MB_FOR_SEMI_SPACE_4 };
-
-    const engineKind = this.engine;
-    this.logger.info(
-      `Clustering: ${workerCount} worker threads (worker_threads + SO_REUSEPORT, ` +
-        `${engineKind.enginePackage}${engineKind.engineVersion ? ` v${engineKind.engineVersion}` : ''})`,
-      'Cluster'
-    );
-
-    let fellBack = false;
-    const fallBackToProcesses = (why: string) => {
-      if (fellBack) return;
-      fellBack = true;
-      this.logger.warn(
-        `Worker threads unavailable (${why}); falling back to worker processes`,
-        'Cluster'
-      );
-      const primary = this.threadCluster;
-      this.threadCluster = undefined;
-      // The process transport installs its own. Left in place, this
-      // transport's listeners would answer the signal as well, find no
-      // thread to wait for and exit the primary under the worker processes.
-      this.removeClusterSignalHandlers();
-      void primary?.shutdown(1000).finally(() => {
-        this.startProcessPrimary(workerCount, port, host, callback);
-      });
-    };
-
-    const primary = new ThreadClusterPrimary({
-      entry,
-      argv: process.argv.slice(2),
-      workerCount,
-      logger: this.logger,
-      ...(resourceLimits ? { resourceLimits } : {}),
-      onReady: () => {
-        this.startPrimaryServices();
-        if (callback) callback();
-      },
-      onFatal: (error, kind) => {
-        if (kind === 'bind') {
-          // Processes would fail identically: surface it like the single-process
-          // path does (Node's server convention; rethrows without a listener).
-          this.emit('error', error);
-          return;
-        }
-        fallBackToProcesses(error.message);
-      },
-    });
-    this.threadCluster = primary;
-    try {
-      primary.start();
-    } catch (error) {
-      fallBackToProcesses(error instanceof Error ? error.message : String(error));
-      return;
-    }
-
-    // Graceful shutdown: drain every worker thread (each closes its server),
-    // then the primary's own services; a second signal exits at once.
-    this.installClusterSignalHandlers();
-  }
-
-  private startProcessPrimary(
-    workerCount: number,
-    port: number,
-    host: string | undefined,
-    callback?: () => void
-  ): void {
-    void port;
-    void host;
-    this.logger.info(`Starting ${workerCount} workers`, 'Cluster');
-
-    // Optimize cluster scheduling for high concurrency
-    // Round-robin is the default on all platforms except Windows (Node.js docs)
-    // Provides better load distribution than shared socket approach
-    nodeCluster().schedulingPolicy = nodeCluster().SCHED_RR;
-
-    // Workers inherit the primary's execArgv; additionally bound each
-    // worker's V8 young generation unless the user tuned it themselves.
-    // On big machines V8 sizes the nursery from total RAM and grows it
-    // under sustained load (~10-34 MB extra RSS per process, measured on a
-    // 64 GB box) - and in cluster mode that cost multiplies by the worker
-    // count. A/B-benched 2026-08-01: identical throughput at 4 MB semi-space
-    // in both the realistic profile (~92k vs ~90k req/s) and the pipelined
-    // x10 microbenchmark (~560k both ways), while sustained-load RSS drops
-    // ~30 MB per worker (115 -> 81 MB on the 25-route POST soak).
-    const userTunedGC = isUserTunedYoungGen();
-
-    // Set cluster settings for better performance
-    nodeCluster().setupMaster({
-      exec: process.argv[1] || process.execPath,
-      args: process.argv.slice(2),
-      silent: false,
-      ...(userTunedGC ? {} : { execArgv: [...process.execArgv, '--max-semi-space-size=4'] }),
-    });
-
-    // IPC Optimization: Reduce communication overhead between master and workers
-    // Research shows excessive IPC can create bottlenecks in clustered applications
-    // (Source: BetterStack - Node.js Clustering Guide)
-    process.env.NODE_CLUSTER_SCHED_POLICY = 'rr'; // Ensure round-robin
-    process.env.NODE_DISABLE_COLORS = '1'; // Reduce IPC message size by disabling color codes
-
-    // One slot per configured worker. A slot whose worker died is forked
-    // again after the delay the thread transport uses (nextRestartDelay), and
-    // never while the cluster is stopping.
-    const slots = new Map<number, { slot: number; startedAt: number }>();
-    const backoff = new Map<number, RestartState>();
-    const restartTimers = new Set<ReturnType<typeof setTimeout>>();
-    const onWorkerMessage = this.handleWorkerMessage.bind(this);
-    let nextSlot = workerCount;
-    let stopping = false;
-
-    const forkWorker = (slot: number, verb: 'started' | 'restarted') => {
-      const worker = nodeCluster().fork();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const pid = worker.process.pid!;
-      this.clusterWorkers.set(pid, worker);
-      slots.set(pid, { slot, startedAt: Date.now() });
-      this.logger.info(`Worker ${pid} ${verb}`, 'Cluster');
-
-      // Handle individual worker messages
-      worker.on('message', onWorkerMessage);
-    };
-
-    const scheduleRestart = (slot: number, aliveMs: number, why: string) => {
-      const state = backoff.get(slot) ?? { restarts: 0, lastStart: 0 };
-      const delay = nextRestartDelay(state, aliveMs, Date.now());
-      backoff.set(slot, state);
-      this.logger.warn(`${why}. Restarting in ${delay} ms...`, 'Cluster');
-      // Referenced on purpose: with every worker down, this timer is what
-      // keeps the primary alive until the next attempt.
-      const timer = setTimeout(() => {
-        restartTimers.delete(timer);
-        if (stopping) return;
-        try {
-          forkWorker(slot, 'restarted');
-        } catch (error) {
-          scheduleRestart(
-            slot,
-            0,
-            `Worker restart failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }, delay);
-      restartTimers.add(timer);
-    };
-
-    // Primary-only services start once the first worker is serving.
-    let servicesStarted = false;
-    const onListening = () => {
-      if (servicesStarted) return;
-      servicesStarted = true;
-      this.startPrimaryServices();
-    };
-
-    const onExit = (worker: any, code: number, signal: string) => {
-      const pid = worker.process.pid;
-      this.clusterWorkers.delete(pid);
-      const known = slots.get(pid);
-      slots.delete(pid);
-      if (stopping) return;
-
-      if (code !== 0 && !worker.exitedAfterDisconnect) {
-        scheduleRestart(
-          known ? known.slot : nextSlot++,
-          known ? Date.now() - known.startedAt : 0,
-          `Worker ${pid} died unexpectedly (${signal || code})`
-        );
-      }
-    };
-
-    // Stop every worker: SIGTERM (each stops accepting, drains its in-flight
-    // responses through its own close(), then exits), wait for the exits up
-    // to the deadline, SIGKILL whatever is left. The primary must outlive
-    // them: a node:cluster worker whose primary disappears exits at once,
-    // cutting the very responses it was draining.
-    this.stopProcessWorkers = (deadlineMs = 3000) => {
-      stopping = true;
-      for (const timer of restartTimers) clearTimeout(timer);
-      restartTimers.clear();
-      nodeCluster().removeListener('listening', onListening);
-
-      const workers = Array.from(this.clusterWorkers);
-      return new Promise<void>(resolve => {
-        const pending = new Set<number>(workers.map(([pid]) => pid));
-        let deadline: ReturnType<typeof setTimeout> | undefined = undefined;
-        let killGrace: ReturnType<typeof setTimeout> | undefined = undefined;
-        const finish = () => {
-          clearTimeout(deadline);
-          clearTimeout(killGrace);
-          nodeCluster().removeListener('exit', onExit);
-          // onExit is gone before it has seen the last of these exits
-          for (const [pid] of workers) {
-            this.clusterWorkers.delete(pid);
-            slots.delete(pid);
-          }
-          resolve();
-        };
-        if (pending.size === 0) {
-          finish();
-          return;
-        }
-        deadline = setTimeout(() => {
-          this.logger.warn(
-            `Shutdown deadline reached; terminating ${pending.size} worker process(es)`,
-            'Cluster'
-          );
-          for (const pid of pending) this.clusterWorkers.get(pid)?.kill('SIGKILL');
-          // SIGKILL cannot be refused; the exits follow at once. The short
-          // wait only keeps a lost 'exit' event from holding close() open.
-          killGrace = setTimeout(finish, 500);
-        }, deadlineMs);
-        for (const [pid, worker] of workers) {
-          worker.once('exit', () => {
-            pending.delete(pid);
-            if (pending.size === 0) finish();
-          });
-          worker.kill('SIGTERM');
-        }
-      });
-    };
-
-    // SIGINT/SIGTERM: close() - the workers above, then the job scheduler
-    // (which releases the leader lock), the onClose hooks and the rest - and
-    // only then exit.
-    this.installClusterSignalHandlers();
-
-    // Fork workers with basic tracking
-    for (let i = 0; i < workerCount; i++) forkWorker(i, 'started');
-
-    nodeCluster().on('listening', onListening);
-    nodeCluster().on('exit', onExit);
-
-    // Master process callback
-    if (callback) callback();
-  }
-
   // One worker, either a worker_threads thread or a node:cluster process:
   // boot the app exactly like the single-process path (auto-discovery,
   // file-based routes, WebSocket registrations, GraphQL) and listen with
@@ -3219,6 +2955,7 @@ export class Moro extends EventEmitter {
   // from the primary over parentPort and never calls process.exit().
   private startClusterWorker(
     mode: { kind: 'thread'; info: ThreadWorkerInfo } | { kind: 'process' },
+    hub: ClusterWorkerHub | null,
     port: number,
     host?: string
   ): void {
@@ -3255,17 +2992,26 @@ export class Moro extends EventEmitter {
       gcTimer.unref();
     }
 
-    let tcw: ThreadClusterWorker | null = null;
-    if (mode.kind === 'thread') {
-      tcw = new ThreadClusterWorker(this.logger);
+    // This app in this worker, as the primary reaches it (null in a worker
+    // process the application forked itself: that one is run by signals
+    // alone).
+    const link = hub ? new ClusterWorkerApp(hub, port, this.logger) : null;
+    if (link) {
+      link.active = true;
       // 'shutdown' from the primary: drain and close; the thread then exits
-      // on its own once the engine's handles are gone.
-      tcw.onShutdown(async () => {
-        this.eventBus.removeAllListeners();
-        this.removeAllListeners();
+      // on its own once the engine's handles are gone. When this app alone
+      // was closed in the primary, it is closed here and may listen again.
+      link.onClose(async final => {
+        if (final) {
+          this.eventBus.removeAllListeners();
+          this.removeAllListeners();
+        }
         await this.close();
       });
-    } else {
+      link.onReopen(() => this.listen(port, host as string));
+    }
+    if (mode.kind === 'process' && !this.workerSignalsInstalled) {
+      this.workerSignalsInstalled = true;
       // Graceful shutdown for worker: the same close() the single-process
       // and worker-thread paths run (onClose hooks, in-flight requests,
       // subsystems), then exit.
@@ -3287,9 +3033,15 @@ export class Moro extends EventEmitter {
         this.eventBus.removeAllListeners();
         this.removeAllListeners();
 
+        // The process is every clustered app's: it exits when the last of
+        // them has closed.
+        const closed = (code: number) => {
+          Moro.processWorkerApps.delete(this);
+          if (Moro.processWorkerApps.size === 0) process.exit(code);
+        };
         this.close().then(
-          () => process.exit(0),
-          () => process.exit(1)
+          () => closed(0),
+          () => closed(1)
         );
       };
 
@@ -3298,11 +3050,13 @@ export class Moro extends EventEmitter {
       process.on('SIGINT', workerShutdown);
     }
 
+    if (mode.kind === 'process') Moro.processWorkerApps.add(this);
+
     const fatal = (code: string, message: string) => {
       this.logger.error(`${label} ${message}`, 'Worker');
-      if (tcw) {
-        tcw.fatal(code, message);
-        void this.close().finally(() => tcw?.close());
+      if (mode.kind === 'thread' && link) {
+        link.fatal(code, message);
+        void this.close().finally(() => link.close());
       } else {
         process.exit(1);
       }
@@ -3344,7 +3098,7 @@ export class Moro extends EventEmitter {
       this.ensureGraphQLInitialized().catch(error => {
         logErrorLines(this.logger, 'Failed to initialize GraphQL', error, 'GraphQL');
       });
-      tcw?.ready(port);
+      link?.ready();
     };
 
     const startWorkerListening = () => {
@@ -3547,27 +3301,14 @@ export class Moro extends EventEmitter {
       }
     }
 
-    // Cluster worker threads first: each drains its server via its own
-    // close(); the primary's services below stop after the traffic did.
-    if (this.threadCluster) {
-      const primary = this.threadCluster;
-      this.threadCluster = undefined;
-      try {
-        await primary.shutdown();
-      } catch (err) {
-        this.logger.error(`Error shutting down cluster worker threads: ${String(err)}`);
-      }
-    }
-
-    // Cluster worker processes, the same way and within the same deadline.
-    if (this.stopProcessWorkers) {
-      const stopWorkers = this.stopProcessWorkers;
-      this.stopProcessWorkers = undefined;
-      try {
-        await stopWorkers();
-      } catch (err) {
-        this.logger.error(`Error shutting down cluster worker processes: ${String(err)}`);
-      }
+    // The cluster workers first: each drains its server via its own close();
+    // the primary's services below stop after the traffic did. With other
+    // clustered apps still open in this process, only this app's listeners
+    // close and the workers serve on.
+    if (this.clusterMember) {
+      const member = this.clusterMember;
+      this.clusterMember = undefined;
+      await leaveCluster(member);
     }
     this.clusterStarted = false;
 

@@ -15,6 +15,12 @@
 // process death. The trade-off (stated in the release notes): a NATIVE crash
 // in one thread takes the whole process down, where processes isolate.
 //
+// One set of workers per process: every clustered app of the process joins it
+// (core/cluster/cluster-group.ts), so a second app adds a listener to each
+// worker and not a second set of workers. A worker therefore hosts several
+// apps, and the protocol below names the listener (its port) where one app
+// alone is meant.
+//
 // This module is internal (not exported from src/index.ts). Everything here
 // is dependency-injectable so the sequencing (spawn, restart backoff, health
 // pings, bounded shutdown) is unit-tested with a fake Worker and fake timers.
@@ -43,15 +49,47 @@ export const YOUNG_GEN_MB_FOR_SEMI_SPACE_4 = 12;
 export interface ThreadWorkerInfo {
   index: number;
   workers: number;
+  /** Port -> how many workers serve it, for the apps the primary knew when
+   *  this worker was started. An app that is not listed decides from its own
+   *  configured count (see ClusterWorkerHub.shouldListen). */
+  listeners?: Record<number, number>;
 }
 
 /** Is this thread a Moro cluster worker (the thread analogue of cluster.isWorker)? */
 export function threadWorkerInfo(data: unknown = wt().workerData): ThreadWorkerInfo | null {
   if (wt().isMainThread) return null;
   const d = data as Record<string, any> | null | undefined;
-  const info = d && typeof d === 'object' ? d[WORKER_DATA_KEY] : undefined;
+  return threadWorkerInfoFrom(d && typeof d === 'object' ? d[WORKER_DATA_KEY] : undefined);
+}
+
+/**
+ * Environment variable that marks a worker PROCESS forked by Moro's cluster
+ * primary and carries what workerData carries for a thread, as JSON:
+ * `{ "index": 0, "workers": 4, "listeners": { "3000": 4 } }`. A cluster
+ * worker forked by anything else (the application's own node:cluster code)
+ * does not have it and is not spoken to over IPC.
+ */
+export const WORKER_ENV_KEY = 'MORO_CLUSTER_WORKER';
+
+/** The process analogue of threadWorkerInfo(). */
+export function processWorkerInfo(
+  raw: string | undefined = process.env[WORKER_ENV_KEY]
+): ThreadWorkerInfo | null {
+  if (!raw) return null;
+  try {
+    return threadWorkerInfoFrom(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function threadWorkerInfoFrom(info: any): ThreadWorkerInfo | null {
   if (!info || typeof info !== 'object' || typeof info.index !== 'number') return null;
-  return { index: info.index, workers: typeof info.workers === 'number' ? info.workers : 1 };
+  return {
+    index: info.index,
+    workers: typeof info.workers === 'number' ? info.workers : 1,
+    ...(info.listeners && typeof info.listeners === 'object' ? { listeners: info.listeners } : {}),
+  };
 }
 
 export interface ClusteringConfig {
@@ -271,17 +309,26 @@ interface ClusterMessage {
 export type WorkerToPrimary = ClusterMessage &
   (
     | { type: 'ready'; threadId: number; port: number }
-    | { type: 'closed'; threadId: number }
+    // With a port: that app's listener is closed in this worker and the
+    // worker goes on serving its other apps. Without: the worker is done.
+    | { type: 'closed'; threadId: number; port?: number }
     | { type: 'pong'; threadId: number; inflight: number }
-    | { type: 'fatal'; threadId: number; code: string; message: string }
+    | { type: 'fatal'; threadId: number; code: string; message: string; port?: number }
   );
 
-export type PrimaryToWorker = ClusterMessage & ({ type: 'shutdown' } | { type: 'ping' });
+export type PrimaryToWorker = ClusterMessage &
+  (
+    | { type: 'shutdown' }
+    | { type: 'ping' }
+    // One app of the process was closed (or is listening again) while the
+    // others keep the workers: close (open) that app's listener only.
+    | { type: 'close'; port: number }
+    | { type: 'open'; port: number }
+  );
 
 type WithoutChannel<T> = T extends unknown ? Omit<T, 'channel'> : never;
-type WorkerToPrimaryBody = WithoutChannel<WorkerToPrimary>;
 
-function isClusterMessage(m: unknown): boolean {
+export function isClusterMessage(m: unknown): boolean {
   return !!m && typeof m === 'object' && (m as { channel?: unknown }).channel === CLUSTER_CHANNEL;
 }
 
@@ -314,6 +361,8 @@ export interface WorkerRecord {
   /** The worker reported that its close() completed. */
   closed: boolean;
   port: number | null;
+  /** The listeners this worker has reported ready and not closed since. */
+  ports: Set<number>;
   restarts: number;
   missedPongs: number;
 }
@@ -328,6 +377,11 @@ export interface ThreadClusterPrimaryOptions {
   resourceLimits?: WorkerOptions['resourceLimits'];
   /** First 'ready' from any worker (fires once). */
   onReady: () => void;
+  /** Every 'ready': a worker is serving the app that listens on `port`. */
+  onListening?: (port: number, threadId: number) => void;
+  /** Port -> how many workers serve it, read at every spawn and handed to
+   *  the worker (a restarted worker sees what is current). */
+  listeners?: () => Record<number, number>;
   /** A worker failed before the cluster ever became ready ('boot': spawn or
    *  module error - the caller may fall back to processes; 'bind': the port
    *  cannot be bound - processes would fail identically, surface it). */
@@ -378,9 +432,14 @@ export class ThreadClusterPrimary {
   private shuttingDown = false;
   private healthTimer: any = null;
   private pendingTimers = new Set<any>();
+  private workerCount: number;
+  // closePort() calls in flight: told of every listener a worker closes
+  // (port) and of every worker that exits (null).
+  private portWaiters = new Set<(record: WorkerRecord, port: number | null) => void>();
 
   constructor(opts: ThreadClusterPrimaryOptions) {
     this.opts = opts;
+    this.workerCount = opts.workerCount;
     this.spawnFn = opts.spawn ?? defaultSpawn;
     this.now = opts.now ?? Date.now;
     this.setTimer =
@@ -406,10 +465,91 @@ export class ThreadClusterPrimary {
     return true;
   }
 
+  /** How many worker slots the set has. */
+  get size(): number {
+    return this.workerCount;
+  }
+
+  /** Is any worker serving the app that listens on `port`? */
+  listening(port: number): boolean {
+    for (const r of this.records.values()) if (r.ports.has(port)) return true;
+    return false;
+  }
+
+  /** Add worker slots up to `count` (an app that joined asks for more
+   *  workers than the set has). Never shrinks. */
+  grow(count: number): void {
+    if (this.shuttingDown) return;
+    while (this.workerCount < count) {
+      const index = this.workerCount++;
+      try {
+        this.spawnAt(index);
+      } catch (err) {
+        this.opts.logger.error(
+          `Worker thread start failed: ${err instanceof Error ? err.message : String(err)}`,
+          'Cluster'
+        );
+        this.scheduleRestart(index, -1, -1);
+      }
+    }
+  }
+
+  /**
+   * Close one app's listener in every worker that serves it and leave the
+   * workers running for the other apps. Resolves when each of those workers
+   * has reported it closed (or exited), or at the deadline.
+   */
+  closePort(port: number, deadlineMs = 3000): Promise<void> {
+    const targets = [...this.records.values()].filter(r => r.ports.has(port));
+    if (targets.length === 0 || this.shuttingDown) return Promise.resolve();
+    return new Promise<void>(resolve => {
+      const pending = new Set(targets);
+      let timer: any = null;
+      const finish = () => {
+        if (timer) this.clearTimer(timer);
+        this.portWaiters.delete(waiter);
+        resolve();
+      };
+      const waiter = (record: WorkerRecord, closedPort: number | null) => {
+        if (closedPort !== null && closedPort !== port) return;
+        pending.delete(record);
+        if (pending.size === 0) finish();
+      };
+      this.portWaiters.add(waiter);
+      timer = this.setTimer(() => {
+        this.opts.logger.warn(
+          `Port ${port} was still open in ${pending.size} worker thread(s) after ${deadlineMs} ms`,
+          'Cluster'
+        );
+        finish();
+      }, deadlineMs);
+      for (const r of targets) {
+        try {
+          r.worker.postMessage({ channel: CLUSTER_CHANNEL, type: 'close', port });
+        } catch {
+          waiter(r, port);
+        }
+      }
+    });
+  }
+
+  /** An app that was closed is listening again: open its listener in the
+   *  first `count` workers that do not serve it. */
+  openPort(port: number, count: number): void {
+    for (const r of this.records.values()) {
+      if (r.index >= count || r.ports.has(port)) continue;
+      try {
+        r.worker.postMessage({ channel: CLUSTER_CHANNEL, type: 'open', port });
+      } catch {
+        // exiting
+      }
+    }
+  }
+
   /** Spawn every worker. Throws synchronously if the FIRST spawn throws (the
    *  entry cannot be started as a thread at all). */
   start(): void {
-    for (let i = 0; i < this.opts.workerCount; i++) this.spawnAt(i);
+    for (let i = 0; i < this.workerCount; i++) this.spawnAt(i);
     this.healthTimer = this.setTimer(
       () => this.healthTick(),
       this.opts.healthIntervalMs ?? HEALTH_INTERVAL_MS
@@ -417,9 +557,16 @@ export class ThreadClusterPrimary {
   }
 
   private spawnAt(index: number): void {
+    const listeners = this.opts.listeners?.();
     const options: WorkerOptions = {
       argv: this.opts.argv,
-      workerData: { [WORKER_DATA_KEY]: { index, workers: this.opts.workerCount } },
+      workerData: {
+        [WORKER_DATA_KEY]: {
+          index,
+          workers: this.workerCount,
+          ...(listeners ? { listeners: { ...listeners } } : {}),
+        },
+      },
       // No execArgv (inherited: V8 flags passed explicitly are rejected by
       // Worker, inherited ones are tolerated) and no env (a copy of
       // process.env at spawn time - UV_THREADPOOL_SIZE was set before).
@@ -437,6 +584,7 @@ export class ThreadClusterPrimary {
       ready: false,
       closed: false,
       port: null,
+      ports: new Set<number>(),
       restarts: this.backoff.get(index)?.restarts ?? 0,
       missedPongs: 0,
     };
@@ -449,25 +597,46 @@ export class ThreadClusterPrimary {
       if (m.type === 'ready') {
         record.ready = true;
         record.port = m.port;
+        record.ports.add(m.port);
         this.opts.logger.info(`Worker thread ${threadId} ready on port ${m.port}`, 'Cluster');
+        // The app was closed while this worker was still starting (or the
+        // worker is beyond the app's count): it is told now.
+        const limit = this.opts.listeners?.()[m.port];
+        if (limit !== undefined && index >= limit) {
+          try {
+            worker.postMessage({ channel: CLUSTER_CHANNEL, type: 'close', port: m.port });
+          } catch {
+            // exiting
+          }
+        }
         if (!this.readyFired) {
           this.readyFired = true;
           this.opts.onReady();
         }
+        this.opts.onListening?.(m.port, threadId);
       } else if (m.type === 'pong') {
         record.missedPongs = 0;
       } else if (m.type === 'closed') {
+        if (typeof m.port === 'number') {
+          // One app's listener; the worker serves on.
+          record.ports.delete(m.port);
+          for (const waiter of [...this.portWaiters]) waiter(record, m.port);
+          return;
+        }
         // The worker's close() has completed; the thread exits by itself once
         // nothing in it holds the event loop.
         record.closed = true;
       } else if (m.type === 'fatal') {
-        // 'fatal' reports a failed start. A worker that is already serving
+        // 'fatal' reports a failed start. A listener that is already serving
         // has nothing of the kind to report.
-        if (record.ready) return;
-        bootFailed = true;
+        if (typeof m.port === 'number' ? record.ports.has(m.port) : record.ready) return;
+        // A worker that serves another app goes on serving it: this is the
+        // one app's failure, not the worker's.
+        if (!record.ready) bootFailed = true;
         const err = Object.assign(new Error(m.message), {
           code: m.code,
           threadId,
+          ...(typeof m.port === 'number' ? { port: m.port } : {}),
         });
         const isBind = m.code === 'EADDRINUSE' || m.code === 'EACCES';
         this.opts.logger.error(
@@ -486,6 +655,7 @@ export class ThreadClusterPrimary {
     });
     worker.on('exit', (code: number) => {
       this.records.delete(threadId);
+      for (const waiter of [...this.portWaiters]) waiter(record, null);
       if (this.shuttingDown) return;
       if (bootFailed) return; // onFatal already decided what happens
       if (code === 0 && record.ready) {
@@ -610,72 +780,238 @@ export class ThreadClusterPrimary {
   }
 }
 
-/** The worker-thread side: a thin wrapper over parentPort. */
-export class ThreadClusterWorker {
-  private readonly port = wt().parentPort;
-  private readonly tid = wt().threadId;
-  private inflight: () => number = () => 0;
-  private readonly logger: ClusterLogger;
-  private shutdownHandler: (() => Promise<void> | void) | null = null;
+// ---- the worker side ----------------------------------------------------------
 
-  constructor(logger: ClusterLogger) {
-    this.logger = logger;
-    this.port?.on('message', (m: PrimaryToWorker) => {
+/** The channel from a worker to its primary: parentPort for a thread, IPC
+ *  for a process. */
+export interface WorkerLink {
+  /** threadId or pid. */
+  id: number;
+  post(message: WorkerToPrimary): void;
+  listen(fn: (message: unknown) => void): void;
+  /** The worker is done: let go of the channel (a thread then exits once its
+   *  handles are closed; never process.exit() inside a thread). */
+  release(): void;
+}
+
+function threadLink(): WorkerLink {
+  const port = wt().parentPort;
+  return {
+    id: wt().threadId,
+    post: m => port?.postMessage(m),
+    listen: fn => void port?.on('message', fn),
+    release: () => port?.close(),
+  };
+}
+
+function processLink(): WorkerLink {
+  return {
+    id: process.pid,
+    post: m => void process.send?.(m),
+    listen: fn => void process.on('message', fn),
+    // A process is ended by its own signal handling, not by its channel.
+    release: () => {},
+  };
+}
+
+/**
+ * The worker side, one per worker thread or worker process: the clustered
+ * apps this worker hosts, by the port each listens on. It answers the
+ * primary for all of them: 'shutdown' closes every app and then lets go of
+ * the channel, 'close' and 'open' act on one app and leave the others
+ * serving, 'ping' is answered once.
+ */
+export class ClusterWorkerHub {
+  private readonly apps = new Map<number, ClusterWorkerApp>();
+  // What the primary has said about a port since this worker started, which
+  // outranks what the worker was started with: true = open, false = closed.
+  private readonly overrides = new Map<number, boolean>();
+  private attached = false;
+  private shuttingDown = false;
+  private released = false;
+
+  constructor(
+    readonly info: ThreadWorkerInfo,
+    private readonly link: WorkerLink,
+    private readonly logger: ClusterLogger
+  ) {}
+
+  get id(): number {
+    return this.link.id;
+  }
+
+  /**
+   * Does the app on `port`, configured for `ownCount` workers, listen in
+   * this worker? The primary's count for the port when it gave one (it is
+   * the count of the app that actually joined), the app's own otherwise;
+   * the worker with index n serves the apps that asked for more than n
+   * workers. In a process with one clustered app that is every worker.
+   */
+  shouldListen(port: number, ownCount: number): boolean {
+    const said = this.overrides.get(port);
+    if (said !== undefined) return said;
+    const limit = this.info.listeners?.[port];
+    return this.info.index < (typeof limit === 'number' ? limit : ownCount);
+  }
+
+  register(app: ClusterWorkerApp): void {
+    this.apps.set(app.port, app);
+    if (this.attached) return;
+    this.attached = true;
+    this.link.listen(message => {
       // Anything without the channel is addressed to application code.
-      if (!isClusterMessage(m)) return;
-      if (m.type === 'ping') {
-        this.post({ type: 'pong', threadId: this.tid, inflight: this.inflight() });
-      } else if (m.type === 'shutdown') {
-        void this.runShutdown();
-      }
+      if (!isClusterMessage(message)) return;
+      void this.handle(message as PrimaryToWorker);
     });
   }
 
-  private post(m: WorkerToPrimaryBody): void {
+  post(body: WithoutChannel<WorkerToPrimary>): void {
+    if (this.released) return;
     try {
-      this.port?.postMessage({ channel: CLUSTER_CHANNEL, ...m });
+      this.link.post({ channel: CLUSTER_CHANNEL, ...body } as WorkerToPrimary);
     } catch {
       // primary gone
     }
   }
 
-  private async runShutdown(): Promise<void> {
-    this.logger.info(`Worker thread ${this.tid} shutting down gracefully...`, 'Worker');
-    try {
-      await this.shutdownHandler?.();
-    } catch (err) {
-      this.logger.error(
-        `Worker thread ${this.tid} shutdown error: ${err instanceof Error ? err.message : String(err)}`,
-        'Worker'
-      );
+  private async handle(m: PrimaryToWorker): Promise<void> {
+    if (m.type === 'ping') {
+      let inflight = 0;
+      for (const app of this.apps.values()) inflight += app.inflight();
+      this.post({ type: 'pong', threadId: this.link.id, inflight });
+    } else if (m.type === 'shutdown') {
+      if (this.shuttingDown) return;
+      this.shuttingDown = true;
+      this.logger.info(`Worker ${this.link.id} shutting down gracefully...`, 'Worker');
+      await Promise.all([...this.apps.values()].map(app => app.runClose(true)));
+      this.release();
+    } else if (m.type === 'close') {
+      this.overrides.set(m.port, false);
+      await this.apps.get(m.port)?.runClose(false);
+      this.post({ type: 'closed', threadId: this.link.id, port: m.port });
+    } else if (m.type === 'open') {
+      this.overrides.set(m.port, true);
+      if (!this.shuttingDown) this.apps.get(m.port)?.reopen();
     }
-    this.close();
   }
 
-  onShutdown(fn: () => Promise<void> | void): void {
-    this.shutdownHandler = fn;
+  /** An app is finished here after a failed start: when it was the last one
+   *  serving, so is the worker. */
+  settle(): void {
+    for (const app of this.apps.values()) if (app.active) return;
+    this.release();
+  }
+
+  private release(): void {
+    if (this.released) return;
+    this.post({ type: 'closed', threadId: this.link.id });
+    this.released = true;
+    try {
+      this.link.release();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/** One clustered app in one worker: what the hub calls, and what the app
+ *  reports to the primary. */
+export class ClusterWorkerApp {
+  /** Listening, or starting to. */
+  active = false;
+  inflight: () => number = () => 0;
+  private closeHandler: ((final: boolean) => Promise<void> | void) | null = null;
+  private reopenHandler: (() => void) | null = null;
+  private closing: Promise<void> | null = null;
+
+  constructor(
+    private readonly hub: ClusterWorkerHub,
+    readonly port: number,
+    private readonly logger: ClusterLogger
+  ) {
+    hub.register(this);
+  }
+
+  /** Close the app in this worker. `final`: the worker is shutting down;
+   *  otherwise the app alone was closed and may be opened again. */
+  onClose(fn: (final: boolean) => Promise<void> | void): void {
+    this.closeHandler = fn;
+  }
+
+  /** The app is to listen again in this worker (after a close, or in a
+   *  worker that did not serve it until now). */
+  onReopen(fn: () => void): void {
+    this.reopenHandler = fn;
   }
 
   inflightProvider(fn: () => number): void {
     this.inflight = fn;
   }
 
-  ready(port: number): void {
-    this.post({ type: 'ready', threadId: this.tid, port });
+  ready(): void {
+    this.hub.post({ type: 'ready', threadId: this.hub.id, port: this.port });
   }
 
   fatal(code: string, message: string): void {
-    this.post({ type: 'fatal', threadId: this.tid, code, message });
+    this.hub.post({ type: 'fatal', threadId: this.hub.id, code, message, port: this.port });
   }
 
-  /** Signal completion and release the port so the thread can exit naturally
-   *  once its handles are closed (never process.exit() inside a thread). */
+  /** Finished here (after fatal()). */
   close(): void {
-    this.post({ type: 'closed', threadId: this.tid });
+    this.active = false;
+    this.hub.settle();
+  }
+
+  runClose(final: boolean): Promise<void> {
+    if (!this.active && this.closing === null) return Promise.resolve();
+    this.closing ??= (async () => {
+      try {
+        await this.closeHandler?.(final);
+      } catch (err) {
+        this.logger.error(
+          `Worker ${this.hub.id} shutdown error: ${err instanceof Error ? err.message : String(err)}`,
+          'Worker'
+        );
+      } finally {
+        this.active = false;
+        this.closing = null;
+      }
+    })();
+    return this.closing;
+  }
+
+  reopen(): void {
+    if (this.active || this.closing !== null) return;
     try {
-      this.port?.close();
-    } catch {
-      // already closed
+      this.reopenHandler?.();
+    } catch (err) {
+      this.logger.error(
+        `Worker ${this.hub.id} could not listen on port ${this.port} again: ${err instanceof Error ? err.message : String(err)}`,
+        'Worker'
+      );
     }
   }
+}
+
+let hub: ClusterWorkerHub | null | undefined = undefined;
+
+/**
+ * This worker's hub, or null when the thread or process is not a worker of
+ * Moro's cluster primary (the main thread of the primary, a worker thread
+ * the application started itself, a node:cluster worker forked by the
+ * application's own code).
+ */
+export function clusterWorkerHub(logger: ClusterLogger): ClusterWorkerHub | null {
+  if (hub !== undefined) return hub;
+  const tinfo = threadWorkerInfo();
+  if (tinfo) {
+    hub = new ClusterWorkerHub(tinfo, threadLink(), logger);
+    return hub;
+  }
+  const pinfo =
+    wt().isMainThread && typeof process.send === 'function' ? processWorkerInfo() : null;
+  // Read once: a process this worker starts itself must not inherit the mark.
+  if (wt().isMainThread) delete process.env[WORKER_ENV_KEY];
+  hub = pinfo ? new ClusterWorkerHub(pinfo, processLink(), logger) : null;
+  return hub;
 }

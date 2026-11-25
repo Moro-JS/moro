@@ -702,6 +702,21 @@ code in the primary stops the workers the same way, without exiting. A
 only when the workers are threads, because a worker thread receives no
 signals; with worker processes it runs in every worker too.
 
+**Several clustered apps share the workers.** A process that creates more
+than one clustered app (a public API and an admin app, a plain and a TLS
+listener, HTTP/1.1 and HTTP/2 ports) runs one set of workers for all of them:
+the first app to listen starts the workers and each later one adds its
+listener to them. A worker runs the entry script, so it holds every app of the
+process anyway; before 1.9.2 each app also started a set of its own, and the
+workers and their memory multiplied by the number of apps. Measured on Linux:
+two apps of two workers each load the entry in two worker threads where they
+loaded it in four (190 MB to 136 MB resident), and four listeners of twelve
+workers each idle at 416 MB in one process where four processes held 1.67 GB.
+Each app is served by the number of workers it asks for (the worker with
+index n serves the apps configured for more than n workers), the set is as
+large as the largest count, and `app.close()` on one app closes its port in
+every worker while the others keep serving. There is nothing to configure.
+
 **`memoryPerWorkerGB` is a divisor, not a limit.** It has one use:
 `workers: 'auto'` is `min(CPUs, floor(memory / memoryPerWorkerGB))`. No memory
 is reserved for a worker and none is capped.
@@ -734,6 +749,27 @@ cluster workers already run with the equivalent `resourceLimits`), and
 `performance.clustering` with worker threads shares one process among all
 workers (504 MB for 24 workers on the reference box, against 1,146 MB as
 processes).
+
+**Start-up memory is given back.** An isolate that has just loaded the
+framework and the application holds about as much free heap as live heap, and
+V8 returns none of it while the server is quiet, so every worker used to keep
+it for as long as it ran. On the native engine (`@morojs/engine` 1.2.3 or
+later), a quarter of a second after an isolate's first server is listening, Moro asks the
+engine for one memory-reducing collection of that isolate's heap. Measured on
+Linux with six clustered workers serving four listeners: 227 MB resident when
+idle before, 150 MB after, about 13 MB a worker (its heap went from 21.7 MB
+to 12.6 MB). Load takes some of it up again as the young
+generation grows: about 4 MB a worker while holding 100,000 connections at
+25,000 requests a second. The collection is synchronous (9 to 17 ms for the
+framework and a forty-route application) and runs once per isolate; only a heap of 64 MB or less is trimmed, since a larger one would
+pay a longer pause for a saving that is small beside it.
+`MORO_STARTUP_TRIM=0` turns it off.
+
+**A connection between requests costs its socket.** Since `@morojs/engine`
+1.2.3 a keep-alive connection that is waiting for its next request holds no
+parser and no request or response buffers: 480 bytes of engine memory where
+it held about 1.8 KB, 136 MB less for every 100,000 connections held.
+Nothing is configured for either.
 
 ### Vercel Edge Optimizations
 
