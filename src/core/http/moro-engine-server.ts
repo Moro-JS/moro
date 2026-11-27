@@ -29,6 +29,7 @@ import {
   parseMultipart as parseMultipartBuffer,
   type MultipartLimits,
 } from './utils/multipart-parser.js';
+import { DEFAULT_MAX_FORM_FIELDS, parseUrlEncodedBody } from './utils/body-parser.js';
 import { DEFAULT_IDLE_TIMEOUT_MS, type HttpRuntimeLimits } from './utils/size.js';
 import type { Http2ServerOptions } from './http2-server.js';
 import {
@@ -2077,6 +2078,8 @@ export class MoroEngineServer {
   private _ssl?: Record<string, any>;
   private _http2Settings?: Http2ServerOptions;
   private multipartLimits?: MultipartLimits;
+  // server.limits.form.maxFields: the fields one urlencoded body may have
+  private maxFormFields = DEFAULT_MAX_FORM_FIELDS;
   /** @internal read by EngineResponse for buffered-response compression */
   _compression: CompressionSettings = {
     enabled: false,
@@ -2159,6 +2162,9 @@ export class MoroEngineServer {
     if (options.ssl) this._ssl = options.ssl;
     if (options.http2Settings) this._http2Settings = options.http2Settings;
     if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
+    if (options.limits?.form?.maxFields !== undefined) {
+      this.maxFormFields = options.limits.form.maxFields;
+    }
 
     // The framework preloads the engine synchronously (loadNativeEngine) and
     // injects it; loading here directly covers standalone construction.
@@ -2580,6 +2586,14 @@ export class MoroEngineServer {
     // engine before 1.2.2 does not read it and takes such targets anyway.
     if (limits?.allowNonAsciiTarget !== undefined) {
       serveOptions.allowNonAsciiTarget = limits.allowNonAsciiTarget;
+    }
+    // server.limits.memoryBudget: the bytes the process may hold in buffers
+    // for its peers, across all connections. Handed over only when set, and
+    // only to an engine that keeps such a budget (capabilities.bufferBudget):
+    // a size in bytes, or Infinity for `false` (no budget). Left out, the
+    // engine sets its own, an eighth of the memory the process may use.
+    if (caps?.bufferBudget && limits?.memoryBudget !== undefined) {
+      serveOptions.memoryBudget = limits.memoryBudget === false ? Infinity : limits.memoryBudget;
     }
     // TLS: gated on the engine's own capability flag (caps.tls), not a version
     // number, so a mismatched engine build is never handed an ssl option it
@@ -3299,12 +3313,20 @@ export class MoroEngineServer {
     }
   }
 
-  // Error shaping shared by the async pipeline and the sync fast path: the
-  // app's error handler first, then the 413/400 client responses, error
-  // hooks, and 500. The handler goes first for client errors too, as it does
-  // on the Node server: a body that failed to parse is a 400 by default, but
-  // the app may know the request better (a route that only takes multipart
-  // answers a JSON body with 415 whatever the bytes were).
+  // Error shaping shared by the async pipeline and the sync fast path. A
+  // client error (400: a body that failed to parse; 413: a body over a size,
+  // multipart or form-field limit) goes to the app's error handler first and
+  // gets the fixed 400/413 answer when the handler leaves it unanswered; the
+  // error hooks do not run for it. Any other error runs the error hooks, then
+  // the handler, then 500. The handler sees a 400 first because the app may
+  // know the request better (a route that only takes multipart answers a
+  // JSON body with 415 whatever the bytes were).
+  //
+  // The Node and HTTP/2 servers differ for client errors: they run the error
+  // hooks for both, call the handler for a 400, and answer a 413 with the
+  // fixed body without calling it. Each side is what working apps' handlers
+  // see today, so neither is changed; docs/API.md ("Request bodies") states
+  // the difference.
   private async handleDispatchError(
     error: unknown,
     httpReq: EngineRequest,
@@ -3447,12 +3469,9 @@ export class MoroEngineServer {
               throw error;
             }
           } else if (isForm) {
-            const params = new URLSearchParams(text);
-            const body: Record<string, any> = {};
-            params.forEach((value, key) => {
-              body[key] = value;
-            });
-            httpReq.body = body;
+            // Over server.limits.form.maxFields this throws a 413, which
+            // handleRequest answers like the size limit above.
+            httpReq.body = parseUrlEncodedBody(text, this.maxFormFields);
           } else {
             httpReq.body = text;
           }
@@ -3501,12 +3520,7 @@ export class MoroEngineServer {
       if (isJsonMediaType(contentType)) {
         httpReq.body = JSON.parse(buffer.toString('utf-8'));
       } else if (isUrlEncodedMediaType(contentType)) {
-        const params = new URLSearchParams(buffer.toString('utf-8'));
-        const body: Record<string, any> = {};
-        params.forEach((value, key) => {
-          body[key] = value;
-        });
-        httpReq.body = body;
+        httpReq.body = parseUrlEncodedBody(buffer.toString('utf-8'), this.maxFormFields);
       } else if (isMultipart) {
         // Shared parser (same as the Node server) - stringifying
         // multipart would corrupt binary uploads and lose fields/files
@@ -3517,8 +3531,9 @@ export class MoroEngineServer {
         httpReq.body = bodyIsText(contentType) ? buffer.toString('utf-8') : buffer;
       }
     } catch (parseError) {
-      // A limit error (multipart maxParts/maxFiles/maxFileSize) carries its own
-      // 413 - preserve it rather than masking it as a generic 400 malformed.
+      // A limit error (multipart maxParts/maxFiles/maxFileSize, form
+      // maxFields) carries its own 413 - preserve it rather than masking it
+      // as a generic 400 malformed.
       if (parseError && typeof (parseError as any).statusCode === 'number') {
         throw parseError;
       }

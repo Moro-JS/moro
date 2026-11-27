@@ -385,6 +385,104 @@ describe.each(SIZE_TIER_BACKENDS)('Request body size tier on the %s backend', ba
   });
 });
 
+// The fields of an application/x-www-form-urlencoded body are capped by
+// server.limits.form.maxFields (1000 unless configured), as the parts of a
+// multipart one are by multipart.maxParts: a body with more is answered 413
+// and its handler never runs - on every backend.
+describe.each(SIZE_TIER_BACKENDS)('Urlencoded field cap on the %s backend', backend => {
+  let app: any;
+  let handlerRan = 0;
+
+  afterEach(async () => {
+    if (app) await closeApp(app);
+    app = undefined;
+    resetConfig();
+  });
+
+  const boot = async (limits?: Record<string, unknown>): Promise<number> => {
+    resetConfig();
+    UnifiedRouter.reset();
+    app = await createApp({
+      logger: { level: 'fatal' },
+      autoDiscover: false,
+      routing: false,
+      server: { engine: backend, ...(limits ? { limits } : {}) },
+    });
+    handlerRan = 0;
+    app.post('/form', (req: any) => {
+      handlerRan++;
+      return { fields: Object.keys(req.body).length, last: req.body.k0 };
+    });
+    const port = testPort();
+    await new Promise<void>(resolve => app.listen(port, '127.0.0.1', () => resolve()));
+    return port;
+  };
+  const fields = (count: number, value = '1') =>
+    Array.from({ length: count }, (_, i) => `k${i}=${value}`).join('&');
+  const post = (port: number, body: string, type = 'application/x-www-form-urlencoded') =>
+    fetch(`http://127.0.0.1:${port}/form`, {
+      method: 'POST',
+      headers: { 'content-type': type },
+      body,
+    });
+
+  it('answers 200 at server.limits.form.maxFields and 413 one field over', async () => {
+    const port = await boot({ form: { maxFields: 5 } });
+
+    const at = await post(port, fields(5));
+    expect(at.status).toBe(200);
+    expect(await at.json()).toEqual({ fields: 5, last: '1' });
+
+    const over = await post(port, fields(6));
+    expect(over.status).toBe(413);
+    expect(await over.json()).toEqual({ success: false, error: 'Request entity too large' });
+    expect(handlerRan).toBe(1);
+
+    // Not ASCII, which the engine reads as bytes instead of text: the same cap
+    expect((await post(port, fields(5, 'é'))).status).toBe(200);
+    expect((await post(port, fields(6, 'é'))).status).toBe(413);
+
+    // A repeated name is a field each time it is sent, and its last value stays
+    const repeated = await post(port, 'k0=a&k0=b&k0=c&k0=d&k0=e');
+    expect(await repeated.json()).toEqual({ fields: 1, last: 'e' });
+    expect((await post(port, 'k0=a&k0=b&k0=c&k0=d&k0=e&k0=f')).status).toBe(413);
+  });
+
+  it('caps a form at 1000 fields when nothing is configured', async () => {
+    const port = await boot();
+
+    const at = await post(port, fields(1000));
+    expect(at.status).toBe(200);
+    expect(await at.json()).toEqual({ fields: 1000, last: '1' });
+
+    // The body the cap is for: 100,000 fields in under a megabyte
+    const flood = fields(100000);
+    expect(Buffer.byteLength(flood)).toBeLessThan(1024 * 1024);
+    for (const body of [fields(1001), flood]) {
+      const over = await post(port, body);
+      expect(over.status).toBe(413);
+    }
+    expect(handlerRan).toBe(1);
+
+    // The connection and the server are as they were
+    expect((await post(port, 'k0=still&b=here')).status).toBe(200);
+  });
+
+  it('leaves a body of another type alone, however many separators it holds', async () => {
+    const port = await boot({ form: { maxFields: 5 } });
+    app.post('/text', (req: any) => ({ length: String(req.body).length }));
+
+    const text = fields(2000);
+    const res = await fetch(`http://127.0.0.1:${port}/text`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: text,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ length: text.length });
+  });
+});
+
 // Global middleware and request hooks are in front of every route, whatever
 // its handler is: a function, a literal body, or param(). (The native engine
 // can answer the last two by itself, and does so only for an app that has

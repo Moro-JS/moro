@@ -73,11 +73,20 @@ export interface HttpRuntimeLimits {
   responseBackpressureLimit?: number;
   /** server.limits.allowNonAsciiTarget (engine allowNonAsciiTarget). */
   allowNonAsciiTarget?: boolean;
+  /**
+   * server.limits.memoryBudget in bytes, or false for no budget (engine
+   * memoryBudget). undefined = the engine's automatic budget.
+   */
+  memoryBudget?: number | false;
   multipart?: {
     maxParts?: number;
     maxPartHeaderBytes?: number;
     maxFiles?: number;
     maxFileSize?: number;
+  };
+  /** server.limits.form: the cap on the fields of one urlencoded body. */
+  form?: {
+    maxFields?: number;
   };
 }
 

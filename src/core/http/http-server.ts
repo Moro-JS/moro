@@ -7,8 +7,7 @@ import { createRequire } from 'module';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
 import { createFrameworkLogger } from '../logger/index.js';
-import type { MultipartLimits } from './utils/multipart-parser.js';
-import { parseBufferedBody, payloadTooLarge } from './utils/body-parser.js';
+import { parseBufferedBody, payloadTooLarge, type BodyParseLimits } from './utils/body-parser.js';
 import { negotiateEncoding, type Encoding } from './utils/compression.js';
 import { absoluteTargetOf, hostnameOf } from './utils/hostname.js';
 import {
@@ -1235,8 +1234,9 @@ export class MoroServerResponse extends http.ServerResponse {
 
 export class MoroHttpServer {
   private server: Server | HttpsServer;
-  /** Multipart limits threaded to parseMultipart at the call site. */
-  private multipartLimits?: MultipartLimits;
+  /** Multipart and form limits threaded to parseBufferedBody at the call
+   *  site; a limit that is absent is the parser's own default. */
+  private bodyLimits: BodyParseLimits = {};
   /** TCP backlog for listen(), when configured. */
   private listenBacklog?: number;
   private routes: RouteEntry[] = [];
@@ -1358,7 +1358,8 @@ export class MoroHttpServer {
     if (options?.maxUploadSize) {
       this.maxUploadSize = options.maxUploadSize;
     }
-    if (limits?.multipart) this.multipartLimits = limits.multipart;
+    if (limits?.multipart) this.bodyLimits.multipart = limits.multipart;
+    if (limits?.form) this.bodyLimits.form = limits.form;
 
     // Timeouts: the previous hardcodes (keepAlive 5000, headers 6000) become
     // the documented defaults; a configured value overrides them. Socket idle
@@ -2098,7 +2099,7 @@ export class MoroHttpServer {
           // JSON, urlencoded and multipart become objects, text a string, and
           // binary stays a Buffer. A body that cannot be parsed is thrown as
           // a client error (400), which the request-error path answers.
-          resolve(parseBufferedBody(body, contentType, this.multipartLimits, true));
+          resolve(parseBufferedBody(body, contentType, this.bodyLimits, true));
         } catch (error) {
           reject(error);
         }

@@ -123,6 +123,19 @@ export interface MultipartLimitsConfig {
   maxFileSize?: number | string;
 }
 
+export interface FormLimitsConfig {
+  /**
+   * How many fields one `application/x-www-form-urlencoded` body may have.
+   * Default 1000. A body with more is answered 413 before any of it is
+   * decoded: the body size limit alone lets a body of 100,000 one-byte
+   * fields through, and decoding it costs tens of milliseconds of CPU. The
+   * fields are counted by their `&` separators, so an empty one (`a=1&&b=2`,
+   * a trailing `&`) counts. Applied by the native engine, the Node.js server
+   * and the HTTP/2 server alike; multipart forms have `multipart.maxParts`.
+   */
+  maxFields?: number;
+}
+
 /** Fine-grained limits; every value is a documented default, not a hard cap. */
 export interface ServerLimitsConfig {
   /** Max request head (request line + headers) size. Node maxHeaderSize / engine maxHeadSize. */
@@ -130,6 +143,8 @@ export interface ServerLimitsConfig {
   /** Max header count. Node maxHeadersCount / engine maxHeaders. */
   maxHeaders?: number;
   multipart?: MultipartLimitsConfig;
+  /** `application/x-www-form-urlencoded` bodies: the cap on their fields. */
+  form?: FormLimitsConfig;
   /** Reassembled WebSocket message cap (engine wsMaxMessageSize). */
   wsMaxMessageSize?: number | string;
   /** WebSocket send backpressure cap (engine wsBackpressureLimit). 0 = unlimited. */
@@ -158,6 +173,31 @@ export interface ServerLimitsConfig {
    * or later); the Node server takes such bytes either way.
    */
   allowNonAsciiTarget?: boolean;
+  /**
+   * How many bytes the process may hold in buffers for its peers, across all
+   * connections together (engine memoryBudget): request bodies still
+   * arriving, WebSocket messages being reassembled, and response bytes
+   * clients have not read yet. A size string ('2gb') or a number of bytes;
+   * `false` for no budget. Unset or 0: the engine sets its own, an eighth of
+   * the memory the process may use (its cgroup limit where there is one).
+   *
+   * Every other limit bounds one connection, so many connections that each
+   * stay within theirs can still hold more memory than the machine has. Over
+   * the budget, the connection that needs more room is closed: an HTTP/1
+   * request still arriving is answered 503, a WebSocket message being
+   * reassembled closes its socket with code 1013, an HTTP/2 connection gets
+   * GOAWAY. A request of up to 16 KiB is never refused for the budget, so
+   * small requests and health checks are served while it is full.
+   *
+   * The budget is shared out among the threads that serve, and the engine
+   * never sets a thread's share below the largest single message it
+   * accepts (the larger of maxUploadSize and bodySizeLimit, or
+   * wsMaxMessageSize when that is larger still), so a budget smaller than
+   * that is raised to it. Native engine only, on a
+   * `@morojs/engine` that reports `capabilities.bufferBudget`; an older
+   * engine and the Node.js server keep no such budget and ignore this.
+   */
+  memoryBudget?: number | string | false;
 }
 
 export interface Http2SettingsConfig {

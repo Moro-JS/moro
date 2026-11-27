@@ -1908,6 +1908,8 @@ export class Moro extends EventEmitter {
     const writeHighWaterMark = size(limits.writeHighWaterMark);
     const maxPendingBytes = size(limits.maxPendingBytes);
     const responseBackpressureLimit = size(limits.responseBackpressureLimit);
+    // false (no budget) is carried as written; a size is resolved to bytes.
+    const memoryBudget = limits.memoryBudget === false ? false : size(limits.memoryBudget);
     return {
       maxBodySize: parseSizeToBytes(s.bodySizeLimit ?? '10mb'),
       maxUploadSize: parseSizeToBytes(s.maxUploadSize ?? '100mb'),
@@ -1929,12 +1931,16 @@ export class Moro extends EventEmitter {
       ...(limits.allowNonAsciiTarget !== undefined
         ? { allowNonAsciiTarget: limits.allowNonAsciiTarget }
         : {}),
+      ...(memoryBudget !== undefined ? { memoryBudget } : {}),
       multipart: {
         maxParts: multipart.maxParts,
         maxFiles: multipart.maxFiles,
         ...(maxPartHeaderBytes !== undefined ? { maxPartHeaderBytes } : {}),
         ...(maxFileSize !== undefined ? { maxFileSize } : {}),
       },
+      ...(limits.form?.maxFields !== undefined
+        ? { form: { maxFields: limits.form.maxFields } }
+        : {}),
     };
   }
 

@@ -757,6 +757,33 @@ describe('HTTP/2 server end to end', () => {
       expect(JSON.parse(within.text).body.fields).toEqual({ a: 'v', b: 'v' });
     });
 
+    it('answers 413 to a urlencoded body of more fields than server.limits.form.maxFields', async () => {
+      const fields = (count: number) =>
+        Array.from({ length: count }, (_, i) => `k${i}=1`).join('&');
+      const form = 'application/x-www-form-urlencoded';
+
+      const port = await bootWith(
+        echo,
+        {},
+        { engine: 'node', http2: true, limits: { form: { maxFields: 3 } } }
+      );
+      const over = await post(port, form, fields(4));
+      expect(over.status).toBe(413);
+      expect(JSON.parse(over.text)).toEqual({ success: false, error: 'Request entity too large' });
+
+      const at = await post(port, form, fields(3));
+      expect(at.status).toBe(200);
+      expect(JSON.parse(at.text)).toEqual({ body: { k0: '1', k1: '1', k2: '1' } });
+      await closeApp(app);
+
+      // Nothing configured: 1000 fields
+      const defaults = await bootWith(echo);
+      expect((await post(defaults, form, fields(1001))).status).toBe(413);
+      const full = await post(defaults, form, fields(1000));
+      expect(full.status).toBe(200);
+      expect(Object.keys(JSON.parse(full.text).body)).toHaveLength(1000);
+    });
+
     it('parses a urlencoded body whatever the case of the media type', async () => {
       const port = await bootWith(echo);
       const res = await post(port, 'Application/X-WWW-Form-Urlencoded', 'a=1&b=two');

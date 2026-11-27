@@ -4,7 +4,7 @@
 // native engine. Boundaries are tested at the CONFIGURED value (not just the
 // default), including a raised body limit that accepts a body the default
 // would reject. Node parity is checked where the limit applies to both.
-import { describe, it, expect, afterEach } from '@jest/globals';
+import { describe, it, expect, afterEach, jest } from '@jest/globals';
 import { createApp } from '../../src/index.js';
 import { resetConfig } from '../../src/core/config/index.js';
 import { closeApp, createTestPort } from '../setup.js';
@@ -24,6 +24,7 @@ const listen = (app: any, port: number) =>
 describeEngine('Native engine configurable limits (over the wire)', () => {
   let app: any;
   afterEach(async () => {
+    jest.restoreAllMocks();
     resetConfig();
     if (app) {
       await closeApp(app);
@@ -128,6 +129,44 @@ describeEngine('Native engine configurable limits (over the wire)', () => {
       expect(unlimited.closed).toBe(false);
     }
   );
+
+  // limits.memoryBudget is the engine's to enforce, and only an engine that
+  // advertises bufferBudget is handed it. What it is handed is read off
+  // serve(), with the capability set either way, so this holds on whichever
+  // engine is installed (one that does not know the option ignores it).
+  it('limits.memoryBudget is handed to an engine that keeps a buffer budget: bytes for a size, Infinity for false, nothing when not set', async () => {
+    const engine = loadNativeEngine()!;
+    const capabilities = engine.capabilities as any;
+    const advertised = capabilities.bufferBudget;
+    const serve = jest.spyOn(engine.module, 'serve');
+    const handedWith = async (limits: any) => {
+      if (app) {
+        await closeApp(app);
+        resetConfig();
+      }
+      app = await createApp({
+        logger: { level: 'fatal' },
+        server: { engine: 'moro', limits },
+      });
+      return serve.mock.calls[serve.mock.calls.length - 1]?.[1] as any;
+    };
+
+    try {
+      capabilities.bufferBudget = true;
+      expect((await handedWith({ memoryBudget: '2gb' })).memoryBudget).toBe(2 * 1024 * 1024 * 1024);
+      expect((await handedWith({ memoryBudget: 64 * 1024 * 1024 })).memoryBudget).toBe(
+        64 * 1024 * 1024
+      );
+      expect((await handedWith({ memoryBudget: false })).memoryBudget).toBe(Infinity);
+      expect('memoryBudget' in (await handedWith({}))).toBe(false);
+
+      capabilities.bufferBudget = false;
+      expect('memoryBudget' in (await handedWith({ memoryBudget: '2gb' }))).toBe(false);
+      expect('memoryBudget' in (await handedWith({ memoryBudget: false }))).toBe(false);
+    } finally {
+      capabilities.bufferBudget = advertised;
+    }
+  });
 
   it('multipart maxFiles is enforced (413 over the limit)', async () => {
     const port = testPort();

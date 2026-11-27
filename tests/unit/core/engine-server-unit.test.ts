@@ -1057,6 +1057,40 @@ describe('MoroEngineServer (fake engine)', () => {
       const old = serve({ limits: true }, { responseBackpressureLimit: 8 * 1024 * 1024 });
       expect('responseBackpressureLimit' in old.engine.serveOptions).toBe(false);
     });
+
+    it('hands over server.limits.memoryBudget when set and the engine keeps a buffer budget', () => {
+      const BUDGETS = { ...SPARES, bufferBudget: true };
+
+      // A size arrives in bytes and is handed over as it is
+      const set = serve(BUDGETS, { memoryBudget: 2 * 1024 * 1024 * 1024 });
+      expect(set.engine.serveOptions.memoryBudget).toBe(2 * 1024 * 1024 * 1024);
+
+      // false is "no budget", which the engine reads from Infinity
+      expect(serve(BUDGETS, { memoryBudget: false }).engine.serveOptions.memoryBudget).toBe(
+        Infinity
+      );
+
+      // Not configured: the key is left out, and the engine sets its own budget
+      expect('memoryBudget' in serve(BUDGETS).engine.serveOptions).toBe(false);
+
+      // An engine without the budget is not handed the option, whatever is set
+      for (const memoryBudget of [2 * 1024 * 1024 * 1024, false]) {
+        expect('memoryBudget' in serve(SPARES, { memoryBudget }).engine.serveOptions).toBe(false);
+        expect('memoryBudget' in serve({}, { memoryBudget }).engine.serveOptions).toBe(false);
+      }
+    });
+
+    it('is handed the budget again by listen() after close()', () => {
+      const { engine, server } = serve(
+        { ...SPARES, bufferBudget: true },
+        { memoryBudget: 64 * 1024 * 1024 }
+      );
+      server.listen(8095, () => {});
+      server.close(() => {});
+      server.listen(8096, () => {});
+      expect(engine.serveOptions.memoryBudget).toBe(64 * 1024 * 1024);
+      server.close(() => {});
+    });
   });
 
   describe('response headers the engine will not send', () => {

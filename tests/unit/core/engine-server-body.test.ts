@@ -250,6 +250,115 @@ describe('MoroEngineServer request bodies (fake engine)', () => {
     });
   });
 
+  // server.limits.form.maxFields. A form reaches the shared parser by three
+  // reads: as text from an engine with the typed reads, as bytes from the
+  // same engine when it is not ASCII, and as bytes from an engine without
+  // them. The cap holds on each.
+  describe('the cap on the fields of a urlencoded body', () => {
+    const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
+    const fields = (count: number, value = '1') =>
+      Array.from({ length: count }, (_, i) => `k${i}=${value}`).join('&');
+    const READS: Array<[string, any, (count: number) => string | Buffer, string[]]> = [
+      ['read as text', TYPED, count => fields(count), ['getBodyType', 'getBodyText']],
+      [
+        'not ASCII, read as bytes',
+        TYPED,
+        count => utf8(fields(count, 'é')),
+        ['getBodyType', 'getBodyText', 'getBody'],
+      ],
+      ['an engine without the typed reads', BASE_CAPS, count => fields(count), ['getBody']],
+    ];
+
+    for (const [name, caps, body, reads] of READS) {
+      it(`${name}: 200 at the cap, 413 one field over`, async () => {
+        const options = { limits: { form: { maxFields: 3 } } };
+
+        const at = await run(
+          createFakeEngine({ capabilities: caps }),
+          { headers: FORM, body: body(3) },
+          options
+        );
+        expect(at.calls).toEqual(reads);
+        expect(at.seen.called).toBe(true);
+        expect(Object.keys(at.seen.body)).toEqual(['k0', 'k1', 'k2']);
+        expect(at.ops[at.ops.length - 1].status).toBe(200);
+
+        const over = await run(
+          createFakeEngine({ capabilities: caps }),
+          { headers: FORM, body: body(4) },
+          options
+        );
+        expect(over.calls).toEqual(reads);
+        expect(over.seen.called).toBe(false);
+        const answer = over.ops[over.ops.length - 1];
+        expect(answer.status).toBe(413);
+        expect(answer.body).toBe('{"success":false,"error":"Request entity too large"}');
+      });
+
+      it(`${name}: 1000 fields when the server is given no limit`, async () => {
+        for (const options of [{}, { limits: {} }, { limits: { multipart: { maxParts: 5 } } }]) {
+          const at = await run(
+            createFakeEngine({ capabilities: caps }),
+            { headers: FORM, body: body(1000) },
+            options
+          );
+          expect(Object.keys(at.seen.body)).toHaveLength(1000);
+
+          const over = await run(
+            createFakeEngine({ capabilities: caps }),
+            { headers: FORM, body: body(1001) },
+            options
+          );
+          expect(over.seen.called).toBe(false);
+          expect(over.ops[over.ops.length - 1].status).toBe(413);
+        }
+      });
+    }
+
+    it('keeps the last value of a repeated key on every read', async () => {
+      for (const [, caps] of READS) {
+        const { seen } = await run(createFakeEngine({ capabilities: caps }), {
+          headers: FORM,
+          body: 'a=1&b=x&a=2',
+        });
+        expect(seen.body).toEqual({ a: '2', b: 'x' });
+      }
+    });
+
+    it('the app error handler is given the 413, with the limit in its message', async () => {
+      for (const [, caps, body] of READS) {
+        const engine = createFakeEngine({ capabilities: caps });
+        const server = createServer(engine, { limits: { form: { maxFields: 2 } } });
+        server.setRouterHandler(() => true);
+        server.setErrorHandler((err, _req, res) => {
+          res.status(err.statusCode).json({ message: err.message });
+        });
+        const reqId = engine.simulate({
+          method: 'POST',
+          path: '/b',
+          headers: FORM,
+          body: body(3),
+        });
+        await tick();
+        await tick();
+        const ops = engine.requests.get(reqId).ops;
+        const answer = ops[ops.length - 1];
+        expect(answer.status).toBe(413);
+        expect(String(answer.body)).toMatch(/2 fields \(server\.limits\.form\.maxFields\)/);
+      }
+    });
+
+    it('does not count the separators of a body that is not a form', async () => {
+      const { seen, ops } = await run(
+        createFakeEngine({ capabilities: TYPED }),
+        { headers: { 'content-type': 'text/plain' }, body: fields(5000) },
+        { limits: { form: { maxFields: 3 } } }
+      );
+      expect(seen.body).toBe(fields(5000));
+      expect(ops[ops.length - 1].status).toBe(200);
+    });
+  });
+
   describe('HTTP/2 through the engine', () => {
     const H2 = { ...TYPED, http2: true };
 

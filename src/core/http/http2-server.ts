@@ -31,12 +31,11 @@ import {
 } from '../../types/http.js';
 import { PathMatcher, literalPathPattern } from '../routing/path-matcher.js';
 import { ObjectPoolManager } from '../pooling/object-pool-manager.js';
-import type { MultipartLimits } from './utils/multipart-parser.js';
 import { DEFAULT_IDLE_TIMEOUT_MS, type HttpRuntimeLimits } from './utils/size.js';
 import { NODE_TLS_OPTION_KEYS } from './utils/ssl-config.js';
 import { clientAddress, type ProxyTrust } from './utils/trust-proxy.js';
 import { negotiateEncoding, type Encoding } from './utils/compression.js';
-import { parseBufferedBody, payloadTooLarge } from './utils/body-parser.js';
+import { parseBufferedBody, payloadTooLarge, type BodyParseLimits } from './utils/body-parser.js';
 import { dispatchMiddleware, WAIT_UNLESS_ANSWERED } from './utils/middleware-dispatch.js';
 import {
   clearCookieOptions,
@@ -587,7 +586,9 @@ export class MoroHttp2Server {
   private requestTrackingEnabled = true;
   /** @internal read by the request getters: server.trustProxy, compiled (undefined = not set) */
   proxyTrust: ProxyTrust | undefined = undefined;
-  private multipartLimits?: MultipartLimits;
+  /** Multipart and form limits threaded to parseBufferedBody at the call
+   *  site; a limit that is absent is the parser's own default. */
+  private bodyLimits: BodyParseLimits = {};
   private _limits?: HttpRuntimeLimits;
   private logger = createFrameworkLogger('Http2Server');
   private hookManager: any;
@@ -663,7 +664,8 @@ export class MoroHttp2Server {
     if (options.maxUploadSize) {
       this.maxUploadSize = options.maxUploadSize;
     }
-    if (options.limits?.multipart) this.multipartLimits = options.limits.multipart;
+    if (options.limits?.multipart) this.bodyLimits.multipart = options.limits.multipart;
+    if (options.limits?.form) this.bodyLimits.form = options.limits.form;
     if (options.limits) this._limits = options.limits;
 
     const serverOptions: any = {
@@ -1843,11 +1845,9 @@ export class MoroHttp2Server {
         try {
           // The Node server's parsing step, so the same bytes parse or fail
           // alike on both: an empty JSON body is null, a body that cannot be
-          // parsed is a client error (400), a multipart limit a 413. A body
-          // that is not JSON, a form or multipart is a string here.
-          resolve(
-            parseBufferedBody(Buffer.concat(chunks), contentType, this.multipartLimits, false)
-          );
+          // parsed is a client error (400), a multipart or form limit a 413.
+          // A body that is not JSON, a form or multipart is a string here.
+          resolve(parseBufferedBody(Buffer.concat(chunks), contentType, this.bodyLimits, false));
         } catch (error) {
           reject(error);
         }

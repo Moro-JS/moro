@@ -518,6 +518,58 @@ describe('Configuration System Validation', () => {
       }
     });
 
+    it('defaults server.limits.form.maxFields to 1000, takes a number of at least 1 and rejects anything else', () => {
+      expect(loadConfigWithOptions({}).server.limits?.form).toEqual({ maxFields: 1000 });
+      expect(DEFAULT_CONFIG.server.limits?.form?.maxFields).toBe(1000);
+
+      const set = loadConfigWithOptions({ server: { limits: { form: { maxFields: 50 } } } });
+      expect(set.server.limits?.form?.maxFields).toBe(50);
+      // ...and the limits beside it keep their defaults
+      expect(set.server.limits?.multipart?.maxParts).toBe(1000);
+
+      // Another limit set alone leaves the default in place
+      const other = loadConfigWithOptions({ server: { limits: { maxHeaders: 50 } } });
+      expect(other.server.limits?.form?.maxFields).toBe(1000);
+
+      for (const value of [0, -1, 'many']) {
+        expect(() =>
+          loadConfigWithOptions({ server: { limits: { form: { maxFields: value as any } } } })
+        ).toThrow(/server\.limits\.form\.maxFields/);
+      }
+      for (const value of [5000, 'many', null]) {
+        expect(() => loadConfigWithOptions({ server: { limits: { form: value as any } } })).toThrow(
+          /server\.limits\.form/
+        );
+      }
+    });
+
+    it('reads MORO_FORM_MAX_FIELDS, and options given in code override it', () => {
+      process.env.MORO_FORM_MAX_FIELDS = '250';
+      expect(loadConfig().server.limits?.form?.maxFields).toBe(250);
+      expect(
+        loadConfigWithOptions({ server: { limits: { form: { maxFields: 20 } } } }).server.limits
+          ?.form?.maxFields
+      ).toBe(20);
+
+      process.env.MORO_FORM_MAX_FIELDS = 'lots';
+      expect(() => loadConfig()).toThrow(/server\.limits\.form\.maxFields/);
+    });
+
+    it('keeps server.limits.memoryBudget as a size or false, unset by default, and rejects anything else', () => {
+      const budget = (value: any) =>
+        loadConfigWithOptions({ server: { limits: { memoryBudget: value } } }).server.limits
+          ?.memoryBudget;
+      expect(budget('2gb')).toBe('2gb');
+      expect(budget(512 * 1024 * 1024)).toBe(512 * 1024 * 1024);
+      // false is "no budget", and has to survive as written
+      expect(budget(false)).toBe(false);
+      expect('memoryBudget' in (loadConfigWithOptions({}).server.limits ?? {})).toBe(false);
+
+      for (const value of ['plenty', -1, true, null, {}]) {
+        expect(() => budget(value)).toThrow(/server\.limits\.memoryBudget/);
+      }
+    });
+
     it('rejects a non-boolean server.gracefulShutdown', () => {
       expect(() => loadConfigWithOptions({ server: { gracefulShutdown: 'never' as any } })).toThrow(
         /server\.gracefulShutdown/

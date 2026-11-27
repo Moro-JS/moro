@@ -257,6 +257,12 @@ function loadEnvironmentConfig(): DeepPartial<AppConfig> {
   setMultipartEnv('MORO_MULTIPART_MAX_PARTS', 'maxParts', true);
   setMultipartEnv('MORO_MULTIPART_MAX_FILES', 'maxFiles', true);
   setMultipartEnv('MORO_MULTIPART_MAX_FILE_SIZE', 'maxFileSize', false);
+  if (process.env.MORO_FORM_MAX_FIELDS) {
+    if (!config.server) config.server = {} as any;
+    if (!config.server!.limits) config.server!.limits = {} as any;
+    if (!config.server!.limits!.form) config.server!.limits!.form = {} as any;
+    config.server!.limits!.form!.maxFields = parseInt(process.env.MORO_FORM_MAX_FIELDS, 10);
+  }
 
   // SSL from env (file paths + passphrase; never fails boot — a partial set is
   // caught by the validator).

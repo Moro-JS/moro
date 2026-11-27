@@ -33,13 +33,19 @@ export const DEFAULT_CONFIG: AppConfig = {
       keepAlive: 5000,
       headers: 6000,
     },
-    // Fine-grained limits. Only multipart carries defaults here (matching the
-    // parser's previous hardcodes); header/ws/high-water limits are left unset
-    // so each runtime uses its own documented default unless overridden.
+    // Fine-grained limits. Only multipart and form carry defaults here
+    // (multipart matching the parser's previous hardcodes); header/ws/
+    // high-water limits and memoryBudget are left unset so each runtime uses
+    // its own documented default unless overridden.
     limits: {
       multipart: {
         maxParts: 1000,
         maxPartHeaderBytes: '16kb',
+      },
+      // The fields of one urlencoded body, as maxParts is the parts of a
+      // multipart one: a body with more is answered 413 before it is decoded.
+      form: {
+        maxFields: 1000,
       },
     },
     // engine: left unset so resolution can tell "user chose it" from "default".

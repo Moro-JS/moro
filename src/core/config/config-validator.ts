@@ -498,6 +498,23 @@ function validateServerLimits(config: any, path: string) {
       mp.maxFileSize = validateSize(m.maxFileSize, `${path}.multipart.maxFileSize`);
     result.multipart = mp;
   }
+  if (config.form !== undefined) {
+    const f = config.form;
+    if (typeof f !== 'object' || f === null) {
+      throw new ConfigValidationError(`${path}.form`, f, 'object', 'form must be an object');
+    }
+    const form: any = {};
+    if (f.maxFields !== undefined)
+      form.maxFields = validateNumber(f.maxFields, `${path}.form.maxFields`, { min: 1 });
+    result.form = form;
+  }
+  // A size, or false for "no budget"; unset leaves the budget to the engine.
+  if (config.memoryBudget !== undefined) {
+    result.memoryBudget =
+      config.memoryBudget === false
+        ? false
+        : validateSize(config.memoryBudget, `${path}.memoryBudget`);
+  }
   return result;
 }
 

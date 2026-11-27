@@ -373,8 +373,27 @@ uncaught exception or unhandled promise rejection.
 passed through to the engine: `maxHeaderSize`, `maxHeaders` (100),
 `wsMaxMessageSize` ('16mb'), `wsBackpressureLimit` ('1mb', 0=unlimited),
 `writeHighWaterMark` ('256kb'), `maxPendingBytes`,
-`responseBackpressureLimit` (not set), `allowNonAsciiTarget` (false), and
-`multipart: { maxParts (1000), maxPartHeaderBytes ('16kb'), maxFiles, maxFileSize }`.
+`responseBackpressureLimit` (not set), `memoryBudget` (not set),
+`allowNonAsciiTarget` (false),
+`multipart: { maxParts (1000), maxPartHeaderBytes ('16kb'), maxFiles, maxFileSize }`
+and `form: { maxFields (1000) }`.
+
+`form.maxFields` (native engine, Node.js and HTTP/2 servers;
+`MORO_FORM_MAX_FIELDS` in the environment) is how many fields one
+`application/x-www-form-urlencoded` body may have. A body with more is
+answered `413` before any of it is decoded, and its handler does not run; a
+multipart body with more parts than `multipart.maxParts` is answered `413`
+likewise. The serverless runtimes do not apply it. `bodySizeLimit` alone
+does not bound this: a body of 100,000 one-byte fields is under a megabyte,
+and decoding it takes tens of milliseconds of CPU for every request that
+sends one. The fields are counted by their `&` separators, so an empty one
+(`a=1&&b=2`, a trailing `&`) counts, and a name sent five times is five
+fields. Raise it for a form that really has more than a thousand fields.
+
+```javascript
+// A bulk-edit form that posts a few thousand fields
+export default { server: { limits: { form: { maxFields: 5000 } } } };
+```
 
 `allowNonAsciiTarget` (native engine, `@morojs/engine` 1.2.2 or later): a
 request whose path or query holds a byte of 0x80 or above, which is UTF-8
@@ -389,9 +408,11 @@ number of bytes) is how much response data one connection may have queued and
 not yet sent. A connection that goes over it is closed at once. It is not set
 by default, and `0` means the same: nothing bounds the queue then, and a
 client that requests large responses and does not read them holds them in the
-server's memory until the engine's other bound applies, which closes a
-connection whose queue has made no progress for 300 s. A response written in
-one piece (`res.json()`, `res.send()`, a returned value) is queued whole
+server's memory until the engine's other bounds apply: it closes a
+connection whose queue has made no progress for 300 s, and with
+`@morojs/engine` 1.2.4 or later the buffer budget (`memoryBudget`, below)
+closes one sooner when the memory set aside for buffers runs short. A
+response written in one piece (`res.json()`, `res.send()`, a returned value) is queued whole
 while the client reads it, so the limit has to be larger than the largest
 response the app writes that way: a smaller one cuts that response off for
 every client, not only for a slow one. A response sent with `res.sendFile()`,
@@ -401,6 +422,72 @@ what the client has not taken yet.
 ```javascript
 // No response of this app is larger than a few megabytes
 export default { server: { limits: { responseBackpressureLimit: '16mb' } } };
+```
+
+`memoryBudget` (native engine, `@morojs/engine` 1.2.4 or later; a size such
+as `'2gb'`, a number of bytes, or `false`) is how many bytes the process may
+hold in buffers for its clients, across all the connections of all its
+servers together. Every other limit here bounds one connection, so ten
+thousand connections that each stay within theirs can still hold more memory
+than the machine has; this one bounds their sum. Counted for a connection:
+the request it is still receiving (the body and the input not yet parsed,
+input held behind a response in flight, a WebSocket message being
+reassembled, the bodies and header blocks of HTTP/2 requests still arriving)
+and the response bytes its client has not taken yet (the write queue, and
+what HTTP/2 flow control holds back). Not counted: a request once its handler
+has it, the JavaScript heap, and what the kernel buffers for a socket.
+
+Not set (and `0` means the same), the budget is an eighth of the memory the
+process may use: the memory limit of its container's cgroup when there is
+one, the machine's memory otherwise. `false` switches the budget off. It is
+divided evenly among the threads of the process that have a server listening
+(the worker threads of `performance.clustering`; a worker process has a
+budget of its own), and a thread's part is never below the largest single
+request or message its servers accept: the request-head limit
+(`maxHeaderSize`) plus the larger of `maxUploadSize` and `bodySizeLimit`, or
+`wsMaxMessageSize` when that is larger still. A smaller value is raised to
+that, about 100 MB a thread with the default 100 MB upload limit, so a
+request that is accepted without a budget is accepted on an idle thread with
+one. Apps listening in the same thread share its part, and the largest
+`memoryBudget` set among them is the one used.
+
+On a thread that is over its part, a connection that has just grown what it
+holds is closed at once, unless it holds 16 KiB or less:
+
+- an HTTP/1 request still arriving is answered `503` with
+  `Connection: close` when nothing of that connection is ahead of the
+  answer, and the connection is closed without a response otherwise;
+- a WebSocket whose message is being reassembled is closed with code `1013`;
+- an HTTP/2 connection is sent `GOAWAY`;
+- a connection whose client is not reading the responses it is owed is
+  closed without a status.
+
+Nothing waits for room. A connection holding 16 KiB or less is never closed
+for the budget, so small requests, health checks among them, are served
+while it is full.
+
+While less than an eighth of a thread's part is free, each sweep of the
+engine also closes the connections that hold more than 4 KiB and have moved
+nothing in either direction for a whole sweep interval: without a status
+(`GOAWAY` on HTTP/2; a WebSocket's app sees close code `1006`), unless a
+handler holds the connection's request and nothing is queued for its client
+(on HTTP/2, unless a handler holds one of its requests and no response is
+waiting on the client's flow-control window). The sweep interval is half the
+shortest of `server.timeouts.request`, `server.timeouts.idle` and the
+engine's 2-second wait for a closing client, and at least 250 ms: a second
+with the default timeouts. A client that sends most of a body and then
+nothing, or asks for responses and reads none of them, would otherwise keep
+its part of the budget until the request timeout, or the 5 minutes the
+engine gives a response that makes no progress.
+
+`@morojs/engine` before 1.2.4 has no budget and is not handed the setting
+(it is given only to an engine that reports `capabilities.bufferBudget`);
+the Node.js and HTTP/2 servers (`engine: 'node'`) keep none either. On those
+the setting has no effect, and the per-connection limits are the only bound.
+
+```javascript
+// A 4 GB container that also runs an in-process cache: 1 GB for buffers
+export default { server: { limits: { memoryBudget: '1gb' } } };
 ```
 
 **HTTP/2** (`server.http2`): `true`, or `{ allowHTTP1, maxSessionMemory,
@@ -449,6 +536,7 @@ otherwise Moro's dedicated HTTP/2 server is used.
 - `MORO_IDLE_TIMEOUT`, `MORO_KEEPALIVE_TIMEOUT`, `MORO_HEADERS_TIMEOUT`
 - `MORO_BACKLOG`, `MORO_MAX_HEADER_SIZE`, `MORO_MAX_HEADERS`, `MORO_WS_MAX_MESSAGE_SIZE`
 - `MORO_MULTIPART_MAX_PARTS`, `MORO_MULTIPART_MAX_FILES`, `MORO_MULTIPART_MAX_FILE_SIZE`
+- `MORO_FORM_MAX_FIELDS`
 - `MORO_SSL_KEY_FILE`, `MORO_SSL_CERT_FILE`, `MORO_SSL_CA_FILE`, `MORO_SSL_PASSPHRASE`
 - `MORO_HTTP2`, `MORO_SERVER_ENGINE`
 

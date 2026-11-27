@@ -143,6 +143,9 @@ export interface EngineCapabilities {
    *  idleTimeoutMs. Gates the default for server.timeouts.idle; engines
    *  without it get an idle timeout only when one is configured. */
   idleSparesDrainingResponse: boolean;
+  /** What all connections hold in buffers together is bounded, and the
+   *  memoryBudget option sets the bound. Gates server.limits.memoryBudget. */
+  bufferBudget: boolean;
 }
 
 // One place to name every boolean flag: getEngineCapabilities coerces each
@@ -169,6 +172,7 @@ const CAP_KEYS = [
   'bodyText',
   'bodyLent',
   'idleSparesDrainingResponse',
+  'bufferBudget',
 ] as const;
 
 /** The TLS library a loaded @morojs/engine terminates TLS with (1.1.20+). */
