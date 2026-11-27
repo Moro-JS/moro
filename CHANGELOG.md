@@ -1,3 +1,28 @@
+## [1.9.3] - 2026-11-27
+
+### Added
+
+- **`server.limits.memoryBudget`**: how many bytes the process may hold in buffers for its clients across all connections (request bodies still arriving, WebSocket messages being reassembled, response data not yet taken). Takes a size such as `'2gb'`, a number of bytes, or `false` for no budget. `@morojs/engine` 1.2.4 or later keeps the budget; left unset, the engine uses an eighth of the memory the process may use (the container's cgroup limit, or the machine's memory). The Node.js server and the HTTP/2 server ignore it.
+- **`server.limits.form.maxFields`** (default 1000) and the `MORO_FORM_MAX_FIELDS` environment variable: how many fields one `application/x-www-form-urlencoded` body may have, on every server. Fields are the segments between `&` separators, counted before the body is decoded, so an empty segment counts.
+
+### Changed
+
+- **A urlencoded body with more than 1000 fields is answered `413` and its handler does not run.** It used to be parsed: a body of 100,000 one-byte fields is under a megabyte and took about 16 ms of CPU to decode. Raise `server.limits.form.maxFields` if a form of yours really has more fields. Express's `urlencoded()` refuses the same bodies by default (`parameterLimit` 1000).
+- **`@morojs/engine` is required at 1.2.4 or later** (it was 1.2.1). An install picks up the engine's bounded request-state pool, its corrected TLS connection close, the buffer budget, and on Linux a time slice per loop turn so a flood of requests no longer keeps new clients waiting. See the [engine 1.2.4 notes](https://github.com/Moro-JS/engine/releases/tag/v1.2.4).
+
+### MoroJS 1.9.3
+
+- Two new limits against request floods, and the native engine moves to 1.2.4.
+
+### Docs
+
+- Which server hands a body `413` (size, multipart, form fields) to `setErrorHandler()` and which runs `error` hooks: the native engine gives it to the handler and runs no hooks; the Node.js and HTTP/2 servers run the hooks and answer the fixed `413` (`docs/API.md`, `docs/HTTP2_GUIDE.md`).
+- What the engine does when the buffer budget runs short: the refusal per protocol (503, WebSocket 1013, HTTP/2 `GOAWAY`), the connections closed at the sweep, the floor and the automatic default (`docs/CONFIGURATION_REFERENCE.md`, `docs/SECURITY_DEFAULTS.md`).
+
+### Upgrading
+
+- `npm install @morojs/moro@1.9.3`. Nothing is removed or renamed. The one behaviour to check is the form field cap: if you accept urlencoded forms with more than 1000 fields, set `server.limits.form.maxFields` before you deploy.
+
 ## [1.9.2] - 2026-11-25
 
 ### Added
