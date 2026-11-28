@@ -196,6 +196,14 @@ export interface ServerLimitsConfig {
    * that is raised to it. Native engine only, on a
    * `@morojs/engine` that reports `capabilities.bufferBudget`; an older
    * engine and the Node.js server keep no such budget and ignore this.
+   *
+   * With `@morojs/engine` 1.2.5 or later, twice the budget is also what the
+   * kernel may queue for the connections to read (Linux): once a thread's
+   * connections no longer fit in its share of that with the kernel's own
+   * receive buffer each, every connection's buffer is set to its part,
+   * 64 KiB down to 16 KiB. And a thread holding twice its share closes the
+   * connections that are owed responses and take none for half a second.
+   * `false` switches all of it off.
    */
   memoryBudget?: number | string | false;
 }

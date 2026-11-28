@@ -435,7 +435,8 @@ input held behind a response in flight, a WebSocket message being
 reassembled, the bodies and header blocks of HTTP/2 requests still arriving)
 and the response bytes its client has not taken yet (the write queue, and
 what HTTP/2 flow control holds back). Not counted: a request once its handler
-has it, the JavaScript heap, and what the kernel buffers for a socket.
+has it, the JavaScript heap, and what the kernel buffers for a socket (which
+`@morojs/engine` 1.2.5 bounds on Linux in its own way, below).
 
 Not set (and `0` means the same), the budget is an eighth of the memory the
 process may use: the memory limit of its container's cgroup when there is
@@ -479,6 +480,34 @@ with the default timeouts. A client that sends most of a body and then
 nothing, or asks for responses and reads none of them, would otherwise keep
 its part of the budget until the request timeout, or the 5 minutes the
 engine gives a response that makes no progress.
+
+With `@morojs/engine` 1.2.5 or later the same setting governs two more
+things.
+
+- **What the kernel queues for the connections to read (Linux).** Every
+  connection has a receive buffer in the kernel, 128 KiB to begin with, that
+  its client fills as fast as it can send, and the memory is charged to the
+  process's container. Twice the budget - a quarter of the process's memory
+  when `memoryBudget` is not set - is what those buffers may hold together.
+  While a thread's connections fit in its part of that with the kernel's own
+  buffer each, nothing is done: up to 8,192 connections in a 4 GiB
+  container, 131,072 with 64 GiB. Past that, each connection's buffer is set
+  to its part, 64 KiB at most and 16 KiB at least, and raised again when
+  connections have gone. A request that fits the buffer is served as
+  before, and so is everything from a client on a network. A body larger
+  than the buffer from a client on the same host (the loopback interface: a
+  reverse proxy in front of the app, on the same machine) arrives a buffer
+  at a time, about five a second, while the thread is that crowded - past
+  four connections per MiB of the process's memory. `memoryBudget: false`
+  switches this off with the rest.
+- **Responses nobody reads.** While a thread holds twice its part of the
+  budget, a connection that is owed more than 16 KiB of response and takes
+  none of it for half a second is closed, the one owed most first, until the
+  thread is within its part again. Taking is acknowledging any of it, or
+  opening an HTTP/2 window for it, so a client that reads, at any speed, is
+  not closed. And on a thread over its part, a connection that has 16 KiB of
+  responses waiting is not answered further until it takes them; the write
+  high-water mark applies only while the thread has room.
 
 `@morojs/engine` before 1.2.4 has no budget and is not handed the setting
 (it is given only to an engine that reports `capabilities.bufferBudget`);
