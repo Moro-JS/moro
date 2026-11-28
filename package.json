@@ -117,7 +117,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@morojs/engine": "^1.2.4"
+    "@morojs/engine": "^1.2.5"
   },
   "peerDependencies": {
     "@aws-sdk/client-cloudfront": ">=3.974.0",
